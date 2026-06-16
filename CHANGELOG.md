@@ -1,0 +1,154 @@
+# Changelog
+
+All notable changes to the Arrangement Editor plugin are documented here.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Fixed
+- **Add / rename section, and edit fret/bend/slide/anchor now work in
+  the desktop app.** These actions used `window.prompt()`, which Electron
+  does not implement — on the desktop app it returns `null` and logs a
+  warning, so the actions silently no-opped while their no-prompt
+  siblings (e.g. Delete Section) still worked. This made it look like
+  "only delete works" on Windows/desktop (issue slopsmith/slopsmith#480).
+  Replaced every `prompt()` call with a small in-app text-prompt modal
+  (`_editorPromptText`, built on the existing `_installModalKeyboard`
+  helper) that resolves to the entered string on OK/Enter or `null` on
+  Cancel/Escape — same semantics as `prompt()`, so each call site's
+  parsing/validation is unchanged. Works identically in the browser and
+  Electron builds.
+
+## [1.4.3] - 2026-05-28
+
+### Added
+- **Drum editor marquee select** — dragging over empty grid space now
+  draws a rubber-band selection box and selects every drum hit inside
+  it, matching the guitar/keys editor. A stationary click on empty space
+  still adds a hit; shift-drag unions onto the current selection.
+
+### Fixed
+- **PSARC save** now writes edits to the arrangement you actually
+  selected. `_load_psarc` built its `xml_files` list (indexed on save by
+  the dropdown's `arrangement_index`) from a raw `rglob` walk in
+  filesystem order, but `lib.song.load_song` priority-sorts the
+  arrangements it returns (Lead > Combo > Rhythm > Bass) — and that
+  sorted list is what the dropdown shows. The two orders diverge on any
+  multi-arrangement PSARC, so saving while "Rhythm" was selected could
+  rewrite the Lead/Bass XML instead (edits silently vanished on
+  reload), and a count mismatch raised `Save error: Invalid arrangement
+  index` (issue #425). `xml_files` is now aligned to the arrangement
+  order by pairing each loaded arrangement back to its source XML via a
+  note/chord content signature, with a safe fall-back to filesystem
+  order when the pairing is ambiguous (e.g. content-identical empty
+  arrangements). This also fixes remove-arrangement and "+ Keys" append,
+  which index the same list.
+- **Sloppak save** now repopulates each phrase's per-difficulty
+  `levels[].notes/chords/anchors` from the editor's flat lists.
+  Previously `_save_sloppak` round-tripped phrases verbatim from the
+  source PSARC, so the highway's mastery-filter consumer
+  (`static/highway.js`, which reads notes from
+  `phrases[].levels[idx].notes` whenever phrases are present)
+  silently rendered the original PSARC chart — every added, edited,
+  or deleted note was invisible on 2D/3D highways. Only arrangements
+  with no source-side phrases (e.g. user-added bass on a sloppak that
+  lacked one) were unaffected, because the highway falls back to the
+  flat `notes` array when `phrases` is absent. This makes the mastery
+  slider a no-op for editor-saved sloppaks (every level shows the
+  same notes), which matches the editor's single-difficulty authoring
+  model. Phrase windows are derived from each phrase's `start_time`
+  and the next phrase's `start_time` (with the first/last extending
+  to ±∞), not from the stored `end_time` — the tempo-edit path
+  updates note times and phrase `start_time` but does not touch
+  `end_time`, so trusting `end_time` would mis-bucket notes after a
+  tempo remap. Notes outside any phrase's window (gaps in the source
+  PSARC's coverage, or user additions before/after the original
+  phrase range) land in the nearest first/last phrase.
+
+## [1.4.2] - 2026-05-26
+
+### Fixed
+- **Build CDLC** no longer drops chords from arrangements that weren't
+  the last one viewed. `editorBuild` ran `reconstructChords()` on every
+  arrangement without flattening first; `reconstructChords()` rebuilds
+  `arr.chords` purely from `arr.notes`, so any arrangement still in its
+  non-flattened state had all its chords silently wiped. Most visible
+  on a multi-track Guitar Pro import — e.g. a strummed-chord track
+  built into a chord-less arrangement. The build now flattens each
+  arrangement before reconstructing, matching the save path.
+
+## [1.4.0] - 2026-05-23
+
+### Added
+- **Unified "New…" entry point** — the toolbar's *Create* button is
+  now *New…* and opens a format-picker dialog asking "What are you
+  making?" with two options: **Sloppak** (audio + chart, with drums +
+  stems available from the start) and **PSARC** (the classic Rocksmith
+  CDLC path, unchanged). Skips the three-step "create PSARC →
+  save-as-sloppak → +drums" workflow that drummers were stuck with.
+- **New-Sloppak modal** — drag-and-drop (or click-to-pick) an audio
+  file (mp3 / wav / flac / m4a / ogg — re-encoded to .ogg on the
+  server via ffmpeg), enter title / artist / album / year, choose an
+  initial arrangement (Lead / Rhythm / Bass) and optionally
+  pre-initialise an empty drum tab (on by default). The new
+  `POST /api/plugins/editor/create_sloppak` route accepts the audio
+  as multipart, builds a fresh .sloppak via the existing
+  `_write_sloppak_pak` helper (which now optionally writes
+  `drum_tab.json` + manifest entry), and returns the new filename;
+  the editor opens it via the existing load path so the in-memory
+  state initialises identically to a normal sloppak load.
+- The legacy *Save as Sloppak* path remains for converting existing
+  PSARC sessions.
+
+## [1.3.0] - 2026-05-23
+
+### Added
+- **Drum vocab expanded to 18 pieces.** The drum editor's lane grid now
+  shows the new `stack` (between Crash R and HH Open) and `bell` (after
+  R.Bell) lanes from core's expanded PIECES dict. The existing
+  `ride_bell` label is shortened to `R.Bell` to disambiguate from the
+  new dedicated `bell` (bell cymbal) piece. Requires slopsmith core
+  ≥ 0.2.9-alpha.4 for the new piece-ids.
+- **Drum import — unmapped-notes warning + manual mapping.** When you
+  import a GP or MIDI drum track containing percussion that doesn't map
+  to one of the 18 slopsmith drum pieces (cowbell, tambourine, etc.),
+  a dialog now lists the unmapped MIDI notes (with their GM names + hit
+  counts) and lets you either drop them or pick a drum piece per row.
+  Previously these notes were silently dropped on import. The
+  `import-drums-tab` and `import-drums-midi` endpoints surface them via
+  a new `unmapped: [{midi, count, times}]` field; the editor builds the
+  warning + mapping UI client-side.
+
+## [1.2.1] - 2026-05-22
+
+### Fixed
+- The sync **offset** now also shifts `drum_tab` hits. Previously an
+  offset nudge moved the guitar notes, beat grid and sections but left
+  the drum chart behind, so drums ended up out of sync. Shifted hits
+  are clamped at 0 and rounded to 3 dp.
+
+## [1.2.0] - 2026-05-22
+
+### Added
+- **Tempo Map editor** — an EOF-style mode for fitting the song-wide beat
+  grid to the audio. A new **🎵 Tempo Map** toolbar button (works on both
+  sloppak and PSARC) swaps the canvas to a tempo view: the waveform plus a
+  draggable vertical "sync-point" pole at every measure downbeat, with each
+  measure's BPM and time signature derived from sync-point spacing.
+  - **Drag** a sync point to retime — only the two adjacent measures
+    recompute their BPM; every other measure stays put.
+  - **Insert / delete** sync points (right-click menu, or the Insert /
+    Delete keys) to split or merge measures.
+  - **Time signature** — `[` / `]` (or the right-click menu) change the
+    selected measure's beats-per-measure; the interior grid re-subdivides.
+  - **Notes ride the grid** with a user-selectable scope: a "Notes that
+    ride the grid" toggle chooses **Drum tab only** (default — never
+    disturbs a guitar/bass/keys chart) or **All instruments** (full
+    retempo). The beat grid and section markers always move regardless.
+    The choice persists in `localStorage`.
+  - A dimmed reference layer shows the current arrangement's notes and the
+    drum-tab hits at their absolute times, so the grid can be aligned to
+    them and the waveform.
+  - Every edit is a single undo step (Ctrl+Z / Ctrl+Y).

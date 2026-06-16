@@ -1,0 +1,16 @@
+{
+    "id": "editor",
+    "name": "Arrangement Editor",
+    "version": "1.5.0",
+    "description": "Build and edit sloppak arrangements — import Guitar Pro tabs, sync audio, and tune every note.",
+    "category": "creation",
+    "icon": "assets/thumb.png",
+    "nav": {
+        "label": "Editor",
+        "screen": "editor"
+    },
+    "screen": "screen.html",
+    "script": "screen.js",
+    "styles": "assets/v3-theme.css",
+    "routes": "routes.py"
+}

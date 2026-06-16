@@ -1,0 +1,568 @@
+<div class="flex flex-col h-screen pt-16 bg-dark-900 text-white overflow-hidden">
+
+    <!-- Top bar: back + song info -->
+    <div class="flex items-center gap-3 px-4 py-2 bg-dark-800 border-b border-gray-800 shrink-0">
+        <button onclick="showScreen('home')" class="text-gray-500 hover:text-white text-sm flex items-center gap-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+            </svg> Back
+        </button>
+        <div class="h-4 w-px bg-gray-700"></div>
+        <span id="editor-song-title" class="text-sm text-gray-400">No song loaded</span>
+        <div class="flex-1"></div>
+        <!-- Arrangement selector -->
+        <select id="editor-arrangement" class="bg-dark-700 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none" onchange="editorSelectArrangement(this.value)" style="display:none">
+        </select>
+        <button id="editor-remove-arr-btn" onclick="editorRemoveArrangement()" class="px-2 py-1 bg-dark-600 hover:bg-red-900 rounded text-xs text-gray-500 hover:text-red-300 transition hidden" title="Remove current arrangement">&times;</button>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="flex items-center gap-2 px-4 py-1.5 bg-dark-800 border-b border-gray-800 shrink-0 flex-wrap">
+        <!-- File operations -->
+        <button id="editor-load-btn" onclick="editorShowLoadModal()" class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium">Load</button>
+        <button id="editor-create-btn" onclick="editorShowCreateModal()" class="px-3 py-1 bg-green-800 hover:bg-green-700 rounded text-xs font-medium" title="Start a new song">New…</button>
+        <button id="editor-save-btn" onclick="editorSave()" class="px-3 py-1 bg-accent hover:bg-accent-light rounded text-xs font-medium" disabled>Save</button>
+        <button id="editor-replace-audio-btn" onclick="editorShowReplaceAudioModal()" class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden" title="Replace the audio track">Replace Audio</button>
+        <button id="editor-build-btn" onclick="editorBuild()" class="px-3 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs font-medium hidden">Build CDLC</button>
+        <button id="editor-add-drums-btn" onclick="editorShowAddDrumsModal()" class="px-3 py-1 bg-red-900 hover:bg-red-800 rounded text-xs font-medium hidden">+ Drums</button>
+        <button id="editor-add-keys-btn" onclick="editorShowAddKeysModal()" class="px-3 py-1 bg-indigo-900 hover:bg-indigo-800 rounded text-xs font-medium hidden">+ Keys</button>
+        <button id="editor-strings-btn" onclick="editorShowStringsModal()" class="px-3 py-1 bg-amber-800 hover:bg-amber-700 rounded text-xs font-medium hidden" title="Add or remove strings on the active arrangement (extended-range guitar / bass)">⋮ Strings</button>
+        <button id="editor-record-midi-btn" onclick="editorShowRecordMidiModal()" class="px-3 py-1 bg-rose-900 hover:bg-rose-800 rounded text-xs font-medium hidden disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-rose-900" title="Record a Keys arrangement live from a MIDI keyboard (Chrome/Edge)">● Record</button>
+        <button id="editor-tones-btn" onclick="editorShowTonesModal()" class="px-3 py-1 bg-cyan-900 hover:bg-cyan-800 rounded text-xs font-medium hidden" title="Tone slot names and base tone for this arrangement">♪ Tones…</button>
+        <button id="editor-stems-mixer-btn" onclick="editorToggleStemMixer()" class="px-3 py-1 bg-teal-800 hover:bg-teal-700 rounded text-xs font-medium hidden" title="Per-instrument stem mixer (volume / mute / solo)">🎚 Stems</button>
+
+        <div class="h-4 w-px bg-gray-700"></div>
+
+        <!-- Undo/Redo -->
+        <button id="editor-undo" onclick="editorUndo()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs" disabled title="Undo (Ctrl+Z)">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4"/></svg>
+        </button>
+        <button id="editor-redo" onclick="editorRedo()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs" disabled title="Redo (Ctrl+Y)">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4M21 10l-4 4"/></svg>
+        </button>
+
+        <div class="h-4 w-px bg-gray-700"></div>
+
+        <!-- Playback -->
+        <button id="editor-play-btn" onclick="editorTogglePlay()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs" disabled title="Play/Pause (Space)">
+            <svg id="editor-play-icon" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <span id="editor-time-display" class="text-xs text-gray-500 font-mono w-20">0:00 / 0:00</span>
+
+        <div class="h-4 w-px bg-gray-700"></div>
+
+        <!-- Zoom -->
+        <span class="text-xs text-gray-500">Zoom:</span>
+        <button onclick="editorZoom(-1)" class="px-1.5 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs">-</button>
+        <span id="editor-zoom-display" class="text-xs text-gray-400 w-8 text-center">100</span>
+        <button onclick="editorZoom(1)" class="px-1.5 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs">+</button>
+
+        <div class="h-4 w-px bg-gray-700"></div>
+
+        <!-- BPM -->
+        <span class="text-xs text-gray-500">BPM:</span>
+        <input type="number" id="editor-bpm" min="30" max="400" step="0.1"
+            class="w-14 bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none text-center"
+            value="120" onchange="editorSetBPM(this.value)" title="Change tab tempo — rescales all notes and beats">
+        <!-- Tempo sync -->
+        <button id="editor-sync-btn" onclick="editorSyncTempo()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs hidden" title="Match tab tempo to audio">Sync</button>
+
+        <div class="h-4 w-px bg-gray-700"></div>
+
+        <!-- Offset -->
+        <span class="text-xs text-gray-500">Offset:</span>
+        <button onclick="editorNudgeOffset(-0.01)" class="px-1 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs" title="-10ms">&lt;</button>
+        <input type="number" id="editor-offset" step="0.01" value="0"
+            class="w-16 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs text-gray-300 outline-none text-center"
+            onchange="editorApplyOffset(this.value)" title="Shift all notes by seconds (negative = earlier)">
+        <button onclick="editorNudgeOffset(0.01)" class="px-1 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs" title="+10ms">&gt;</button>
+
+        <div class="h-4 w-px bg-gray-700"></div>
+
+        <!-- Snap -->
+        <span class="text-xs text-gray-500">Snap:</span>
+        <select id="editor-snap" onchange="editorSetSnap(this.selectedIndex)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none">
+            <option>1/1</option>
+            <option>1/2</option>
+            <option selected>1/4</option>
+            <option>1/8</option>
+            <option>1/16</option>
+            <option>Off</option>
+        </select>
+    </div>
+
+    <!-- Canvas area + inspector panel -->
+    <div class="flex-1 flex overflow-hidden">
+        <div id="editor-canvas-wrap" class="flex-1 relative overflow-hidden bg-dark-900">
+            <canvas id="editor-canvas" class="absolute inset-0"></canvas>
+            <!-- Stem mixer panel — floating, populated by _renderStemMixer() -->
+            <div id="editor-stem-mixer" class="hidden absolute top-3 right-3 z-20 w-60 bg-dark-800/95 border border-gray-700 rounded-lg shadow-xl backdrop-blur">
+                <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+                    <span class="text-xs font-semibold">🎚 Stem Mixer</span>
+                    <button onclick="editorToggleStemMixer()" class="text-gray-500 hover:text-white text-sm leading-none">&times;</button>
+                </div>
+                <div id="editor-stem-mixer-rows" class="p-2 space-y-1.5 max-h-[60vh] overflow-y-auto"></div>
+            </div>
+        </div>
+        <!-- Inspector panel — populated by `_renderInspector` whenever the
+             selection changes. Hidden when no notes are selected; the wrapper
+             stays in the DOM so layout is stable across selection changes. -->
+        <div id="editor-inspector" class="hidden w-64 shrink-0 bg-dark-800 border-l border-gray-800 overflow-y-auto text-xs text-gray-200 p-3 space-y-3"></div>
+    </div>
+
+    <!-- Status bar -->
+    <div class="flex items-center gap-4 px-4 py-1 bg-dark-800 border-t border-gray-800 shrink-0">
+        <span id="editor-status" class="text-xs text-gray-500">Ready</span>
+        <div class="flex-1"></div>
+        <span id="editor-note-count" class="text-xs text-gray-600"></span>
+        <span class="text-xs text-gray-600">Scroll: zoom | Middle-drag: pan | Dbl-click: add note | Del: delete</span>
+    </div>
+</div>
+
+<!-- Load modal -->
+<div id="editor-load-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-md max-h-[70vh] flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+            <span class="text-sm font-medium">Load CDLC</span>
+            <button onclick="editorHideLoadModal()" class="text-gray-500 hover:text-white">&times;</button>
+        </div>
+        <div class="px-4 py-2">
+            <input id="editor-load-search" type="text" placeholder="Search..." oninput="editorFilterSongs(this.value)"
+                class="w-full bg-dark-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-accent/50">
+        </div>
+        <div id="editor-load-list" class="flex-1 overflow-y-auto px-2 pb-2">
+            <div class="text-xs text-gray-500 p-2">Loading...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Context menu -->
+<div id="editor-context-menu" class="hidden absolute z-50 bg-dark-700 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[160px]">
+</div>
+
+<!-- Create CDLC modal -->
+<div id="editor-create-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-lg max-h-[85vh] flex flex-col overflow-y-auto">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700 shrink-0">
+            <span class="text-sm font-medium">Create New CDLC</span>
+            <button onclick="editorHideCreateModal()" class="text-gray-500 hover:text-white">&times;</button>
+        </div>
+        <div class="p-4 space-y-4">
+
+            <!-- Step 1: Guitar Pro file -->
+            <div>
+                <label class="text-xs font-medium text-gray-400 mb-1 block">Guitar Pro File <span id="editor-create-gp-opt" class="text-gray-600">(.gp3/.gp4/.gp5/.gpx/.gp — optional)</span></label>
+                <input type="file" id="editor-create-gp" accept=".gp3,.gp4,.gp5,.gpx,.gp"
+                    onchange="editorGPFileSelected(this)"
+                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+            </div>
+
+            <!-- Track selection (shown after GP upload) -->
+            <div id="editor-create-tracks" class="hidden">
+                <label class="text-xs font-medium text-gray-400 mb-1 block">Select Tracks</label>
+                <div id="editor-create-track-list" class="space-y-1 max-h-32 overflow-y-auto bg-dark-800 rounded p-2">
+                </div>
+            </div>
+
+            <!-- Blank-chart options (Sloppak with no Guitar Pro file) -->
+            <div id="editor-create-blank-opts" class="hidden space-y-2">
+                <div>
+                    <label class="text-xs font-medium text-gray-400 mb-1 block">Initial Arrangement</label>
+                    <div id="editor-create-arr-buttons" class="flex gap-1"></div>
+                    <p class="text-[11px] text-gray-600 mt-1">Default tuning is E standard (Bass: 4 strings). Adjust later from the editor toolbar.</p>
+                </div>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="editor-create-drum-tab" checked class="cursor-pointer">
+                    <span class="text-sm">Also start an empty drum tab</span>
+                </label>
+            </div>
+
+            <!-- GP8 embedded audio banner (shown only when GP8 file has embedded audio) -->
+            <div id="editor-gp8-audio-banner" class="hidden rounded-lg border border-accent/30 bg-accent/5 p-3">
+                <div class="flex items-start gap-2">
+                    <svg class="w-4 h-4 text-accent mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"/></svg>
+                    <div class="flex-1">
+                        <p class="text-xs font-semibold text-white mb-1">Embedded audio detected</p>
+                        <p class="text-xs text-gray-400 mb-2">This GP8 file has a backing track with <span id="editor-gp8-sync-count">0</span> sync point(s).</p>
+                        <div class="flex gap-2">
+                            <button onclick="editorSetGP8AudioMode('embedded')" id="editor-gp8-btn-embedded"
+                                class="px-2 py-1 rounded text-xs font-medium bg-accent text-white">Use embedded audio</button>
+                            <button onclick="editorSetGP8AudioMode('upload')" id="editor-gp8-btn-upload"
+                                class="px-2 py-1 rounded text-xs font-medium bg-dark-600 text-gray-300 hover:bg-dark-500">Supply own audio</button>
+                        </div>
+                        <p class="text-xs text-gray-600 mt-1">Sync quality depends on how carefully the tab was aligned in Guitar Pro.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Auto-sync audio drop zone (shown when no embedded audio, or user wants to supply their own) -->
+            <div id="editor-autosync-section" class="hidden">
+                <label class="text-xs font-medium text-gray-400 mb-1 block">
+                    Audio for auto-sync
+                    <span class="text-gray-600 font-normal ml-1">— align tab to recording automatically</span>
+                </label>
+                <input type="file" id="editor-autosync-audio" accept=".mp3,.ogg,.wav,.flac,.m4a,.aac"
+                    onchange="editorAutoSyncAudioSelected(this)"
+                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+                <div id="editor-autosync-status" class="text-xs text-gray-600 mt-1"></div>
+                <div id="editor-refine-row" class="hidden mt-2 flex items-center gap-2 flex-wrap">
+                    <span class="text-xs text-gray-500">Refine sync every</span>
+                    <input type="number" id="editor-refine-bars" value="8" min="1" max="64" step="1"
+                        class="w-14 bg-dark-700 border border-gray-700 rounded px-2 py-0.5 text-xs text-gray-300 outline-none">
+                    <span class="text-xs text-gray-500">bars</span>
+                    <button onclick="editorRefineSync()" id="editor-refine-btn"
+                        class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs text-gray-300 transition">Refine</button>
+                    <span id="editor-refine-status" class="text-xs text-gray-600"></span>
+                </div>
+            </div>
+
+            <!-- Step 2: Audio source -->
+            <div>
+                <label class="text-xs font-medium text-gray-400 mb-1 block">Audio Source</label>
+                <div class="flex gap-2 mb-2">
+                    <button onclick="editorSetAudioMode('file')" id="editor-audio-mode-file"
+                        class="px-3 py-1 bg-accent rounded text-xs">Upload File</button>
+                    <button onclick="editorSetAudioMode('youtube')" id="editor-audio-mode-yt"
+                        class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs">YouTube URL</button>
+                </div>
+                <!-- File upload -->
+                <div id="editor-audio-file-input">
+                    <input type="file" id="editor-create-audio" accept=".mp3,.wav,.ogg,.m4a,.flac,.opus"
+                        class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+                </div>
+                <!-- YouTube URL -->
+                <div id="editor-audio-yt-input" class="hidden">
+                    <input type="text" id="editor-create-yt-url" placeholder="https://youtube.com/watch?v=..."
+                        class="w-full bg-dark-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-accent/50">
+                </div>
+                <div id="editor-audio-status" class="text-xs text-gray-500 mt-1"></div>
+            </div>
+
+            <!-- Step 3: Metadata -->
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="text-xs text-gray-500">Title</label>
+                    <input type="text" id="editor-create-title" placeholder="Song Title"
+                        class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500">Artist</label>
+                    <input type="text" id="editor-create-artist" placeholder="Artist Name"
+                        class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500">Album</label>
+                    <input type="text" id="editor-create-album" placeholder="Album"
+                        class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500">Year</label>
+                    <input type="text" id="editor-create-year" placeholder="2024"
+                        class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                </div>
+            </div>
+
+            <!-- Album art -->
+            <div>
+                <label class="text-xs text-gray-500">Album Art (optional)</label>
+                <input type="file" id="editor-create-art" accept=".png,.jpg,.jpeg,.dds"
+                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+            </div>
+
+            <!-- Import button -->
+            <button onclick="editorDoCreate()" id="editor-create-go"
+                class="w-full px-4 py-2 bg-green-700 hover:bg-green-600 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                Import & Open in Editor
+            </button>
+            <div id="editor-create-status" class="text-xs text-gray-500"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Replace audio modal -->
+<div id="editor-replace-audio-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-md flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+            <span class="text-sm font-medium">Replace Audio</span>
+            <button onclick="editorHideReplaceAudioModal()" class="text-gray-500 hover:text-white">&times;</button>
+        </div>
+        <div class="p-4 space-y-4">
+            <div>
+                <label class="text-xs font-medium text-gray-400 mb-1 block">Audio Source</label>
+                <div class="flex gap-2 mb-2">
+                    <button onclick="editorSetReplaceAudioMode('file')" id="editor-replace-mode-file"
+                        class="px-3 py-1 bg-accent rounded text-xs">Upload File</button>
+                    <button onclick="editorSetReplaceAudioMode('youtube')" id="editor-replace-mode-yt"
+                        class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs">YouTube URL</button>
+                </div>
+                <div id="editor-replace-audio-file-input">
+                    <input type="file" id="editor-replace-audio" accept=".mp3,.wav,.ogg,.m4a,.flac"
+                        class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+                </div>
+                <div id="editor-replace-audio-yt-input" class="hidden">
+                    <input type="text" id="editor-replace-yt-url" placeholder="https://youtube.com/watch?v=..."
+                        class="w-full bg-dark-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-accent/50">
+                </div>
+                <div id="editor-replace-audio-status" class="text-xs text-gray-500 mt-1"></div>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="editorApplyReplaceAudio()" id="editor-replace-audio-apply"
+                    class="flex-1 px-4 py-2 bg-accent hover:bg-accent-light rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+                    Apply
+                </button>
+                <button onclick="editorHideReplaceAudioModal()"
+                    class="flex-1 px-4 py-2 bg-dark-600 hover:bg-dark-500 rounded-lg text-sm font-medium">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Sync tempo dialog -->
+<div id="editor-sync-dialog" class="hidden absolute z-50 bg-dark-700 border border-gray-700 rounded-lg shadow-xl p-4 w-72">
+    <div class="text-xs font-medium text-gray-300 mb-3">Sync Tempo</div>
+    <div class="space-y-2 text-xs">
+        <div class="flex justify-between"><span class="text-gray-500">Tab BPM:</span><span id="sync-tab-bpm" class="text-gray-300">—</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">Audio BPM:</span><span id="sync-audio-bpm" class="text-gray-300">—</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">Scale factor:</span><span id="sync-factor" class="text-white font-mono">—</span></div>
+        <div>
+            <label class="text-gray-500">Manual audio BPM override:</label>
+            <input type="number" id="sync-manual-bpm" min="30" max="300" step="0.1" placeholder="auto"
+                class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none mt-1"
+                oninput="editorSyncUpdateFactor()">
+        </div>
+        <div>
+            <label class="text-gray-500">Time offset (seconds):</label>
+            <input type="number" id="sync-offset" step="0.01" value="0" placeholder="0"
+                class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none mt-1">
+        </div>
+    </div>
+    <div class="flex gap-2 mt-3">
+        <button onclick="editorApplySync()" class="flex-1 px-2 py-1 bg-accent hover:bg-accent-light rounded text-xs">Apply</button>
+        <button onclick="editorHideSyncDialog()" class="flex-1 px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs">Cancel</button>
+    </div>
+</div>
+
+<!-- Add drums modal -->
+<div id="editor-add-drums-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-md flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+            <span class="text-sm font-medium">Add Drum Arrangement</span>
+            <button onclick="editorHideAddDrumsModal()" class="text-gray-500 hover:text-white">&times;</button>
+        </div>
+        <div class="p-4 space-y-3">
+            <div>
+                <label class="text-xs font-medium text-gray-400 mb-1 block">Guitar Pro (.gp3, .gp4, .gp5, .gpx, .gp) or Standard MIDI (.mid, .midi) File</label>
+                <input type="file" id="editor-add-drums-gp" accept=".gp3,.gp4,.gp5,.gpx,.gp,.mid,.midi"
+                    onchange="editorDrumsFileSelected(this)"
+                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+            </div>
+            <div id="editor-add-drums-existing" class="hidden text-xs text-amber-400 bg-amber-900/30 border border-amber-700/40 rounded p-2">
+                This song already has a drum tab. Importing will replace it.
+            </div>
+            <div id="editor-add-drums-tracks" class="hidden">
+                <label class="text-xs font-medium text-gray-400 mb-1 block">Select Drum Track</label>
+                <div id="editor-add-drums-track-list" class="space-y-1 max-h-32 overflow-y-auto bg-dark-800 rounded p-2"></div>
+            </div>
+            <button onclick="editorDoAddDrums()" id="editor-add-drums-go"
+                class="w-full px-4 py-2 bg-red-700 hover:bg-red-600 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                Import Drum Track
+            </button>
+            <div id="editor-add-drums-status" class="text-xs text-gray-500"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Add keys modal -->
+<div id="editor-add-keys-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-md flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+            <span class="text-sm font-medium">Add Keys Arrangement</span>
+            <button onclick="editorHideAddKeysModal()" class="text-gray-500 hover:text-white">&times;</button>
+        </div>
+        <div class="p-4 space-y-3">
+            <div>
+                <label class="text-xs font-medium text-gray-400 mb-1 block">Source File (Guitar Pro, MIDI, or MusicXML)</label>
+                <input type="file" id="editor-add-keys-file" accept=".gp3,.gp4,.gp5,.gpx,.gp,.mid,.midi,.xml,.musicxml"
+                    onchange="editorKeysFileSelected(this)"
+                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+                <p class="text-[11px] text-gray-600 mt-1">After import you can fine-tune note timing in the editor.</p>
+            </div>
+            <div id="editor-add-keys-tracks" class="hidden">
+                <label class="text-xs font-medium text-gray-400 mb-1 block">Select Keyboard Track</label>
+                <div id="editor-add-keys-track-list" class="space-y-1 max-h-40 overflow-y-auto bg-dark-800 rounded p-2"></div>
+            </div>
+            <button onclick="editorDoAddKeys()" id="editor-add-keys-go"
+                class="w-full px-4 py-2 bg-indigo-700 hover:bg-indigo-600 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                Import Keys Track
+            </button>
+            <div class="text-center text-xs text-gray-600">— or —</div>
+            <button onclick="editorAddEmptyKeys()"
+                class="w-full px-4 py-2 bg-dark-600 hover:bg-dark-500 rounded-lg text-sm font-medium">
+                Start Empty (no source file)
+            </button>
+            <div id="editor-add-keys-status" class="text-xs text-gray-500"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Strings (tuning) editor modal -->
+<div id="editor-strings-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-md flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+            <span class="text-sm font-medium">Strings (extended range)</span>
+            <button onclick="editorHideStringsModal()" class="text-gray-500 hover:text-white">&times;</button>
+        </div>
+        <div class="p-4 space-y-3">
+            <div id="editor-strings-summary" class="text-xs text-gray-400"></div>
+            <div id="editor-strings-list" class="space-y-1 text-xs font-mono"></div>
+            <div class="flex gap-2">
+                <button id="editor-strings-add" onclick="editorAddString()"
+                    class="flex-1 px-3 py-2 bg-amber-800 hover:bg-amber-700 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+                    + Add string
+                </button>
+                <button id="editor-strings-remove" onclick="editorRemoveString()"
+                    class="flex-1 px-3 py-2 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+                    − Remove string
+                </button>
+            </div>
+            <p id="editor-strings-warning" class="text-[11px] text-amber-300"></p>
+            <p class="text-[11px] text-gray-600">
+                Guitar arrangements support 6–8 strings; bass supports 4–6.
+                Extra strings are added at the low end (guitar low B/F#,
+                bass low B); 6-string bass also adds high C. Going above
+                6/4 will require saving as Sloppak.
+            </p>
+        </div>
+    </div>
+</div>
+
+<!-- Save format prompt modal (extended-range arrangement) -->
+<div id="editor-save-format-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-lg flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+            <span class="text-sm font-medium">Extended-range arrangement</span>
+            <button onclick="editorHideSaveFormatModal()" class="text-gray-500 hover:text-white">&times;</button>
+        </div>
+        <div class="p-4 space-y-3 text-xs text-gray-300">
+            <p>
+                This arrangement has more strings than the standard
+                6-guitar / 4-bass layout. It will be saved as a
+                <strong>Sloppak</strong>, which preserves the extended
+                range.
+            </p>
+            <div class="flex flex-col gap-2 pt-2">
+                <button id="editor-save-as-sloppak-btn"
+                    onclick="editorSaveAsSloppakConfirm()"
+                    class="w-full px-3 py-2 bg-green-800 hover:bg-green-700 rounded text-xs font-medium">
+                    Save as Sloppak
+                </button>
+                <button onclick="editorHideSaveFormatModal()"
+                    class="w-full px-3 py-2 text-gray-500 hover:text-white rounded text-xs">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Tone slots modal — names the five tone slots (base + A/B/C/D) and
+     picks which one is the base. Tone changes placed on the lane store
+     their slot name verbatim, so the slot list here is mostly a UI
+     dictionary that the lane uses for click-to-place + display. -->
+<div id="editor-tones-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-md flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+            <span class="text-sm font-medium">Tone slots</span>
+            <button onclick="editorHideTonesModal()" class="text-gray-500 hover:text-white">&times;</button>
+        </div>
+        <div class="p-4 space-y-3 text-xs text-gray-300">
+            <p class="text-gray-400">
+                Name the five tone slots and pick which one is the base
+                tone. The base plays from the start of the song; the
+                others can be placed on the tone lane to switch into.
+            </p>
+            <div id="editor-tones-slots" class="space-y-2"></div>
+            <div class="flex flex-col gap-2 pt-2">
+                <button onclick="editorApplyTonesModal()"
+                    class="w-full px-3 py-2 bg-cyan-800 hover:bg-cyan-700 rounded text-xs font-medium">
+                    Apply
+                </button>
+                <button onclick="editorHideTonesModal()"
+                    class="w-full px-3 py-2 text-gray-500 hover:text-white rounded text-xs">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Record MIDI modal -->
+<div id="editor-record-midi-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-md flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+            <span class="text-sm font-medium">Record Keys (live MIDI)</span>
+            <button onclick="editorHideRecordMidiModal()" class="text-gray-500 hover:text-white">&times;</button>
+        </div>
+        <div class="p-4 space-y-3">
+            <div id="editor-record-midi-setup" class="space-y-3">
+                <div>
+                    <label class="text-xs font-medium text-gray-400 mb-1 block">MIDI Device</label>
+                    <select id="editor-record-midi-device"
+                        class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none"></select>
+                    <p id="editor-record-midi-no-device" class="hidden text-[11px] text-rose-400 mt-1">No MIDI input detected — connect a keyboard and reopen.</p>
+                    <p id="editor-record-midi-no-webmidi" class="hidden text-[11px] text-rose-400 mt-1">Web MIDI not available in this browser — use Chrome or Edge.</p>
+                </div>
+                <div>
+                    <label class="text-xs font-medium text-gray-400 mb-1 block">Channel</label>
+                    <select id="editor-record-midi-channel"
+                        class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                        <option value="-1">All channels</option>
+                    </select>
+                </div>
+                <button onclick="editorStartRecordMidi()" id="editor-record-midi-start"
+                    class="w-full px-4 py-2 bg-rose-700 hover:bg-rose-600 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+                    Start Recording (audio will play)
+                </button>
+            </div>
+            <div id="editor-record-midi-active" class="hidden flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2 text-sm">
+                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse"></span>
+                    <span>Recording…</span>
+                    <span id="editor-record-midi-count" class="text-gray-400">0 notes</span>
+                </div>
+                <button onclick="editorStopRecordMidi()"
+                    class="px-3 py-1.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium">
+                    Stop
+                </button>
+            </div>
+            <div id="editor-record-midi-status" class="text-xs text-gray-500"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Add note dialog -->
+<div id="editor-add-note-dialog" class="hidden absolute z-50 bg-dark-700 border border-gray-700 rounded-lg shadow-xl p-3 w-48">
+    <div class="text-xs text-gray-400 mb-2">Add Note</div>
+    <div class="flex gap-2 mb-2">
+        <div id="editor-add-fret-col" class="flex-1">
+            <label class="text-xs text-gray-500">Fret</label>
+            <input id="editor-add-fret" type="number" min="0" max="24" value="0"
+                class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+        </div>
+        <div id="editor-add-pitch-col" class="flex-1 hidden">
+            <label class="text-xs text-gray-500">Pitch</label>
+            <div id="editor-add-pitch-label" class="px-2 py-1 text-sm text-indigo-300 font-medium">C4</div>
+        </div>
+        <div class="flex-1">
+            <label class="text-xs text-gray-500">Sustain</label>
+            <input id="editor-add-sustain" type="number" min="0" max="10" step="0.1" value="0"
+                class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+        </div>
+    </div>
+    <div class="flex gap-2">
+        <button onclick="editorConfirmAddNote()" class="flex-1 px-2 py-1 bg-accent hover:bg-accent-light rounded text-xs">Add</button>
+        <button onclick="editorHideAddNote()" class="flex-1 px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs">Cancel</button>
+    </div>
+</div>

@@ -1,0 +1,98 @@
+/* ====================================================================
+ * Arrangement Editor — fee[dB]ack v0.3.0 ("v3") theme
+ *
+ * Re-skins the editor chrome to the v3 `fb` palette (design package
+ * 01-design-system.md §1). Scoped under #plugin-editor[data-v3-layout="1"],
+ * which screen.js sets only when window.slopsmith.uiVersion === 'v3'. In the
+ * classic UI nothing matches, so the legacy look is byte-for-byte unchanged.
+ *
+ * The #id + attribute prefix gives these rules specificity (1,2,0) — which
+ * deliberately beats BOTH the Tailwind utilities (0,1,0) AND the optional
+ * `themes` plugin overrides (`html[data-sm-theme] .bg-accent {…}`, 0,2,0).
+ * That keeps the editor on the fixed v3 fb palette so it matches the v3-native
+ * chrome (which uses untheme-able fb-* classes), regardless of sm-theme. The
+ * timeline canvas keeps its own semantic note/lane colors.
+ *
+ * fb palette: bg #0f172a · card #1e293b · cardMuted #0b1220 ·
+ * primary #0ea5e9 / hi #38bdf8 · border #334155 · text #f8fafc ·
+ * textDim #94a3b8.
+ * ==================================================================== */
+
+/* ── Surfaces ─────────────────────────────────────────────────────── */
+#plugin-editor[data-v3-layout="1"] .bg-dark-900 { background-color: #0f172a; } /* app bg / canvas wrap */
+#plugin-editor[data-v3-layout="1"] .bg-dark-800 { background-color: #1e293b; } /* bars + panels (fb-card) */
+#plugin-editor[data-v3-layout="1"] .bg-dark-700 { background-color: #1e293b; } /* modals (fb-card) */
+#plugin-editor[data-v3-layout="1"] .bg-dark-600 { background-color: #334155; } /* neutral buttons */
+#plugin-editor[data-v3-layout="1"] .bg-dark-500 { background-color: #475569; } /* lighter / hover base */
+
+/* Inset wells (search box, track lists, metadata inputs) sit darker than
+   their panel so they read as fields. */
+#plugin-editor[data-v3-layout="1"] input.bg-dark-800,
+#plugin-editor[data-v3-layout="1"] select.bg-dark-800,
+#plugin-editor[data-v3-layout="1"] input.bg-dark-700 { background-color: #0b1220; }
+
+/* ── Hover states (escaped Tailwind class names) ──────────────────── */
+#plugin-editor[data-v3-layout="1"] .hover\:bg-dark-500:hover { background-color: #475569; }
+#plugin-editor[data-v3-layout="1"] .hover\:bg-dark-600:hover { background-color: #334155; }
+#plugin-editor[data-v3-layout="1"] .hover\:text-white:hover  { color: #f8fafc; }
+
+/* ── Borders / dividers ───────────────────────────────────────────── */
+#plugin-editor[data-v3-layout="1"] .border-gray-800,
+#plugin-editor[data-v3-layout="1"] .border-gray-700 { border-color: #334155; } /* fb-border */
+#plugin-editor[data-v3-layout="1"] .bg-gray-700 { background-color: #334155; } /* toolbar divider pips */
+
+/* ── Text ─────────────────────────────────────────────────────────── */
+#plugin-editor[data-v3-layout="1"] .text-white    { color: #f8fafc; }
+#plugin-editor[data-v3-layout="1"] .text-gray-200 { color: #e2e8f0; }
+#plugin-editor[data-v3-layout="1"] .text-gray-300 { color: #cbd5e1; }
+#plugin-editor[data-v3-layout="1"] .text-gray-400 { color: #94a3b8; }
+#plugin-editor[data-v3-layout="1"] .text-gray-500 { color: #94a3b8; }
+#plugin-editor[data-v3-layout="1"] .text-gray-600 { color: #64748b; }
+
+/* ── Primary action (Save) — legacy accent (blue) → fb sky primary ── */
+#plugin-editor[data-v3-layout="1"] .bg-accent { background-color: #0ea5e9; }
+#plugin-editor[data-v3-layout="1"] .hover\:bg-accent-light:hover { background-color: #38bdf8; }
+#plugin-editor[data-v3-layout="1"] .text-accent { color: #0ea5e9; }
+#plugin-editor[data-v3-layout="1"] .border-accent\/50 { border-color: rgba(14,165,233,.5); }
+#plugin-editor[data-v3-layout="1"] .border-accent\/30 { border-color: rgba(14,165,233,.3); }
+#plugin-editor[data-v3-layout="1"] .bg-accent\/5 { background-color: rgba(14,165,233,.05); }
+#plugin-editor[data-v3-layout="1"] .focus\:border-accent\/50:focus { border-color: rgba(14,165,233,.5); }
+
+/* File-picker buttons (Tailwind file: utilities) — keep on neutral slate. */
+#plugin-editor[data-v3-layout="1"] .file\:bg-dark-600::file-selector-button { background-color: #334155; }
+#plugin-editor[data-v3-layout="1"] .hover\:file\:bg-dark-500:hover::file-selector-button { background-color: #475569; }
+
+/* ====================================================================
+ * Layout / color shims (NOT v3-gated — apply in the classic UI too).
+ *
+ * The editor uses a few utilities the host's committed/self-healed
+ * Tailwind build doesn't reliably emit for plugin HTML: arbitrary values
+ * ([70vh]/[85vh]/[160px]/[11px]) and non-safelisted colors (rose/cyan).
+ * Without them the Load/Create modals have no max-height and grow to fit
+ * every row (thousands of px tall), the context menu has no min width, and
+ * the Record/Tones buttons render with no background. Ship the intended
+ * values, scoped to #plugin-editor so nothing else is affected, so the
+ * editor renders as designed regardless of how the host scanned its files.
+ * ==================================================================== */
+#plugin-editor .max-h-\[70vh\] { max-height: 70vh; }
+#plugin-editor .max-h-\[85vh\] { max-height: 85vh; }
+#plugin-editor .max-h-32 { max-height: 8rem; }
+#plugin-editor .max-h-40 { max-height: 10rem; }
+#plugin-editor .min-w-\[160px\] { min-width: 160px; }
+#plugin-editor .text-\[11px\] { font-size: 11px; line-height: 1rem; }
+
+/* Non-safelisted button hues (standard Tailwind values). */
+#plugin-editor .bg-rose-500 { background-color: #f43f5e; }
+#plugin-editor .bg-rose-700 { background-color: #be123c; }
+#plugin-editor .bg-rose-900 { background-color: #881337; }
+#plugin-editor .hover\:bg-rose-600:hover { background-color: #e11d48; }
+#plugin-editor .hover\:bg-rose-800:hover { background-color: #9f1239; }
+#plugin-editor .hover\:bg-rose-900:hover { background-color: #881337; }
+#plugin-editor .bg-cyan-800 { background-color: #155e75; }
+#plugin-editor .bg-cyan-900 { background-color: #164e63; }
+#plugin-editor .hover\:bg-cyan-700:hover { background-color: #0e7490; }
+#plugin-editor .hover\:bg-cyan-800:hover { background-color: #155e75; }
+#plugin-editor .text-rose-400 { color: #fb7185; }
+#plugin-editor .text-amber-300 { color: #fcd34d; }
+#plugin-editor .text-amber-400 { color: #fbbf24; }
+#plugin-editor .text-indigo-300 { color: #a5b4fc; }
