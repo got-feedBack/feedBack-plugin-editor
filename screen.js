@@ -188,11 +188,11 @@ let _lanesCacheValue = 6;
 //   * Always seed when `tuningLen > 6` — RS-XML never pads past 6, so
 //     any length above that is an unambiguous extended-range signal
 //     (string6+ attrs were emitted). Applies to all sources including
-//     a previously-extended PSARC reloaded in this session.
+//     a previously-extended archive reloaded in this session.
 //   * When `authoritativeLength` is true (sloppak / GP-imported create-
 //     mode), also seed when `tuningLen > baseline` even if ≤ 6 —
 //     those sources don't apply RS padding, so a 6-slot bass tuning
-//     genuinely means 6-string bass. Skipping this path for PSARC
+//     genuinely means 6-string bass. Skipping this path for archive
 //     loads preserves the standard bass-padded-to-6 → 4 inference.
 function _seedExtendedStringsFromTuning(arrangements, authoritativeLength) {
     for (const arr of arrangements || []) {
@@ -1059,7 +1059,7 @@ class ChangeFretCmd {
 // Guitar E2=40 A2=45 D3=50 G3=55 B3=59 e4=64; extended low strings
 // prepend B1=35 (7-str) and F#1=30 (8-str).
 // Bass  E1=28 A1=33 D2=38 G2=43; extended: B0=23 low, C3=48 high.
-// These match Rocksmith's own pitch reference so that fret=0 on each
+// These match the chart's own pitch reference so that fret=0 on each
 // string resolves to the correct open-string MIDI note.
 const _GUITAR_OPEN_MIDI = [40, 45, 50, 55, 59, 64]; // 6-string standard
 const _BASS_OPEN_MIDI   = [28, 33, 38, 43];           // 4-string standard
@@ -2491,7 +2491,7 @@ async function loadCDLC(filename) {
         S.artist = data.artist || '';
         S.filename = filename;
         S.sessionId = data.session_id;
-        S.format = data.format || 'psarc';
+        S.format = data.format || 'archive';
         S.arrangements = data.arrangements || [];
         // Sloppak sources don't pad tuning to 6 slots like RS XML does,
         // so a bass arrangement arriving with tuning.length === 6 from
@@ -2499,9 +2499,9 @@ async function loadCDLC(filename) {
         // Seed `_extendedStrings` so `_stringCountFor` doesn't fall
         // back to the baseline-and-ignore-length-6 heuristic for these.
         // Sloppak sources have authoritative tuning lengths (no RS
-        // padding). PSARC sources still get the `tuningLen > 6` path so
-        // a previously-extended-saved PSARC is detected on reload.
-        _seedExtendedStringsFromTuning(S.arrangements, S.format !== 'psarc');
+        // padding). archive sources still get the `tuningLen > 6` path so
+        // a previously-extended-saved archive is detected on reload.
+        _seedExtendedStringsFromTuning(S.arrangements, S.format !== 'archive');
         S.beats = data.beats || [];
         S.sections = data.sections || [];
         S.duration = data.duration || 0;
@@ -2606,8 +2606,8 @@ function updateArrangementSelector() {
     const drumsBtn = document.getElementById('editor-add-drums-btn');
     if (drumsBtn) {
         // Gate to sloppak sessions only — drum_tab.json is a sloppak-spec
-        // artefact and _save_psarc silently ignores the drum_tab payload,
-        // so showing the button on PSARC would mislead users into thinking
+        // artefact and _save_archive silently ignores the drum_tab payload,
+        // so showing the button on archive would mislead users into thinking
         // drums will persist after save. Mirrors the +Keys button pattern.
         drumsBtn.classList.toggle('hidden', !S.sessionId || S.format !== 'sloppak');
         if (S.drumTab) {
@@ -2633,8 +2633,8 @@ function updateArrangementSelector() {
 
     // Show "⋮ Strings" tuning editor whenever a guitar/bass arrangement is
     // active (not Keys-mode — piano-roll arrangements have no string concept).
-    // Available on both PSARC and sloppak; the save-time prompt handles the
-    // format constraint if PSARC can't carry the result.
+    // Available on both archive and sloppak; the save-time prompt handles the
+    // format constraint if archive can't carry the result.
     const stringsBtn = document.getElementById('editor-strings-btn');
     if (stringsBtn) {
         const active = S.arrangements[S.currentArr];
@@ -2644,9 +2644,9 @@ function updateArrangementSelector() {
         stringsBtn.classList.toggle('hidden', !S.sessionId || !stringsMode);
     }
 
-    // Show "● Record" (live MIDI) button on sloppak sessions only — PSARC's
+    // Show "● Record" (live MIDI) button on sloppak sessions only — archive's
     // add-arrangement path requires an xml_path we can't synthesize, and
-    // PSARC build silently drops extra arrangements anyway. Mirror the
+    // archive build silently drops extra arrangements anyway. Mirror the
     // "+ Keys" gate exactly so users only see Record where it persists.
     const recBtn = document.getElementById('editor-record-midi-btn');
     if (recBtn) {
@@ -2686,7 +2686,7 @@ async function showLoadModal() {
     // Don't dump the whole library on open — it can be thousands of rows.
     // Show a prompt and populate results as the user types (see filterSongs).
     // If the library is empty / the fetch failed, fall through to the
-    // existing "No CDLC files found" empty state instead of telling the user
+    // existing "No custom song files found" empty state instead of telling the user
     // to search for something that isn't there.
     if (S.songsList && S.songsList.length) renderSongPrompt();
     else renderSongList(S.songsList || []);
@@ -2694,11 +2694,11 @@ async function showLoadModal() {
 }
 
 // Empty/initial state for the load list: prompt to search rather than
-// rendering every CDLC up front.
+// rendering every custom song up front.
 function renderSongPrompt() {
     const list = document.getElementById('editor-load-list');
     if (list) {
-        list.innerHTML = '<div class="text-xs text-gray-500 p-3 text-center">Start typing to search your CDLC…</div>';
+        list.innerHTML = '<div class="text-xs text-gray-500 p-3 text-center">Start typing to search your custom song…</div>';
     }
 }
 
@@ -2728,12 +2728,12 @@ function _normalizeSongList(raw) {
         if (typeof item === 'string') {
             return {
                 filename: item,
-                format: item.toLowerCase().endsWith('.sloppak') ? 'sloppak' : 'psarc',
+                format: item.toLowerCase().endsWith('.sloppak') ? 'sloppak' : 'archive',
             };
         }
         const filename = String(item?.filename ?? '');
         const format = String(item?.format
-            ?? (filename.toLowerCase().endsWith('.sloppak') ? 'sloppak' : 'psarc'));
+            ?? (filename.toLowerCase().endsWith('.sloppak') ? 'sloppak' : 'archive'));
         return { filename, format };
     });
 }
@@ -2743,7 +2743,7 @@ function renderSongList(files) {
     files = _normalizeSongList(files);
     list.innerHTML = '';
     if (!files.length) {
-        list.innerHTML = '<div class="text-xs text-gray-500 p-2">No CDLC files found</div>';
+        list.innerHTML = '<div class="text-xs text-gray-500 p-2">No custom song files found</div>';
         return;
     }
     // Cap the rendered rows so a broad query (e.g. a single letter) can't
@@ -2795,7 +2795,7 @@ function filterSongs(q) {
 // ════════════════════════════════════════════════════════════════════
 
 // True if the *active* arrangement has more strings than stock-RS
-// PSARC can carry (>6 guitar, >4 bass). PSARC saves are
+// archive can carry (>6 guitar, >4 bass). archive saves are
 // per-arrangement (the /save endpoint only writes `arrangement_index`),
 // so checking other arrangements would surface the format prompt
 // even when the save would only touch a standard one — annoying for
@@ -2805,7 +2805,7 @@ function filterSongs(q) {
 // index signals (so a 5-string bass with no notes on the new lane
 // still trips the prompt, and a 6-string bass after a high-C add
 // does too because `_extendedStrings` is set).
-function _activeArrangementExceedsPsarcLimit() {
+function _activeArrangementExceedsArchiveLimit() {
     const a = S.arrangements[S.currentArr];
     if (!a) return false;
     const isBass = /bass/i.test(a.name || '');
@@ -2841,7 +2841,7 @@ function _buildSaveBody(forceFullSnapshot) {
         chord_templates: arr.chord_templates,
         beats: S.beats,
         sections: S.sections,
-        // Always ship title/artist so PSARC saves persist in-session
+        // Always ship title/artist so archive saves persist in-session
         // metadata edits too. Backend merges with session metadata
         // (album/year captured at load time) so all four fields
         // round-trip regardless of save path.
@@ -2890,14 +2890,14 @@ function _buildSaveBody(forceFullSnapshot) {
             return { ...rest, tones: _stripToneInternals(rest.tones) };
         });
     } else if (_tonesAreDirty(arr)) {
-        // Single-arrangement (PSARC) save — the backend reads
+        // Single-arrangement (archive) save — the backend reads
         // `body.tones` directly. Ship it only when net authored
         // edits exist this session; a complete undo back to load
         // state returns the count to 0 → omit the field and let
         // the backend's preserve-from-disk branch fire.
         body.tones = _stripToneInternals(arr.tones);
     }
-    // PR3d: ship `anchors_user` for single-arr PSARC saves when
+    // PR3d: ship `anchors_user` for single-arr archive saves when
     // the user has authored anchors this session. Full-snapshot
     // sloppak saves ride through `body.arrangements[i].anchors_user`
     // already (every arrangement object carries it intact).
@@ -2920,10 +2920,10 @@ function _buildSaveBody(forceFullSnapshot) {
 
 async function saveCDLC() {
     if (!S.sessionId) return;
-    // PSARC can't carry >6-string guitar / >4-string bass. If the user
+    // archive can't carry >6-string guitar / >4-string bass. If the user
     // pushed past those limits while editing, ask them whether to spill
     // into a new .sloppak or accept the truncation before we touch disk.
-    if (S.format === 'psarc' && _activeArrangementExceedsPsarcLimit()) {
+    if (S.format === 'archive' && _activeArrangementExceedsArchiveLimit()) {
         document.getElementById('editor-save-format-modal').classList.remove('hidden');
         return;
     }
@@ -2952,7 +2952,7 @@ window.editorHideSaveFormatModal = () => {
 
 // "Save as Sloppak" — POST the full arrangement snapshot to the new
 // /save_as_sloppak route. The backend writes a .sloppak next to the
-// source .psarc, then flips the session into sloppak mode so the next
+// source .archive, then flips the session into sloppak mode so the next
 // regular Save uses the native sloppak path.
 window.editorSaveAsSloppakConfirm = async () => {
     document.getElementById('editor-save-format-modal').classList.add('hidden');
@@ -2968,7 +2968,7 @@ window.editorSaveAsSloppakConfirm = async () => {
         const data = await resp.json();
         if (data.error) { setStatus('Save error: ' + data.error); return; }
         // Flip session into sloppak mode so subsequent edits route to
-        // _save_sloppak. The original PSARC stays on disk untouched.
+        // _save_sloppak. The original archive stays on disk untouched.
         if (data.filename) S.filename = data.filename;
         S.format = 'sloppak';
         // Normalize in-memory tuning to the real string count so a
@@ -3659,9 +3659,9 @@ let createState = {
 };
 
 // ════════════════════════════════════════════════════════════════════
-// "New…" entry point — format picker → sloppak-create OR PSARC-create.
-// The button used to go straight to the PSARC create modal; drummers
-// asked for a sloppak-first path so they don't have to make-PSARC-
+// "New…" entry point — format picker → sloppak-create OR archive-create.
+// The button used to go straight to the archive create modal; drummers
+// asked for a sloppak-first path so they don't have to make-archive-
 // then-save-as-sloppak just to land in drum-charting mode.
 // ════════════════════════════════════════════════════════════════════
 
@@ -4657,7 +4657,7 @@ window.editorDoCreate = async () => {
 
         if (data.audio_url) await loadAudio(data.audio_url);
         draw();
-        setStatus('Imported — edit notes then click Build CDLC');
+        setStatus('Imported — edit notes then click Build Song');
     } catch (e) {
         status.textContent = 'Import failed: ' + e.message;
         btn.disabled = false;
@@ -4668,13 +4668,13 @@ window.editorBuild = async () => {
     if (!S.sessionId || !S.createMode) return;
     // PR3c: warn before building when authored tone slots have no
     // matching gear definition — DLC Builder defaults them to stock
-    // clean in the output PSARC. Confirm prompt lets the user
+    // clean in the output archive. Confirm prompt lets the user
     // continue or bail back to the modal to pull definitions in.
     if (!_editorConfirmToneDefinitions()) {
         setStatus('Build cancelled');
         return;
     }
-    setStatus('Building CDLC...');
+    setStatus('Building custom song...');
 
     // Reconstruct chords for ALL arrangements before sending. Each
     // arrangement must be flattened first: reconstructChords() rebuilds
@@ -4708,7 +4708,7 @@ window.editorBuild = async () => {
             // tuning-length check fires for arrangements where the
             // user extended via the Strings modal but hasn't placed
             // notes on the new lanes yet. Without these the build
-            // would route to PSARC and then crash inside RsCli's SNG
+            // would route to archive and then crash inside the converter's note-chart
             // compiler when it sees the >6 tuning slots.
             tuning: Array.isArray(arr.tuning) ? arr.tuning.slice() : [0, 0, 0, 0, 0, 0],
             capo: arr.capo || 0,
@@ -4759,7 +4759,7 @@ window.editorBuild = async () => {
                 // Drums and piano "Keys" arrangements can only live in a
                 // sloppak. editorDoCreate sets S.format='sloppak' when the GP
                 // import brought either; forward that as the build target so
-                // the server writes a sloppak (not a PSARC that silently drops
+                // the server writes a sloppak (not a archive that silently drops
                 // them), and ship the imported drum_tab so it's persisted.
                 target_format: S.format === 'sloppak' ? 'sloppak' : '',
                 drum_tab: (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab : null,
@@ -4772,7 +4772,7 @@ window.editorBuild = async () => {
         });
         const data = await resp.json();
         if (data.error) { setStatus('Build error: ' + data.error); return; }
-        setStatus('CDLC built: ' + data.path);
+        setStatus('custom song built: ' + data.path);
     } catch (e) {
         setStatus('Build failed: ' + e.message);
     } finally {
@@ -4856,7 +4856,7 @@ window.editorApplyReplaceAudio = async () => {
             return;
         }
 
-        // Keep create-mode build in sync — Build CDLC reads createState.audioUrl.
+        // Keep create-mode build in sync — Build Song reads createState.audioUrl.
         if (S.createMode) createState.audioUrl = audioUrl;
 
         // Stop active playback before swapping the buffer; otherwise the old
@@ -4883,8 +4883,8 @@ window.editorApplyReplaceAudio = async () => {
         const HINTS = {
             none:    'Audio replaced',
             save:    'Audio replaced (Save to persist to .sloppak)',
-            build:   'Audio replaced (will persist on next Build CDLC)',
-            rebuild: "Audio replaced (playback only — PSARC won't be repacked)",
+            build:   'Audio replaced (will persist on next Build Song)',
+            rebuild: "Audio replaced (playback only — archive won't be repacked)",
         };
         editorHideReplaceAudioModal();
         setStatus(HINTS[data.next_step] || (data.persisted ? HINTS.none : HINTS.rebuild));
@@ -5052,7 +5052,7 @@ window.editorRemoveArrangement = async () => {
 
 // ════════════════════════════════════════════════════════════════════
 // Add Drums — drum_tab.json import from a GP or MIDI file.
-// Persists via _buildSaveBody's `drum_tab` field on the next save_cdlc.
+// Persists via _buildSaveBody's `drum_tab` field on the next save_song.
 // ════════════════════════════════════════════════════════════════════
 
 // Buffered state from the upload phase: a successful parse stores the
@@ -5193,7 +5193,7 @@ window.editorDoAddDrums = async () => {
             return;
         }
 
-        // Stash on session state; the next save_cdlc ships it as
+        // Stash on session state; the next save_song ships it as
         // `drum_tab` and the backend writes drum_tab.json + manifest key.
         // Normalize hits: ensure sorted by t so drum-editor hit-testing and
         // dragging work correctly, and clear any stale selection so indices
@@ -6843,7 +6843,7 @@ let _tempoMapBtnState = '';  // memoized signature; updates only on change
 function _refreshTempoMapButton() {
     const btn = _ensureTempoMapButton();
     if (!btn) return;
-    // The grid is song-wide and round-trips through PSARC + sloppak, so
+    // The grid is song-wide and round-trips through archive + sloppak, so
     // the button is NOT format-gated — only a beat grid is required.
     const hasGrid = !!(S.beats && S.beats.length >= 2);
     const sig = `${!!S.sessionId}|${hasGrid}|${!!S.tempoMapMode}`;
@@ -7266,14 +7266,14 @@ function _makeTimeRemap(oldBeats, newBeats) {
 
 const _r3 = v => Math.round(v * 1000) / 1000;
 
-// The arrangements an 'all'-scope tempo edit re-times. PSARC saves only
+// The arrangements an 'all'-scope tempo edit re-times. archive saves only
 // persist the active arrangement (_buildSaveBody ships body.arrangements
-// for sloppak only), so re-timing a non-active arrangement on a PSARC
-// would be silently lost on reload — limit PSARC to the active one.
+// for sloppak only), so re-timing a non-active arrangement on a archive
+// would be silently lost on reload — limit archive to the active one.
 // A TempoMapCmd freezes this list at construction so capture / remap /
 // restore all agree even if the user switches arrangements later.
 function _tempoRetimeArrangements() {
-    if (S.format === 'psarc') {
+    if (S.format === 'archive') {
         const a = S.arrangements[S.currentArr];
         return a ? [a] : [];
     }
@@ -7809,7 +7809,7 @@ if (document.getElementById('editor-canvas')) {
 // Derive a 5-slot list from a raw tones object's `base` + `changes`.
 // Shared between `_readToneSnapshot` (no mutation) and `_ensureTones`
 // (writes back) so they always produce the same ordering. Without
-// this the UI would show `_TONE_SLOT_DEFAULTS` for PSARC loads (where
+// this the UI would show `_TONE_SLOT_DEFAULTS` for archive loads (where
 // the backend writes `{base, changes, definitions}` without `slots`)
 // and `RenameToneSlotsCmd`'s index-based remap would target the
 // wrong names.
@@ -7889,7 +7889,7 @@ function _ensureTones(arr) {
 // than a sticky boolean. Every mutating command bumps the counter
 // on `exec` and decrements it on `rollback`, so the count returns
 // to 0 after a complete undo to the load state — and `_buildSaveBody`
-// + the Build CDLC warning can skip arrangements where the net
+// + the Build Song warning can skip arrangements where the net
 // authored count is zero.
 //
 // A sticky `_dirty` would cause the editor to ship `<tones>` even
@@ -7926,10 +7926,10 @@ function drawToneLane(w) {
     if (!arr) return;
     // Don't mutate `arr` from the render path — calling `_ensureTones`
     // here would silently attach an empty `tones` object to every
-    // PSARC/sloppak just by drawing the canvas, which the Build CDLC
+    // archive/sloppak just by drawing the canvas, which the Build Song
     // warning would then mistake for authored content. Use
     // `_readToneSnapshot` so the slot list is derived from
-    // `base + changes[].name` for PSARC loads where `arr.tones.slots`
+    // `base + changes[].name` for archive loads where `arr.tones.slots`
     // is absent — markers render with their authored color/label
     // instead of grey "unknown" until the first mutation.
     const snap = _readToneSnapshot(arr);
@@ -8424,7 +8424,7 @@ function _updateTonesButtonVisibility() {
     else btn.classList.add('hidden');
 }
 
-// ─── Build CDLC warning ─────────────────────────────────────────────
+// ─── Build Song warning ─────────────────────────────────────────────
 
 // Returns the list of authored tone-slot names that have no matching
 // gear definition in arr.tones.definitions. When the build path

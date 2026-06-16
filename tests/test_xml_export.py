@@ -685,7 +685,7 @@ def test_arr_dict_to_wire_handshapes_and_anchors_user():
 #
 # Regression for the "highway shows original chart instead of edits" bug:
 # `_save_sloppak` used to round-trip phrase levels verbatim from the source
-# PSARC, so `static/highway.js`'s mastery filter (which reads notes from
+# archive, so `static/highway.js`'s mastery filter (which reads notes from
 # `phrases[].levels[idx].notes`, never from the flat `notes` array, when
 # phrases are present) silently rendered the original chart.
 
@@ -752,7 +752,7 @@ def test_repopulate_phrase_levels_ignores_stale_end_time():
 
 
 def test_repopulate_phrase_levels_overwrites_stale_levels():
-    """Each level's old `notes` (representing the source PSARC) must be
+    """Each level's old `notes` (representing the source archive) must be
     replaced — not merged — by the fresh slice. Otherwise stale notes
     would still surface in the mastery filter."""
     phrases = [_phrase(0.0, 5.0, n_levels=3)]

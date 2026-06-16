@@ -1,14 +1,14 @@
 # Arrangement Editor — Plugin Constitution
 
-The editor is the largest plugin in the Slopsmith ecosystem (~5500 lines, 17 backend routes). It's a DAW-style timeline note editor for CDLC arrangements with import paths from Guitar Pro, MIDI, and existing PSARC/sloppak files, plus a CDLC build pipeline.
+The editor is the largest plugin in the Slopsmith ecosystem (~5500 lines, 17 backend routes). It's a DAW-style timeline note editor for custom song arrangements with import paths from Guitar Pro, MIDI, and existing archive/sloppak files, plus a custom song build pipeline.
 
 ## Core Principles
 
 ### I. Session-Scoped Server State, Browser-Side Edits
-The backend manages a `_sessions` dict keyed by session id; each session owns the unpacked working directory + extracted audio + art. The frontend (`screen.js`) holds the canonical edit state in `S` and ships diffs / full snapshots to the server on save/build. Closing the tab abandons the session but does not corrupt the source PSARC.
+The backend manages a `_sessions` dict keyed by session id; each session owns the unpacked working directory + extracted audio + art. The frontend (`screen.js`) holds the canonical edit state in `S` and ships diffs / full snapshots to the server on save/build. Closing the tab abandons the session but does not corrupt the source archive.
 
 ### II. Deterministic Import → Edit → Build Pipeline
-Every supported source format (PSARC, sloppak, GP3-7, MIDI) routes through a dedicated `/api/plugins/editor/import-*` endpoint that normalises into the same internal song model. The build step (`/build`) is the only path that mutates the user's DLC dir — saves go to the session working dir.
+Every supported source format (archive, sloppak, GP3-7, MIDI) routes through a dedicated `/api/plugins/editor/import-*` endpoint that normalises into the same internal song model. The build step (`/build`) is the only path that mutates the user's DLC dir — saves go to the session working dir.
 
 ### III. Storage Path Probes the Environment
 The plugin needs a writable place to stage extracted audio/art that's also web-served. It probes `slopsmith/static/` for writability + an `app.js` sentinel; if both check out it uses `/static/...` (Docker web). Otherwise it falls back to a per-user `config_dir/editor_cache` mounted at `/api/plugins/editor/cache/...` (desktop bundles, read-only app package). Read-back accepts BOTH URL prefixes so old session URLs survive upgrades.
@@ -25,10 +25,10 @@ Arrangements named matching `KEYS_PATTERN = /^(keys|piano|keyboard|synth)/i` ope
 ## Inherits from Slopsmith Core Constitution
 
 - **Vanilla JS, no framework.** `screen.js` is one IIFE.
-- **Plugin isolation**: backend `setup(app, context)` consumes `config_dir` + `get_dlc_dir`, then dynamically imports `lib.song`, `lib.psarc`, `lib.patcher`, `lib.audio`, `lib.sloppak` from Slopsmith core.
+- **Plugin isolation**: backend `setup(app, context)` consumes `config_dir` + `get_dlc_dir`, then dynamically imports `lib.song`, `lib.archive`, `lib.patcher`, `lib.audio`, `lib.sloppak` from Slopsmith core.
 - **Manifest-driven loading**: `plugin.json` declares `nav.screen = "editor"`, `screen.html`, `screen.js`, `routes.py`.
 - **YouTube audio import** delegates to `yt-dlp` via subprocess — already present in core's runtime image.
-- **Build pipeline** uses core's `lib.patcher.pack_psarc` + `lib.sloppak` so output PSARCs are byte-compatible with the rest of the ecosystem.
+- **Build pipeline** uses core's `lib.sloppak` so output sloppaks are compatible with the rest of the ecosystem.
 - **Single-user, single-host.** No collaborative editing.
 
 **Version**: 1.0.2 | **Ratified**: 2026-05-09 | **Last Amended**: 2026-05-09

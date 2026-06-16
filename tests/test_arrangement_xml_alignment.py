@@ -1,4 +1,4 @@
-"""Tests for PSARC arrangement <-> source-XML alignment (issue #425).
+"""Tests for archive arrangement <-> source-XML alignment (issue #425).
 
 `lib.song.load_song` priority-sorts `song.arrangements` (Lead > Combo >
 Rhythm > Bass), and the editor dropdown / `arrangement_index` follows that

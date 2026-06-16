@@ -23,7 +23,7 @@
         <button id="editor-create-btn" onclick="editorShowCreateModal()" class="px-3 py-1 bg-green-800 hover:bg-green-700 rounded text-xs font-medium" title="Start a new song">New…</button>
         <button id="editor-save-btn" onclick="editorSave()" class="px-3 py-1 bg-accent hover:bg-accent-light rounded text-xs font-medium" disabled>Save</button>
         <button id="editor-replace-audio-btn" onclick="editorShowReplaceAudioModal()" class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden" title="Replace the audio track">Replace Audio</button>
-        <button id="editor-build-btn" onclick="editorBuild()" class="px-3 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs font-medium hidden">Build CDLC</button>
+        <button id="editor-build-btn" onclick="editorBuild()" class="px-3 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs font-medium hidden">Build Song</button>
         <button id="editor-add-drums-btn" onclick="editorShowAddDrumsModal()" class="px-3 py-1 bg-red-900 hover:bg-red-800 rounded text-xs font-medium hidden">+ Drums</button>
         <button id="editor-add-keys-btn" onclick="editorShowAddKeysModal()" class="px-3 py-1 bg-indigo-900 hover:bg-indigo-800 rounded text-xs font-medium hidden">+ Keys</button>
         <button id="editor-strings-btn" onclick="editorShowStringsModal()" class="px-3 py-1 bg-amber-800 hover:bg-amber-700 rounded text-xs font-medium hidden" title="Add or remove strings on the active arrangement (extended-range guitar / bass)">⋮ Strings</button>
@@ -123,7 +123,7 @@
 <div id="editor-load-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
     <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-md max-h-[70vh] flex flex-col">
         <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-            <span class="text-sm font-medium">Load CDLC</span>
+            <span class="text-sm font-medium">Load custom song</span>
             <button onclick="editorHideLoadModal()" class="text-gray-500 hover:text-white">&times;</button>
         </div>
         <div class="px-4 py-2">
@@ -140,11 +140,11 @@
 <div id="editor-context-menu" class="hidden absolute z-50 bg-dark-700 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[160px]">
 </div>
 
-<!-- Create CDLC modal -->
+<!-- Create custom song modal -->
 <div id="editor-create-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
     <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-lg max-h-[85vh] flex flex-col overflow-y-auto">
         <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700 shrink-0">
-            <span class="text-sm font-medium">Create New CDLC</span>
+            <span class="text-sm font-medium">Create New custom song</span>
             <button onclick="editorHideCreateModal()" class="text-gray-500 hover:text-white">&times;</button>
         </div>
         <div class="p-4 space-y-4">

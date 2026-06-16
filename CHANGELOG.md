@@ -30,13 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still adds a hit; shift-drag unions onto the current selection.
 
 ### Fixed
-- **PSARC save** now writes edits to the arrangement you actually
-  selected. `_load_psarc` built its `xml_files` list (indexed on save by
+- **archive save** now writes edits to the arrangement you actually
+  selected. `_load_archive` built its `xml_files` list (indexed on save by
   the dropdown's `arrangement_index`) from a raw `rglob` walk in
   filesystem order, but `lib.song.load_song` priority-sorts the
   arrangements it returns (Lead > Combo > Rhythm > Bass) — and that
   sorted list is what the dropdown shows. The two orders diverge on any
-  multi-arrangement PSARC, so saving while "Rhythm" was selected could
+  multi-arrangement archive, so saving while "Rhythm" was selected could
   rewrite the Lead/Bass XML instead (edits silently vanished on
   reload), and a count mismatch raised `Save error: Invalid arrangement
   index` (issue #425). `xml_files` is now aligned to the arrangement
@@ -48,10 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Sloppak save** now repopulates each phrase's per-difficulty
   `levels[].notes/chords/anchors` from the editor's flat lists.
   Previously `_save_sloppak` round-tripped phrases verbatim from the
-  source PSARC, so the highway's mastery-filter consumer
+  source archive, so the highway's mastery-filter consumer
   (`static/highway.js`, which reads notes from
   `phrases[].levels[idx].notes` whenever phrases are present)
-  silently rendered the original PSARC chart — every added, edited,
+  silently rendered the original archive chart — every added, edited,
   or deleted note was invisible on 2D/3D highways. Only arrangements
   with no source-side phrases (e.g. user-added bass on a sloppak that
   lacked one) were unaffected, because the highway falls back to the
@@ -64,13 +64,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   updates note times and phrase `start_time` but does not touch
   `end_time`, so trusting `end_time` would mis-bucket notes after a
   tempo remap. Notes outside any phrase's window (gaps in the source
-  PSARC's coverage, or user additions before/after the original
+  archive's coverage, or user additions before/after the original
   phrase range) land in the nearest first/last phrase.
 
 ## [1.4.2] - 2026-05-26
 
 ### Fixed
-- **Build CDLC** no longer drops chords from arrangements that weren't
+- **Build Song** no longer drops chords from arrangements that weren't
   the last one viewed. `editorBuild` ran `reconstructChords()` on every
   arrangement without flattening first; `reconstructChords()` rebuilds
   `arr.chords` purely from `arr.notes`, so any arrangement still in its
@@ -85,8 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unified "New…" entry point** — the toolbar's *Create* button is
   now *New…* and opens a format-picker dialog asking "What are you
   making?" with two options: **Sloppak** (audio + chart, with drums +
-  stems available from the start) and **PSARC** (the classic Rocksmith
-  CDLC path, unchanged). Skips the three-step "create PSARC →
+  stems available from the start) and **archive** (the classic the chart
+  custom song path, unchanged). Skips the three-step "create archive →
   save-as-sloppak → +drums" workflow that drummers were stuck with.
 - **New-Sloppak modal** — drag-and-drop (or click-to-pick) an audio
   file (mp3 / wav / flac / m4a / ogg — re-encoded to .ogg on the
@@ -100,7 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the editor opens it via the existing load path so the in-memory
   state initialises identically to a normal sloppak load.
 - The legacy *Save as Sloppak* path remains for converting existing
-  PSARC sessions.
+  archive sessions.
 
 ## [1.3.0] - 2026-05-23
 
@@ -134,7 +134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Tempo Map editor** — an EOF-style mode for fitting the song-wide beat
   grid to the audio. A new **🎵 Tempo Map** toolbar button (works on both
-  sloppak and PSARC) swaps the canvas to a tempo view: the waveform plus a
+  sloppak and archive) swaps the canvas to a tempo view: the waveform plus a
   draggable vertical "sync-point" pole at every measure downbeat, with each
   measure's BPM and time signature derived from sync-point spacing.
   - **Drag** a sync point to retime — only the two adjacent measures

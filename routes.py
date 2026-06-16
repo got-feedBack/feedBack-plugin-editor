@@ -24,7 +24,7 @@ import yaml
 
 # Matches a plausible 4-digit album year inside free-form text — used to
 # sanitize <albumYear> when it has been polluted by copyright strings from
-# GP imports (RsCli parses albumYear as Int32 and rejects anything else).
+# GP imports (the converter parses albumYear as Int32 and rejects anything else).
 _YEAR_RE = re.compile(r"\b(1[89]\d{2}|20\d{2})\b")
 
 # Sentinel object used to distinguish "drum_tab key absent from JSON body"
@@ -307,8 +307,8 @@ def _tones_from_old_root(old_root):
     """Extract `{base, changes, definitions}` from an existing arrangement XML.
 
     `definitions` always comes through as `[]` here — gear chains live in
-    the PSARC manifest, not the XML. The editor authors names only, so
-    the PSARC manifest's existing tone definitions stay untouched by the
+    the archive manifest, not the XML. The editor authors names only, so
+    the archive manifest's existing tone definitions stay untouched by the
     save pipeline anyway. Returns None when the source has no tones.
     """
     if old_root is None:
@@ -412,7 +412,7 @@ def _valid_anchor_dicts(seq):
 
     Drops non-list input, non-dict entries, entries missing required
     keys, and entries with non-finite or negative `time` (can't legally
-    appear in Rocksmith XML). `fret` is clamped to >= 1 to match
+    appear in arrangement XML). `fret` is clamped to >= 1 to match
     `_compute_anchors`; `width` is clamped to >= 1 so a malformed
     `width=0` can't produce a zero-width anchor. The returned list is
     time-sorted so downstream consumers see the same ordering whether
@@ -448,11 +448,11 @@ def _valid_handshape_dicts(seq):
     """Coerce a candidate handshapes list into clean dicts; drop bad entries.
 
     A handshape with a missing / negative `chord_id` is dropped rather
-    than kept with the `-1` sentinel — Rocksmith XML treats `chordId`
+    than kept with the `-1` sentinel — arrangement XML treats `chordId`
     as a non-negative (zero-based) index into `<chordTemplates>`, so
     emitting `chordId="-1"` would write a malformed handshape into the
     output. Same idea for `start_time` / `end_time`: non-finite or
-    negative values can't appear in Rocksmith XML, and `end_time <
+    negative values can't appear in arrangement XML, and `end_time <
     start_time` is structurally invalid (the highway uses the range
     for chord-shape lifetime). The `arp` flag goes through
     `_safe_bool` so a wire-style `"false"` / `"0"` doesn't silently
@@ -766,7 +766,7 @@ def _repopulate_phrase_levels(phrases, notes, chords, anchors):
 
     The editor authors a single flat note/chord/anchor list per
     arrangement; the multi-level `phrases[].levels[]` structure comes
-    from the source PSARC and the editor UI does not re-author it. If
+    from the source archive and the editor UI does not re-author it. If
     we round-trip those levels verbatim on save, the highway's
     mastery-filter consumer (`static/highway.js`) reads stale per-level
     notes and silently renders the original chart — additions, edits,
@@ -787,7 +787,7 @@ def _repopulate_phrase_levels(phrases, notes, chords, anchors):
     times and phrase `start_time` but does not touch `end_time`, so
     `end_time` can drift out of sync with both the notes and the
     next phrase's start. Anchors and notes outside any phrase's
-    window (gaps in the source PSARC's phrase coverage, or user
+    window (gaps in the source archive's phrase coverage, or user
     additions past the song's original phrase data) still need to
     surface on the highway, so the first/last phrases swallow the
     -inf / +inf tails.
@@ -860,20 +860,20 @@ def _note_attrs_xml(n, *, include_time=True):
     return attrs
 
 
-# Maps editor metadata keys → Rocksmith PSARC manifest Attribute keys. The
+# Maps editor metadata keys → the archive manifest Attribute keys. The
 # library scanner reads title/artist/album/year from these manifest JSON
-# Attributes (NOT the arrangement XML), so a PSARC save MUST update them or the
+# Attributes (NOT the arrangement XML), so a archive save MUST update them or the
 # edit silently reverts on the next library rescan.
-_PSARC_MANIFEST_ATTRS = {
+_ARCHIVE_MANIFEST_ATTRS = {
     "title": "SongName",
     "artist": "ArtistName",
     "album": "AlbumName",
 }
 
 
-def _patch_psarc_manifest_metadata(session_dir, metadata) -> int:
+def _patch_archive_manifest_metadata(session_dir, metadata) -> int:
     """Write edited title/artist/album/year into every manifest JSON of an
-    unpacked PSARC tree (``manifests/**/*.json`` plus the aggregate ``*.hsan``).
+    unpacked archive tree (``manifests/**/*.json`` plus the aggregate ``*.hsan``).
 
     Returns the number of manifest files changed. Only keys present (non-None)
     in ``metadata`` are overwritten, mirroring the sloppak save path so a no-UI
@@ -898,7 +898,7 @@ def _patch_psarc_manifest_metadata(session_dir, metadata) -> int:
             attrs = entry.get("Attributes") if isinstance(entry, dict) else None
             if not isinstance(attrs, dict):
                 continue
-            for key, attr in _PSARC_MANIFEST_ATTRS.items():
+            for key, attr in _ARCHIVE_MANIFEST_ATTRS.items():
                 if metadata.get(key) is not None:
                     attrs[attr] = str(metadata[key])
                     dirty = True
@@ -919,9 +919,9 @@ def _build_arrangement_xml(
     force_max_strings=None,
     *, tones=None, handshapes=None, anchors_user=None,
 ):
-    """Build a Rocksmith arrangement XML from editor data.
+    """Build a arrangement XML from editor data.
 
-    `force_max_strings` caps the emitted `<tuning>` width so a PSARC
+    `force_max_strings` caps the emitted `<tuning>` width so a archive
     truncate save can't carry over `string6+` slots that may have been
     written by a prior extended-range save.
 
@@ -1008,10 +1008,10 @@ def _build_arrangement_xml(
                 t = float(c.get("t", c.get("time", 0)))
             except (TypeError, ValueError):
                 continue
-            # Rocksmith tone times are non-negative real numbers; drop
+            # the chart tone times are non-negative real numbers; drop
             # negatives / NaN / ±inf so the writer never emits an
             # invalid `<tone time="..."/>` that would break downstream
-            # SNG compilers.
+            # note-chart compilers.
             if not math.isfinite(t) or t < 0:
                 continue
             name = c.get("name", "")
@@ -1133,7 +1133,7 @@ def _build_arrangement_xml(
     # Constrain `chord_id` to the actual `<chordTemplates>` range —
     # `_valid_handshape_dicts` only enforces `>= 0`, but emitting a
     # handshape that points past the end of the templates list would
-    # produce invalid Rocksmith XML.
+    # produce invalid arrangement XML.
     max_chord_id = len(chord_templates) - 1
     hs_list = [
         h for h in _valid_handshape_dicts(handshapes)
@@ -1381,7 +1381,7 @@ def setup(app, context):
         return max(4, min(8, n))
 
     def _is_extended_range(arr) -> bool:
-        """True if `arr` has more strings than stock-RS PSARC supports.
+        """True if `arr` has more strings than stock-RS archive supports.
 
         Delegates to `_arrangement_string_count` so all the same
         signals (explicit `_extendedStrings` counter, tuning length,
@@ -1437,7 +1437,7 @@ def setup(app, context):
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(candidate)
 
-    # ── List available CDLC files ────────────────────────────────────────
+    # ── List available custom song files ────────────────────────────────────────
 
     @app.get("/api/plugins/editor/songs")
     async def list_songs():
@@ -1448,9 +1448,9 @@ def setup(app, context):
         seen: set = set()
         # Single os.walk pass so large libraries are traversed only once.
         # Sloppak has two valid forms: zip (`.sloppak` file) and authoring
-        # directory (`.sloppak/`). All suffixes are lowercased so that
-        # e.g. `.PSARC` / `.SLOPPAK` from older backends are handled correctly.
-        _FORMATS = {".sloppak": "sloppak", ".psarc": "psarc"}
+        # directory (`.sloppak/`). Suffixes are lowercased so a `.SLOPPAK`
+        # from an older backend is still recognised.
+        _FORMATS = {".sloppak": "sloppak"}
         for dirpath, dirnames, filenames in os.walk(dlc_dir):
             dirnames.sort()
             for name in filenames:
@@ -1480,10 +1480,10 @@ def setup(app, context):
         files.sort(key=lambda x: x["filename"])
         return files
 
-    # ── Load a CDLC for editing ──────────────────────────────────────────
+    # ── Load a custom song for editing ──────────────────────────────────────────
 
     @app.post("/api/plugins/editor/load")
-    async def load_cdlc(data: dict):
+    async def load_song(data: dict):
         filename = data.get("filename", "")
         if not filename:
             return JSONResponse({"error": "No filename"}, 400)
@@ -1499,7 +1499,7 @@ def setup(app, context):
             filepath.relative_to(dlc_dir.resolve())
         except ValueError:
             return JSONResponse({"error": "Invalid filename"}, 400)
-        # Rocksmith `.psarc` loading has been removed. The editor only opens
+        # external `.archive` loading has been removed. The editor only opens
         # native `.sloppak` authoring/distribution containers now.
         if filepath.suffix.lower() != ".sloppak":
             return JSONResponse({"error": "Unsupported file type"}, 400)
@@ -1546,7 +1546,7 @@ def setup(app, context):
                 return candidate if candidate.exists() else None
 
             # Same basename-collision class as session_id: nested paths
-            # like `foo/bar.psarc` and `baz/bar.sloppak` both reduce to
+            # like `foo/bar.archive` and `baz/bar.sloppak` both reduce to
             # stem "bar". Use a sanitised full path so two browser tabs
             # loading distinct songs don't overwrite each other's
             # `editor_audio_*` file under STATIC_DIR.
@@ -1635,7 +1635,7 @@ def setup(app, context):
             # `lib/sloppak.load_song()` doesn't restore song.offset (the
             # sloppak format doesn't carry an explicit offset field today),
             # so song.offset is 0 here. If the manifest happens to surface
-            # one (e.g. a forward-compat extension that mirrors PSARC's
+            # one (e.g. a forward-compat extension that mirrors archive's
             # song-level <offset>), pick it up so the audio_offset that
             # gets fed to the +Keys/+Drums converters matches the chart.
             try:
@@ -1718,20 +1718,20 @@ def setup(app, context):
             return JSONResponse({"error": str(e)}, 500)
 
         # Session id has to disambiguate the full relative path, not just
-        # the basename — the picker now emits paths like `foo/bar.psarc`
+        # the basename — the picker now emits paths like `foo/bar.archive`
         # and `baz/bar.sloppak` that share the same stem, and a basename-
         # keyed session would have two browser tabs collide on `bar`,
         # corrupting the second's saves into the first's working dir.
         # Sanitise path separators / spaces into a stable id (matches the
         # `lib.sloppak._safe_id` convention) and append the suffix so a
-        # `.psarc` and `.sloppak` of the same name still get distinct ids.
+        # `.archive` and `.sloppak` of the same name still get distinct ids.
         sanitised = filename.replace("/", "__").replace("\\", "__").replace(" ", "_")
         session_id = sanitised
-        # Clean up previous PSARC session for same file (sloppak sessions
+        # Clean up previous archive session for same file (sloppak sessions
         # use the cache dir directly — never delete it on session swap).
         if session_id in sessions:
             old = sessions[session_id]
-            if old.get("format") == "psarc":
+            if old.get("format") == "archive":
                 shutil.rmtree(old["dir"], ignore_errors=True)
 
         sessions[session_id] = {
@@ -1739,7 +1739,7 @@ def setup(app, context):
             "audio_file": audio_file,
             "filename": filename,
             "xml_files": xml_files,
-            "format": "sloppak" if is_sloppak else "psarc",
+            "format": "sloppak" if is_sloppak else "archive",
             "sloppak_state": sloppak_state,
             # Stash song-level metadata so save_as_sloppak can carry
             # album/year through to the generated manifest even though
@@ -1755,10 +1755,10 @@ def setup(app, context):
         result["session_id"] = session_id
         return result
 
-    # ── Save edited arrangement back to PSARC ────────────────────────────
+    # ── Save edited arrangement back to archive ────────────────────────────
 
     @app.post("/api/plugins/editor/save")
-    async def save_cdlc(data: dict):
+    async def save_song(data: dict):
         session_id = data.get("session_id", "")
         session = sessions.get(session_id)
         if not session:
@@ -1783,7 +1783,7 @@ def setup(app, context):
         # New arrangement extras — surfaced from the frontend on save. When
         # `arrangements` (full snapshot) is provided we re-read these from
         # each entry inside the sloppak builder; the single-arrangement
-        # PSARC save path takes them straight off the request body.
+        # archive save path takes them straight off the request body.
         # Use the sentinel to distinguish "absent" from "explicitly empty"
         # — an empty `anchors_user: []` is meaningful (means "fall back to
         # `_compute_anchors`"), and an empty `handshapes: []` is meaningful
@@ -1793,16 +1793,16 @@ def setup(app, context):
         tones = data.get("tones", _FIELD_ABSENT)
         handshapes = data.get("handshapes", _FIELD_ABSENT)
         anchors_user = data.get("anchors_user", _FIELD_ABSENT)
-        # Merge session metadata (album/year captured at PSARC load
+        # Merge session metadata (album/year captured at archive load
         # time) with anything the frontend sent. `_buildSaveBody` ships
         # `{title, artist}` on every save path; this merge keeps the
-        # PSARC-only fields (album, year) that the frontend never
+        # archive-only fields (album, year) that the frontend never
         # round-trips, so they survive a save through this endpoint.
         metadata = dict(session.get("metadata") or {})
         metadata.update(data.get("metadata") or {})
 
         # Sloppak save can be a full snapshot of all arrangements (needed when
-        # arrangements were added). If arrangements isn't provided, save_cdlc
+        # arrangements were added). If arrangements isn't provided, save_song
         # only updates the single arrangement at arrangement_index.
         all_arrangements = data.get("arrangements")
 
@@ -1853,7 +1853,7 @@ def setup(app, context):
                     status_code=400,
                 )
 
-        # PSARC export (and its extended-range truncation path) has been
+        # archive export (and its extended-range truncation path) has been
         # removed — sloppak preserves extended range natively, so no
         # string-peeling is needed on save.
 
@@ -2073,7 +2073,7 @@ def setup(app, context):
             #   explicit null → None               → remove drum_tab.json
             #   dict          →                    → write/replace the file
             # Non-dict/non-null payloads are rejected with a 400 early in
-            # save_cdlc before this closure is reached.
+            # save_song before this closure is reached.
             if drum_tab_payload is not _DRUM_TAB_ABSENT:
                 drum_tab_path = (source_dir / "drum_tab.json").resolve()
                 # Constrain writes to source_dir — defends against a malformed
@@ -2215,7 +2215,7 @@ def setup(app, context):
             return str(output_path)
 
         # The editor only writes native `.sloppak` containers now —
-        # Rocksmith `.psarc` export has been removed.
+        # external `.archive` export has been removed.
         if session.get("format") != "sloppak":
             return JSONResponse(
                 {"error": "Only sloppak-format sessions can be saved"}, 400
@@ -2229,14 +2229,14 @@ def setup(app, context):
 
         return {"success": True, "path": output}
 
-    # ── Save edited PSARC as Sloppak ──────────────────────────────────────
+    # ── Save edited archive as Sloppak ──────────────────────────────────────
     #
     # When the user added extra strings (7/8-string guitar or 5/6-string
-    # bass) to a PSARC-sourced edit, the regular PSARC save path can't
-    # carry the extra strings — stock Rocksmith's SNG binary is hard-locked
+    # bass) to a archive-sourced edit, the regular archive save path can't
+    # carry the extra strings — stock the chart's note-chart binary is hard-locked
     # to 6/4. This endpoint writes a new `.sloppak` next to the original
-    # PSARC and updates the session so subsequent saves go through the
-    # native sloppak path. The PSARC stays on disk untouched.
+    # archive and updates the session so subsequent saves go through the
+    # native sloppak path. The archive stays on disk untouched.
 
     @app.post("/api/plugins/editor/save_as_sloppak")
     async def save_as_sloppak(data: dict):
@@ -2244,9 +2244,9 @@ def setup(app, context):
         session = sessions.get(session_id)
         if not session:
             return JSONResponse({"error": "No active session"}, 400)
-        if session.get("format") != "psarc":
+        if session.get("format") != "archive":
             return JSONResponse(
-                {"error": "save_as_sloppak only applies to PSARC-sourced sessions"},
+                {"error": "save_as_sloppak only applies to archive-sourced sessions"},
                 400,
             )
         session["last_touched"] = time.time()
@@ -2256,7 +2256,7 @@ def setup(app, context):
             return JSONResponse({"error": "arrangements required"}, 400)
         beats = data.get("beats", [])
         sections = data.get("sections", [])
-        # Merge session metadata (loaded from the source PSARC: album,
+        # Merge session metadata (loaded from the source archive: album,
         # year, etc.) with anything the frontend sent (title/artist that
         # the user may have edited mid-session). The frontend currently
         # only ships `{title, artist}`, so without this merge `album` and
@@ -2279,10 +2279,10 @@ def setup(app, context):
         except ValueError:
             return JSONResponse({"error": "forbidden"}, 403)
 
-        # Output sits next to the source PSARC, sharing its stem so the
-        # library shows both `MySong_p.psarc` and `MySong_p.sloppak`.
+        # Output sits next to the source archive, sharing its stem so the
+        # library shows both `MySong_p.archive` and `MySong_p.sloppak`.
         # Keep any subdirectory prefix from `filename` (the picker
-        # supports nested layouts like `Artist/Song_p.psarc`); using
+        # supports nested layouts like `Artist/Song_p.archive`); using
         # just the bare stem here would put the sloppak in the right
         # place on disk but `resolve_source_dir(new_filename, ...)`
         # downstream would later look for it at the DLC root.
@@ -2298,7 +2298,7 @@ def setup(app, context):
                 {"error": (
                     f"A sloppak directory already exists at "
                     f"{new_filename}. Remove or rename it before "
-                    "converting the PSARC."
+                    "converting the archive."
                 )},
                 409,
             )
@@ -2306,7 +2306,7 @@ def setup(app, context):
         def _do_save():
             return _write_sloppak_pak(
                 audio_file=audio_file,
-                art_path="",  # PSARC sessions don't extract cover to disk yet
+                art_path="",  # archive sessions don't extract cover to disk yet
                 arrangements_data=arrangements_data,
                 beats=beats,
                 sections=sections,
@@ -2320,7 +2320,7 @@ def setup(app, context):
             # directory so the next /save call has a real sloppak source
             # tree (`source_dir/arrangements/*.json`, `manifest.yaml`,
             # stems) to edit. Without this, `_save_sloppak` would run
-            # against the PSARC unpacked dir with no manifest and emit a
+            # against the archive unpacked dir with no manifest and emit a
             # broken .sloppak on the user's next click of Save.
             new_source_dir = sloppak_mod.resolve_source_dir(
                 new_filename, dlc_dir, SLOPPAK_CACHE,
@@ -2338,17 +2338,17 @@ def setup(app, context):
             return JSONResponse({"error": str(e)}, 500)
 
         # Switch session into sloppak mode pointing at the new sloppak's
-        # unpacked cache dir. The old PSARC working dir is unreachable
+        # unpacked cache dir. The old archive working dir is unreachable
         # from the session dict after we repoint `session["dir"]`, so
-        # delete it now — without this, every PSARC→Sloppak conversion
-        # leaks a temp directory full of unpacked SNG/WEM/DDS bytes.
-        old_psarc_dir = session.get("dir")
+        # delete it now — without this, every archive→Sloppak conversion
+        # leaks a temp directory full of unpacked note-chart/WEM/DDS bytes.
+        old_source_dir = session.get("dir")
         session["filename"] = new_filename
         session["format"] = "sloppak"
         session["dir"] = str(new_source_dir)
         session["sloppak_state"] = {"manifest": new_manifest, "form": "zip"}
-        if old_psarc_dir and old_psarc_dir != str(new_source_dir):
-            shutil.rmtree(old_psarc_dir, ignore_errors=True)
+        if old_source_dir and old_source_dir != str(new_source_dir):
+            shutil.rmtree(old_source_dir, ignore_errors=True)
 
         return {
             "success": True,
@@ -2359,12 +2359,12 @@ def setup(app, context):
 
     # ── Create new Sloppak from scratch ───────────────────────────────
     #
-    # Drummer-driven flow: instead of "create new CDLC (PSARC) →
+    # Drummer-driven flow: instead of "create new custom song (archive) →
     # save-as-sloppak → +drums", let the user pick "New Sloppak" up
     # front and land in sloppak mode immediately with drum_tab + stems
     # available. Accepts the audio file as a multipart upload, builds a
     # minimal one-arrangement sloppak via `_write_sloppak_pak`, and
-    # returns the new filename — the frontend then calls /load_cdlc to
+    # returns the new filename — the frontend then calls /load_song to
     # open it in the editor.
 
     @app.post("/api/plugins/editor/create_sloppak")
@@ -2902,12 +2902,12 @@ def setup(app, context):
           ``persisted=False, next_step="save"`` so the UI can prompt.
 
         - **create-mode (fresh GP import)**: only ``session["audio_file"]``
-          is updated. The next Build CDLC will produce a ``.psarc``
+          is updated. The next Build Song will produce a ``.archive``
           referencing the new audio. ``persisted=False, next_step="build"``.
 
-        - **loaded PSARC**: only ``session["audio_file"]`` is updated; the
+        - **loaded archive**: only ``session["audio_file"]`` is updated; the
           editor uses the new audio for playback, but there is no
-          in-editor flow that repacks WEMs into the original ``.psarc``.
+          in-editor flow that repacks WEMs into the original ``.archive``.
           ``persisted=False, next_step="rebuild"`` — the UI surfaces this
           as playback-only.
         """
@@ -2926,8 +2926,8 @@ def setup(app, context):
         # next_step tells the client which UI hint to show when not persisted.
         # "none"    — already on disk
         # "save"    — zip-form sloppak: cache updated, Save will re-zip
-        # "build"   — create-mode: Build CDLC will produce a .psarc with the new audio
-        # "rebuild" — loaded PSARC: no in-editor persist path (would need WEM repack)
+        # "build"   — create-mode: Build Song will produce a .archive with the new audio
+        # "rebuild" — loaded archive: no in-editor persist path (would need WEM repack)
         next_step = "rebuild"
         if session.get("create_mode"):
             next_step = "build"
@@ -3340,7 +3340,7 @@ def setup(app, context):
 
     @app.post("/api/plugins/editor/convert-gp")
     async def convert_gp(data: dict):
-        """Convert selected GP tracks to Rocksmith arrangements."""
+        """Convert selected GP tracks to arrangements."""
         from lib.gp2rs import convert_file, auto_select_tracks
         from lib.song import parse_arrangement, Song, Beat, Section
 
@@ -3894,7 +3894,7 @@ def setup(app, context):
     # arrangement dict (drums MIDI-encoded via string*24+fret) for the legacy
     # drums plugin path. The new endpoint returns the canonical
     # `drum_tab.json` shape documented in `docs/sloppak-spec.md` §5.3, ready
-    # to be persisted via /save_cdlc's new `drum_tab:` body field.
+    # to be persisted via /save_song's new `drum_tab:` body field.
 
     @app.post("/api/plugins/editor/import-drums-tab")
     async def import_drums_tab(data: dict):
@@ -4200,7 +4200,7 @@ def setup(app, context):
         # Delete the XML and every sidecar keyed off the XML stem so the next
         # build doesn't still ship the "removed" arrangement:
         #   songs/arr/<stem>.xml          (this file)
-        #   songs/bin/generic/<stem>.sng  (compiled chart)
+        #   songs/bin/generic/<stem>.notechart  (compiled chart)
         #   manifests/songs_dlc_*/<stem>.json (manifest)
         xml_p = Path(removed)
         stem = xml_p.stem
@@ -4211,7 +4211,7 @@ def setup(app, context):
         except Exception:
             pass
 
-        sng_path = xml_p.parent.parent / "bin" / "generic" / f"{stem}.sng"
+        sng_path = xml_p.parent.parent / "bin" / "generic" / f"{stem}.notechart"
         try:
             sng_path.unlink(missing_ok=True)
         except Exception:
@@ -4250,7 +4250,7 @@ def setup(app, context):
         if session.get("format") == "sloppak":
             return {"success": True, "arrangement_count": -1, "format": "sloppak"}
 
-        # PSARC path: persist the XML so save can use the existing flow.
+        # archive path: persist the XML so save can use the existing flow.
         if xml_path and Path(xml_path).exists():
             # Copy XML into session dir
             dest = os.path.join(session["dir"], f"Keys_{len(session.get('xml_files', []))}.xml")
@@ -4261,16 +4261,16 @@ def setup(app, context):
 
         return {"success": True, "arrangement_count": len(session.get("xml_files", []))}
 
-    # ── Build CDLC from create-mode session ──────────────────────────
+    # ── Build Song from create-mode session ──────────────────────────
 
     @app.post("/api/plugins/editor/build")
-    async def build_cdlc_endpoint(data: dict):
+    async def build_song_endpoint(data: dict):
         """Build a song from the current create-mode session.
 
-        Always writes a native `.sloppak`. (Rocksmith `.psarc`/CDLC export
+        Always writes a native `.sloppak`. (the native `.archive`/custom-song export
         has been removed — the sloppak container carries every arrangement,
         including extended-range 7/8-string guitar and 5/6-string bass that
-        the old SNG binary format couldn't.)
+        the old note-chart binary format couldn't.)
         """
         session_id = data.get("session_id", "")
         session = sessions.get(session_id)
@@ -4373,7 +4373,7 @@ def setup(app, context):
 
         Shared between the create-mode build path (output_path derived
         from title/artist) and the save-as-sloppak path (output_path
-        derived from the source PSARC filename, so the new sloppak sits
+        derived from the source archive filename, so the new sloppak sits
         next to the original on disk).
 
         Optional `drum_tab`: when provided, written as `drum_tab.json`
@@ -4410,9 +4410,9 @@ def setup(app, context):
             stems_dir.mkdir()
 
             # Single combined-audio stem — the editor only carries one
-            # audio source per session (PSARC load decodes the WEM to a
+            # audio source per session (archive load decodes the WEM to a
             # single ogg; create-mode imports one audio file). Name it
-            # `full.ogg` to match the ecosystem convention (PSARC→sloppak
+            # `full.ogg` to match the ecosystem convention (archive→sloppak
             # conversion + `split_sloppak_stems` both key on `stems/full.ogg`);
             # naming it `audio.ogg` here meant the stem separator couldn't
             # find the source mix. Transcode to OGG when the source isn't
@@ -4706,7 +4706,7 @@ def setup(app, context):
             # (`anchors_user`). We ALSO emit the legacy `anchors` field
             # with the same payload until the editor UI is fully on
             # `anchors_user` — frontend code paths like the tempo
-            # re-time logic still read `arr.anchors`, and PSARC saves
+            # re-time logic still read `arr.anchors`, and archive saves
             # that flip to sloppak format without a reload would
             # otherwise lose anchors entirely.
             anchors_payload = [
