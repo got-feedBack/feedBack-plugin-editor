@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not implement — on the desktop app it returns `null` and logs a
   warning, so the actions silently no-opped while their no-prompt
   siblings (e.g. Delete Section) still worked. This made it look like
-  "only delete works" on Windows/desktop (issue slopsmith/slopsmith#480).
+  "only delete works" on Windows/desktop (issue got-feedback/feedback#480).
   Replaced every `prompt()` call with a small in-app text-prompt modal
   (`_editorPromptText`, built on the existing `_installModalKeyboard`
   helper) that resolves to the entered string on OK/Enter or `null` on
