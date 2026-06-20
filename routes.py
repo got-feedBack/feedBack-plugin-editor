@@ -49,11 +49,15 @@ _sessions = None
 # content signature (`_align_xml_files_to_arrangements`) — keeping the two
 # in lockstep so a newly-added technique can't silently drop out of either.
 _NOTE_TECH_FIELDS = (
-    "bend", "slide_to", "slide_unpitch_to", "hammer_on", "pull_off",
-    "harmonic", "harmonic_pinch", "palm_mute", "mute", "vibrato",
+    "bend", "bend_intent", "slide_to", "slide_unpitch_to", "hammer_on",
+    "pull_off", "harmonic", "harmonic_pinch", "palm_mute", "mute", "vibrato",
     "tremolo", "accent", "tap", "link_next", "fret_hand_mute",
     "pluck", "slap", "right_hand", "pick_direction", "ignore",
 )
+# `bend_values` (the §6.2.1 bend curve) is deliberately NOT in the tuple above:
+# it's a list, and the tuple feeds hashable content-signature tuples
+# (`_obj_note_sig` / `_dict_note_sig`). It's handled explicitly in `_tech_dict`
+# (load) and `_arr_dict_to_wire` (save) instead.
 
 
 def _split_stems_best_effort(sloppak_path) -> bool:
@@ -407,6 +411,31 @@ def _safe_bool(v, default=False):
     return default
 
 
+def _safe_bend_curve(raw):
+    """Sanitize an editor bend curve ([{t, v}], §6.2.1) for the wire: drop
+    non-dict / non-finite entries, round (t to 3, v to 1, matching `bn`), and
+    sort by `t`. Returns None for non-list / empty / all-invalid input so an
+    absent curve round-trips as *omitted*, never []."""
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for p in raw:
+        if not isinstance(p, dict):
+            continue
+        t, v = p.get("t"), p.get("v")
+        if (not isinstance(t, (int, float)) or isinstance(t, bool)
+                or not math.isfinite(t)):
+            continue
+        if (not isinstance(v, (int, float)) or isinstance(v, bool)
+                or not math.isfinite(v)):
+            continue
+        out.append({"t": round(float(t), 3), "v": round(float(v), 1)})
+    if not out:
+        return None
+    out.sort(key=lambda e: e["t"])
+    return out
+
+
 def _valid_anchor_dicts(seq):
     """Coerce a candidate anchors list into clean {time, fret, width} dicts.
 
@@ -561,6 +590,14 @@ def _arr_dict_to_wire(
             "pkd": _safe_int(tech.get("pick_direction"), -1),
             "ig": _safe_bool(tech.get("ignore")),
         }
+        # Bend shape (§6.2.1) — default-omitted, matching core's note_to_wire:
+        # `bt` only when non-zero, `bnv` only when a curve is present.
+        _bt = _safe_int(tech.get("bend_intent"), 0)
+        if _bt:
+            out["bt"] = _bt
+        _bnv = _safe_bend_curve(tech.get("bend_values"))
+        if _bnv:
+            out["bnv"] = _bnv
         return out
 
     def _note_in_chord(n):
@@ -4684,7 +4721,11 @@ def setup(app, context):
             # round-trips so the editor can render and re-emit them. Field
             # set lives in `_NOTE_TECH_FIELDS` so the content signature
             # stays in sync (attr name == wire key for each).
-            return {f: getattr(n, f) for f in _NOTE_TECH_FIELDS}
+            d = {f: getattr(n, f) for f in _NOTE_TECH_FIELDS}
+            # `bend_values` (§6.2.1 curve) is a list, kept out of the signature
+            # tuple — carry it explicitly so an authored/imported curve loads.
+            d["bend_values"] = getattr(n, "bend_values", None)
+            return d
 
         for arr in song.arrangements:
             arr_data = {
