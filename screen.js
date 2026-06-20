@@ -629,7 +629,11 @@ function reconstructChords() {
     if (Array.isArray(arr.handshapes) && arr.handshapes.length) {
         const oldToNew = buildHandshapeChordIdMap(
             arr.handshapes, oldTemplates, templateMap, chordTemplates, L);
+        const _selWasHere = S.handshapeSel && arr.handshapes.includes(S.handshapeSel);
         arr.handshapes = remapHandshapeChordIds(arr.handshapes, oldToNew);
+        // If the selected handshape was in THIS arrangement and the remap
+        // dropped it (its template vanished), clear the now-dangling selection.
+        if (_selWasHere && !arr.handshapes.includes(S.handshapeSel)) S.handshapeSel = null;
     }
 }
 
@@ -2184,6 +2188,12 @@ function onKeyDown(e) {
                     && arr.handshapes.includes(S.handshapeSel)) {
                 e.preventDefault();
                 S.history.exec(new RemoveHandshapeCmd(S.currentArr, S.handshapeSel));
+                // Drop any in-flight drag on the just-deleted handshape so a
+                // trailing mouseup can't enqueue a move/resize for a detached
+                // object (and falsely bump the dirty count).
+                if (S.drag && S.drag.type === 'handshape' && S.drag.hs === S.handshapeSel) {
+                    S.drag = null;
+                }
                 S.handshapeSel = null;
                 draw();
                 return;
@@ -2727,6 +2737,10 @@ async function loadCDLC(filename) {
         for (const a of S.arrangements) {
             if (!a) continue;
             a.handshapes = (a.handshapes || []).map(_normalizeHandshape)
+                // Drop degenerate zero-/negative-length spans: they convey no
+                // region and would render/hit-test as a 2px sliver. Authoring
+                // enforces HS_MIN_SPAN; a loaded payload may not.
+                .filter(hs => hs.end_time > hs.start_time)
                 .sort((x, y) => x.start_time - y.start_time);
         }
         S.beats = data.beats || [];
@@ -7623,6 +7637,10 @@ function _finalizeActiveDrag() {
     if (!S.drag) return;
     if (S.drag.type === 'tempo-sync') _tempoMapOnDragEnd();
     else if (S.drag.type === 'drum-move') _drumEditorOnDragEnd();
+    // Commit an in-flight handshape create/move/resize through its own mouseup
+    // so the edit lands as a history command (instead of being silently
+    // dropped when a mode toggle interrupts the drag).
+    else if (S.drag.type === 'handshape') onHandshapeLaneMouseUp();
     else S.drag = null;
 }
 
@@ -9489,35 +9507,45 @@ class AddHandshapeCmd {
     // exec from the voicing under the span. When that voicing has no existing
     // template, one is appended (at the tail, so live chord_id refs held by
     // other handshapes don't shift) and removed again on rollback.
+    //
+    // Template handling is split deliberately: exec() resolves/appends by
+    // FRET-PATTERN KEY (so a redo across a save's reconstruct finds the rebuilt
+    // template instead of pushing a duplicate), while rollback() removes by
+    // OBJECT IDENTITY (so once a save has replaced the template objects we leave
+    // them alone — the rebuilt template may now back a real chord, not just us).
     constructor(arrIdx, hs, L) {
         this.arrIdx = arrIdx; this.hs = hs; this.L = L;
-        this._resolved = false; this._tmpl = null; this._created = false;
+        this._resolved = false; this._tmpl = null; this._key = null;
+        this._appended = false;
     }
     _resolve(arr) {
         const frets = _handshapeSpanFrets(arr, this.hs.start_time, this.hs.end_time, this.L);
-        if (!frets) { this._tmpl = null; this._created = false; return; }
-        if (!Array.isArray(arr.chord_templates)) arr.chord_templates = [];
-        const key = _fretKeyForL(frets, this.L);
-        const existing = arr.chord_templates.find(
-            ct => ct && Array.isArray(ct.frets) && _fretKeyForL(ct.frets, this.L) === key);
-        if (existing) { this._tmpl = existing; this._created = false; return; }
-        // Build a fresh template, carrying authored metadata if the voicing
-        // matches a preserved one (else blank).
+        if (!frets) { this._tmpl = null; this._key = null; return; }
+        this._key = _fretKeyForL(frets, this.L);
+        // Pre-build a template (carrying authored metadata if the voicing
+        // matches a preserved one) for the case where none exists at exec time.
         const preserved = _buildPreservedTemplates(arr.chord_templates, this.L);
         this._tmpl = relinkChordTemplate(frets, preserved, this.L);
-        this._created = true;
+    }
+    _findByKey(arr) {
+        if (this._key == null || !Array.isArray(arr.chord_templates)) return -1;
+        return arr.chord_templates.findIndex(
+            ct => ct && Array.isArray(ct.frets) && _fretKeyForL(ct.frets, this.L) === this._key);
     }
     exec() {
         const arr = S.arrangements[this.arrIdx];
         if (!arr) return;
         if (!this._resolved) { this._resolve(arr); this._resolved = true; }
         _bumpHandshapesDirty(arr, +1);
-        if (this._tmpl) {
+        this._appended = false;
+        if (this._key != null) {
             if (!Array.isArray(arr.chord_templates)) arr.chord_templates = [];
-            if (this._created && arr.chord_templates.indexOf(this._tmpl) < 0) {
+            let idx = this._findByKey(arr);
+            if (idx < 0 && this._tmpl) {
                 arr.chord_templates.push(this._tmpl); // tail-append
+                idx = arr.chord_templates.length - 1;
+                this._appended = true;
             }
-            const idx = arr.chord_templates.indexOf(this._tmpl);
             this.hs.chord_id = idx >= 0 ? idx : 0;
         } else if (!Number.isInteger(this.hs.chord_id)) {
             this.hs.chord_id = 0;
@@ -9532,9 +9560,13 @@ class AddHandshapeCmd {
         _bumpHandshapesDirty(arr, -1);
         const i = arr.handshapes.indexOf(this.hs);
         if (i >= 0) arr.handshapes.splice(i, 1);
-        // Remove our tail-appended template only if it's still the tail and no
-        // other handshape now references it (keeps live indices stable).
-        if (this._created && this._tmpl && Array.isArray(arr.chord_templates)) {
+        // Remove the template only if THIS exec appended this exact object and
+        // it's still present at the tail and unreferenced by any handshape.
+        // Identity (not key) is deliberate: a save's reconstructChords() rebuilds
+        // arr.chord_templates with fresh objects, so afterwards indexOf() is -1
+        // and we correctly leave the reconstruct-owned template alone — it may
+        // now back a real chord (arr.chords[*].chord_id), not just our handshape.
+        if (this._appended && this._tmpl && Array.isArray(arr.chord_templates)) {
             const ti = arr.chord_templates.indexOf(this._tmpl);
             if (ti >= 0 && ti === arr.chord_templates.length - 1
                     && !arr.handshapes.some(h => h.chord_id === ti)) {
@@ -9700,9 +9732,15 @@ function onHandshapeLaneMouseUp() {
     S.drag = null;
     const arr = _currentAnchorArr();
     if (d.mode === 'create') {
-        if (arr && d.hs.end_time - d.hs.start_time >= HS_MIN_SPAN) {
+        // Only create when the span both clears the min length AND covers a
+        // resolvable voicing — a handshape over empty bars would otherwise
+        // fall back to chord_id 0 (an unrelated shape) or an invalid ref.
+        if (arr && d.hs.end_time - d.hs.start_time >= HS_MIN_SPAN
+                && _handshapeSpanFrets(arr, d.hs.start_time, d.hs.end_time, lanes())) {
             S.history.exec(new AddHandshapeCmd(S.currentArr, d.hs, lanes()));
             S.handshapeSel = d.hs;
+        } else if (arr) {
+            setStatus('Handshape needs notes in the span — nothing to frame.');
         }
     } else {
         const newStart = d.hs.start_time, newEnd = d.hs.end_time;
