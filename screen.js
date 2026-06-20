@@ -632,6 +632,36 @@ function rescaleBendCurveToPeak(raw, peak) {
 }
 /* @pure:bend-shape:end */
 
+/* @pure:teaching-marks:start — pure, no browser deps; node-tested by
+ * tests/teaching_marks.test.js. Helpers for authoring the §6.2.2 teaching
+ * marks (fg fret-hand finger, ch strum group, sd scale degree). Display only —
+ * the editor authors them; nothing here feeds grading. */
+
+// Fret-hand-finger (`fg`) picker options, in spec order (-1 unset … 4 pinky).
+const FRET_FINGER_OPTIONS = [
+    { v: -1, label: 'Unset' },
+    { v: 0, label: 'Thumb' },
+    { v: 1, label: 'Index' },
+    { v: 2, label: 'Middle' },
+    { v: 3, label: 'Ring' },
+    { v: 4, label: 'Pinky' },
+];
+
+// Next free strum-group key (`ch`) across a note list: max used (>= 0) + 1, or
+// 0 when none is grouped yet. Used by "Group as strum" so a new gesture never
+// collides with an existing one.
+function nextUnusedStrumGroup(noteList) {
+    let max = -1;
+    if (Array.isArray(noteList)) {
+        for (const n of noteList) {
+            const ch = n && n.techniques ? n.techniques.strum_group : undefined;
+            if (Number.isInteger(ch) && ch > max) max = ch;
+        }
+    }
+    return max + 1;
+}
+/* @pure:teaching-marks:end */
+
 // Reconstruct chords from notes at the same time before saving
 function reconstructChords() {
     if (!S.arrangements.length) return;
@@ -1377,6 +1407,36 @@ class SetBendIntentCmd {
             const n = notes()[i];
             if (!n.techniques) n.techniques = {};
             n.techniques.bend_intent = this.old[k];
+        });
+    }
+}
+
+// Teaching marks (§6.2.2) — set one integer technique field (fret_finger /
+// scale_degree / strum_group) across a set of notes as one undoable edit,
+// snapshotting the prior per-note value. -1 is the unset sentinel (the save
+// path omits it from the wire). Display only — never feeds grading.
+class SetTeachingMarkCmd {
+    constructor(indices, key, value) {
+        this.indices = indices.slice();
+        this.key = key;
+        this.value = Number.isInteger(value) ? value : -1;
+        this.old = this.indices.map(i => {
+            const t = notes()[i].techniques || {};
+            return t[key];
+        });
+    }
+    exec() {
+        for (const i of this.indices) {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.value;
+        }
+    }
+    rollback() {
+        this.indices.forEach((i, k) => {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.old[k];
         });
     }
 }
@@ -3699,6 +3759,21 @@ function _renderInspector() {
         const v = n.techniques && n.techniques.slide_unpitch_to;
         return v === undefined ? -1 : v;
     });
+    // Teaching marks (§6.2.2): fret-hand finger, scale-degree override, strum
+    // group. Default to -1 (unset) so a note that never authored them reads as
+    // unset rather than "mixed" against an authored sibling.
+    const sharedFinger = _selSharedValue(sel, n => {
+        const v = n.techniques && n.techniques.fret_finger;
+        return Number.isInteger(v) ? v : -1;
+    });
+    const sharedScaleDeg = _selSharedValue(sel, n => {
+        const v = n.techniques && n.techniques.scale_degree;
+        return Number.isInteger(v) ? v : -1;
+    });
+    const sharedStrum = _selSharedValue(sel, n => {
+        const v = n.techniques && n.techniques.strum_group;
+        return Number.isInteger(v) ? v : -1;
+    });
     const inputVal = v => v === null ? '' : String(v);
 
     // Chord inspector (E1): when the selection is a chord (>=2 notes sharing a
@@ -3758,6 +3833,31 @@ function _renderInspector() {
                     onchange="editorInspectorSetTech('slide_unpitch_to', this.value)"
                     class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
             </label>
+        </div>
+        <div class="space-y-2 border-t border-gray-700 pt-3">
+            <div class="text-gray-500 text-[10px] uppercase tracking-wide">Teaching marks</div>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Finger</span>
+                <select onchange="editorInspectorSetFretFinger(this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                    ${FRET_FINGER_OPTIONS.map(o => `<option value="${o.v}"${o.v === (sharedFinger ?? -1) ? ' selected' : ''}>${o.label}</option>`).join('')}
+                </select>
+            </label>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Scale deg.</span>
+                <input type="number" min="-1" max="11" step="1" value="${inputVal(sharedScaleDeg)}"
+                    placeholder="${sharedScaleDeg === null ? 'mixed' : 'auto'}"
+                    title="0–11 semitones above the key tonic; -1 / blank = auto-derive"
+                    onchange="editorInspectorSetScaleDegree(this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+            </label>
+            <div class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Strum grp ${sharedStrum === null ? '(mixed)' : (sharedStrum >= 0 ? '#' + sharedStrum : '—')}</span>
+                <button type="button" onclick="editorGroupAsStrum()"
+                    class="flex-1 bg-dark-700 hover:bg-dark-600 border border-gray-700 rounded px-1 py-0.5 text-xs">Group</button>
+                <button type="button" onclick="editorUngroupStrum()"
+                    class="flex-1 bg-dark-700 hover:bg-dark-600 border border-gray-700 rounded px-1 py-0.5 text-xs">Ungroup</button>
+            </div>
         </div>
         <div class="space-y-1 border-t border-gray-700 pt-3">`;
 
@@ -3918,6 +4018,46 @@ window.editorInspectorSetFlag = (key, on) => {
     }
     draw();
     updateStatus();
+};
+
+// ─── Teaching marks (§6.2.2) ────────────────────────────────────────
+// Author fg (fret-hand finger), sd (scale-degree override) and ch (strum
+// group) on the current selection. Each is one undoable batch edit
+// (SetTeachingMarkCmd). Display only — these never affect grading.
+function _applyTeachingMark(key, value) {
+    const idxs = [...(S.sel || [])];
+    if (!idxs.length) return;
+    S.history.exec(new SetTeachingMarkCmd(idxs, key, value));
+    draw();
+    updateStatus();
+    _renderInspector();
+}
+
+window.editorInspectorSetFretFinger = (raw) => {
+    const v = Math.trunc(Number(raw));
+    if (!Number.isFinite(v)) return;
+    _applyTeachingMark('fret_finger', Math.max(-1, Math.min(4, v)));
+};
+
+window.editorInspectorSetScaleDegree = (raw) => {
+    const s = String(raw).trim();
+    // Empty input clears the override back to -1 (auto/unset).
+    const v = s === '' ? -1 : Math.trunc(Number(s));
+    if (!Number.isFinite(v)) { _renderInspector(); return; }
+    _applyTeachingMark('scale_degree', Math.max(-1, Math.min(11, v)));
+};
+
+// "Group as strum": assign every selected note a shared, unused ch key so the
+// highway renders them as one strum/rake gesture (pkd gives direction).
+window.editorGroupAsStrum = () => {
+    if (!(S.sel && S.sel.size)) return;
+    _applyTeachingMark('strum_group', nextUnusedStrumGroup(notes()));
+};
+
+// "Ungroup": clear the strum-group key on the selection (-1 = not grouped).
+window.editorUngroupStrum = () => {
+    if (!(S.sel && S.sel.size)) return;
+    _applyTeachingMark('strum_group', -1);
 };
 
 // ─── Chord inspector (E1) ───────────────────────────────────────────

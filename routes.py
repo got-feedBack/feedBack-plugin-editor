@@ -53,6 +53,8 @@ _NOTE_TECH_FIELDS = (
     "pull_off", "harmonic", "harmonic_pinch", "palm_mute", "mute", "vibrato",
     "tremolo", "accent", "tap", "link_next", "fret_hand_mute",
     "pluck", "slap", "right_hand", "pick_direction", "ignore",
+    # Teaching marks (§6.2.2) — display only, never grading.
+    "fret_finger", "strum_group", "scale_degree",
 )
 # `bend_values` (the §6.2.1 bend curve) is deliberately NOT in the tuple above:
 # it's a list, and the tuple feeds hashable content-signature tuples
@@ -174,7 +176,10 @@ def _align_xml_files_to_arrangements(tmp_dir, result):
     def _obj_note_sig(n):
         return (
             round(n.time, 3), n.string, n.fret, round(n.sustain or 0.0, 3),
-            tuple(getattr(n, f) for f in _NOTE_TECH_FIELDS),
+            # Default -1 so the signature stays stable against a core build that
+            # predates a field (e.g. the teaching marks before #534 lands) —
+            # parse_arrangement notes from older core simply lack the attribute.
+            tuple(getattr(n, f, -1) for f in _NOTE_TECH_FIELDS),
         )
 
     def _obj_chord_sig(c):
@@ -598,6 +603,17 @@ def _arr_dict_to_wire(
         _bnv = _safe_bend_curve(tech.get("bend_values"))
         if _bnv:
             out["bnv"] = _bnv
+        # Teaching marks (§6.2.2) — default-omitted, matching core's note_to_wire.
+        # Display only; never used for grading.
+        _fg = _safe_int(tech.get("fret_finger"), -1)
+        if _fg != -1:
+            out["fg"] = _fg
+        _ch = _safe_int(tech.get("strum_group"), -1)
+        if _ch != -1:
+            out["ch"] = _ch
+        _sd = _safe_int(tech.get("scale_degree"), -1)
+        if _sd != -1:
+            out["sd"] = _sd
         return out
 
     def _note_in_chord(n):
@@ -894,6 +910,10 @@ def _note_attrs_xml(n, *, include_time=True):
         "slap": _flag("slap"),
         "rightHand": str(_safe_int(techs.get("right_hand"), -1)),
         "pickDirection": str(_safe_int(techs.get("pick_direction"), -1)),
+        # Teaching mark (§6.2.2): fret-hand finger. core's _parse_note reads
+        # `fretFinger` back; strum_group/scale_degree have no chart-XML attribute
+        # (they round-trip through the sloppak wire instead). Display only.
+        "fretFinger": str(_safe_int(techs.get("fret_finger"), -1)),
         "ignore": _flag("ignore"),
     })
     return attrs
@@ -4721,7 +4741,7 @@ def setup(app, context):
             # round-trips so the editor can render and re-emit them. Field
             # set lives in `_NOTE_TECH_FIELDS` so the content signature
             # stays in sync (attr name == wire key for each).
-            d = {f: getattr(n, f) for f in _NOTE_TECH_FIELDS}
+            d = {f: getattr(n, f, -1) for f in _NOTE_TECH_FIELDS}
             # `bend_values` (§6.2.1 curve) is a list, kept out of the signature
             # tuple — carry it explicitly so an authored/imported curve loads.
             d["bend_values"] = getattr(n, "bend_values", None)
