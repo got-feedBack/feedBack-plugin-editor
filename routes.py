@@ -56,6 +56,251 @@ _NOTE_TECH_FIELDS = (
 )
 
 
+# ── JSONC support (feedpak-spec §8) ──────────────────────────────────────────
+# A .jsonc file is JSON with C-style // line and /* */ block comments. The spec
+# requires a Reader to strip comments before parsing and a Writer to preserve
+# them when editing a .jsonc file. The editor reads existing arrangements to
+# preserve anchors/handshapes/phrases/tones on save, and re-writes the
+# arrangement file — so both sides need JSONC handling for .jsonc arrangements.
+
+# String-aware comment stripper: matches JSON string literals (kept), // line
+# comments, and /* block comments */ (stripped). Mirrors the reference
+# implementation in feedpak-spec/tools/validate.py.
+_JSONC_STRIP_RE = re.compile(
+    r'"(?:[^"\\]|\\.)*"|'   # string literal — keep
+    r'//.*|'                 # // line comment — strip
+    r'/\*[\s\S]*?\*/',       # /* block comment */ — strip
+)
+
+
+def _parse_jsonc(text: str):
+    """Parse JSONC, stripping comments before json.loads. String contents
+    are preserved (comment-like text inside a string is never stripped)."""
+    stripped = _JSONC_STRIP_RE.sub(
+        lambda m: m.group(0) if m.group(0).startswith('"') else '',
+        text,
+    )
+    return json.loads(stripped)
+
+
+def _load_arrangement_json(path) -> dict:
+    """Read and parse an arrangement JSON/JSONC file. ``.jsonc`` files are
+    stripped of comments via :func:`_parse_jsonc`; plain ``.json`` goes through
+    ``json.loads``. UTF-8, matching every other reader in this plugin."""
+    raw = path.read_text(encoding="utf-8")
+    if path.name.lower().endswith(".jsonc"):
+        return _parse_jsonc(raw)
+    return json.loads(raw)
+
+
+def _extract_jsonc_top_comments(text: str) -> dict:
+    """Extract top-level comments from a JSONC text for round-trip preservation.
+
+    Returns a dict with keys:
+      ``header``: list[str] — comments before the opening ``{``.
+      ``before_key``: dict[str, list[str]] — comments immediately preceding a
+        top-level key (between ``{`` / ``,`` and the key).
+      ``trailing``: list[str] — comments after the last top-level value but
+        before the closing ``}``.
+      ``footer``: list[str] — comments after the closing ``}``.
+
+    Comments inside nested arrays/objects (depth > 1) are NOT captured — that
+    is the documented phase-1 limitation. Each entry in the lists is the raw
+    comment text including its ``//`` or ``/* */`` delimiters.
+    """
+    header: list[str] = []
+    before_key: dict[str, list[str]] = {}
+    trailing: list[str] = []
+    footer: list[str] = []
+
+    i = 0
+    n = len(text)
+    depth = 0
+    in_string = False
+    expecting_key = False  # at depth 1, next string is a top-level key
+    after_colon = False     # at depth 1, just saw ':' → next is a value
+    seen_root = False       # have we opened the root object?
+    pending: list[str] = []  # comments waiting to attach to the next key
+
+    while i < n:
+        ch = text[i]
+
+        if in_string:
+            if ch == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+                if depth == 1 and expecting_key and not after_colon:
+                    # Read the key string content to anchor pending comments.
+                    # (We already consumed the closing quote above; the key is
+                    # the text from the opening quote to here. Find it by
+                    # scanning back — simplest: re-scan from a marker.)
+                    # Walk back to the opening quote.
+                    j = i - 1
+                    while j > 0 and text[j] != '"':
+                        j -= 1
+                    # j points at the opening quote of this key string.
+                    key = text[j + 1:i]
+                    if pending:
+                        before_key[key] = pending
+                        pending = []
+                    expecting_key = False
+            i += 1
+            continue
+
+        # Not in a string.
+        if ch == '"':
+            in_string = True
+            i += 1
+            continue
+
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            # Line comment — scan to end of line.
+            end = text.find("\n", i)
+            if end == -1:
+                end = n
+            comment = text[i:end]
+            if not seen_root:
+                header.append(comment)
+            elif depth == 0:
+                footer.append(comment)
+            elif depth == 1:
+                pending.append(comment)
+            # depth > 1 → nested comment, drop (phase-1 limitation)
+            i = end
+            continue
+
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            # Block comment — scan to */.
+            end = text.find("*/", i + 2)
+            if end == -1:
+                end = n
+            else:
+                end += 2
+            comment = text[i:end]
+            if not seen_root:
+                header.append(comment)
+            elif depth == 0:
+                footer.append(comment)
+            elif depth == 1:
+                pending.append(comment)
+            i = end
+            continue
+
+        if ch == "{":
+            depth += 1
+            if depth == 1 and not seen_root:
+                seen_root = True
+                expecting_key = True
+                after_colon = False
+            elif depth == 2:
+                expecting_key = False
+                after_colon = False
+            i += 1
+            continue
+
+        if ch == "[":
+            depth += 1
+            if depth == 1 and not seen_root:
+                seen_root = True  # array root — no keys to anchor to
+            expecting_key = False
+            after_colon = False
+            i += 1
+            continue
+
+        if ch == "}" or ch == "]":
+            depth -= 1
+            if depth == 1:
+                # Closing a nested value inside the root — back to expecting
+                # the next top-level key after the upcoming comma.
+                after_colon = False
+                expecting_key = False
+            elif depth == 0 and seen_root:
+                # Closing the root object. Pending comments are trailing.
+                if pending:
+                    trailing.extend(pending)
+                    pending = []
+            i += 1
+            continue
+
+        if ch == "," and depth == 1:
+            expecting_key = True
+            after_colon = False
+            # Pending comments that didn't attach to a key (e.g. a comment
+            # after a value but before the comma) stay pending for the next key.
+            i += 1
+            continue
+
+        if ch == ":" and depth == 1:
+            after_colon = True
+            expecting_key = False
+            i += 1
+            continue
+
+        i += 1
+
+    return {
+        "header": header,
+        "before_key": before_key,
+        "trailing": trailing,
+        "footer": footer,
+    }
+
+
+def _preserve_jsonc_comments(original_text: str, new_json_str: str) -> str:
+    """Re-insert top-level comments from ``original_text`` into
+    ``new_json_str`` (a freshly json.dumps-ed, indent=2 object).
+
+    Header comments go before the opening ``{``; ``before_key`` comments go on
+    their own line(s) immediately before the line containing the top-level key;
+    trailing comments go before the closing ``}``; footer comments go after the
+    closing ``}``. Comments whose anchor key no longer exists in the new JSON
+    are dropped (acceptable for phase 1 — the editor replaces note content, not
+    top-level keys).
+    """
+    extracted = _extract_jsonc_top_comments(original_text)
+    header = extracted["header"]
+    before_key = extracted["before_key"]
+    trailing = extracted["trailing"]
+    footer = extracted["footer"]
+
+    if not header and not before_key and not trailing and not footer:
+        return new_json_str  # nothing to preserve
+
+    lines = new_json_str.splitlines(keepends=True)
+    out: list[str] = []
+
+    # Header comments precede the first line (the opening ``{``).
+    if header:
+        for h in header:
+            out.append(h if h.endswith("\n") else h + "\n")
+
+    for line in lines:
+        # Is this line a top-level key line? Matches `  "key":` (2-space indent
+        # from json.dumps(indent=2) for a root object's direct children).
+        m = re.match(r'^  "([^"]+)":', line)
+        if m:
+            key = m.group(1)
+            comments = before_key.get(key)
+            if comments:
+                for c in comments:
+                    out.append(c if c.endswith("\n") else c + "\n")
+        # Is this the closing brace? Insert trailing comments before it.
+        if line.strip() == "}":
+            for c in trailing:
+                out.append(c if c.endswith("\n") else c + "\n")
+        out.append(line)
+
+    if footer:
+        if out and not out[-1].endswith("\n"):
+            out.append("\n")
+        for f in footer:
+            out.append(f if f.endswith("\n") else f + "\n")
+
+    return "".join(out)
+
+
 def _split_stems_best_effort(sloppak_path) -> bool:
     """Separate a freshly-written sloppak's audio into per-instrument stems,
     in place, using the best available method (the configured Demucs server,
@@ -1962,7 +2207,7 @@ def setup(app, context):
                         pass
                     if _old_path_ok:
                         try:
-                            _existing = json.loads(_old_path.read_text(encoding="utf-8"))
+                            _existing = _load_arrangement_json(_old_path)
                             for _k in ("anchors", "handshapes", "phrases", "tones"):
                                 if _k in _existing:
                                     _preserved[_k] = _existing[_k]
@@ -2047,10 +2292,28 @@ def setup(app, context):
                     except ValueError:
                         raise RuntimeError(f"Arrangement path escapes sandbox: {rel}")
                     arr_path.parent.mkdir(parents=True, exist_ok=True)
-                    arr_path.write_text(
-                        json.dumps(wire, separators=(",", ":")),
-                        encoding="utf-8",
-                    )
+                    if arr_path.name.lower().endswith(".jsonc"):
+                        # .jsonc arrangement: preserve top-level comments from
+                        # the existing file (feedpak-spec §8 Writer SHOULD).
+                        # Serialize pretty-printed (indent=2) so comments can be
+                        # re-inserted at top-level-key line boundaries; comments
+                        # inside nested arrays/objects are dropped (phase-1
+                        # limitation — the editor replaces note content anyway).
+                        original = ""
+                        if arr_path.exists():
+                            try:
+                                original = arr_path.read_text(encoding="utf-8")
+                            except OSError:
+                                original = ""
+                        new_text = _preserve_jsonc_comments(
+                            original, json.dumps(wire, indent=2)
+                        )
+                        arr_path.write_text(new_text, encoding="utf-8")
+                    else:
+                        arr_path.write_text(
+                            json.dumps(wire, separators=(",", ":")),
+                            encoding="utf-8",
+                        )
                     entry = dict(entry)
                     entry["file"] = rel
                     # Dual-write: for keys-family arrangements also emit a
@@ -2065,8 +2328,9 @@ def setup(app, context):
                 new_manifest_arrangements.append(entry)
             manifest["arrangements"] = new_manifest_arrangements
 
-            # Drop orphaned arrangement JSONs (e.g. after a remove).
-            for f in arr_dir.glob("*.json"):
+            # Drop orphaned arrangement JSONs (e.g. after a remove). Include
+            # .jsonc so a removed .jsonc arrangement doesn't linger on disk.
+            for f in (*arr_dir.glob("*.json"), *arr_dir.glob("*.jsonc")):
                 if f.resolve() not in kept_paths:
                     try:
                         f.unlink()
