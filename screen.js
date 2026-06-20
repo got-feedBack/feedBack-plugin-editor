@@ -81,6 +81,7 @@ const _TONE_SLOT_COLORS = ['#7dd3fc', '#f87171', '#fbbf24', '#a78bfa', '#34d399'
 // aligned with notes and tones. 18px gives enough room for a fret
 // label plus a width-strip visualization.
 const ANCHOR_LANE_H = 18;
+const HS_LANE_H = 20;   // E2: handshape (chord-shape / arpeggio) span lane
 
 const S = {
     // Song data
@@ -99,6 +100,9 @@ const S = {
     // arrangement's `arr.anchors_user` array. Same semantics as
     // `toneSel`. `null` means no anchor is selected.
     anchorSel: null,
+    // Selected handshape — direct ref into the active arrangement's
+    // `arr.handshapes` array. Same semantics as `anchorSel`. `null` = none.
+    handshapeSel: null,
 
     // Drum tab — null until the user adds drums via the +Drums modal, then
     // a dict matching docs/sloppak-spec.md §5.3 ({version,name,kit,hits}).
@@ -532,7 +536,11 @@ function buildHandshapeChordIdMap(handshapes, oldTemplates, templateMap, chordTe
 }
 // E2: apply an old->new chord_id remap to handshapes, dropping any whose old
 // `chord_id` has no mapping (its template no longer exists -> invalid; the
-// backend validator drops these too). Returns a new array; inputs untouched.
+// backend validator drops these too). Mutates each surviving handshape's
+// `chord_id` IN PLACE and returns the filtered array of the SAME objects —
+// preserving object identity so undo/redo command refs (which `indexOf` the
+// handshape) survive a save, where reconstructChords() reassigns
+// `arr.handshapes`. (Cloning here would orphan those refs.)
 function remapHandshapeChordIds(handshapes, oldToNew) {
     if (!Array.isArray(handshapes) || !oldToNew) return [];
     const out = [];
@@ -540,7 +548,8 @@ function remapHandshapeChordIds(handshapes, oldToNew) {
         if (!hs) continue;
         const mapped = oldToNew[hs.chord_id];
         if (mapped === undefined) continue;
-        out.push({ ...hs, chord_id: mapped });
+        hs.chord_id = mapped;
+        out.push(hs);
     }
     return out;
 }
@@ -677,6 +686,7 @@ function draw() {
         drawSelectionRect(w);
         drawGhostNotes();
         drawAnchorLane(w);
+        drawHandshapeLane(w);
         // Draw cursor AFTER the anchor lane so the playhead line
         // appears on top of the lane instead of getting overdrawn —
         // the cursor's time-axis extent intentionally spans every
@@ -1619,6 +1629,13 @@ function onMouseDown(e) {
             if (onAnchorLaneMouseDown(e, x, y)) return;
         }
     }
+    // Handshape lane sits directly below the anchor lane.
+    if (S.arrangements && S.arrangements.length) {
+        const hsTop = _handshapeLaneTopY();
+        if (y >= hsTop && y < hsTop + HS_LANE_H) {
+            if (onHandshapeLaneMouseDown(e, x, y)) return;
+        }
+    }
     // Click outside the tone lane → clear the tone selection so the
     // next Del press targets the note path instead of the previously
     // selected tone marker.
@@ -1631,6 +1648,11 @@ function onMouseDown(e) {
     // otherwise hijack the next Del press from the note delete path.
     if (S.anchorSel !== null) {
         S.anchorSel = null;
+    }
+    // …and the handshape selection (the handshape-lane mousedown returns
+    // early, so a click reaching here is outside that lane).
+    if (S.handshapeSel !== null) {
+        S.handshapeSel = null;
     }
 
     // Left button
@@ -1743,6 +1765,10 @@ function _onMouseMoveBody(e, x, y, L) {
     }
     if (S.drag && S.drag.type === 'anchor') {
         onAnchorLaneMouseMove(e, x);
+        return;
+    }
+    if (S.drag && S.drag.type === 'handshape') {
+        onHandshapeLaneMouseMove(e, x);
         return;
     }
 
@@ -1889,6 +1915,11 @@ function onMouseUp(e) {
         return;
     }
 
+    if (S.drag.type === 'handshape') {
+        onHandshapeLaneMouseUp();
+        return;
+    }
+
     if (S.drag.type === 'resize') {
         const nn = notes();
         const finalSustain = nn[S.drag.noteIdx].sustain;
@@ -2006,6 +2037,13 @@ function onContextMenu(e) {
         const anchorTop = _anchorLaneTopY();
         if (y >= anchorTop && y < anchorTop + ANCHOR_LANE_H) {
             if (onAnchorLaneContextMenu(e, x, y)) return;
+        }
+    }
+    // Handshape-lane right-click — toggle arp / pick shape / delete.
+    if (S.arrangements && S.arrangements.length) {
+        const hsTop = _handshapeLaneTopY();
+        if (y >= hsTop && y < hsTop + HS_LANE_H) {
+            if (onHandshapeLaneContextMenu(e, x, y)) return;
         }
     }
 
@@ -2134,6 +2172,19 @@ function onKeyDown(e) {
                 e.preventDefault();
                 S.history.exec(new RemoveAnchorCmd(S.currentArr, S.anchorSel));
                 S.anchorSel = null;
+                draw();
+                return;
+            }
+        }
+        // Handshape-lane: delete the selected handshape. Same gates.
+        if (S.handshapeSel && !S.drumEditMode && !S.tempoMapMode &&
+                !e.target.matches('input, select, textarea')) {
+            const arr = _currentAnchorArr();
+            if (arr && Array.isArray(arr.handshapes)
+                    && arr.handshapes.includes(S.handshapeSel)) {
+                e.preventDefault();
+                S.history.exec(new RemoveHandshapeCmd(S.currentArr, S.handshapeSel));
+                S.handshapeSel = null;
                 draw();
                 return;
             }
@@ -2711,6 +2762,7 @@ async function loadCDLC(filename) {
         S.sel.clear();
         S.toneSel = null;
         S.anchorSel = null;
+        S.handshapeSel = null;
         S.scrollX = 0;
         S.cursorTime = 0;
         S.history = new EditHistory();
@@ -3639,7 +3691,10 @@ function resizeCanvas() {
     WAVEFORM_H = Math.max(minWave, Math.floor(h * 0.12));
     // Reserve `ANCHOR_LANE_H` for the anchor strip below the beat bar
     // so the lanes still fill the remaining vertical space.
-    LANE_H = Math.max(30, Math.floor((h - WAVEFORM_H - BEAT_H - ANCHOR_LANE_H) / lanes()));
+    // Reserve the handshape lane (HS_LANE_H) alongside the anchor lane so the
+    // note lanes still fill the remaining height; the max(30,…) floor keeps
+    // short canvases from starving them.
+    LANE_H = Math.max(30, Math.floor((h - WAVEFORM_H - BEAT_H - ANCHOR_LANE_H - HS_LANE_H) / lanes()));
 
     canvas.width = w * DPR;
     canvas.height = h * DPR;
@@ -3748,6 +3803,7 @@ window.editorSelectArrangement = (val) => {
     // new arrangement.
     S.toneSel = null;
     S.anchorSel = null;
+    S.handshapeSel = null;
     flattenChords();
     if (isKeysMode()) updatePianoRange();
     draw();
@@ -4934,6 +4990,7 @@ window.editorDoCreate = async () => {
         S.sel.clear();
         S.toneSel = null;
         S.anchorSel = null;
+        S.handshapeSel = null;
         S.scrollX = 0;
         S.cursorTime = 0;
         S.history = new EditHistory();
@@ -8488,6 +8545,7 @@ function onToneLaneMouseDown(e, x) {
     // the Del handler (which checks anchor first) would delete the
     // stale anchor instead of the just-clicked tone marker.
     S.anchorSel = null;
+    S.handshapeSel = null;
     const hit = _hitToneMarker(x);
     if (hit) {
         S.toneSel = hit;
@@ -8578,6 +8636,7 @@ function onToneLaneContextMenu(e, x) {
     // so a subsequent Del hits the right path. Mirrors the mousedown
     // mutual-exclusion above.
     S.anchorSel = null;
+    S.handshapeSel = null;
     // Capture the arrangement index NOW. If the user switches
     // arrangements while the context menu is open, a later
     // `S.currentArr` read inside the click handlers would dispatch
@@ -9146,6 +9205,7 @@ function onAnchorLaneMouseDown(e, x, y) {
     // Mutually exclusive with the tone-lane selection — see the
     // matching note in `onToneLaneMouseDown`.
     S.toneSel = null;
+    S.handshapeSel = null;
     const hit = _hitAnchorMarker(x, y);
     if (hit) {
         // Auto-fallback hits get promoted into `arr.anchors_user` so
@@ -9216,6 +9276,7 @@ function onAnchorLaneContextMenu(e, x, y) {
     // Clear the tone selection while interacting with an anchor —
     // mirrors the tone-lane context menu's clear above.
     S.toneSel = null;
+    S.handshapeSel = null;
     const menuArrIdx = S.currentArr;
     const menu = document.getElementById('editor-context-menu');
     menu.replaceChildren();
@@ -9260,6 +9321,466 @@ function onAnchorLaneContextMenu(e, x, y) {
         hideContextMenu();
         S.history.exec(new RemoveAnchorCmd(menuArrIdx, hit));
         S.anchorSel = null;
+        draw();
+    };
+    menu.appendChild(delBtn);
+
+    menu.style.left = e.clientX + 'px';
+    menu.style.top = e.clientY + 'px';
+    menu.classList.remove('hidden');
+    return true;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Handshape lane — E2 (got-feedback/feedback-plugin-editor#5).
+//
+// Renders authored handshapes (chord-shape / arpeggio framing regions) as
+// horizontal bars on a thin strip just below the anchor lane. A handshape is
+// a time span { chord_id, start_time, end_time, arp } whose `chord_id` indexes
+// `arr.chord_templates`. Modelled on the anchor lane above, but spans (with
+// resize edges) rather than point markers. The chord_id is resolved from the
+// voicing covered by the span at authoring time; reconstructChords() remaps it
+// to the rebuilt template indices on save (see buildHandshapeChordIdMap).
+// ════════════════════════════════════════════════════════════════════
+
+const HS_EDGE_HIT = 5;   // px from a bar edge that grabs a resize handle
+const HS_MIN_SPAN = 0.02; // s — smallest authorable / resizable span
+
+function _handshapeLaneTopY() {
+    // Sits directly below the anchor lane.
+    return _anchorLaneTopY() + ANCHOR_LANE_H;
+}
+
+// Compute the width-L fret pattern (voicing) covered by a [s, e] span from the
+// flattened editor notes. Prefers a same-time chord (>=2 notes); otherwise
+// combines the span's single notes into one shape (the arpeggio case). Returns
+// null when the span covers no notes.
+function _handshapeSpanFrets(arr, s, e, L) {
+    if (!arr || !Array.isArray(arr.notes)) return null;
+    const EPS = 1e-6;
+    const inSpan = arr.notes.filter(
+        n => n && typeof n.time === 'number' && n.time >= s - EPS && n.time <= e + EPS);
+    if (!inSpan.length) return null;
+    const byTime = {};
+    for (const n of inSpan) {
+        const k = n.time.toFixed(4);
+        (byTime[k] || (byTime[k] = [])).push(n);
+    }
+    let chord = null;
+    for (const k of Object.keys(byTime)) {
+        if (byTime[k].length >= 2 && (!chord || byTime[k].length > chord.length)) chord = byTime[k];
+    }
+    const frets = new Array(L).fill(-1);
+    for (const n of (chord || inSpan)) {
+        if (n.string >= 0 && n.string < L) frets[n.string] = n.fret;
+    }
+    return frets;
+}
+
+// Human label for a handshape bar — the covered template's displayName/name,
+// falling back to the framing kind.
+function _handshapeLabel(arr, hs) {
+    const ct = Array.isArray(arr.chord_templates) ? arr.chord_templates[hs.chord_id] : null;
+    if (ct && typeof ct.displayName === 'string' && ct.displayName) return ct.displayName;
+    if (ct && typeof ct.name === 'string' && ct.name) return ct.name;
+    return hs.arp ? 'arp' : 'shape';
+}
+
+// ─── Lane drawing ───────────────────────────────────────────────────
+
+function drawHandshapeLane(w) {
+    const arr = _currentAnchorArr();
+    if (!arr) return;
+    const top = _handshapeLaneTopY();
+
+    // Lane background.
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, top, w, HS_LANE_H);
+    ctx.strokeStyle = '#1f2937';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, top + 0.5);
+    ctx.lineTo(w, top + 0.5);
+    ctx.stroke();
+
+    // Left label.
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('shapes', 4, top + HS_LANE_H / 2);
+
+    const list = Array.isArray(arr.handshapes) ? arr.handshapes : [];
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(LABEL_W, top, Math.max(0, w - LABEL_W), HS_LANE_H);
+    ctx.clip();
+    // Existing handshapes, plus the in-progress create preview (if any).
+    const preview = (S.drag && S.drag.type === 'handshape' && S.drag.mode === 'create')
+        ? S.drag.hs : null;
+    for (const hs of preview ? list.concat([preview]) : list) {
+        _drawHandshapeBar(arr, hs, top, w, hs === S.handshapeSel, hs === preview);
+    }
+    ctx.restore();
+}
+
+function _drawHandshapeBar(arr, hs, top, w, sel, isPreview) {
+    if (!hs || !Number.isFinite(hs.start_time) || !Number.isFinite(hs.end_time)) return;
+    const x0 = timeToX(hs.start_time);
+    const x1 = timeToX(hs.end_time);
+    if (x1 < -40 || x0 > w + 40) return;
+    const left = Math.min(x0, x1);
+    const width = Math.max(2, Math.abs(x1 - x0));
+    const barTop = top + 2;
+    const barH = HS_LANE_H - 4;
+    // Arpeggio framing vs held chord shape get distinct fills.
+    const fill = hs.arp ? '#7c3aed' : '#0ea5e9';
+    ctx.globalAlpha = isPreview ? 0.5 : (sel ? 0.95 : 0.75);
+    ctx.fillStyle = fill;
+    ctx.fillRect(left, barTop, width, barH);
+    ctx.globalAlpha = 1;
+    if (sel) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(left + 0.5, barTop + 0.5, width - 1, barH - 1);
+    }
+    // Label (clipped to the bar width).
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, barTop, width, barH);
+    ctx.clip();
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(_handshapeLabel(arr, hs), left + 3, top + HS_LANE_H / 2 + 1);
+    ctx.restore();
+}
+
+// ─── Hit testing ────────────────────────────────────────────────────
+
+// Returns { hs, edge } where edge ∈ {'left','right',null} for the topmost bar
+// under (x, y), or null. Within HS_EDGE_HIT px of an edge → resize handle.
+function _hitHandshape(x, y) {
+    const arr = _currentAnchorArr();
+    if (!arr || !Array.isArray(arr.handshapes)) return null;
+    const top = _handshapeLaneTopY();
+    if (y < top || y >= top + HS_LANE_H) return null;
+    // Iterate last-drawn-first so the topmost (later) bar wins on overlap.
+    for (let i = arr.handshapes.length - 1; i >= 0; i--) {
+        const hs = arr.handshapes[i];
+        if (!hs || !Number.isFinite(hs.start_time) || !Number.isFinite(hs.end_time)) continue;
+        const xL = timeToX(hs.start_time);
+        const xR = timeToX(hs.end_time);
+        const lo = Math.min(xL, xR), hi = Math.max(xL, xR);
+        if (x < lo - HS_EDGE_HIT || x > hi + HS_EDGE_HIT) continue;
+        let edge = null;
+        if (Math.abs(x - xL) <= HS_EDGE_HIT) edge = 'left';
+        else if (Math.abs(x - xR) <= HS_EDGE_HIT) edge = 'right';
+        return { hs, edge };
+    }
+    return null;
+}
+
+// ─── Cmd classes ────────────────────────────────────────────────────
+
+class AddHandshapeCmd {
+    // `hs` is { start_time, end_time, arp }; chord_id is resolved on first
+    // exec from the voicing under the span. When that voicing has no existing
+    // template, one is appended (at the tail, so live chord_id refs held by
+    // other handshapes don't shift) and removed again on rollback.
+    constructor(arrIdx, hs, L) {
+        this.arrIdx = arrIdx; this.hs = hs; this.L = L;
+        this._resolved = false; this._tmpl = null; this._created = false;
+    }
+    _resolve(arr) {
+        const frets = _handshapeSpanFrets(arr, this.hs.start_time, this.hs.end_time, this.L);
+        if (!frets) { this._tmpl = null; this._created = false; return; }
+        if (!Array.isArray(arr.chord_templates)) arr.chord_templates = [];
+        const key = _fretKeyForL(frets, this.L);
+        const existing = arr.chord_templates.find(
+            ct => ct && Array.isArray(ct.frets) && _fretKeyForL(ct.frets, this.L) === key);
+        if (existing) { this._tmpl = existing; this._created = false; return; }
+        // Build a fresh template, carrying authored metadata if the voicing
+        // matches a preserved one (else blank).
+        const preserved = _buildPreservedTemplates(arr.chord_templates, this.L);
+        this._tmpl = relinkChordTemplate(frets, preserved, this.L);
+        this._created = true;
+    }
+    exec() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        if (!this._resolved) { this._resolve(arr); this._resolved = true; }
+        _bumpHandshapesDirty(arr, +1);
+        if (this._tmpl) {
+            if (!Array.isArray(arr.chord_templates)) arr.chord_templates = [];
+            if (this._created && arr.chord_templates.indexOf(this._tmpl) < 0) {
+                arr.chord_templates.push(this._tmpl); // tail-append
+            }
+            const idx = arr.chord_templates.indexOf(this._tmpl);
+            this.hs.chord_id = idx >= 0 ? idx : 0;
+        } else if (!Number.isInteger(this.hs.chord_id)) {
+            this.hs.chord_id = 0;
+        }
+        _ensureHandshapes(arr);
+        arr.handshapes.push(this.hs);
+        arr.handshapes.sort((a, b) => a.start_time - b.start_time);
+    }
+    rollback() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        _bumpHandshapesDirty(arr, -1);
+        const i = arr.handshapes.indexOf(this.hs);
+        if (i >= 0) arr.handshapes.splice(i, 1);
+        // Remove our tail-appended template only if it's still the tail and no
+        // other handshape now references it (keeps live indices stable).
+        if (this._created && this._tmpl && Array.isArray(arr.chord_templates)) {
+            const ti = arr.chord_templates.indexOf(this._tmpl);
+            if (ti >= 0 && ti === arr.chord_templates.length - 1
+                    && !arr.handshapes.some(h => h.chord_id === ti)) {
+                arr.chord_templates.splice(ti, 1);
+            }
+        }
+    }
+}
+
+class RemoveHandshapeCmd {
+    constructor(arrIdx, hs) { this.arrIdx = arrIdx; this.hs = hs; }
+    exec() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr || !Array.isArray(arr.handshapes)) return;
+        _bumpHandshapesDirty(arr, +1);
+        const i = arr.handshapes.indexOf(this.hs);
+        if (i >= 0) arr.handshapes.splice(i, 1);
+    }
+    rollback() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        _bumpHandshapesDirty(arr, -1);
+        _ensureHandshapes(arr);
+        arr.handshapes.push(this.hs);
+        arr.handshapes.sort((a, b) => a.start_time - b.start_time);
+    }
+}
+
+// Move the whole span (both edges shift). Resize moves a single edge. Both
+// store old + new {start,end} so rollback is exact; the live drag mutates the
+// hs in place and defers the command to mouseup (mirrors MoveAnchorCmd).
+class MoveHandshapeCmd {
+    constructor(arrIdx, hs, oldStart, oldEnd, newStart, newEnd) {
+        this.arrIdx = arrIdx; this.hs = hs;
+        this.oldStart = oldStart; this.oldEnd = oldEnd;
+        this.newStart = newStart; this.newEnd = newEnd;
+    }
+    _apply(s, e) {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        this.hs.start_time = s; this.hs.end_time = e;
+        if (Array.isArray(arr.handshapes)) arr.handshapes.sort((a, b) => a.start_time - b.start_time);
+    }
+    exec() { _bumpHandshapesDirty(S.arrangements[this.arrIdx], +1); this._apply(this.newStart, this.newEnd); }
+    rollback() { _bumpHandshapesDirty(S.arrangements[this.arrIdx], -1); this._apply(this.oldStart, this.oldEnd); }
+}
+
+class ResizeHandshapeCmd extends MoveHandshapeCmd {}
+
+class ToggleHandshapeArpCmd {
+    constructor(arrIdx, hs) { this.arrIdx = arrIdx; this.hs = hs; }
+    exec() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        _bumpHandshapesDirty(arr, +1);
+        this.hs.arp = !this.hs.arp;
+    }
+    rollback() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        _bumpHandshapesDirty(arr, -1);
+        this.hs.arp = !this.hs.arp;
+    }
+}
+
+class SetHandshapeChordCmd {
+    // Resolve old/new templates by FRET-PATTERN key, not bare index: a save
+    // runs reconstructChords() which rebuilds `arr.chord_templates` (and the
+    // indices), so a stored index would go stale across a save → undo. The
+    // flattened model has one template per fret pattern, so the key is unique;
+    // the captured index is a fallback when the key no longer resolves.
+    constructor(arrIdx, hs, oldId, newId) {
+        this.arrIdx = arrIdx; this.hs = hs;
+        this.oldId = oldId; this.newId = newId;
+        this.L = lanes();
+        const cts = (S.arrangements[arrIdx] && S.arrangements[arrIdx].chord_templates) || [];
+        this.oldKey = this._keyOf(cts[oldId]);
+        this.newKey = this._keyOf(cts[newId]);
+    }
+    _keyOf(ct) {
+        return (ct && Array.isArray(ct.frets)) ? _fretKeyForL(ct.frets, this.L) : null;
+    }
+    _resolve(key, fallback) {
+        const cts = (S.arrangements[this.arrIdx] && S.arrangements[this.arrIdx].chord_templates) || [];
+        if (key != null) {
+            const i = cts.findIndex(ct => this._keyOf(ct) === key);
+            if (i >= 0) return i;
+        }
+        return fallback;
+    }
+    exec() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        _bumpHandshapesDirty(arr, +1);
+        this.hs.chord_id = this._resolve(this.newKey, this.newId);
+    }
+    rollback() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        _bumpHandshapesDirty(arr, -1);
+        this.hs.chord_id = this._resolve(this.oldKey, this.oldId);
+    }
+}
+
+// ─── Mouse interactions ─────────────────────────────────────────────
+
+function onHandshapeLaneMouseDown(e, x, y) {
+    const arr = _currentAnchorArr();
+    if (!arr) return false;
+    S.toneSel = null;
+    S.anchorSel = null;
+    const hit = _hitHandshape(x, y);
+    if (hit) {
+        S.handshapeSel = hit.hs;
+        const mode = hit.edge === 'left' ? 'resize-left'
+            : hit.edge === 'right' ? 'resize-right' : 'move';
+        S.drag = {
+            type: 'handshape', mode, hs: hit.hs,
+            origStart: hit.hs.start_time, origEnd: hit.hs.end_time,
+            startX: x, grabTime: snapTime(Math.max(0, xToTime(x))),
+        };
+        draw();
+        return true;
+    }
+    // Empty lane → begin a create drag. arp defaults true (arpeggio framing is
+    // the dominant case the highway renders).
+    const t = snapTime(Math.max(0, xToTime(x)));
+    S.handshapeSel = null;
+    S.drag = {
+        type: 'handshape', mode: 'create', anchorTime: t,
+        hs: { start_time: t, end_time: t, arp: true },
+    };
+    draw();
+    return true;
+}
+
+function onHandshapeLaneMouseMove(e, x) {
+    if (!S.drag || S.drag.type !== 'handshape') return false;
+    const t = snapTime(Math.max(0, xToTime(x)));
+    const d = S.drag;
+    if (d.mode === 'create') {
+        d.hs.start_time = Math.min(d.anchorTime, t);
+        d.hs.end_time = Math.max(d.anchorTime, t);
+    } else if (d.mode === 'resize-left') {
+        d.hs.start_time = Math.min(t, d.hs.end_time - HS_MIN_SPAN);
+        if (d.hs.start_time < 0) d.hs.start_time = 0;
+    } else if (d.mode === 'resize-right') {
+        d.hs.end_time = Math.max(t, d.hs.start_time + HS_MIN_SPAN);
+    } else { // move — shift both edges, preserving width, clamped at 0
+        const span = d.origEnd - d.origStart;
+        let s = d.origStart + (t - d.grabTime);
+        if (s < 0) s = 0;
+        d.hs.start_time = s;
+        d.hs.end_time = s + span;
+    }
+    draw();
+    return true;
+}
+
+function onHandshapeLaneMouseUp() {
+    if (!S.drag || S.drag.type !== 'handshape') return false;
+    const d = S.drag;
+    S.drag = null;
+    const arr = _currentAnchorArr();
+    if (d.mode === 'create') {
+        if (arr && d.hs.end_time - d.hs.start_time >= HS_MIN_SPAN) {
+            S.history.exec(new AddHandshapeCmd(S.currentArr, d.hs, lanes()));
+            S.handshapeSel = d.hs;
+        }
+    } else {
+        const newStart = d.hs.start_time, newEnd = d.hs.end_time;
+        if (arr && (newStart !== d.origStart || newEnd !== d.origEnd)) {
+            // Restore, then route through the command for clean undo.
+            d.hs.start_time = d.origStart; d.hs.end_time = d.origEnd;
+            const Cmd = d.mode === 'move' ? MoveHandshapeCmd : ResizeHandshapeCmd;
+            S.history.exec(new Cmd(S.currentArr, d.hs, d.origStart, d.origEnd, newStart, newEnd));
+        }
+    }
+    draw();
+    return true;
+}
+
+function onHandshapeLaneContextMenu(e, x, y) {
+    const arr = _currentAnchorArr();
+    if (!arr) return false;
+    const hit = _hitHandshape(x, y);
+    if (!hit) return false;
+    const hs = hit.hs;
+    S.handshapeSel = hs;
+    S.toneSel = null;
+    S.anchorSel = null;
+    const menuArrIdx = S.currentArr;
+    const menu = document.getElementById('editor-context-menu');
+    menu.replaceChildren();
+
+    const arpBtn = document.createElement('button');
+    arpBtn.className = 'w-full text-left px-3 py-1 text-xs hover:bg-dark-500';
+    arpBtn.textContent = hs.arp ? 'Make held chord shape' : 'Make arpeggio';
+    arpBtn.onclick = () => {
+        hideContextMenu();
+        S.history.exec(new ToggleHandshapeArpCmd(menuArrIdx, hs));
+        draw();
+    };
+    menu.appendChild(arpBtn);
+
+    // Choose the covered template — lets the user repoint a handshape whose
+    // span no longer matches the auto-resolved voicing.
+    const templates = Array.isArray(arr.chord_templates) ? arr.chord_templates : [];
+    if (templates.length) {
+        const sep = document.createElement('div');
+        sep.className = 'border-t border-gray-700 my-1';
+        menu.appendChild(sep);
+        const hdr = document.createElement('div');
+        hdr.className = 'px-3 py-1 text-[10px] uppercase tracking-wide text-gray-500';
+        hdr.textContent = 'Set shape';
+        menu.appendChild(hdr);
+        templates.forEach((ct, idx) => {
+            if (!ct) return;
+            const label = (ct.displayName || ct.name
+                || (Array.isArray(ct.frets) ? ct.frets.join(' ') : `#${idx}`));
+            const b = document.createElement('button');
+            b.className = 'w-full text-left px-3 py-1 text-xs hover:bg-dark-500'
+                + (idx === hs.chord_id ? ' text-sky-300' : '');
+            b.textContent = (idx === hs.chord_id ? '• ' : '') + label;
+            b.onclick = () => {
+                hideContextMenu();
+                if (idx !== hs.chord_id) {
+                    S.history.exec(new SetHandshapeChordCmd(menuArrIdx, hs, hs.chord_id, idx));
+                }
+                draw();
+            };
+            menu.appendChild(b);
+        });
+    }
+
+    const sep2 = document.createElement('div');
+    sep2.className = 'border-t border-gray-700 my-1';
+    menu.appendChild(sep2);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'w-full text-left px-3 py-1 text-xs hover:bg-dark-500 text-rose-300';
+    delBtn.textContent = 'Delete handshape';
+    delBtn.onclick = () => {
+        hideContextMenu();
+        S.history.exec(new RemoveHandshapeCmd(menuArrIdx, hs));
+        S.handshapeSel = null;
         draw();
     };
     menu.appendChild(delBtn);
