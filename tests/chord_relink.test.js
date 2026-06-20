@@ -134,8 +134,9 @@ t('remaps handshape chord_id by fret pattern (reordered rebuild)', () => {
     assert.strictEqual(out[0].start_time, 1);
     // No orphan appended — both voicings were in the rebuild.
     assert.strictEqual(chordTemplates.length, 2);
-    // Pure: original handshape not mutated.
-    assert.strictEqual(handshapes[0].chord_id, 0);
+    // Identity preserved + mutated in place (so undo/redo refs survive save).
+    assert.strictEqual(out[0], handshapes[0]);
+    assert.strictEqual(handshapes[0].chord_id, 1);
 });
 
 // 6. Arpeggio orphan: a handshape's template produced no same-time chord (so
