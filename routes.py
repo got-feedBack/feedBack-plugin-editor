@@ -613,6 +613,8 @@ def _arr_dict_to_wire(
         "templates": [
             {
                 "name": ct.get("name", ""),
+                "displayName": ct.get("displayName", ct.get("name", "")),
+                "arp": bool(ct.get("arp", False)),
                 "fingers": list(ct.get("fingers", [-1]*6)),
                 "frets": list(ct.get("frets", [-1]*6)),
             }
@@ -1086,6 +1088,10 @@ def _build_arrangement_xml(
     ct_width = min(ct_width, _CT_HARD_CAP)
     for ct in chord_templates:
         attrs = {"chordName": ct.get("name", "")}
+        # displayName round-trips on the chordTemplate; template-level `arp` is
+        # wire-only (no standard chordTemplate XML attr — arpeggio lives on
+        # <handShape>), so it's reconstructed from handshapes, not emitted here.
+        attrs["displayName"] = ct.get("displayName", ct.get("name", ""))
         frets = ct.get("frets", [-1] * ct_width)
         fingers = ct.get("fingers", [-1] * ct_width)
         for i in range(ct_width):
@@ -3737,6 +3743,8 @@ def setup(app, context):
             for ct in arr.chord_templates:
                 arr_data["chord_templates"].append({
                     "name": ct.name,
+                    "displayName": getattr(ct, "display_name", "") or ct.name,
+                    "arp": bool(getattr(ct, "arpeggio", False)),
                     "frets": ct.frets,
                     "fingers": ct.fingers,
                 })
@@ -3871,6 +3879,8 @@ def setup(app, context):
             for ct in arr.chord_templates:
                 arr_data["chord_templates"].append({
                     "name": ct.name,
+                    "displayName": getattr(ct, "display_name", "") or ct.name,
+                    "arp": bool(getattr(ct, "arpeggio", False)),
                     "frets": ct.frets,
                     "fingers": ct.fingers,
                 })
@@ -4749,6 +4759,8 @@ def setup(app, context):
             for ct in arr.chord_templates:
                 arr_data["chord_templates"].append({
                     "name": ct.name,
+                    "displayName": getattr(ct, "display_name", "") or ct.name,
+                    "arp": bool(getattr(ct, "arpeggio", False)),
                     "frets": ct.frets,
                     "fingers": ct.fingers,
                 })

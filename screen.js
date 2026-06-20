@@ -433,17 +433,20 @@ function _buildPreservedTemplates(oldTemplates, L) {
 // Build a rebuilt template for `frets`, carrying authored metadata when the
 // fret pattern matches a preserved template; blank otherwise. `frets` is the
 // authoritative current voicing.
-// Carries ONLY the fields the save path persists today: chordName (`name`) and
-// per-string `fingers`. The wire format also has `displayName` and a
-// template-level `arp`, but the editor's writer (routes.py) drops both, so
-// carrying them here would be silent dead-state — they round-trip when E1 (the
-// chord inspector) adds the authoring UI and the matching backend emission.
+// Carries the authored, round-trippable template fields: chordName (`name`),
+// per-string `fingers`, `displayName` (falls back to `name`), and the
+// template-level `arp` flag. E1 added the chord-inspector authoring UI and the
+// matching backend emission (routes.py wire/XML writers + read side), so these
+// persist through save and reload instead of being silent dead-state.
 function relinkChordTemplate(frets, preserved, L) {
     const old = preserved[_fretKeyForL(frets, L)];
+    const name = (old && typeof old.name === 'string') ? old.name : '';
     return {
-        name: (old && typeof old.name === 'string') ? old.name : '',
+        name,
         frets: frets.slice(),
         fingers: _normFingers(old && old.fingers, L),
+        displayName: (old && typeof old.displayName === 'string') ? old.displayName : name,
+        arp: !!(old && old.arp),
     };
 }
 /* @pure:chord-relink:end */
@@ -3168,6 +3171,13 @@ function _renderInspector() {
     });
     const inputVal = v => v === null ? '' : String(v);
 
+    // Chord inspector (E1): when the selection is a chord (>=2 notes sharing a
+    // time), author the shared chord template — name / displayName / per-string
+    // fingering / arp. Edits land on the matching `arr.chord_templates` entry
+    // (created if this chord hasn't been saved yet), which reconstructChords()
+    // carries through save via relinkChordTemplate.
+    const chordHtml = _chordInspectorHtml(_selectedChordContext(sel));
+
     let html = `
         <div class="space-y-1">
             <div class="font-semibold text-gray-100">${headerCount}</div>
@@ -3176,6 +3186,7 @@ function _renderInspector() {
             <div class="text-gray-400">time: ${fmtTime(sharedTime)}</div>
             <div class="text-gray-400">sustain: ${fmtSus(sharedSustain)}</div>
         </div>
+        ${chordHtml}
         <div class="space-y-2 border-t border-gray-700 pt-3">
             <label class="flex items-center gap-2">
                 <span class="w-24 text-gray-400">Sustain</span>
@@ -3336,6 +3347,128 @@ window.editorInspectorSetFlag = (key, on) => {
     }
     draw();
     updateStatus();
+};
+
+// ─── Chord inspector (E1) ───────────────────────────────────────────
+// Resolve the current selection to a chord and its width-L fret pattern +
+// matching chord template, or null when the selection isn't a chord.
+//
+// The fret pattern is built from the FULL save-time group — every note sharing
+// the selection's `time.toFixed(4)` key — not just the selected subset, and
+// using the same key reconstructChords() groups by. That way a partial
+// selection (e.g. rectangle-selecting 2 of a 3-note chord) still authors the
+// triad's fret key, so the metadata survives the save-time rebuild instead of
+// being dropped onto a dyad key reconstructChords() never produces.
+function _selectedChordContext(sel) {
+    sel = sel || _selectedNotes();
+    if (sel.length < 2) return null;
+    if (!S.arrangements.length) return null;
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return null;
+    // The selection must fall within a single save-time group; reconstructChords
+    // keys groups on `time.toFixed(4)`, so match that exactly.
+    const key = sel[0].time.toFixed(4);
+    for (const n of sel) { if (n.time.toFixed(4) !== key) return null; }
+    const L = lanes();
+    const frets = new Array(L).fill(-1);
+    let count = 0;
+    for (const n of notes()) {
+        if (n.time.toFixed(4) !== key) continue;
+        count++;
+        if (n.string >= 0 && n.string < L) frets[n.string] = n.fret;
+    }
+    if (count < 2) return null; // single note at this time isn't a chord
+    const fretKey = _fretKeyForL(frets, L);
+    let tmpl = null;
+    for (const ct of (arr.chord_templates || [])) {
+        if (ct && Array.isArray(ct.frets) && _fretKeyForL(ct.frets, L) === fretKey) { tmpl = ct; break; }
+    }
+    return { arr, L, frets, fretKey, tmpl };
+}
+
+function _chordAttrEsc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Build the chord-section HTML, or '' when the selection isn't a chord. Finger
+// pickers are shown only for sounding strings (fret >= 0); unused strings carry
+// no finger.
+function _chordInspectorHtml(ctx) {
+    if (!ctx) return '';
+    const t = ctx.tmpl;
+    const name = t && typeof t.name === 'string' ? t.name : '';
+    const displayName = t && typeof t.displayName === 'string' ? t.displayName : '';
+    const arp = !!(t && t.arp);
+
+    let fingersHtml = '';
+    for (let i = 0; i < ctx.L; i++) {
+        const fr = ctx.frets[i];
+        if (fr < 0) continue;
+        const cur = (t && Array.isArray(t.fingers) && Number.isFinite(t.fingers[i])) ? t.fingers[i] : -1;
+        const opt = (v, label) => `<option value="${v}" ${cur === v ? 'selected' : ''}>${label}</option>`;
+        fingersHtml += `
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">S${i + 1} (fret ${fr})</span>
+                <select onchange="editorChordSetFinger(${i}, this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                    ${opt(-1, '—')}${opt(0, 'open')}${opt(1, '1')}${opt(2, '2')}${opt(3, '3')}${opt(4, '4')}
+                </select>
+            </label>`;
+    }
+
+    return `
+        <div class="space-y-2 border-t border-gray-700 pt-3">
+            <div class="font-semibold text-gray-100">Chord</div>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Name</span>
+                <input type="text" value="${_chordAttrEsc(name)}" placeholder="e.g. Em7"
+                    onchange="editorChordSetName(this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+            </label>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Display</span>
+                <input type="text" value="${_chordAttrEsc(displayName)}"
+                    placeholder="${_chordAttrEsc(name) || 'same as name'}"
+                    onchange="editorChordSetDisplayName(this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+            </label>
+            ${fingersHtml}
+            <label class="flex items-center gap-2">
+                <input type="checkbox" ${arp ? 'checked' : ''}
+                    onchange="editorChordToggleArp(this.checked)"
+                    class="rounded border-gray-600 bg-dark-700">
+                <span>Arpeggio</span>
+            </label>
+        </div>`;
+}
+
+// Apply a patch (subset of {name, displayName, fingers, arp}) to the selected
+// chord's template via the undo history.
+function _editorChordPatch(patch) {
+    const ctx = _selectedChordContext();
+    if (!ctx) return;
+    S.history.exec(new EditChordTemplateCmd(S.currentArr, ctx.L, ctx.frets, patch));
+    draw();
+    _renderInspector();
+}
+
+window.editorChordSetName = (raw) => _editorChordPatch({ name: String(raw == null ? '' : raw).trim() });
+window.editorChordSetDisplayName = (raw) => _editorChordPatch({ displayName: String(raw == null ? '' : raw).trim() });
+window.editorChordToggleArp = (on) => _editorChordPatch({ arp: !!on });
+window.editorChordSetFinger = (stringIdx, raw) => {
+    const ctx = _selectedChordContext();
+    if (!ctx) return;
+    const i = Number(stringIdx);
+    if (!Number.isInteger(i) || i < 0 || i >= ctx.L) return;
+    const v = parseInt(raw, 10);
+    if (![-1, 0, 1, 2, 3, 4].includes(v)) { _renderInspector(); return; }
+    // Fingers persist as one width-L array — start from the current template
+    // (or a blank width-L array) and change just this string.
+    const base = _normFingers(ctx.tmpl && ctx.tmpl.fingers, ctx.L);
+    base[i] = v;
+    _editorChordPatch({ fingers: base });
 };
 
 function updateZoomDisplay() {
@@ -8781,6 +8914,65 @@ class EditAnchorFretWidthCmd {
         _bumpAnchorsDirty(arr, -1);
         this.anchor.fret = this.oldFret;
         this.anchor.width = this.oldWidth;
+    }
+}
+
+// Edit (or create) the chord template for a width-L fret pattern. Chord
+// templates are rebuilt at save by reconstructChords(), keyed on the fret
+// pattern, so editing/creating the matching `arr.chord_templates` entry here
+// makes the authored name/displayName/fingers/arp survive the rebuild (see
+// relinkChordTemplate). The flattened editor model holds one template per fret
+// pattern, so this shared template is what every same-fret chord resolves to.
+class EditChordTemplateCmd {
+    // patch is a subset of { name, displayName, fingers, arp }.
+    constructor(arrIdx, L, frets, patch) {
+        this.arrIdx = arrIdx;
+        this.L = L;
+        this.frets = frets.slice();
+        this.fretKey = _fretKeyForL(frets, L);
+        this.patch = patch;
+        this._created = false; // did exec() create the entry?
+        this._prev = null;     // snapshot of the patched fields, for rollback
+    }
+    _find(arr) {
+        if (!Array.isArray(arr.chord_templates)) arr.chord_templates = [];
+        for (const ct of arr.chord_templates) {
+            if (ct && Array.isArray(ct.frets) && _fretKeyForL(ct.frets, this.L) === this.fretKey) return ct;
+        }
+        return null;
+    }
+    exec() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        let ct = this._find(arr);
+        if (!ct) {
+            ct = { name: '', displayName: '', frets: this.frets.slice(), fingers: _normFingers(null, this.L), arp: false };
+            arr.chord_templates.push(ct);
+            this._created = true;
+        }
+        // Snapshot only the fields the patch touches so rollback restores
+        // exactly those (and leaves other authored fields untouched).
+        this._prev = {};
+        for (const k of Object.keys(this.patch)) {
+            this._prev[k] = Array.isArray(ct[k]) ? ct[k].slice() : ct[k];
+            ct[k] = Array.isArray(this.patch[k]) ? this.patch[k].slice() : this.patch[k];
+        }
+    }
+    rollback() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr || !Array.isArray(arr.chord_templates)) return;
+        if (this._created) {
+            const i = arr.chord_templates.findIndex(
+                ct => ct && Array.isArray(ct.frets) && _fretKeyForL(ct.frets, this.L) === this.fretKey);
+            if (i >= 0) arr.chord_templates.splice(i, 1);
+            this._created = false;
+            return;
+        }
+        const ct = this._find(arr);
+        if (!ct || !this._prev) return;
+        for (const k of Object.keys(this._prev)) {
+            ct[k] = Array.isArray(this._prev[k]) ? this._prev[k].slice() : this._prev[k];
+        }
     }
 }
 
