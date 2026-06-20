@@ -3,12 +3,20 @@
 The editor reads the existing arrangement JSON to preserve
 anchors/handshapes/phrases/tones on save, and re-writes the arrangement file.
 For ``.jsonc`` arrangements both sides must be comment-aware: the read strips
-comments, the write preserves top-level comments (phase 1 — header, before-key,
-trailing, footer; comments inside nested arrays/objects are dropped, the
-documented phase-1 limitation).
+comments, the write preserves comments on a best-effort basis — including
+comments nested inside arrays/objects (phase 2).
 
-These cover the four helpers in ``routes.py``: ``_parse_jsonc``,
-``_load_arrangement_json``, ``_extract_jsonc_top_comments``, and
+Anchoring (phase 2): each comment is anchored to a structural identity in the
+original (header, footer, before-key, before-value, before-elem, trailing)
+and re-inserted at the matching spot in the freshly serialized JSON. Array
+elements anchor by a content signature (the ``t`` value for objects that have
+one, else a compact JSON hash), so a comment follows its element across
+reorders / additions / removals of *other* elements. Editing the anchored
+element's ``t`` (or any field of a ``t``-less element) changes its signature
+and the comment drifts or drops — the documented best-effort limit.
+
+These cover the helpers in ``routes.py``: ``_parse_jsonc``,
+``_load_arrangement_json``, ``_jsonc_extract_comments``, and
 ``_preserve_jsonc_comments`` — the read site and the write site both delegate
 to them.
 """
@@ -21,7 +29,7 @@ from pathlib import Path
 import pytest
 
 from routes import (  # noqa: E402
-    _extract_jsonc_top_comments,
+    _jsonc_extract_comments,
     _load_arrangement_json,
     _parse_jsonc,
     _preserve_jsonc_comments,
@@ -89,15 +97,13 @@ def test_load_arrangement_json_preserves_anchors_through_comments(tmp_path: Path
     assert out["anchors"] == [{"time": 1.0, "fret": 3}]
 
 
-# ── _extract_jsonc_top_comments ──────────────────────────────────────────────
+# ── _jsonc_extract_comments (anchor structure) ───────────────────────────────
 
 def test_extract_header_and_footer_comments():
     text = '// header\n/* block header */\n{"a": 1}\n// footer\n'
-    out = _extract_jsonc_top_comments(text)
-    assert out["header"] == ["// header", "/* block header */"]
-    assert out["footer"] == ["// footer"]
-    assert out["before_key"] == {}
-    assert out["trailing"] == []
+    out = _jsonc_extract_comments(text)
+    assert out[("header",)] == ["// header", "/* block header */"]
+    assert out[("footer",)] == ["// footer"]
 
 
 def test_extract_before_key_comments():
@@ -109,37 +115,66 @@ def test_extract_before_key_comments():
         '  "b": 2\n'
         '}'
     )
-    out = _extract_jsonc_top_comments(text)
-    assert out["before_key"] == {"a": ["// before-a"], "b": ["/* before-b */"]}
-    assert out["header"] == []
-    assert out["footer"] == []
+    out = _jsonc_extract_comments(text)
+    assert out[("before-key", "a")] == ["// before-a"]
+    assert out[("before-key", "b")] == ["/* before-b */"]
+    assert ("header",) not in out
+    assert ("footer",) not in out
 
 
 def test_extract_trailing_comment_before_closing_brace():
     text = '{"a": 1\n  // trailing\n}'
-    out = _extract_jsonc_top_comments(text)
-    assert out["trailing"] == ["// trailing"]
+    out = _jsonc_extract_comments(text)
+    assert out[("trailing",)] == ["// trailing"]
 
 
-def test_extract_drops_nested_comments():
-    """Comments inside nested arrays/objects (depth > 1) are not captured —
-    the documented phase-1 limitation."""
+def test_extract_capts_nested_before_elem_comment():
+    """A comment before an array element anchors to the element's signature."""
     text = (
         '{\n'
         '  "notes": [\n'
-        '    // inside the notes array — NOT captured\n'
-        '    {"t": 0}\n'
+        '    // first note\n'
+        '    {"t": 0.5}\n'
         '  ]\n'
         '}'
     )
-    out = _extract_jsonc_top_comments(text)
-    assert out["before_key"] == {}  # the comment is inside notes[], not before a top-level key
-    assert out["header"] == []
-    assert out["trailing"] == []
-    assert out["footer"] == []
+    out = _jsonc_extract_comments(text)
+    # The note has t=0.5 -> signature "t=0.5".
+    assert out[("notes", "before-elem", "t=0.5")] == ["// first note"]
 
 
-# ── _preserve_jsonc_comments (round trip) ────────────────────────────────────
+def test_extract_capt_nested_before_key_comment_inside_element():
+    """A comment before a key inside an array element anchors to that key plus
+    the element's signature path."""
+    text = (
+        '{\n'
+        '  "notes": [\n'
+        '    {\n'
+        '      "t": 0.5,\n'
+        '      // bend\n'
+        '      "f": 5\n'
+        '    }\n'
+        '  ]\n'
+        '}'
+    )
+    out = _jsonc_extract_comments(text)
+    assert out[("notes", "t=0.5", "before-key", "f")] == ["// bend"]
+
+
+def test_extract_capt_trailing_comment_inside_nested_array():
+    text = (
+        '{\n'
+        '  "notes": [\n'
+        '    {"t": 0.5}\n'
+        '    // end of notes\n'
+        '  ]\n'
+        '}'
+    )
+    out = _jsonc_extract_comments(text)
+    assert out[("notes", "trailing")] == ["// end of notes"]
+
+
+# ── _preserve_jsonc_comments (top-level round trip) ──────────────────────────
 
 def test_round_trip_preserves_header_before_key_trailing_footer():
     original = (
@@ -158,22 +193,18 @@ def test_round_trip_preserves_header_before_key_trailing_footer():
     )
     wire = {"name": "Lead", "notes": [], "chords": [], "beats": []}
     out = _preserve_jsonc_comments(original, json.dumps(wire, indent=2))
-    # Parses back to the same data.
     assert _parse_jsonc(out) == wire
-    # All comment blocks preserved.
     assert "// header line" in out
     assert "/* block header */" in out
     assert "// before notes" in out
     assert "/* before beats */" in out
     assert "// trailing comment" in out
     assert "// footer" in out
-    # Footer sits on its own line after the closing brace.
     assert "}\n// footer" in out
 
 
 def test_round_trip_drops_comments_for_removed_keys():
-    """If a top-level key was removed from the new wire, its before-key comment
-    is dropped (acceptable for phase 1)."""
+    """If a key was removed from the new wire, its before-key comment drops."""
     original = (
         '{\n'
         '  // before-old\n'
@@ -194,20 +225,142 @@ def test_round_trip_no_comments_is_identity():
     assert out == original
 
 
-def test_round_trip_nested_comments_are_dropped():
-    """Comments inside nested arrays/objects are not preserved (phase 1)."""
+# ── _preserve_jsonc_comments (nested round trip — phase 2) ───────────────────
+
+def test_round_trip_preserves_nested_before_key_inside_note():
+    """A comment before a key inside a note object survives a save, even when
+    a non-``t`` field of that note is edited (the note's ``t`` anchors it)."""
     original = (
         '{\n'
         '  "notes": [\n'
-        '    // inside notes — will be dropped\n'
-        '    {"t": 0}\n'
+        '    {\n'
+        '      "t": 0.5,\n'
+        '      // tricky bend here\n'
+        '      "f": 5,\n'
+        '      "s": 0\n'
+        '    }\n'
         '  ]\n'
         '}'
     )
-    wire = {"notes": [{"t": 0}]}
+    wire = _parse_jsonc(original)
+    wire["notes"][0]["f"] = 7  # edit fret; t unchanged -> comment survives
     out = _preserve_jsonc_comments(original, json.dumps(wire, indent=2))
     assert _parse_jsonc(out) == wire
-    assert "// inside notes" not in out
+    assert "// tricky bend here" in out
+    # The comment lands on its own line, indented to match the key it precedes.
+    assert '      // tricky bend here\n      "f"' in out
+
+
+def test_round_trip_preserves_nested_before_elem_comment():
+    """A comment before an array element survives a save when the element is
+    unchanged."""
+    original = (
+        '{\n'
+        '  "notes": [\n'
+        '    // first note\n'
+        '    {"t": 0.5, "f": 5}\n'
+        '  ]\n'
+        '}'
+    )
+    wire = _parse_jsonc(original)
+    out = _preserve_jsonc_comments(original, json.dumps(wire, indent=2))
+    assert _parse_jsonc(out) == wire
+    assert "// first note" in out
+
+
+def test_round_trip_comment_follows_element_across_insertion():
+    """A comment anchored to an element follows that element when a new element
+    is inserted before it (the anchor is the element's ``t``, not its index)."""
+    original = (
+        '{\n'
+        '  "notes": [\n'
+        '    {"t": 0.5, "f": 5},\n'
+        '    // this one is the bend\n'
+        '    {"t": 1.0, "f": 3}\n'
+        '  ]\n'
+        '}'
+    )
+    wire = _parse_jsonc(original)
+    wire["notes"].insert(1, {"t": 0.75, "f": 2})  # new note before t=1.0
+    out = _preserve_jsonc_comments(original, json.dumps(wire, indent=2))
+    assert _parse_jsonc(out) == wire
+    assert "// this one is the bend" in out
+    # The comment now precedes the t=1.0 note (which moved from index 1 to 2).
+    assert '// this one is the bend\n    {\n      "t": 1.0' in out
+
+
+def test_round_trip_comment_drops_when_anchored_note_t_edited():
+    """Editing the anchored note's ``t`` changes its signature, so a before-elem
+    or nested before-key comment drops — the documented best-effort limit."""
+    original = (
+        '{\n'
+        '  "notes": [\n'
+        '    // bend\n'
+        '    {"t": 1.0, "f": 3}\n'
+        '  ]\n'
+        '}'
+    )
+    wire = _parse_jsonc(original)
+    wire["notes"][0]["t"] = 2.0  # t changed -> sig changes -> comment drops
+    out = _preserve_jsonc_comments(original, json.dumps(wire, indent=2))
+    assert _parse_jsonc(out) == wire
+    assert "// bend" not in out
+
+
+def test_round_trip_preserves_deeply_nested_comment_in_chord_notes():
+    """A comment before a ``t``-less element (a chord-note) survives when that
+    element is unchanged, but drops when any of its fields is edited (no stable
+    primary key to anchor to)."""
+    original = (
+        '{\n'
+        '  "chords": [\n'
+        '    {\n'
+        '      "t": 0.5,\n'
+        '      "notes": [\n'
+        '        // first string\n'
+        '        {"s": 0, "f": 3}\n'
+        '      ]\n'
+        '    }\n'
+        '  ]\n'
+        '}'
+    )
+    # Unchanged -> comment survives.
+    wire = _parse_jsonc(original)
+    out = _preserve_jsonc_comments(original, json.dumps(wire, indent=2))
+    assert _parse_jsonc(out) == wire
+    assert "// first string" in out
+    # Edit the t-less chord-note's f -> sig changes -> comment drops.
+    wire2 = _parse_jsonc(original)
+    wire2["chords"][0]["notes"][0]["f"] = 5
+    out2 = _preserve_jsonc_comments(original, json.dumps(wire2, indent=2))
+    assert _parse_jsonc(out2) == wire2
+    assert "// first string" not in out2
+
+
+def test_round_trip_preserves_trailing_comment_in_nested_array():
+    original = (
+        '{\n'
+        '  "notes": [\n'
+        '    {"t": 0.5},\n'
+        '    {"t": 1.0}\n'
+        '    // end of notes\n'
+        '  ]\n'
+        '}'
+    )
+    wire = _parse_jsonc(original)
+    out = _preserve_jsonc_comments(original, json.dumps(wire, indent=2))
+    assert _parse_jsonc(out) == wire
+    assert "// end of notes" in out
+    # Trailing comment indented to the array's close bracket.
+    assert "    // end of notes\n  ]" in out
+
+
+def test_round_trip_preserves_empty_array_trailing_comment():
+    original = '{"notes": [\n    // nothing yet\n  ]}'
+    wire = {"notes": []}
+    out = _preserve_jsonc_comments(original, json.dumps(wire, indent=2))
+    assert _parse_jsonc(out) == wire
+    assert "// nothing yet" in out
 
 
 # ── Combined read → modify → write round trip (the editor's save path) ───────
@@ -219,7 +372,8 @@ def test_jsonc_arrangement_save_round_trip(tmp_path: Path):
     2. read it via _load_arrangement_json (read site)
     3. merge preserved fields into the new wire (as save_song does)
     4. write it back via _preserve_jsonc_comments (write site)
-    5. read it again — comments survive at top level, anchors survive in data
+    5. read it again — comments survive (top-level + nested), anchors survive
+       in data
     """
     existing = tmp_path / "arrangements" / "lead.jsonc"
     existing.parent.mkdir(parents=True)
@@ -230,7 +384,15 @@ def test_jsonc_arrangement_save_round_trip(tmp_path: Path):
         '  "tuning": [0, 0, 0, 0, 0, 0],\n'
         '  "capo": 0,\n'
         '  // edited notes below\n'
-        '  "notes": [{"t": 0.5, "s": 0, "f": 5, "sus": 0}],\n'
+        '  "notes": [\n'
+        '    {\n'
+        '      "t": 0.5,\n'
+        '      // bend on the downbeat\n'
+        '      "f": 5,\n'
+        '      "s": 0,\n'
+        '      "sus": 0\n'
+        '    }\n'
+        '  ],\n'
         '  "chords": [],\n'
         '  /* preserved from a prior save */\n'
         '  "anchors": [{"time": 1.0, "fret": 3, "width": 4}],\n'
@@ -246,27 +408,31 @@ def test_jsonc_arrangement_save_round_trip(tmp_path: Path):
         if _k in data:
             preserved[_k] = data[_k]
 
-    # 2. new wire from the editor (notes edited; anchors not in the UI body).
+    # 2. new wire from the editor (a second note added; anchors not in the UI).
     new_wire = {
         "name": "Lead", "tuning": [0, 0, 0, 0, 0, 0], "capo": 0,
-        "notes": [{"t": 0.5, "s": 0, "f": 5, "sus": 0}, {"t": 1.0, "s": 1, "f": 3}],
+        "notes": [
+            {"t": 0.5, "s": 0, "f": 5, "sus": 0},  # unchanged -> nested comment survives
+            {"t": 1.0, "s": 1, "f": 3, "sus": 0},  # added
+        ],
         "chords": [], "templates": [],
     }
-    # 3. merge preserved fields (mirrors save_song's merge).
     new_wire["anchors"] = preserved.get("anchors", [])
 
-    # 4. write site: preserve comments, serialize pretty-printed.
+    # 3. write site: preserve comments, serialize pretty-printed.
     original_text = existing.read_text(encoding="utf-8")
     written = _preserve_jsonc_comments(original_text, json.dumps(new_wire, indent=2))
     existing.write_text(written, encoding="utf-8")
 
-    # 5. read back: data correct, top-level comments survived.
+    # 4. read back: data correct, top-level + nested comments survived.
     back = _load_arrangement_json(existing)
-    assert len(back["notes"]) == 2          # the edited note count
+    assert len(back["notes"]) == 2
+    assert back["notes"][0]["f"] == 5
     assert back["notes"][1]["f"] == 3
-    assert back["anchors"] == [{"time": 1.0, "fret": 3, "width": 4}]  # preserved
+    assert back["anchors"] == [{"time": 1.0, "fret": 3, "width": 4}]
 
     text_back = existing.read_text(encoding="utf-8")
-    assert "// lead chart — hand-edited" in text_back   # header preserved
-    assert "// edited notes below" in text_back           # before-key preserved
-    assert "/* preserved from a prior save */" in text_back  # before-key preserved
+    assert "// lead chart — hand-edited" in text_back      # header
+    assert "// edited notes below" in text_back            # before-key (top level)
+    assert "// bend on the downbeat" in text_back          # before-key (nested in note)
+    assert "/* preserved from a prior save */" in text_back  # before-key (top level)

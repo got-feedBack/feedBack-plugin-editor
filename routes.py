@@ -93,212 +93,466 @@ def _load_arrangement_json(path) -> dict:
     return json.loads(raw)
 
 
-def _extract_jsonc_top_comments(text: str) -> dict:
-    """Extract top-level comments from a JSONC text for round-trip preservation.
+# ── JSONC comment-preservation scanners ──────────────────────────────────────
+#
+# The editor re-saves arrangements by replacing note content, so preserving
+# comments means anchoring each comment to a stable structural identity and
+# re-inserting it at the matching spot in the freshly serialized JSON. This is
+# best-effort by design (a hand-author who nests a comment deep inside an array
+# of notes owns the consequence of editing that note).
+#
+# Anchoring strategy (phase 2 — full nesting):
+#   - Header comments (before the root ``{``) / footer comments (after ``}``)
+#     re-insert at the file head / tail.
+#   - A comment before a key in an object anchors to ``(*path, 'before-key',
+#     key)``. Re-inserts on its own line before the key, indented to match.
+#   - A comment before an array element anchors to ``(*path, 'before-elem',
+#     sig)`` where ``sig`` is a content signature of the element: objects with a
+#     numeric ``t`` key anchor by ``t=<value>`` (the primary key for
+#     notes/beats/sections/anchors/etc.); other objects anchor by a compact
+#     sorted-JSON hash; scalars/strings anchor by their JSON rendering. Because
+#     the anchor is the element's *content identity* (not its index), the
+#     comment follows the element across reorders / additions / removals of
+#     *other* elements. If the anchored element itself is edited (its ``t``
+#     changes) or removed, the comment drifts or drops — the documented
+#     best-effort limit.
+#   - A trailing comment (before a closing ``}``/`]``) anchors to
+#     ``(*path, 'trailing')``. Re-inserts before the close, indented to match.
+#   - A comment between ``:`` and a value (rare) anchors to ``(*path,
+#     'before-value', key)`` and re-inserts inline after ``:``.
+#
+# Path components for array-element levels are element *signatures* (not
+# indices), so a comment nested inside an array element (e.g. a before-key
+# comment on a note object inside ``notes[]``) re-anchors correctly even when
+# notes are added/removed before it.
 
-    Returns a dict with keys:
-      ``header``: list[str] — comments before the opening ``{``.
-      ``before_key``: dict[str, list[str]] — comments immediately preceding a
-        top-level key (between ``{`` / ``,`` and the key).
-      ``trailing``: list[str] — comments after the last top-level value but
-        before the closing ``}``.
-      ``footer``: list[str] — comments after the closing ``}``.
+def _jsonc_skip_ws_comments(text: str, pos: int, n: int) -> tuple[int, list[str]]:
+    """Skip whitespace and comments from ``pos``. Returns (new_pos, comments)."""
+    comments: list[str] = []
+    while pos < n:
+        ch = text[pos]
+        if ch in " \t\r\n":
+            pos += 1
+            continue
+        if ch == "/" and pos + 1 < n and text[pos + 1] == "/":
+            end = text.find("\n", pos)
+            end = n if end == -1 else end
+            comments.append(text[pos:end])
+            pos = end
+            continue
+        if ch == "/" and pos + 1 < n and text[pos + 1] == "*":
+            end = text.find("*/", pos + 2)
+            end = n if end == -1 else end + 2
+            comments.append(text[pos:end])
+            pos = end
+            continue
+        break
+    return pos, comments
 
-    Comments inside nested arrays/objects (depth > 1) are NOT captured — that
-    is the documented phase-1 limitation. Each entry in the lists is the raw
-    comment text including its ``//`` or ``/* */`` delimiters.
-    """
-    header: list[str] = []
-    before_key: dict[str, list[str]] = {}
-    trailing: list[str] = []
-    footer: list[str] = []
 
-    i = 0
-    n = len(text)
-    depth = 0
-    in_string = False
-    expecting_key = False  # at depth 1, next string is a top-level key
-    after_colon = False     # at depth 1, just saw ':' → next is a value
-    seen_root = False       # have we opened the root object?
-    pending: list[str] = []  # comments waiting to attach to the next key
-
+def _jsonc_read_string(text: str, pos: int, n: int) -> tuple[str, int]:
+    """``pos`` is at the opening ``"``. Returns (decoded_value, end_pos) where
+    end_pos is one past the closing ``"``. Decodes JSON string escapes."""
+    out: list[str] = []
+    i = pos + 1
     while i < n:
         ch = text[i]
-
-        if in_string:
-            if ch == "\\" and i + 1 < n:
+        if ch == "\\":
+            if i + 1 < n:
+                esc = text[i + 1]
+                simple = {"n": "\n", "t": "\t", "r": "\r", "b": "\b",
+                          "f": "\f", '"': '"', "\\": "\\", "/": "/"}
+                if esc in simple:
+                    out.append(simple[esc])
+                    i += 2
+                    continue
+                if esc == "u":
+                    hex4 = text[i + 2:i + 6]
+                    try:
+                        out.append(chr(int(hex4, 16)))
+                    except (ValueError, IndexError):
+                        out.append("?")
+                    i += 6
+                    continue
+                out.append(esc)
                 i += 2
                 continue
-            if ch == '"':
-                in_string = False
-                if depth == 1 and expecting_key and not after_colon:
-                    # Read the key string content to anchor pending comments.
-                    # (We already consumed the closing quote above; the key is
-                    # the text from the opening quote to here. Find it by
-                    # scanning back — simplest: re-scan from a marker.)
-                    # Walk back to the opening quote.
-                    j = i - 1
-                    while j > 0 and text[j] != '"':
-                        j -= 1
-                    # j points at the opening quote of this key string.
-                    key = text[j + 1:i]
-                    if pending:
-                        before_key[key] = pending
-                        pending = []
-                    expecting_key = False
             i += 1
             continue
-
-        # Not in a string.
         if ch == '"':
-            in_string = True
-            i += 1
-            continue
-
-        if ch == "/" and i + 1 < n and text[i + 1] == "/":
-            # Line comment — scan to end of line.
-            end = text.find("\n", i)
-            if end == -1:
-                end = n
-            comment = text[i:end]
-            if not seen_root:
-                header.append(comment)
-            elif depth == 0:
-                footer.append(comment)
-            elif depth == 1:
-                pending.append(comment)
-            # depth > 1 → nested comment, drop (phase-1 limitation)
-            i = end
-            continue
-
-        if ch == "/" and i + 1 < n and text[i + 1] == "*":
-            # Block comment — scan to */.
-            end = text.find("*/", i + 2)
-            if end == -1:
-                end = n
-            else:
-                end += 2
-            comment = text[i:end]
-            if not seen_root:
-                header.append(comment)
-            elif depth == 0:
-                footer.append(comment)
-            elif depth == 1:
-                pending.append(comment)
-            i = end
-            continue
-
-        if ch == "{":
-            depth += 1
-            if depth == 1 and not seen_root:
-                seen_root = True
-                expecting_key = True
-                after_colon = False
-            elif depth == 2:
-                expecting_key = False
-                after_colon = False
-            i += 1
-            continue
-
-        if ch == "[":
-            depth += 1
-            if depth == 1 and not seen_root:
-                seen_root = True  # array root — no keys to anchor to
-            expecting_key = False
-            after_colon = False
-            i += 1
-            continue
-
-        if ch == "}" or ch == "]":
-            depth -= 1
-            if depth == 1:
-                # Closing a nested value inside the root — back to expecting
-                # the next top-level key after the upcoming comma.
-                after_colon = False
-                expecting_key = False
-            elif depth == 0 and seen_root:
-                # Closing the root object. Pending comments are trailing.
-                if pending:
-                    trailing.extend(pending)
-                    pending = []
-            i += 1
-            continue
-
-        if ch == "," and depth == 1:
-            expecting_key = True
-            after_colon = False
-            # Pending comments that didn't attach to a key (e.g. a comment
-            # after a value but before the comma) stay pending for the next key.
-            i += 1
-            continue
-
-        if ch == ":" and depth == 1:
-            after_colon = True
-            expecting_key = False
-            i += 1
-            continue
-
+            return "".join(out), i + 1
+        out.append(ch)
         i += 1
+    return "".join(out), n
 
-    return {
-        "header": header,
-        "before_key": before_key,
-        "trailing": trailing,
-        "footer": footer,
-    }
+
+def _jsonc_read_scalar(text: str, pos: int, n: int) -> tuple[str, int]:
+    """``pos`` is at the start of a scalar (number/true/false/null). Returns
+    (raw_text, end_pos) where end_pos is one past the scalar."""
+    i = pos
+    while i < n:
+        ch = text[i]
+        if ch in ",]} \t\r\n":
+            break
+        i += 1
+    return text[pos:i], i
+
+
+def _jsonc_find_matching(text: str, pos: int, n: int) -> int:
+    """``pos`` is at ``{`` or ``[``. Returns the index of the matching ``}``/``]``,
+    accounting for strings, nested brackets, and comments. Returns ``n`` if
+    unmatched."""
+    open_ch = text[pos]
+    close_ch = "}" if open_ch == "{" else "]"
+    depth = 0
+    i = pos
+    while i < n:
+        ch = text[i]
+        if ch == '"':
+            _, i = _jsonc_read_string(text, i, n)
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            end = text.find("\n", i)
+            i = n if end == -1 else end
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+            continue
+        if ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return n
+
+
+def _jsonc_elem_signature(elem) -> str:
+    """Stable content signature for an array element, used to anchor comments.
+
+    Objects with a numeric ``t`` key anchor by ``t=<json value>`` (the primary
+    key for notes/beats/sections/anchors — stable across edits to the element's
+    *other* fields). Other objects anchor by their compact sorted-JSON hash.
+    Scalars/strings anchor by their JSON rendering.
+    """
+    if isinstance(elem, dict):
+        t = elem.get("t")
+        if isinstance(t, (int, float)) and not isinstance(t, bool):
+            return f"t={json.dumps(t)}"
+        return json.dumps(elem, sort_keys=True, separators=(",", ":"))
+    return json.dumps(elem, separators=(",", ":"))
+
+
+def _jsonc_extract_comments(text: str) -> dict:
+    """Extract comments from a JSONC text, anchored to structural positions.
+
+    Returns ``dict[anchor_tuple, list[comment_str]]``. Each comment includes its
+    ``//`` or ``/* */`` delimiters. Anchor tuples:
+      ``('header',)`` / ``('footer',)``
+      ``(*path, 'before-key', key)``
+      ``(*path, 'before-value', key)``
+      ``(*path, 'before-elem', sig)``
+      ``(*path, 'trailing')``
+    where ``path`` is a tuple of ancestor keys (strings) and array-element
+    signatures (strings), so nested anchors survive reorders.
+    """
+    attachments: dict = {}
+    n = len(text)
+    pos, header = _jsonc_skip_ws_comments(text, 0, n)
+    if header:
+        attachments[("header",)] = header
+    if pos >= n:
+        return attachments
+    open_ch = text[pos]
+    if open_ch not in "{[":
+        return attachments
+    end = _jsonc_find_matching(text, pos, n)
+    root_text = text[pos:end + 1]
+    if open_ch == "{":
+        _jsonc_process_obj(root_text, (), attachments, [])
+    else:
+        _jsonc_process_arr(root_text, (), attachments, [])
+    _, footer = _jsonc_skip_ws_comments(text, end + 1, n)
+    if footer:
+        attachments[("footer",)] = footer
+    return attachments
+
+
+def _jsonc_process_obj(text: str, path: tuple, attachments: dict,
+                       pending_initial: list[str]) -> None:
+    """Process a full object (including ``{`` and ``}``) at ``path``."""
+    n = len(text)
+    i = 1  # past '{'
+    pending = list(pending_initial)
+    while i < n:
+        i, comments = _jsonc_skip_ws_comments(text, i, n)
+        pending += comments
+        if i >= n:
+            break
+        ch = text[i]
+        if ch == "}":
+            if pending:
+                attachments[(*path, "trailing")] = pending
+                pending = []
+            break
+        if ch == ",":
+            i += 1
+            continue
+        if ch == '"':
+            key, i = _jsonc_read_string(text, i, n)
+            if pending:
+                attachments[(*path, "before-key", key)] = pending
+                pending = []
+            # Comments between the key and ':' / between ':' and the value
+            # attach as before-value (re-inserted inline after ':').
+            i, c1 = _jsonc_skip_ws_comments(text, i, n)
+            before_value = list(c1)
+            if i < n and text[i] == ":":
+                i += 1
+            i, c2 = _jsonc_skip_ws_comments(text, i, n)
+            before_value += c2
+            if before_value:
+                attachments[(*path, "before-value", key)] = before_value
+            if i >= n:
+                break
+            vch = text[i]
+            if vch == "{":
+                end = _jsonc_find_matching(text, i, n)
+                _jsonc_process_obj(text[i:end + 1], path + (key,), attachments, [])
+                i = end + 1
+            elif vch == "[":
+                end = _jsonc_find_matching(text, i, n)
+                _jsonc_process_arr(text[i:end + 1], path + (key,), attachments, [])
+                i = end + 1
+            elif vch == '"':
+                _, i = _jsonc_read_string(text, i, n)
+            else:
+                _, i = _jsonc_read_scalar(text, i, n)
+            continue
+        break
+
+
+def _jsonc_process_arr(text: str, path: tuple, attachments: dict,
+                       pending_initial: list[str]) -> None:
+    """Process a full array (including ``[`` and ``]``) at ``path``."""
+    n = len(text)
+    i = 1  # past '['
+    pending = list(pending_initial)
+    while i < n:
+        i, comments = _jsonc_skip_ws_comments(text, i, n)
+        pending += comments
+        if i >= n:
+            break
+        ch = text[i]
+        if ch == "]":
+            if pending:
+                attachments[(*path, "trailing")] = pending
+                pending = []
+            break
+        if ch == ",":
+            i += 1
+            continue
+        elem_start = i
+        if ch == "{" or ch == "[":
+            end = _jsonc_find_matching(text, i, n)
+            elem_raw = text[i:end + 1]
+            i = end + 1
+        elif ch == '"':
+            _, i = _jsonc_read_string(text, i, n)
+            elem_raw = text[elem_start:i]
+        else:
+            _, i = _jsonc_read_scalar(text, i, n)
+            elem_raw = text[elem_start:i]
+        try:
+            elem_val = _parse_jsonc(elem_raw)
+        except Exception:
+            elem_val = None
+        sig = _jsonc_elem_signature(elem_val)
+        if pending:
+            attachments[(*path, "before-elem", sig)] = pending
+            pending = []
+        if ch == "{":
+            _jsonc_process_obj(elem_raw, path + (sig,), attachments, [])
+        elif ch == "[":
+            _jsonc_process_arr(elem_raw, path + (sig,), attachments, [])
+        continue
+
+
+def _jsonc_collect_obj(text: str, open_off: int, path: tuple,
+                       attachments: dict, insertions: list) -> int:
+    """Walk a clean-JSON object (no comments) at absolute offset ``open_off`` and
+    record comment insertions for any anchors present in ``attachments``.
+    Returns the offset one past the closing ``}``."""
+    n = len(text)
+    i = open_off + 1
+    while i < n:
+        i, _ = _jsonc_skip_ws_comments(text, i, n)
+        if i >= n:
+            break
+        ch = text[i]
+        if ch == "}":
+            cmts = attachments.get((*path, "trailing"))
+            if cmts:
+                insertions.append(("trailing", i, cmts))
+            return i + 1
+        if ch == ",":
+            i += 1
+            continue
+        if ch == '"':
+            key_off = i
+            key, i = _jsonc_read_string(text, i, n)
+            i, _ = _jsonc_skip_ws_comments(text, i, n)
+            if i < n and text[i] == ":":
+                i += 1
+            i, _ = _jsonc_skip_ws_comments(text, i, n)
+            cmts = attachments.get((*path, "before-key", key))
+            if cmts:
+                insertions.append(("line_before", key_off, cmts))
+            cmts2 = attachments.get((*path, "before-value", key))
+            if cmts2:
+                insertions.append(("inline_before", i, cmts2))
+            if i >= n:
+                break
+            vch = text[i]
+            if vch == "{":
+                i = _jsonc_collect_obj(text, i, path + (key,), attachments, insertions)
+            elif vch == "[":
+                i = _jsonc_collect_arr(text, i, path + (key,), attachments, insertions)
+            elif vch == '"':
+                _, i = _jsonc_read_string(text, i, n)
+            else:
+                _, i = _jsonc_read_scalar(text, i, n)
+            continue
+        break
+    return i
+
+
+def _jsonc_collect_arr(text: str, open_off: int, path: tuple,
+                       attachments: dict, insertions: list) -> int:
+    """Walk a clean-JSON array (no comments) at absolute offset ``open_off`` and
+    record comment insertions for any anchors present in ``attachments``.
+    Returns the offset one past the closing ``]``."""
+    n = len(text)
+    i = open_off + 1
+    while i < n:
+        i, _ = _jsonc_skip_ws_comments(text, i, n)
+        if i >= n:
+            break
+        ch = text[i]
+        if ch == "]":
+            cmts = attachments.get((*path, "trailing"))
+            if cmts:
+                insertions.append(("trailing", i, cmts))
+            return i + 1
+        if ch == ",":
+            i += 1
+            continue
+        elem_off = i
+        if ch == "{" or ch == "[":
+            end = _jsonc_find_matching(text, i, n)
+            elem_raw = text[i:end + 1]
+            i_after = end + 1
+        elif ch == '"':
+            _, i_after = _jsonc_read_string(text, i, n)
+            elem_raw = text[i:i_after]
+        else:
+            _, i_after = _jsonc_read_scalar(text, i, n)
+            elem_raw = text[i:i_after]
+        sig = _jsonc_elem_signature(json.loads(elem_raw))
+        cmts = attachments.get((*path, "before-elem", sig))
+        if cmts:
+            insertions.append(("line_before", elem_off, cmts))
+        if ch == "{":
+            _jsonc_collect_obj(text, i, path + (sig,), attachments, insertions)
+        elif ch == "[":
+            _jsonc_collect_arr(text, i, path + (sig,), attachments, insertions)
+        i = i_after
+        continue
+    return i
 
 
 def _preserve_jsonc_comments(original_text: str, new_json_str: str) -> str:
-    """Re-insert top-level comments from ``original_text`` into
-    ``new_json_str`` (a freshly json.dumps-ed, indent=2 object).
+    """Re-insert comments from ``original_text`` into ``new_json_str`` (a freshly
+    ``json.dumps(..., indent=2)``-ed object), preserving nested comments on a
+    best-effort basis.
 
-    Header comments go before the opening ``{``; ``before_key`` comments go on
-    their own line(s) immediately before the line containing the top-level key;
-    trailing comments go before the closing ``}``; footer comments go after the
-    closing ``}``. Comments whose anchor key no longer exists in the new JSON
-    are dropped (acceptable for phase 1 — the editor replaces note content, not
-    top-level keys).
+    Each comment is anchored to a structural identity in the original (header,
+    footer, before-key, before-value, before-elem, trailing) and re-inserted at
+    the matching spot in the new JSON. Comments whose anchor (key / element
+    signature) no longer exists in the new JSON are dropped. Comments anchored
+    to an array element whose ``t`` was edited will drift or drop — the
+    documented best-effort limit (a hand-author who nests a comment inside an
+    array of notes owns the consequence of editing that note).
     """
-    extracted = _extract_jsonc_top_comments(original_text)
-    header = extracted["header"]
-    before_key = extracted["before_key"]
-    trailing = extracted["trailing"]
-    footer = extracted["footer"]
-
-    if not header and not before_key and not trailing and not footer:
-        return new_json_str  # nothing to preserve
-
-    lines = new_json_str.splitlines(keepends=True)
-    out: list[str] = []
-
-    # Header comments precede the first line (the opening ``{``).
+    attachments = _jsonc_extract_comments(original_text)
+    if not attachments:
+        return new_json_str
+    insertions: list = []
+    n = len(new_json_str)
+    i, _ = _jsonc_skip_ws_comments(new_json_str, 0, n)
+    if i < n and new_json_str[i] == "{":
+        _jsonc_collect_obj(new_json_str, i, (), attachments, insertions)
+    elif i < n and new_json_str[i] == "[":
+        _jsonc_collect_arr(new_json_str, i, (), attachments, insertions)
+    header = attachments.get(("header",))
     if header:
-        for h in header:
-            out.append(h if h.endswith("\n") else h + "\n")
-
-    for line in lines:
-        # Is this line a top-level key line? Matches `  "key":` (2-space indent
-        # from json.dumps(indent=2) for a root object's direct children).
-        m = re.match(r'^  "([^"]+)":', line)
-        if m:
-            key = m.group(1)
-            comments = before_key.get(key)
-            if comments:
-                for c in comments:
-                    out.append(c if c.endswith("\n") else c + "\n")
-        # Is this the closing brace? Insert trailing comments before it.
-        if line.strip() == "}":
-            for c in trailing:
-                out.append(c if c.endswith("\n") else c + "\n")
-        out.append(line)
-
+        insertions.append(("line_before", 0, header))
+    footer = attachments.get(("footer",))
     if footer:
-        if out and not out[-1].endswith("\n"):
-            out.append("\n")
-        for f in footer:
-            out.append(f if f.endswith("\n") else f + "\n")
-
-    return "".join(out)
+        insertions.append(("footer", n, footer))
+    if not insertions:
+        return new_json_str
+    # Apply in descending offset order so earlier splice points stay valid.
+    insertions.sort(key=lambda r: r[1], reverse=True)
+    out = new_json_str
+    for mode, off, cmts in insertions:
+        if mode == "footer":
+            out = out[:off] + "\n" + "".join(c + "\n" for c in cmts) + out[off:]
+        elif mode == "trailing":
+            # A trailing comment goes one indent level deeper than the close
+            # bracket (matching the element/key indent, as a hand-author
+            # writes it). Empty containers rendered inline ([]/{}) are expanded
+            # so a // line comment doesn't eat the close bracket.
+            line_start = out.rfind("\n", 0, off) + 1
+            before = out[line_start:off]
+            if before.strip() == "":
+                inner = before + "  "
+                piece = "".join(inner + c + "\n" for c in cmts)
+                out = out[:line_start] + piece + out[line_start:]
+            elif off > 0 and out[off - 1] in "[{":
+                ws = 0
+                while ws < len(before) and before[ws] in " \t":
+                    ws += 1
+                bracket_indent = before[:ws]
+                inner_indent = bracket_indent + "  "
+                piece = "\n" + "".join(inner_indent + c + "\n" for c in cmts) + bracket_indent
+                out = out[:off] + piece + out[off:]
+            else:
+                piece = " " + " ".join(c.replace("//", "/*", 1) for c in cmts) + " "
+                out = out[:off] + piece + out[off:]
+        elif mode == "line_before":
+            # Insert before the line containing ``off`` — but only when ``off``
+            # is at the start of its line (the expanded-container case, e.g. a
+            # key / element / close bracket on its own line). When ``off`` is
+            # inline (an empty ``[]``/``{}`` rendered inline by json.dumps),
+            # inserting at line_start would grab the whole line prefix and
+            # corrupt it — and a ``//`` line comment placed inline before the
+            # close bracket would eat the bracket (``[ // c ]`` strips to
+            # ``[ ``). Defer to the ``trailing``/inline handling instead.
+            line_start = out.rfind("\n", 0, off) + 1
+            before = out[line_start:off]
+            if before.strip() == "":
+                piece = "".join(before + c + "\n" for c in cmts)
+                out = out[:line_start] + piece + out[line_start:]
+            else:
+                piece = " " + " ".join(c.replace("//", "/*", 1) for c in cmts) + " "
+                out = out[:off] + piece + out[off:]
+        elif mode == "inline_before":
+            piece = " ".join(cmts) + " "
+            out = out[:off] + piece + out[off:]
+    return out
 
 
 def _split_stems_best_effort(sloppak_path) -> bool:

@@ -13,16 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `//` line and `/* */` block comments). The read path (which loads the
   existing arrangement to preserve `anchors`/`handshapes`/`phrases`/`tones`
   on save) strips comments via a string-aware regex mirroring the spec's
-  reference validator. The write path preserves top-level comments from the
-  original file — header comments, comments before a top-level key, trailing
-  comments before the closing `}`, and footer comments — by re-inserting them
-  into the freshly serialized (`indent=2`) JSON. Comments inside nested
-  arrays/objects (e.g. inside `notes[]`) are dropped on save, the documented
-  phase-1 limitation (the editor replaces note content, so re-anchoring
-  nested comments to the right note is unreliable). `.json` arrangements are
-  byte-identical to before (still compact `separators=(",", ":")`). Orphan
-  cleanup now also removes `.jsonc` arrangement files after a remove. Tests:
-  `tests/test_jsonc_save.py`.
+  reference validator. The write path preserves comments from the original
+  file — including comments nested inside arrays/objects — by anchoring each
+  comment to a structural identity and re-inserting it at the matching spot in
+  the freshly serialized (`indent=2`) JSON:
+  - Header / footer comments re-insert at the file head / tail.
+  - A comment before a key (at any nesting depth) re-inserts on its own line
+    before the key, indented to match.
+  - A comment before an array element anchors to the element's *content
+    signature* (the `t` value for objects that have one — the primary key for
+    notes/beats/sections/anchors; else a compact sorted-JSON hash), so the
+    comment follows the element across reorders / additions / removals of
+    *other* elements. Editing the anchored element's `t` (or any field of a
+    `t`-less element) changes its signature and the comment drifts or drops —
+    the documented best-effort limit (a hand-author who nests a comment deep
+    inside an array of notes owns the consequence of editing that note).
+  - Trailing comments (before a closing `}`/`]`) re-insert one indent level
+    deeper than the close bracket; empty containers rendered inline (`[]`/`{}`)
+    are expanded so a `//` line comment doesn't eat the close bracket.
+  `.json` arrangements are byte-identical to before (still compact
+  `separators=(",", ":")`). Orphan cleanup now also removes `.jsonc`
+  arrangement files after a remove. Tests: `tests/test_jsonc_save.py`.
 
 ### Fixed
 - **Add / rename section, and edit fret/bend/slide/anchor now work in
