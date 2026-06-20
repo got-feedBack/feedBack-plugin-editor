@@ -555,6 +555,65 @@ function remapHandshapeChordIds(handshapes, oldToNew) {
 }
 /* @pure:chord-relink:end */
 
+/* @pure:bend-shape:start — pure, no browser deps; node-tested by
+ * tests/bend_shape.test.js. Helpers for authoring the §6.2.1 bend curve. */
+
+// Bend-intent (`bt`) options, in spec order.
+const BEND_INTENTS = [
+    { v: 0, label: 'Bend up' },
+    { v: 1, label: 'Release' },
+    { v: 2, label: 'Pre-bend' },
+    { v: 3, label: 'Pre-bend + release' },
+    { v: 4, label: 'Round-trip' },
+];
+
+// Generate a sensible bend curve ([{t, v}], t = seconds-from-onset) for a
+// given intent `bt`, peak `bn` and note `sustain`. Used to seed the curve
+// editor and by the preset buttons.
+function bendPresetCurve(bt, bn, sustain) {
+    const T = sustain > 0 ? sustain : 1.0;
+    const peak = Math.max(0, bn) || 0;
+    const mid = Math.round(T * 0.5 * 1000) / 1000;
+    const end = Math.round(T * 1000) / 1000;
+    switch (Number(bt) || 0) {
+        case 1: // release: held bend let down to pitch
+            return [{ t: 0, v: peak }, { t: end, v: 0 }];
+        case 2: // pre-bend: already bent, held
+            return [{ t: 0, v: peak }, { t: end, v: peak }];
+        case 3: // pre-bend + release
+            return [{ t: 0, v: peak }, { t: mid, v: peak }, { t: end, v: 0 }];
+        case 4: // round-trip: up then back down
+            return [{ t: 0, v: 0 }, { t: mid, v: peak }, { t: end, v: 0 }];
+        default: // 0 up
+            return [{ t: 0, v: 0 }, { t: end, v: peak }];
+    }
+}
+
+// Sanitize an authored curve for persistence: drop non-finite / non-dict
+// entries, round (t to 3, v to 1) and sort by t. No magnitude clamp — mirrors
+// core's `_sanitize_bend_curve` / the backend `_safe_bend_curve` (a bend can
+// legitimately exceed the editor's 3-semitone authoring cap), and the curve
+// canvas already bounds authored values. Returns null for empty / all-invalid
+// input so an absent curve serializes as omitted, never [].
+function sanitizeBendCurve(raw) {
+    if (!Array.isArray(raw)) return null;
+    const out = [];
+    for (const p of raw) {
+        if (!p || typeof p !== 'object') continue;
+        const t = Number(p.t);
+        const v = Number(p.v);
+        if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
+        out.push({
+            t: Math.round(t * 1000) / 1000,
+            v: Math.round(v * 10) / 10,
+        });
+    }
+    if (!out.length) return null;
+    out.sort((a, b) => a.t - b.t);
+    return out;
+}
+/* @pure:bend-shape:end */
+
 // Reconstruct chords from notes at the same time before saving
 function reconstructChords() {
     if (!S.arrangements.length) return;
@@ -1233,6 +1292,75 @@ class ChangeFretCmd {
     }
     exec() { notes()[this.index].fret = this.newFret; }
     rollback() { notes()[this.index].fret = this.oldFret; }
+}
+
+// Set the full bend shape (peak `bend`, intent `bend_intent`, curve
+// `bend_values` — §6.2.1) on one or more notes as a single undoable edit.
+// Snapshots the prior bend triple per note so undo restores it exactly.
+class SetBendShapeCmd {
+    constructor(indices, bn, bt, bnv) {
+        this.indices = indices.slice();
+        this.bn = bn;
+        this.bt = bt;
+        // Store a defensive copy; null when the note has no curve.
+        this.bnv = Array.isArray(bnv) && bnv.length
+            ? bnv.map(p => ({ t: p.t, v: p.v }))
+            : null;
+        this.old = this.indices.map(i => {
+            const t = notes()[i].techniques || {};
+            return {
+                bend: t.bend,
+                bend_intent: t.bend_intent,
+                bend_values: t.bend_values,
+            };
+        });
+    }
+    exec() {
+        for (const i of this.indices) {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques.bend = this.bn;
+            n.techniques.bend_intent = this.bt;
+            n.techniques.bend_values = this.bnv
+                ? this.bnv.map(p => ({ t: p.t, v: p.v }))
+                : null;
+        }
+    }
+    rollback() {
+        this.indices.forEach((i, k) => {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            const o = this.old[k];
+            n.techniques.bend = o.bend;
+            n.techniques.bend_intent = o.bend_intent;
+            n.techniques.bend_values = o.bend_values;
+        });
+    }
+}
+
+// Set only the bend intent (`bt`) on a set of notes — used by the inspector
+// dropdown so changing intent across a multi-selection doesn't flatten each
+// note's distinct peak/curve (which the full SetBendShapeCmd would).
+class SetBendIntentCmd {
+    constructor(indices, bt) {
+        this.indices = indices.slice();
+        this.bt = Number(bt) || 0;
+        this.old = this.indices.map(i => (notes()[i].techniques || {}).bend_intent);
+    }
+    exec() {
+        for (const i of this.indices) {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques.bend_intent = this.bt;
+        }
+    }
+    rollback() {
+        this.indices.forEach((i, k) => {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques.bend_intent = this.old[k];
+        });
+    }
 }
 
 // ── Move-to-string helpers ──────────────────────────────────────────
@@ -2445,29 +2573,202 @@ async function promptFret(idx) {
     _renderInspector();
 }
 
+// Bend authoring (§6.2.1): a modal with the peak amount (`bn`), an intent
+// dropdown (`bt`) and an interactive drag-point curve editor (`bnv`). Applies
+// to the full selection when the right-clicked note is part of it, else just
+// that note. Wrapped in SetBendShapeCmd so the whole edit is one undo step.
 async function promptBend(idx) {
     hideContextMenu();
     const n = notes()[idx];
+    if (!n) return;
+    const targets = (S.sel && S.sel.size && S.sel.has(idx)) ? [...S.sel] : [idx];
     const techs = n.techniques || {};
-    const current = techs.bend || 0;
-    const val = await _editorPromptText({
-        title: 'Bend',
-        label: 'Bend amount in semitones (0 = none, 1 = full, 0.5 = half)',
-        value: String(current),
+    const startBn = Number(techs.bend) || 0;
+    const startBt = Number(techs.bend_intent) || 0;
+    const startBnv = sanitizeBendCurve(techs.bend_values)
+        || bendPresetCurve(startBt, startBn || 1, n.sustain);
+    const result = await _editorBendModal({
+        bn: startBn, bt: startBt, bnv: startBnv, sustain: n.sustain,
     });
-    if (val === null) return;
-    // Strict-numeric parse — `Number('1abc')` is NaN, while
-    // `parseFloat('1abc')` would partial-parse to `1`. Matches the
-    // inspector's `_coerceInspectorNumber` for the same field so both
-    // entry points accept/reject the same set of inputs.
-    const s = String(val).trim();
-    const parsed = s === '' ? NaN : Number(s);
-    if (!Number.isFinite(parsed)) return;
-    const bend = Math.max(0, Math.min(3, parsed));
-    if (!n.techniques) n.techniques = {};
-    n.techniques.bend = bend;
+    if (result === null) return;  // cancelled
+    S.history.exec(new SetBendShapeCmd(
+        targets, result.bn, result.bt, sanitizeBendCurve(result.bnv)));
     draw();
     _renderInspector();
+    updateStatus();
+}
+
+// The bend-shape modal. Resolves to {bn, bt, bnv} on OK, or null on Cancel.
+// The curve editor: left-click empty space adds a point, drag moves it,
+// right-click deletes it; x = time across the note, y = semitones.
+function _editorBendModal({ bn = 0, bt = 0, bnv = null, sustain = 0 } = {}) {
+    return new Promise((resolve) => {
+        document.getElementById('editor-bend-modal')?.remove();
+        const Tmax = sustain > 0 ? sustain : 1.0;
+        let curBn = Math.max(0, Math.min(3, Number(bn) || 0));
+        let curBt = Number(bt) || 0;
+        let pts = (sanitizeBendCurve(bnv) || []).map(p => ({ t: p.t, v: p.v }));
+
+        const modal = document.createElement('div');
+        modal.id = 'editor-bend-modal';
+        modal.className = 'fixed inset-0 bg-black/70 z-50 flex items-center justify-center';
+        const inner = document.createElement('div');
+        inner.className = 'bg-dark-800 border border-gray-700 rounded-lg p-6 w-full max-w-md mx-4';
+        inner.setAttribute('role', 'dialog');
+        inner.setAttribute('aria-modal', 'true');
+        inner.setAttribute('aria-label', 'Edit bend');
+
+        let settled = false;
+        const done = (val) => {
+            if (settled) return;
+            settled = true;
+            modal.remove();
+            resolve(val);
+        };
+
+        // Vmax: keep the peak and any authored point visible (>= 3 semis).
+        const vmax = () => Math.max(3, curBn, ...pts.map(p => p.v), 1);
+        const W = 380, H = 170, pad = 26;
+        const toX = (t) => pad + (Tmax > 0 ? t / Tmax : 0) * (W - 2 * pad);
+        const toY = (v) => H - pad - (v / vmax()) * (H - 2 * pad);
+        const fromX = (px) => Math.max(0, Math.min(1, (px - pad) / (W - 2 * pad))) * Tmax;
+        const fromY = (py) => Math.max(0, Math.min(1, (H - pad - py) / (H - 2 * pad))) * vmax();
+
+        inner.innerHTML = `
+            <h3 class="text-lg font-semibold mb-3">Edit bend</h3>
+            <div class="flex items-center gap-3 mb-3">
+                <label class="flex items-center gap-2">
+                    <span class="text-xs text-gray-400">Peak (semi)</span>
+                    <input id="bend-bn" type="number" min="0" max="3" step="0.5" value="${curBn}"
+                        class="w-20 bg-dark-700 border border-gray-600 rounded px-1 py-0.5 text-xs">
+                </label>
+                <label class="flex items-center gap-2 flex-1">
+                    <span class="text-xs text-gray-400">Intent</span>
+                    <select id="bend-bt" class="flex-1 bg-dark-700 border border-gray-600 rounded px-1 py-0.5 text-xs">
+                        ${BEND_INTENTS.map(o => `<option value="${o.v}"${o.v === curBt ? ' selected' : ''}>${o.label}</option>`).join('')}
+                    </select>
+                </label>
+            </div>
+            <canvas id="bend-canvas" width="${W}" height="${H}"
+                class="w-full bg-dark-900 border border-gray-700 rounded cursor-crosshair"></canvas>
+            <p class="text-[11px] text-gray-500 mt-1">Click to add a point · drag to move · right-click to remove. Preset from intent:</p>
+            <div class="flex gap-2 mt-2">
+                <button type="button" id="bend-preset" class="px-2 py-1 bg-dark-700 hover:bg-dark-600 rounded text-xs">Apply preset</button>
+                <button type="button" id="bend-clear" class="px-2 py-1 bg-dark-700 hover:bg-dark-600 rounded text-xs">Clear curve</button>
+                <div class="flex-1"></div>
+                <button type="button" id="bend-cancel" class="px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-sm">Cancel</button>
+                <button type="button" id="bend-ok" class="px-3 py-1 bg-blue-700 hover:bg-blue-600 rounded text-sm">OK</button>
+            </div>`;
+        modal.appendChild(inner);
+        document.body.appendChild(modal);
+
+        const canvas = inner.querySelector('#bend-canvas');
+        const cx = canvas.getContext('2d');
+        const bnInput = inner.querySelector('#bend-bn');
+        const btSelect = inner.querySelector('#bend-bt');
+
+        const redraw = () => {
+            cx.clearRect(0, 0, W, H);
+            // Baseline (0 semis) + frame.
+            cx.strokeStyle = '#374151';
+            cx.lineWidth = 1;
+            cx.strokeRect(pad, pad, W - 2 * pad, H - 2 * pad);
+            cx.beginPath();
+            cx.moveTo(pad, toY(0)); cx.lineTo(W - pad, toY(0));
+            cx.stroke();
+            // Curve through the time-sorted points.
+            const sorted = pts.slice().sort((a, b) => a.t - b.t);
+            if (sorted.length) {
+                cx.strokeStyle = '#60a5fa';
+                cx.lineWidth = 2;
+                cx.beginPath();
+                sorted.forEach((p, i) => {
+                    const X = toX(p.t), Y = toY(p.v);
+                    if (i === 0) cx.moveTo(X, Y); else cx.lineTo(X, Y);
+                });
+                cx.stroke();
+                cx.fillStyle = '#93c5fd';
+                for (const p of sorted) {
+                    cx.beginPath();
+                    cx.arc(toX(p.t), toY(p.v), 4, 0, Math.PI * 2);
+                    cx.fill();
+                }
+            }
+        };
+        redraw();
+
+        const evtPos = (e) => {
+            const r = canvas.getBoundingClientRect();
+            return {
+                px: (e.clientX - r.left) * (W / r.width),
+                py: (e.clientY - r.top) * (H / r.height),
+            };
+        };
+        const nearest = (px, py) => {
+            let best = -1, bestD = 12 * 12;
+            pts.forEach((p, i) => {
+                const dx = toX(p.t) - px, dy = toY(p.v) - py;
+                const d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; best = i; }
+            });
+            return best;
+        };
+        let drag = null;  // dragged point object reference
+        canvas.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            const { px, py } = evtPos(e);
+            const hit = nearest(px, py);
+            if (hit >= 0) {
+                drag = pts[hit];
+            } else {
+                drag = { t: fromX(px), v: fromY(py) };
+                pts.push(drag);
+            }
+            canvas.setPointerCapture(e.pointerId);
+            redraw();
+        });
+        canvas.addEventListener('pointermove', (e) => {
+            if (!drag) return;
+            const { px, py } = evtPos(e);
+            drag.t = fromX(px);
+            drag.v = fromY(py);
+            redraw();
+        });
+        const endDrag = () => {
+            if (!drag) return;
+            drag = null;
+            pts.sort((a, b) => a.t - b.t);
+            redraw();
+        };
+        canvas.addEventListener('pointerup', endDrag);
+        canvas.addEventListener('pointercancel', endDrag);
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            const { px, py } = evtPos(e);
+            const hit = nearest(px, py);
+            if (hit >= 0) { pts.splice(hit, 1); redraw(); }
+        });
+
+        bnInput.addEventListener('change', () => {
+            const v = Number(bnInput.value);
+            curBn = Number.isFinite(v) ? Math.max(0, Math.min(3, v)) : 0;
+            bnInput.value = String(curBn);
+            redraw();
+        });
+        btSelect.addEventListener('change', () => { curBt = Number(btSelect.value) || 0; });
+        inner.querySelector('#bend-preset').onclick = () => {
+            pts = bendPresetCurve(curBt, curBn || 1, sustain).map(p => ({ t: p.t, v: p.v }));
+            redraw();
+        };
+        inner.querySelector('#bend-clear').onclick = () => { pts = []; redraw(); };
+        inner.querySelector('#bend-cancel').onclick = () => done(null);
+        inner.querySelector('#bend-ok').onclick = () => done({
+            bn: curBn, bt: curBt, bnv: sanitizeBendCurve(pts),
+        });
+
+        _installModalKeyboard(modal, inner, () => done(null));
+        bnInput.focus();
+    });
 }
 
 // Parse a `prompt()` fret input strictly: a plain decimal integer
@@ -3359,6 +3660,7 @@ function _renderInspector() {
     // it; when mixed, leave blank and let the user supply a new value
     // that applies to all.
     const sharedBend = _selSharedValue(sel, n => (n.techniques && n.techniques.bend) || 0);
+    const sharedBt = _selSharedValue(sel, n => (n.techniques && n.techniques.bend_intent) || 0);
     const sharedSlide = _selSharedValue(sel, n => {
         const v = n.techniques && n.techniques.slide_to;
         return v === undefined ? -1 : v;
@@ -3400,6 +3702,18 @@ function _renderInspector() {
                     onchange="editorInspectorSetTech('bend', this.value)"
                     class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
             </label>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Bend intent</span>
+                <select onchange="editorInspectorSetBendIntent(this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                    ${BEND_INTENTS.map(o => `<option value="${o.v}"${o.v === (sharedBt ?? 0) ? ' selected' : ''}>${o.label}</option>`).join('')}
+                </select>
+            </label>
+            <div class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Bend curve</span>
+                <button type="button" onclick="editorOpenBendCurve()"
+                    class="flex-1 bg-dark-700 hover:bg-dark-600 border border-gray-700 rounded px-1 py-0.5 text-xs">Edit curve…</button>
+            </div>
             <label class="flex items-center gap-2">
                 <span class="w-24 text-gray-400">Slide to</span>
                 <input type="number" min="-1" max="24" step="1" value="${inputVal(sharedSlide)}"
@@ -3534,6 +3848,23 @@ window.editorInspectorSetTech = (key, raw) => {
     }
     draw();
     updateStatus();
+};
+
+window.editorInspectorSetBendIntent = (raw) => {
+    const idxs = [...(S.sel || [])];
+    if (!idxs.length) return;
+    const bt = Number(raw) || 0;
+    S.history.exec(new SetBendIntentCmd(idxs, bt));
+    draw();
+    updateStatus();
+    _renderInspector();
+};
+
+window.editorOpenBendCurve = () => {
+    const idxs = [...(S.sel || [])];
+    if (!idxs.length) return;
+    // promptBend re-derives the target set from S.sel; pass any selected index.
+    promptBend(idxs[0]);
 };
 
 window.editorInspectorSetFlag = (key, on) => {
