@@ -391,6 +391,54 @@ function flattenChords() {
     arr.notes.sort((a, b) => a.time - b.time);
 }
 
+// E2: coerce a wire-style boolean the way the backend's `_safe_bool` does
+// (routes.py) — native bool, 0/1, and the string spellings true/false/yes/no/
+// 1/0/"". JS `!!"false"` is truthy, so a hand-edited / legacy sloppak with
+// `arp: "false"` must NOT flip arpeggio on during a load→save round-trip.
+function _safeWireBool(v, dflt) {
+    if (typeof v === 'boolean') return v;
+    if (v === null || v === undefined) return dflt;
+    if (typeof v === 'number') return v !== 0;
+    if (typeof v === 'string') {
+        const s = v.trim().toLowerCase();
+        if (s === 'true' || s === '1' || s === 'yes') return true;
+        if (s === 'false' || s === '0' || s === 'no' || s === '') return false;
+    }
+    return dflt;
+}
+
+// E2: coerce a wire-style number the way the backend's `_safe_int` / `float`
+// do — accept native numbers and numeric strings (a hand-edited sloppak may
+// carry `chord_id: "0"`, `start_time: "1.2"`). Returns `dflt` for blank /
+// non-numeric / non-finite input.
+function _wireFloat(v, dflt) {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : dflt;
+    if (typeof v === 'string' && v.trim() !== '') {
+        const n = Number(v);
+        if (Number.isFinite(n)) return n;
+    }
+    return dflt;
+}
+
+// E2: coerce a loaded handshape into a robust editable dict using the wire
+// field names the backend reads (chord_id/start_time/end_time/arp). Mirrors
+// the backend's `_valid_handshape_dicts` coercion (numeric strings accepted)
+// so a hand-edited pack isn't silently dropped. The `arp` default matches the
+// backend's absent-default (False, via `_safe_bool`) so a load→save round-trip
+// of a legacy payload is a no-op; freshly drawn regions default `arp:true` in
+// the authoring UI (PR-B), not here.
+function _normalizeHandshape(hs) {
+    const cidNum = _wireFloat(hs && hs.chord_id, NaN);
+    const cid = Number.isFinite(cidNum) ? Math.trunc(cidNum) : -1;
+    let st = _wireFloat(hs && hs.start_time, 0);
+    let et = _wireFloat(hs && hs.end_time, st);
+    if (st < 0) st = 0;
+    if (et < st) et = st;
+    const rawArp = (hs && hs.arp !== undefined) ? hs.arp
+        : (hs && hs.arpeggio !== undefined) ? hs.arpeggio : false;
+    return { chord_id: cid, start_time: st, end_time: et, arp: _safeWireBool(rawArp, false) };
+}
+
 /* @pure:chord-relink:start — pure, no browser deps; node-tested by
    tests/chord_relink.test.js (extracted + eval'd from this marked block).
    Keep self-contained: these must not reference any other screen.js symbol. */
@@ -449,6 +497,53 @@ function relinkChordTemplate(frets, preserved, L) {
         arp: !!(old && old.arp),
     };
 }
+// E2: build an old-template-index -> new-template-index map for handshapes'
+// `chord_id` references after reconstructChords() rebuilt the template list.
+// `templateMap` (new fret-key -> new index) and `chordTemplates` (the new
+// list) are the rebuild outputs; both may be MUTATED here to append a
+// preserved template for an arpeggio handshape whose voicing produced no
+// same-time chord (so it isn't in the rebuild) — those must not be dropped.
+// Only templates actually referenced by a surviving handshape are appended,
+// and each orphan voicing is appended once (deduped via `templateMap`).
+function buildHandshapeChordIdMap(handshapes, oldTemplates, templateMap, chordTemplates, L) {
+    const oldToNew = {};
+    if (!Array.isArray(handshapes) || !Array.isArray(oldTemplates)
+        || !templateMap || !Array.isArray(chordTemplates)) return oldToNew;
+    for (const hs of handshapes) {
+        if (!hs) continue;
+        const oldIdx = hs.chord_id;
+        if (!Number.isInteger(oldIdx) || oldIdx < 0 || oldIdx >= oldTemplates.length) continue;
+        if (oldIdx in oldToNew) continue;
+        const old = oldTemplates[oldIdx];
+        if (!old || !Array.isArray(old.frets)) continue;
+        const key = _fretKeyForL(old.frets, L);
+        if (key in templateMap) {
+            oldToNew[oldIdx] = templateMap[key];
+        } else {
+            const newIdx = chordTemplates.length;
+            // Re-link through the preserved metadata so the appended template
+            // is width-L normalized and keeps name/displayName/fingers/arp.
+            chordTemplates.push(relinkChordTemplate(old.frets, { [key]: old }, L));
+            templateMap[key] = newIdx;
+            oldToNew[oldIdx] = newIdx;
+        }
+    }
+    return oldToNew;
+}
+// E2: apply an old->new chord_id remap to handshapes, dropping any whose old
+// `chord_id` has no mapping (its template no longer exists -> invalid; the
+// backend validator drops these too). Returns a new array; inputs untouched.
+function remapHandshapeChordIds(handshapes, oldToNew) {
+    if (!Array.isArray(handshapes) || !oldToNew) return [];
+    const out = [];
+    for (const hs of handshapes) {
+        if (!hs) continue;
+        const mapped = oldToNew[hs.chord_id];
+        if (mapped === undefined) continue;
+        out.push({ ...hs, chord_id: mapped });
+    }
+    return out;
+}
 /* @pure:chord-relink:end */
 
 // Reconstruct chords from notes at the same time before saving
@@ -460,6 +555,9 @@ function reconstructChords() {
     // `arr.chord_templates` here) keyed by fret pattern, so the rebuild below
     // preserves name/displayName/fingers/arp instead of blanking them.
     const _preserved = _buildPreservedTemplates(arr.chord_templates, L);
+    // E2: keep the OLD template list so handshape `chord_id` references (old
+    // indices) can be remapped to the rebuilt indices below.
+    const oldTemplates = arr.chord_templates;
     const byTime = {};
     const soloNotes = [];
     for (const n of arr.notes) {
@@ -514,6 +612,16 @@ function reconstructChords() {
     arr.notes = newNotes;
     arr.chords = newChords;
     arr.chord_templates = chordTemplates;
+    // E2: remap authored handshapes' `chord_id` from the OLD template indices
+    // to the rebuilt ones (matched by fret pattern). An arpeggio handshape
+    // whose voicing produced no same-time chord gets its preserved template
+    // appended (so it survives); references with no template are dropped to
+    // match the backend's `chord_id < len(chord_templates)` validator.
+    if (Array.isArray(arr.handshapes) && arr.handshapes.length) {
+        const oldToNew = buildHandshapeChordIdMap(
+            arr.handshapes, oldTemplates, templateMap, chordTemplates, L);
+        arr.handshapes = remapHandshapeChordIds(arr.handshapes, oldToNew);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -2561,6 +2669,15 @@ async function loadCDLC(filename) {
         // padding). archive sources still get the `tuningLen > 6` path so
         // a previously-extended-saved archive is detected on reload.
         _seedExtendedStringsFromTuning(S.arrangements, S.format !== 'archive');
+        // E2: normalize loaded handshapes into robust editable dicts (wire
+        // field names) so span-lane authoring + the save round-trip operate
+        // on them. The server emits them per-arrangement (_song_to_dict); the
+        // editor kept them verbatim before but never normalized them.
+        for (const a of S.arrangements) {
+            if (!a) continue;
+            a.handshapes = (a.handshapes || []).map(_normalizeHandshape)
+                .sort((x, y) => x.start_time - y.start_time);
+        }
         S.beats = data.beats || [];
         S.sections = data.sections || [];
         S.duration = data.duration || 0;
@@ -2926,9 +3043,11 @@ function _buildSaveBody(forceFullSnapshot) {
         // next sloppak save.
         body.arrangements = S.arrangements.map(a => {
             if (!a) return a;
-            // Strip `_anchorEditCount` from every arrangement so the
-            // counter never leaks to the backend's wire format.
-            const { _anchorEditCount, ...rest } = a;
+            // Strip `_anchorEditCount` / `_handshapeEditCount` from every
+            // arrangement so the dirty counters never leak to the backend's
+            // wire format. `rest` still carries `handshapes` (remapped by the
+            // reconstructChords pass above) for the sloppak round-trip.
+            const { _anchorEditCount, _handshapeEditCount, ...rest } = a;
             if (!rest.tones) return rest;
             // Distinguish loaded-but-unauthored data (ship verbatim,
             // round-trip through sloppak) from a synthesized-then-
@@ -2963,6 +3082,19 @@ function _buildSaveBody(forceFullSnapshot) {
     if (S.format !== 'sloppak' && !forceFullSnapshot
             && _anchorsAreDirty(arr) && Array.isArray(arr.anchors_user)) {
         body.anchors_user = arr.anchors_user;
+    }
+    // E2: ship `handshapes` for single-arr archive saves whenever any exist.
+    // Unlike anchors (index-free {time,fret,width}), a handshape's `chord_id`
+    // is an index into `chord_templates`, which reconstructChords() rebuilds
+    // (and remaps the handshapes against) on EVERY save. So a dirty-only gate
+    // is unsafe: editing notes can reindex templates while leaving handshapes
+    // "clean", and the backend's absent→preserve path (`_FIELD_ABSENT`) would
+    // then keep stale `chord_id`s pointing at the wrong rebuilt templates.
+    // Shipping the freshly-remapped list keeps chord_ids consistent; ship an
+    // empty list only when the user explicitly cleared authored handshapes.
+    if (S.format !== 'sloppak' && !forceFullSnapshot && Array.isArray(arr.handshapes)
+            && (arr.handshapes.length > 0 || _handshapesAreDirty(arr))) {
+        body.handshapes = arr.handshapes;
     }
     // Drum-tab payload — separate from arrangements (see sloppak-spec §5.3).
     // S.drumTab is null while the sloppak has none; after +Drums it holds the
@@ -4917,6 +5049,15 @@ window.editorBuild = async () => {
         // entry built above, so nothing extra to strip here.
         if (_anchorsAreDirty(arr) && Array.isArray(arr.anchors_user)) {
             arrEntry.anchors_user = arr.anchors_user;
+        }
+        // E2: include handshapes whenever any exist — chord_ids were remapped
+        // by the reconstructChords() pass above and must stay consistent with
+        // the rebuilt templates (see the archive-save note in _buildSaveBody).
+        // `_handshapeEditCount` lives on `arr`, not the entry, so nothing extra
+        // to strip. Ship an empty list only on an explicit clear.
+        if (Array.isArray(arr.handshapes)
+                && (arr.handshapes.length > 0 || _handshapesAreDirty(arr))) {
+            arrEntry.handshapes = arr.handshapes;
         }
         allArrangements.push(arrEntry);
     }
@@ -8720,6 +8861,27 @@ function _bumpAnchorsDirty(arr, delta) {
 
 function _anchorsAreDirty(arr) {
     return !!(arr && (arr._anchorEditCount || 0) > 0);
+}
+
+// E2: handshape dirty tracking — mirrors the anchor pattern above. The edit
+// counter lives on `arr` (not on `arr.handshapes`) so a load that normalized
+// handshapes via `_normalizeHandshape` isn't flagged as authored, and the
+// serialize paths strip `_handshapeEditCount` from the wire body.
+function _ensureHandshapes(arr) {
+    if (!arr) return null;
+    if (!Array.isArray(arr.handshapes)) arr.handshapes = [];
+    return arr.handshapes;
+}
+
+function _bumpHandshapesDirty(arr, delta) {
+    if (!arr) return;
+    _ensureHandshapes(arr);
+    const next = (arr._handshapeEditCount || 0) + delta;
+    arr._handshapeEditCount = next > 0 ? next : 0;
+}
+
+function _handshapesAreDirty(arr) {
+    return !!(arr && (arr._handshapeEditCount || 0) > 0);
 }
 
 function _anchorLaneTopY() {
