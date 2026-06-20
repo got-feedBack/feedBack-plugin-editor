@@ -391,10 +391,72 @@ function flattenChords() {
     arr.notes.sort((a, b) => a.time - b.time);
 }
 
+/* @pure:chord-relink:start — pure, no browser deps; node-tested by
+   tests/chord_relink.test.js (extracted + eval'd from this marked block).
+   Keep self-contained: these must not reference any other screen.js symbol. */
+// Normalize a frets array to a width-L comma key so loaded/GP templates
+// (padded to 6) match the editor's L-wide rebuilt frets on 7/8-string charts.
+function _fretKeyForL(frets, L) {
+    const out = new Array(L);
+    for (let i = 0; i < L; i++) {
+        out[i] = (Array.isArray(frets) && Number.isFinite(frets[i])) ? frets[i] : -1;
+    }
+    return out.join(',');
+}
+// Return a length-L fingers array from `fingers` (pad/trim with -1).
+function _normFingers(fingers, L) {
+    const out = new Array(L).fill(-1);
+    if (Array.isArray(fingers)) {
+        for (let i = 0; i < L && i < fingers.length; i++) {
+            out[i] = Number.isFinite(fingers[i]) ? fingers[i] : -1;
+        }
+    }
+    return out;
+}
+// fret-pattern (width-L) -> authored template; first occurrence wins.
+// Note: the flattened editor model has exactly ONE template per fret pattern,
+// so two authored chords that share frets but differ in name/fingers
+// necessarily collapse to one here (first wins). That's a pre-existing model
+// limitation — before this change both collapsed to a *blank* template, so this
+// is strictly an improvement; a fuller fix (per-`_chordId` templates) is E1/E2.
+function _buildPreservedTemplates(oldTemplates, L) {
+    const preserved = {};
+    if (Array.isArray(oldTemplates)) {
+        for (const ct of oldTemplates) {
+            if (!ct || !Array.isArray(ct.frets)) continue;
+            const k = _fretKeyForL(ct.frets, L);
+            if (!(k in preserved)) preserved[k] = ct;
+        }
+    }
+    return preserved;
+}
+// Build a rebuilt template for `frets`, carrying authored metadata when the
+// fret pattern matches a preserved template; blank otherwise. `frets` is the
+// authoritative current voicing.
+// Carries ONLY the fields the save path persists today: chordName (`name`) and
+// per-string `fingers`. The wire format also has `displayName` and a
+// template-level `arp`, but the editor's writer (routes.py) drops both, so
+// carrying them here would be silent dead-state — they round-trip when E1 (the
+// chord inspector) adds the authoring UI and the matching backend emission.
+function relinkChordTemplate(frets, preserved, L) {
+    const old = preserved[_fretKeyForL(frets, L)];
+    return {
+        name: (old && typeof old.name === 'string') ? old.name : '',
+        frets: frets.slice(),
+        fingers: _normFingers(old && old.fingers, L),
+    };
+}
+/* @pure:chord-relink:end */
+
 // Reconstruct chords from notes at the same time before saving
 function reconstructChords() {
     if (!S.arrangements.length) return;
     const arr = S.arrangements[S.currentArr];
+    const L = lanes();
+    // E0: snapshot the authored chord-template store (still present on
+    // `arr.chord_templates` here) keyed by fret pattern, so the rebuild below
+    // preserves name/displayName/fingers/arp instead of blanking them.
+    const _preserved = _buildPreservedTemplates(arr.chord_templates, L);
     const byTime = {};
     const soloNotes = [];
     for (const n of arr.notes) {
@@ -416,7 +478,6 @@ function reconstructChords() {
             newNotes.push(group[0]);
         } else {
             // Multiple notes at same time = chord
-            const L = lanes();
             const frets = new Array(L).fill(-1);
             for (const n of group) {
                 if (n.string >= 0 && n.string < L) frets[n.string] = n.fret;
@@ -427,15 +488,10 @@ function reconstructChords() {
                 tmplIdx = templateMap[fretKey];
             } else {
                 tmplIdx = chordTemplates.length;
-                chordTemplates.push({
-                    name: '',
-                    frets: [...frets],
-                    // Match `frets` width — on 7/8-string charts the
-                    // template would otherwise have inconsistent
-                    // frets.length=L but fingers.length=6, which
-                    // serializes to misaligned `fingerN` slots.
-                    fingers: new Array(L).fill(-1),
-                });
+                // E0: carry authored name/displayName/fingers/arp forward when
+                // this fret pattern matches a preserved template; blank otherwise.
+                // Width-normalized to L so 7/8-string charts match correctly.
+                chordTemplates.push(relinkChordTemplate(frets, _preserved, L));
                 templateMap[fretKey] = tmplIdx;
             }
             newChords.push({
