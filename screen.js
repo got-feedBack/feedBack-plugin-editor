@@ -612,6 +612,24 @@ function sanitizeBendCurve(raw) {
     out.sort((a, b) => a.t - b.t);
     return out;
 }
+
+// Rescale a bend curve so its peak == `peak` (preserves shape). Returns null
+// when the curve is empty/invalid, `peak <= 0`, or the curve is all-zero
+// (unscalable) — callers then drop the curve so the scalar `bn` and `bnv` can
+// never contradict each other.
+function rescaleBendCurveToPeak(raw, peak) {
+    const clean = sanitizeBendCurve(raw);
+    if (!clean || !(peak > 0)) return null;
+    const oldPeak = clean.reduce((m, p) => Math.max(m, p.v), 0);
+    if (!(oldPeak > 0)) return null;
+    const k = peak / oldPeak;
+    const out = clean.map(p => ({ t: p.t, v: Math.round(p.v * k * 10) / 10 }));
+    // A target peak below bnv's 0.1 precision (e.g. 0.04) rounds every point to
+    // 0 — the curve can't carry the peak. Report unscalable so the caller drops
+    // it and keeps the scalar bn, rather than deriving a contradictory 0.
+    if (!(out.reduce((m, p) => Math.max(m, p.v), 0) > 0)) return null;
+    return out;
+}
 /* @pure:bend-shape:end */
 
 // Reconstruct chords from notes at the same time before saving
@@ -2752,6 +2770,11 @@ function _editorBendModal({ bn = 0, bt = 0, bnv = null, sustain = 0 } = {}) {
         bnInput.addEventListener('change', () => {
             const v = Number(bnInput.value);
             curBn = Number.isFinite(v) ? Math.max(0, Math.min(3, v)) : 0;
+            // Keep the curve consistent with the Peak input: rescale to the new
+            // peak (preserves shape), or clear it — when Peak is 0 (= no bend),
+            // or when the curve is empty/all-zero so it can't carry the peak
+            // (else OK would derive bn=0 and silently discard the Peak edit).
+            pts = curBn > 0 ? (rescaleBendCurveToPeak(pts, curBn) || []) : [];
             bnInput.value = String(curBn);
             redraw();
         });
@@ -2762,9 +2785,16 @@ function _editorBendModal({ bn = 0, bt = 0, bnv = null, sustain = 0 } = {}) {
         };
         inner.querySelector('#bend-clear').onclick = () => { pts = []; redraw(); };
         inner.querySelector('#bend-cancel').onclick = () => done(null);
-        inner.querySelector('#bend-ok').onclick = () => done({
-            bn: curBn, bt: curBt, bnv: sanitizeBendCurve(pts),
-        });
+        inner.querySelector('#bend-ok').onclick = () => {
+            const cleanBnv = sanitizeBendCurve(pts);
+            // `bn` is the PEAK; when a curve exists it MUST equal the curve's
+            // peak (renderers/graders treat bnv as authoritative). Reconcile so
+            // a saved `bn` can never contradict `bnv`.
+            const finalBn = (cleanBnv && cleanBnv.length)
+                ? Math.max(0, ...cleanBnv.map(p => p.v))
+                : curBn;
+            done({ bn: finalBn, bt: curBt, bnv: cleanBnv });
+        };
 
         _installModalKeyboard(modal, inner, () => done(null));
         bnInput.focus();
@@ -3845,6 +3875,18 @@ window.editorInspectorSetTech = (key, raw) => {
     for (const n of sel) {
         if (!n.techniques) n.techniques = {};
         n.techniques[key] = v;
+        // Editing the scalar peak must keep any authored curve consistent
+        // (renderers/graders read bnv as authoritative): rescale the curve to
+        // the new peak, or drop it when the peak is 0 / the curve is unscalable.
+        if (key === 'bend' && sanitizeBendCurve(n.techniques.bend_values)) {
+            const scaled = v > 0
+                ? rescaleBendCurveToPeak(n.techniques.bend_values, v)
+                : null;
+            n.techniques.bend_values = scaled;
+            // bnv rounds points to 0.1, so a non-0.1 `v` (e.g. 0.25) would leave
+            // bn disagreeing with the curve's real peak. Snap bn to the curve.
+            if (scaled) n.techniques.bend = scaled.reduce((m, p) => Math.max(m, p.v), 0);
+        }
     }
     draw();
     updateStatus();
