@@ -41,8 +41,34 @@ t('preserves name + fingers on a matching fret pattern (Em7)', () => {
     assert.strictEqual(out.name, 'Em7');
     assert.deepStrictEqual(out.fingers, [-1, 2, 1, -1, -1, -1]);
     assert.deepStrictEqual(out.frets, [0, 2, 2, 0, 0, 0]);
-    // E0 carries only persisted fields (name/fingers); displayName/arp deferred to E1.
-    assert.ok(!('displayName' in out) && !('arp' in out));
+    // E1 carries displayName + arp through the rebuild too (now that the
+    // inspector authors them and routes.py persists them).
+    assert.strictEqual(out.displayName, 'Em7');
+    assert.strictEqual(out.arp, false);
+});
+
+// 1b. E1: an authored displayName + arp=true survive the rebuild.
+t('preserves displayName + arp on a matching fret pattern', () => {
+    const L = 6;
+    const preserved = _buildPreservedTemplates([
+        { name: 'Em7', displayName: 'Em7 (fingerpicked)', arp: true,
+          frets: [0, 2, 2, 0, 0, 0], fingers: [-1, 2, 1, -1, -1, -1] },
+    ], L);
+    const out = relinkChordTemplate([0, 2, 2, 0, 0, 0], preserved, L);
+    assert.strictEqual(out.name, 'Em7');
+    assert.strictEqual(out.displayName, 'Em7 (fingerpicked)');
+    assert.strictEqual(out.arp, true);
+});
+
+// 1c. E1: displayName falls back to name when absent; arp defaults to false.
+t('displayName falls back to name; arp defaults false', () => {
+    const L = 6;
+    const preserved = _buildPreservedTemplates([
+        { name: 'Am', frets: [-1, 0, 2, 2, 1, 0], fingers: [-1, -1, 2, 3, 1, -1] },
+    ], L);
+    const out = relinkChordTemplate([-1, 0, 2, 2, 1, 0], preserved, L);
+    assert.strictEqual(out.displayName, 'Am');
+    assert.strictEqual(out.arp, false);
 });
 
 // 2. Unknown fret pattern -> blank (no false metadata).
@@ -54,6 +80,8 @@ t('blanks metadata for an unknown fret pattern', () => {
     const out = relinkChordTemplate([3, 2, 0, 0, 0, 3], preserved, L);
     assert.strictEqual(out.name, '');
     assert.deepStrictEqual(out.fingers, [-1, -1, -1, -1, -1, -1]);
+    assert.strictEqual(out.displayName, '');
+    assert.strictEqual(out.arp, false);
 });
 
 // 3. Width normalization: a width-6 stored template matches a width-7 chart.
