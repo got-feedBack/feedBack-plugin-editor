@@ -3483,7 +3483,7 @@ async function showLoadModal() {
 function renderSongPrompt() {
     const list = document.getElementById('editor-load-list');
     if (list) {
-        list.innerHTML = '<div class="text-xs text-gray-500 p-3 text-center">Start typing to search your custom song…</div>';
+        list.innerHTML = '<div class="text-xs text-gray-500 p-3 text-center">Start typing to search by song, artist, or filename…</div>';
     }
 }
 
@@ -3514,12 +3514,15 @@ function _normalizeSongList(raw) {
             return {
                 filename: item,
                 format: item.toLowerCase().endsWith('.sloppak') ? 'sloppak' : 'archive',
+                title: '', artist: '',
             };
         }
         const filename = String(item?.filename ?? '');
         const format = String(item?.format
             ?? (filename.toLowerCase().endsWith('.sloppak') ? 'sloppak' : 'archive'));
-        return { filename, format };
+        // title/artist are best-effort enrichment from the library cache;
+        // absent for unscanned songs, in which case we show the filename only.
+        return { filename, format, title: String(item?.title ?? ''), artist: String(item?.artist ?? '') };
     });
 }
 
@@ -3541,10 +3544,25 @@ function renderSongList(files) {
         btn.className = 'w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-dark-500 rounded flex items-center gap-2';
         btn.addEventListener('click', () => editorLoadFile(f.filename));
 
-        const name = document.createElement('span');
-        name.className = 'flex-1 truncate';
-        name.textContent = f.filename;
-        btn.appendChild(name);
+        // Prefer the real song name (title — artist) when the library cache
+        // had it; fall back to the raw filename otherwise. The filename is
+        // always shown as a dim subtitle so it stays identifiable/pickable.
+        const songName = f.title
+            ? (f.artist ? `${f.title} — ${f.artist}` : f.title)
+            : '';
+        const col = document.createElement('span');
+        col.className = 'flex-1 min-w-0';
+        const primary = document.createElement('span');
+        primary.className = 'block truncate';
+        primary.textContent = songName || f.filename;
+        col.appendChild(primary);
+        if (songName) {
+            const sub = document.createElement('span');
+            sub.className = 'block truncate text-[10px] text-gray-500';
+            sub.textContent = f.filename;
+            col.appendChild(sub);
+        }
+        btn.appendChild(col);
 
         const badge = document.createElement('span');
         const badgeColor = f.format === 'sloppak'
@@ -3571,7 +3589,11 @@ function filterSongs(q) {
     // to search) instead of the entire library.
     if (!query) { if (S.songsList.length) renderSongPrompt(); else renderSongList([]); return; }
     const list = _normalizeSongList(S.songsList);
-    const filtered = list.filter(f => f.filename.toLowerCase().includes(query));
+    // Match song name, artist, OR raw filename so users can search either way.
+    const filtered = list.filter(f =>
+        f.filename.toLowerCase().includes(query)
+        || (f.title && f.title.toLowerCase().includes(query))
+        || (f.artist && f.artist.toLowerCase().includes(query)));
     renderSongList(filtered);
 }
 
