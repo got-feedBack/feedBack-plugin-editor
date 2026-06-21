@@ -3812,6 +3812,7 @@ window.editorSaveAsSloppakConfirm = async () => {
         // Prefer the relative filename over `data.path` so we don't
         // leak absolute server filesystem paths into the status UI.
         const displayName = data.filename || (data.path ? data.path.split('/').pop() : '');
+        _kickLibraryRescan();   // new file → surface it in the library automatically
         setStatus('Saved as Sloppak: ' + displayName);
     } catch (e) {
         setStatus('Save failed: ' + e.message);
@@ -3829,6 +3830,44 @@ window.editorSaveAsSloppakConfirm = async () => {
 function setStatus(msg) {
     const el = document.getElementById('editor-status');
     if (el) el.textContent = msg;
+}
+
+// Kick an incremental library rescan so a song the editor just wrote shows up
+// without the user manually rescanning from Settings — then refresh the library
+// view so it appears without a page reload too. Uses the mtime-based
+// /api/rescan, then (on the v3 UI) drops the cached library scroll snapshot so
+// the next visit re-fetches, and polls /api/scan-status to reload the grid the
+// moment the scan finishes (mirrors the v3 upload flow). No-ops gracefully on
+// other UIs — the server still indexes the file regardless.
+function _kickLibraryRescan(doneMsg) {
+    fetch('/api/rescan', { method: 'POST' }).catch(() => {});
+    // Signal plugins (e.g. Song Preview) that the library changed so they can
+    // refresh immediately — their own audits read the files on disk and don't
+    // need to wait for the core scan to finish.
+    try { window.slopsmith?.emit?.('library:changed'); } catch (_) {}
+    const songs = window.v3Songs;
+    // v3: drop the cached library scroll snapshot so the next Songs visit
+    // re-fetches instead of restoring the stale (pre-build) view.
+    if (songs) { try { songs._scrollHelpers?.clearSnapshot?.(); } catch (_) {} }
+    let sawRunning = false, ticks = 0;
+    const timer = setInterval(async () => {
+        ticks++;
+        let sd = null;
+        try { const r = await fetch('/api/scan-status'); if (r.ok) sd = await r.json(); } catch (_) {}
+        if (sd && sd.running) sawRunning = true;
+        // "Finished" = a scan we watched has stopped, OR we never caught one
+        // running within a few ticks (it was quick). Hard bail at ~90s.
+        const finished = (sawRunning && sd && !sd.running) || (!sawRunning && ticks >= 4);
+        if (finished || ticks >= 90) {
+            clearInterval(timer);
+            if (finished) {
+                if (songs && typeof songs.reload === 'function') {
+                    try { songs.reload(); } catch (_) {}   // refresh grid + count
+                }
+                if (doneMsg) setStatus(doneMsg);            // truthful confirmation
+            }
+        }
+    }, 1000);
 }
 
 function updateStatus() {
@@ -5368,6 +5407,7 @@ window.editorShowCreateSloppakModal = () => {
                 return;
             }
             modal.remove();
+            _kickLibraryRescan();   // surface the new song in the library automatically
             // Open the freshly-written sloppak via the existing load
             // path so the editor state initialises identically to a
             // normal sloppak load.
@@ -6044,7 +6084,8 @@ window.editorBuild = async () => {
         });
         const data = await resp.json();
         if (data.error) { setStatus('Build error: ' + data.error); return; }
-        setStatus('custom song built: ' + data.path);
+        _kickLibraryRescan();   // refresh the library grid in the background
+        setStatus('Built - added to library!');
     } catch (e) {
         setStatus('Build failed: ' + e.message);
     } finally {
