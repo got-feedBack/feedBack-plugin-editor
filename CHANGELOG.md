@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata cache (`meta_db`); songs not yet scanned fall back to
   filename-only display and remain pickable as before.
 
+### Changed
+- **Sidebar label is now "Song Editor"** (was "Editor"). Pairs with the
+  core change that promotes the editor to a first-class v3 sidebar entry
+  (got-feedback/feedback#546) — `renderPromotedNav` shows this manifest
+  `nav.label`, so the dedicated sidebar item reads "Song Editor".
+
 ### Fixed
 - **Add / rename section, and edit fret/bend/slide/anchor now work in
   the desktop app.** These actions used `window.prompt()`, which Electron

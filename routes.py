@@ -412,6 +412,29 @@ def _chord_fn_wire(fn):
     return {"rn": rn.strip(), "q": q.strip(), "deg": deg}
 
 
+# §6.6 CAGED shape enum — the only values accepted onto the wire.
+_CAGED_SHAPES = ("C", "A", "G", "E", "D")
+
+
+def _caged_wire(caged):
+    """Validate a template CAGED shape (§6.6) for the wire: returns the trimmed
+    enum letter ("C"/"A"/"G"/"E"/"D"), else "" (omitted). Mirrors core's
+    `_sanitize_caged`. Display only — never grading."""
+    c = caged.strip() if isinstance(caged, str) else ""
+    return c if c in _CAGED_SHAPES else ""
+
+
+def _guide_tones_wire(tones):
+    """Validate template guide tones (§6.6) for the wire: returns the int entries
+    in 0..11, dropping non-ints (bool rejected) and out-of-range values so a
+    malformed value never reaches the wire. Mirrors core's `_sanitize_guide_tones`.
+    Display only — never grading."""
+    if not isinstance(tones, list):
+        return []
+    return [v for v in tones
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 11]
+
+
 def _safe_float(v, default=0.0):
     """Best-effort float coercion; returns `default` for bad input."""
     if v is None:
@@ -711,6 +734,12 @@ def _arr_dict_to_wire(
                 # Voicing (§6.6) — default-omitted, only when a non-empty string.
                 **({"voicing": _v.strip()}
                    if isinstance((_v := ct.get("voicing")), str) and _v.strip() else {}),
+                # CAGED shape (§6.6) — default-omitted, only when a valid enum letter.
+                **({"caged": _c} if (_c := _caged_wire(ct.get("caged"))) else {}),
+                # Guide tones (§6.6) — default-omitted; only the int entries in 0..11
+                # (bool rejected), never an out-of-range value.
+                **({"guideTones": _gt}
+                   if (_gt := _guide_tones_wire(ct.get("guideTones"))) else {}),
             }
             for ct in chord_templates
         ],
@@ -4901,6 +4930,12 @@ def setup(app, context):
                     "fingers": ct.fingers,
                     # Voicing (§6.6) rides the template (display only).
                     "voicing": getattr(ct, "voicing", "") or "",
+                    # CAGED shape + guide tones (§6.6) ride the template too
+                    # (display only); guarded so an invalid value can't leak.
+                    # Core's ChordTemplate exposes guide_tones as snake_case
+                    # (wire/camelCase only on the dict side).
+                    "caged": _caged_wire(getattr(ct, "caged", "")),
+                    "guideTones": _guide_tones_wire(getattr(ct, "guide_tones", [])),
                 })
 
             result["arrangements"].append(arr_data)

@@ -475,6 +475,28 @@ function _normFingers(fingers, L) {
     }
     return out;
 }
+// §6.6 CAGED shape (display only): keep only the enum letters, else "".
+function _sanitizeCaged(caged) {
+    const c = (typeof caged === 'string') ? caged.trim() : '';
+    return /^[CAGED]$/.test(c) ? c : '';
+}
+// §6.6 guide tones (display only): keep only the int entries in 0..11, dropping
+// non-ints (bool excluded) and out-of-range values. Mirrors core's wire guard.
+function _sanitizeGuideTones(tones) {
+    if (!Array.isArray(tones)) return [];
+    return tones.filter(n => Number.isInteger(n) && n >= 0 && n <= 11);
+}
+// Parse a comma-separated guide-tone string (inspector text input) into a clean
+// int array via _sanitizeGuideTones — e.g. "4, 10, 12, x" -> [4, 10].
+function _parseGuideTones(raw) {
+    if (Array.isArray(raw)) return _sanitizeGuideTones(raw);
+    if (typeof raw !== 'string') return [];
+    return _sanitizeGuideTones(
+        raw.split(',').map(s => {
+            const t = s.trim();
+            return /^-?\d+$/.test(t) ? parseInt(t, 10) : NaN;
+        }));
+}
 // fret-pattern (width-L) -> authored template; first occurrence wins.
 // Note: the flattened editor model has exactly ONE template per fret pattern,
 // so two authored chords that share frets but differ in name/fingers
@@ -512,6 +534,10 @@ function relinkChordTemplate(frets, preserved, L) {
         // §6.6 voicing — carry it forward or the save rebuild BLANKS it (same
         // carry-forward gotcha as name/displayName/fingers/arp).
         voicing: (old && typeof old.voicing === 'string') ? old.voicing : '',
+        // §6.6 caged + guideTones — same carry-forward gotcha as voicing; sanitize
+        // here too so a stale invalid value can't survive the rebuild.
+        caged: _sanitizeCaged(old && old.caged),
+        guideTones: _sanitizeGuideTones(old && old.guideTones),
     };
 }
 
@@ -4274,6 +4300,12 @@ function _chordInspectorHtml(ctx) {
     const VOICINGS = ['', 'open', 'triad', 'shell', 'drop2', 'drop3', 'barre'];
     const voicingOpts = VOICINGS.map(v =>
         `<option value="${_chordAttrEsc(v)}"${v === voicing ? ' selected' : ''}>${v || '—'}</option>`).join('');
+    // §6.6 CAGED shape + guide tones (template fields, display only).
+    const caged = _sanitizeCaged(t && t.caged);
+    const CAGED_SHAPES = ['', 'C', 'A', 'G', 'E', 'D'];
+    const cagedOpts = CAGED_SHAPES.map(v =>
+        `<option value="${_chordAttrEsc(v)}"${v === caged ? ' selected' : ''}>${v || '—'}</option>`).join('');
+    const guideTonesStr = _sanitizeGuideTones(t && t.guideTones).join(', ');
 
     let fingersHtml = '';
     for (let i = 0; i < ctx.L; i++) {
@@ -4322,6 +4354,21 @@ function _chordInspectorHtml(ctx) {
                     ${voicingOpts}
                 </select>
             </label>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">CAGED</span>
+                <select onchange="editorChordSetCaged(this.value)"
+                    title="§6.6 CAGED shape the fingering derives from (display only)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                    ${cagedOpts}
+                </select>
+            </label>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Guide tones</span>
+                <input type="text" value="${_chordAttrEsc(guideTonesStr)}" placeholder="e.g. 4, 10"
+                    onchange="editorChordSetGuideTones(this.value)"
+                    title="§6.6 semitone offsets 0-11 above the root (display only)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+            </label>
             <div class="space-y-2 border-t border-gray-700 pt-3">
                 <div class="text-gray-500 text-[10px] uppercase tracking-wide"
                     title="§6.3.1 harmonic function — display only; all three needed to persist">Function</div>
@@ -4363,6 +4410,10 @@ window.editorChordSetName = (raw) => _editorChordPatch({ name: String(raw == nul
 window.editorChordSetDisplayName = (raw) => _editorChordPatch({ displayName: String(raw == null ? '' : raw).trim() });
 window.editorChordToggleArp = (on) => _editorChordPatch({ arp: !!on });
 window.editorChordSetVoicing = (raw) => _editorChordPatch({ voicing: String(raw == null ? '' : raw).trim() });
+// §6.6 CAGED shape + guide tones — enum/range-guarded, routed as one undoable
+// template patch like voicing (sanitizers live in the @pure:chord-relink block).
+window.editorChordSetCaged = (raw) => _editorChordPatch({ caged: _sanitizeCaged(raw) });
+window.editorChordSetGuideTones = (raw) => _editorChordPatch({ guideTones: _parseGuideTones(raw) });
 
 // Apply a partial harmony-function patch ({rn?|q?|deg?}) to the selected
 // chord's instance (the notes at its time), merged onto the current fn, via the
