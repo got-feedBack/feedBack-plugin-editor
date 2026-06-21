@@ -3793,7 +3793,13 @@ def setup(app, context):
         import guitarpro
 
         gp_path_raw = data.get("gp_path", "")
-        track_index = data.get("track_index")
+        # Accept a list of track indices (preferred — passing an RH/LH piano pair
+        # together lets convert_file's _find_piano_pairs merge them into one
+        # full-keyboard arrangement) or a single `track_index` (back-compat).
+        raw_indices = data.get("track_indices")
+        if raw_indices is None:
+            single = data.get("track_index")
+            raw_indices = [single] if single is not None else []
         try:
             audio_offset = float(data.get("audio_offset", 0.0))
         except (TypeError, ValueError):
@@ -3803,41 +3809,20 @@ def setup(app, context):
         if not validated:
             return JSONResponse({"error": "GP file not found"}, 400)
         gp_path = str(validated)
-        if track_index is None:
-            return JSONResponse({"error": "track_index required"}, 400)
+        if not raw_indices:
+            return JSONResponse({"error": "track_index(es) required"}, 400)
         try:
-            track_index = int(track_index)
+            track_indices = [int(i) for i in raw_indices]
         except (TypeError, ValueError):
-            return JSONResponse({"error": "track_index must be an integer"}, 400)
+            return JSONResponse({"error": "track indices must be integers"}, 400)
+        # De-dupe while preserving order.
+        _seen_idx: set = set()
+        track_indices = [i for i in track_indices
+                         if not (i in _seen_idx or _seen_idx.add(i))]
 
-        def _convert():
-            tmp = tempfile.mkdtemp(prefix="slopsmith_keys_")
-            # GP8 (.gp, ZIP) and GP6 (.gpx, BCFZ) can't be read by PyGuitarPro
-            # (GP3/4/5 binary only) — it raises "unsupported version '…'".
-            # Route those through convert_file, which dispatches to the gpx
-            # converter by extension; forcing the arrangement name to "Keys"
-            # makes the GP5 branch pick the piano converter too, so both
-            # formats resolve to the same per-track piano XML here.
-            if Path(gp_path).suffix.lower() in (".gp", ".gpx"):
-                xml_paths = convert_file(
-                    gp_path, tmp, track_indices=[track_index],
-                    audio_offset=audio_offset,
-                    arrangement_names={track_index: "Keys"},
-                )
-                if not xml_paths:
-                    raise RuntimeError("Keys track produced no arrangement")
-                xml_path = xml_paths[0]
-            else:
-                song = guitarpro.parse(gp_path)
-                xml_str = convert_piano_track(
-                    song, track_index, audio_offset, "Keys"
-                )
-                xml_path = os.path.join(tmp, "Keys.xml")
-                Path(xml_path).write_text(xml_str, encoding="utf-8")
-
-            arr = parse_arrangement(xml_path)
+        def _arr_to_data(arr, name):
             arr_data = {
-                "name": "Keys",
+                "name": name,
                 "tuning": arr.tuning,
                 "capo": arr.capo,
                 "notes": [],
@@ -3907,10 +3892,47 @@ def setup(app, context):
                     "fingers": ct.fingers,
                 })
 
-            return arr_data, tmp, xml_path
+            return arr_data
+
+        def _convert():
+            tmp = tempfile.mkdtemp(prefix="slopsmith_keys_")
+            # GP8 (.gp, ZIP) / GP6 (.gpx, BCFZ) go through convert_file's gpx
+            # converter: passing ALL chosen indices in one call lets
+            # gp2rs_gpx._find_piano_pairs merge an RH/LH pair into one
+            # full-keyboard arrangement (unrelated keys tracks stay separate),
+            # and the "Keys" name selects the piano converter. GP3/4/5 binary is
+            # read directly by PyGuitarPro, one track at a time — the piano-pair
+            # merge is gpx-only, so an RH/LH pair in a GP3/4/5 file still imports
+            # as two arrangements (a separate, pre-existing limitation; the common
+            # GP6/GP8 case is the one this fixes).
+            if Path(gp_path).suffix.lower() in (".gp", ".gpx"):
+                xml_paths = convert_file(
+                    gp_path, tmp, track_indices=track_indices,
+                    audio_offset=audio_offset,
+                    arrangement_names={i: "Keys" for i in track_indices},
+                )
+            else:
+                song = guitarpro.parse(gp_path)
+                xml_paths = []
+                for idx in track_indices:
+                    xml_str = convert_piano_track(song, idx, audio_offset, "Keys")
+                    xp = os.path.join(tmp, f"Keys_{idx}.xml")
+                    Path(xp).write_text(xml_str, encoding="utf-8")
+                    xml_paths.append(xp)
+            if not xml_paths:
+                raise RuntimeError("Keys track(s) produced no arrangement")
+
+            arrangements = []
+            for _n, xml_path in enumerate(xml_paths):
+                # Disambiguate names when >1 arrangement results (e.g. two
+                # unrelated keys tracks): Keys, Keys 2, Keys 3, …
+                name = "Keys" if _n == 0 else f"Keys {_n + 1}"
+                arrangements.append(
+                    _arr_to_data(parse_arrangement(xml_path), name))
+            return arrangements, tmp, xml_paths
 
         try:
-            arr_data, tmp_dir, xml_path = (
+            arrangements, tmp_dir, xml_paths = (
                 await asyncio.get_event_loop().run_in_executor(None, _convert)
             )
         except Exception as e:
@@ -3918,7 +3940,15 @@ def setup(app, context):
             traceback.print_exc()
             return JSONResponse({"error": str(e)}, 500)
 
-        return {"arrangement": arr_data, "tmp_dir": tmp_dir, "xml_path": xml_path}
+        # Multi-track shape; keep singular `arrangement`/`xml_path` for any
+        # caller still on the old single-track contract.
+        return {
+            "arrangements": arrangements,
+            "xml_paths": xml_paths,
+            "arrangement": arrangements[0],
+            "xml_path": xml_paths[0],
+            "tmp_dir": tmp_dir,
+        }
 
     # ── Import drum/percussion tracks from a GP file ─────────────────
 

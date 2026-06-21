@@ -6747,19 +6747,19 @@ window.editorKeysFileSelected = async (input) => {
         _addKeysSortedTracks = sorted;
 
         const listEl = document.getElementById('editor-add-keys-track-list');
-        const firstPianoPos = sorted.findIndex(t => t.is_piano);
-        const defaultPos = firstPianoPos >= 0 ? firstPianoPos : 0;
-        // Radio value is the position in `sorted` (not t.index) because
-        // format-0 channel splits produce multiple entries that share the
-        // same MIDI track_index — we need a unique key.
+        const defaultChecked = _keysDefaultSelection(sorted);
+        // Checkbox value is the position in `sorted` (not t.index) because
+        // format-0 channel splits produce multiple entries that share the same
+        // MIDI track_index — we need a unique key. Multi-select: a detected
+        // RH/LH piano pair is pre-checked so both hands import and merge.
         listEl.innerHTML = sorted.map((t, pos) => {
-            const checked = pos === defaultPos ? 'checked' : '';
+            const checked = defaultChecked.has(pos) ? 'checked' : '';
             const isDrums = !!(t.is_drums || t.is_percussion);
             const flag = t.is_piano ? '<span class="text-indigo-300">[keys]</span>' : '';
             const drumsTag = isDrums ? '<span class="text-red-400">[drums]</span>' : '';
             const safeName = _editorEscHtml(t.name || '') || _editorEscHtml('Track ' + t.index);
             return `<label class="flex items-center gap-2 text-xs text-gray-300 py-0.5">
-                <input type="radio" name="keys-track" value="${pos}" ${checked} class="accent-indigo-500">
+                <input type="checkbox" name="keys-track" value="${pos}" ${checked} class="accent-indigo-500">
                 <span class="text-gray-200">${safeName}</span>
                 ${flag} ${drumsTag}
                 <span class="text-gray-600 ml-auto">${Number(t.notes) || 0} notes</span>
@@ -6768,13 +6768,45 @@ window.editorKeysFileSelected = async (input) => {
         document.getElementById('editor-add-keys-tracks').classList.remove('hidden');
         document.getElementById('editor-add-keys-go').disabled = false;
         const found = sorted.filter(t => t.is_piano).length;
+        const pairHint = defaultChecked.size > 1
+            ? ' An RH/LH pair is pre-selected — both hands merge into one piano.'
+            : '';
         statusEl.textContent = found > 0
-            ? `Found ${found} keyboard track(s). Pick one.`
-            : `No tracks auto-flagged as keyboard — pick one manually.`;
+            ? `Found ${found} keyboard track(s). Select one or more.${pairHint}`
+            : `No tracks auto-flagged as keyboard — select one or more manually.`;
     } catch (e) {
         statusEl.textContent = 'Failed: ' + e.message;
     }
 };
+
+// Mirror gp2rs_gpx._find_piano_pairs: a keys track named "<stem> RH" pairs with
+// "<stem> LH" (word-boundary, case-insensitive). Pre-select detected pairs so
+// both hands import and merge into one piano by default; if none pair, select
+// the first keyboard track. Returns a Set of positions in `tracks`.
+function _keysDefaultSelection(tracks) {
+    const checked = new Set();
+    const keys = tracks
+        .map((t, pos) => ({ pos, name: String(t.name || '').trim().toLowerCase(), is: !!t.is_piano }))
+        .filter(t => t.is);
+    const consumed = new Set();
+    for (const a of keys) {
+        if (consumed.has(a.pos) || !/\brh\b/.test(a.name)) continue;
+        const stem = a.name.replace(/\s*\brh\b\s*$/, '').trim();
+        for (const b of keys) {
+            if (b.pos === a.pos || consumed.has(b.pos) || !/\blh\b/.test(b.name)) continue;
+            if (b.name.replace(/\s*\blh\b\s*$/, '').trim() === stem) {
+                checked.add(a.pos); checked.add(b.pos);
+                consumed.add(a.pos); consumed.add(b.pos);
+                break;
+            }
+        }
+    }
+    if (checked.size === 0) {
+        const firstPiano = tracks.findIndex(t => t.is_piano);
+        checked.add(firstPiano >= 0 ? firstPiano : 0);
+    }
+    return checked;
+}
 
 window.editorDoAddKeys = async () => {
     if (!_addKeysSourcePath || !S.sessionId) return;
@@ -6783,12 +6815,18 @@ window.editorDoAddKeys = async () => {
     goBtn.disabled = true;
     statusEl.textContent = 'Importing keys track...';
 
-    const radio = document.querySelector('input[name="keys-track"]:checked');
-    // Radio value is a position in _addKeysSortedTracks; resolve it back to
-    // the full entry so we can pull both `index` and `channel_filter`.
-    const pos = radio ? parseInt(radio.value) : 0;
-    const picked = _addKeysSortedTracks[pos] || _addKeysSortedTracks[0];
-    if (!picked) { statusEl.textContent = 'No track selected.'; goBtn.disabled = false; return; }
+    // Checkbox values are positions in _addKeysSortedTracks; resolve them back
+    // to full entries (each carries `index` and `channel_filter`). Multiple
+    // keys tracks can be imported at once — an RH/LH piano pair is merged into
+    // one arrangement server-side (convert_file._find_piano_pairs).
+    const checkedEls = Array.from(
+        document.querySelectorAll('input[name="keys-track"]:checked'));
+    const positions = checkedEls.length ? checkedEls.map(el => parseInt(el.value)) : [0];
+    const pickedList = positions.map(p => _addKeysSortedTracks[p]).filter(Boolean);
+    if (!pickedList.length) { statusEl.textContent = 'No track selected.'; goBtn.disabled = false; return; }
+    const trackIndices = pickedList.map(p => Number(p.index) || 0);
+    // MIDI keys import is single-track; use the first selected track + channel.
+    const picked = pickedList[0];
     const trackIndex = Number(picked.index) || 0;
     const channelFilter = (picked.channel_filter == null) ? null : Number(picked.channel_filter);
 
@@ -6800,7 +6838,7 @@ window.editorDoAddKeys = async () => {
         const body = _addKeysSourceFormat === 'midi'
             ? { midi_path: _addKeysSourcePath, track_index: trackIndex, audio_offset: audioOffset,
                 channel_filter: channelFilter }
-            : { gp_path: _addKeysSourcePath, track_index: trackIndex, audio_offset: audioOffset };
+            : { gp_path: _addKeysSourcePath, track_indices: trackIndices, audio_offset: audioOffset };
         const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -6813,10 +6851,20 @@ window.editorDoAddKeys = async () => {
             return;
         }
 
-        const ok = await _editorAppendKeysArrangement(data.arrangement, statusEl, {
-            xml_path: data.xml_path || '',
-        });
-        if (!ok) goBtn.disabled = false;
+        // The GP path may return several arrangements (one per non-merged keys
+        // track); the MIDI path returns one. Append each in order.
+        const arrangements = Array.isArray(data.arrangements)
+            ? data.arrangements
+            : (data.arrangement ? [data.arrangement] : []);
+        const xmlPaths = Array.isArray(data.xml_paths) ? data.xml_paths : [];
+        let allOk = arrangements.length > 0;
+        for (let i = 0; i < arrangements.length; i++) {
+            const ok = await _editorAppendKeysArrangement(arrangements[i], statusEl, {
+                xml_path: xmlPaths[i] || data.xml_path || '',
+            });
+            if (!ok) { allOk = false; break; }
+        }
+        if (!allOk) goBtn.disabled = false;
     } catch (e) {
         statusEl.textContent = 'Failed: ' + e.message;
         goBtn.disabled = false;
