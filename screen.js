@@ -4620,6 +4620,26 @@ window.editSong = (filename) => {
     loadCDLC(filename);
 };
 
+// Register an "Open in editor" action on the v3 song-card three-dot menu, so a
+// song can be loaded straight into the editor (sibling to core's "Edit
+// metadata"). Routed through the shared ui.library-card-injection registry, so
+// it only appears when this plugin is loaded — and only in v3, where the
+// registry exists (guarded for v2, which has no such menu). register() rejects
+// duplicate ids, so re-running the script is a no-op.
+(function _registerEditorCardAction() {
+    const sm = window.slopsmith;
+    if (!sm || !sm.libraryCardActions) return;
+    sm.libraryCardActions.register({
+        id: 'editor.open-in-editor',
+        pluginId: 'editor',
+        label: 'Open in editor',
+        placement: 'menu',
+        order: 15, // just under core's "Edit metadata" (10)
+        applies: (song) => !!(song && song.filename),
+        run: (song) => window.editSong(song.filename),
+    });
+})();
+
 // ════════════════════════════════════════════════════════════════════
 // Sync Tempo — detect audio BPM and scale notes to match
 // ════════════════════════════════════════════════════════════════════

@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   artist, **or** filename. Titles/artists come from the core library
   metadata cache (`meta_db`); songs not yet scanned fall back to
   filename-only display and remain pickable as before.
+- **"Open in editor" on the v3 song-card menu.** Song cards in the v3 web
+  UI have a three-dot menu (with core's "Edit metadata"); when this plugin
+  is loaded it now also registers an **Open in editor** item that loads the
+  song straight into the editor. Routed through the shared
+  `ui.library-card-injection` registry (`window.slopsmith.libraryCardActions`),
+  so it appears only when the editor is installed and only in v3 (the v2 UI
+  has no such menu); the action calls the existing `window.editSong`.
 
 ### Changed
 - **Sidebar label is now "Song Editor"** (was "Editor"). Pairs with the
