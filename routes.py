@@ -479,6 +479,36 @@ def _jsonc_collect_arr(text: str, open_off: int, path: tuple,
     return i
 
 
+def _jsonc_save_text(original_text: str, wire) -> str:
+    """Produce the ``.jsonc`` text to write for ``wire``, re-inserting comments
+    from ``original_text`` — but NEVER returning text that fails to round-trip
+    back to ``wire``. Comment preservation is best-effort; if it throws or yields
+    text that no longer parses to this exact arrangement (a stray comment can eat
+    a token), fall back to the plain comment-less pretty JSON. A dropped comment
+    is acceptable; an unreadable / wrong arrangement on disk is not."""
+    pretty = json.dumps(wire, indent=2)
+    try:
+        candidate = _preserve_jsonc_comments(original_text, pretty)
+        if _parse_jsonc(candidate) == wire:
+            return candidate
+    except Exception:
+        pass
+    return pretty
+
+
+def _jsonc_inline_comment(c: str) -> str:
+    """Render a comment for INLINE placement (mid-line, with content following on
+    the same line). A ``//`` line comment would swallow the rest of the line —
+    including the following ``,`` / ``}`` / ``]`` — so emit it as a CLOSED
+    ``/* … */`` block comment instead (the previous code dropped the closing
+    ``*/``, producing an unterminated comment that ate the rest of the file).
+    Existing ``/* … */`` block comments are returned unchanged."""
+    s = c.strip()
+    if s.startswith("//"):
+        return "/* " + s[2:].strip() + " */"
+    return s
+
+
 def _preserve_jsonc_comments(original_text: str, new_json_str: str) -> str:
     """Re-insert comments from ``original_text`` into ``new_json_str`` (a freshly
     ``json.dumps(..., indent=2)``-ed object), preserving nested comments on a
@@ -536,7 +566,7 @@ def _preserve_jsonc_comments(original_text: str, new_json_str: str) -> str:
                 piece = "\n" + "".join(inner_indent + c + "\n" for c in cmts) + bracket_indent
                 out = out[:off] + piece + out[off:]
             else:
-                piece = " " + " ".join(c.replace("//", "/*", 1) for c in cmts) + " "
+                piece = " " + " ".join(_jsonc_inline_comment(c) for c in cmts) + " "
                 out = out[:off] + piece + out[off:]
         elif mode == "line_before":
             # Insert before the line containing ``off`` — but only when ``off``
@@ -553,7 +583,7 @@ def _preserve_jsonc_comments(original_text: str, new_json_str: str) -> str:
                 piece = "".join(before + c + "\n" for c in cmts)
                 out = out[:line_start] + piece + out[line_start:]
             else:
-                piece = " " + " ".join(c.replace("//", "/*", 1) for c in cmts) + " "
+                piece = " " + " ".join(_jsonc_inline_comment(c) for c in cmts) + " "
                 out = out[:off] + piece + out[off:]
         elif mode == "inline_before":
             piece = " ".join(cmts) + " "
@@ -2705,22 +2735,18 @@ def setup(app, context):
                         raise RuntimeError(f"Arrangement path escapes sandbox: {rel}")
                     arr_path.parent.mkdir(parents=True, exist_ok=True)
                     if arr_path.name.lower().endswith(".jsonc"):
-                        # .jsonc arrangement: preserve top-level comments from
-                        # the existing file (feedpak-spec §8 Writer SHOULD).
-                        # Serialize pretty-printed (indent=2) so comments can be
-                        # re-inserted at top-level-key line boundaries; comments
-                        # inside nested arrays/objects are dropped (phase-1
-                        # limitation — the editor replaces note content anyway).
+                        # .jsonc arrangement: preserve comments from the existing
+                        # file (feedpak-spec §8 Writer SHOULD), serialized pretty
+                        # (indent=2) so comments re-insert at line boundaries.
                         original = ""
                         if arr_path.exists():
                             try:
                                 original = arr_path.read_text(encoding="utf-8")
                             except OSError:
                                 original = ""
-                        new_text = _preserve_jsonc_comments(
-                            original, json.dumps(wire, indent=2)
+                        arr_path.write_text(
+                            _jsonc_save_text(original, wire), encoding="utf-8"
                         )
-                        arr_path.write_text(new_text, encoding="utf-8")
                     else:
                         arr_path.write_text(
                             json.dumps(wire, separators=(",", ":")),

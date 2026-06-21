@@ -30,6 +30,8 @@ import pytest
 
 from routes import (  # noqa: E402
     _jsonc_extract_comments,
+    _jsonc_inline_comment,
+    _jsonc_save_text,
     _load_arrangement_json,
     _parse_jsonc,
     _preserve_jsonc_comments,
@@ -436,3 +438,54 @@ def test_jsonc_arrangement_save_round_trip(tmp_path: Path):
     assert "// edited notes below" in text_back            # before-key (top level)
     assert "// bend on the downbeat" in text_back          # before-key (nested in note)
     assert "/* preserved from a prior save */" in text_back  # before-key (top level)
+
+
+# ── save-time safety: _jsonc_save_text never corrupts the arrangement ─────────
+
+def _round_trips_to(text, wire):
+    """The written .jsonc must always parse back to the exact arrangement."""
+    return _parse_jsonc(text) == wire
+
+
+def test_save_text_falls_back_when_comment_would_corrupt():
+    # A comment placed between a key's ':' and its value used to produce
+    #   "capo": // pickme 0,
+    # which strips to invalid JSON — silent save corruption. The guard now
+    # validates the round-trip and falls back to plain JSON (comment dropped,
+    # file valid) rather than write something that won't reload.
+    orig = '{\n  "name": "Lead",\n  "capo": // pickme\n    0,\n  "notes": []\n}'
+    wire = _parse_jsonc(orig)
+    out = _jsonc_save_text(orig, wire)
+    assert _round_trips_to(out, wire)          # never corrupt
+    assert _parse_jsonc(out) == wire
+
+
+@pytest.mark.parametrize("orig", [
+    '{\n  "name": "Lead",\n  "capo": 0, // trailing\n  "notes": []\n}',
+    '{\n  // before a key\n  "name": "Lead",\n  "capo": 0\n}',
+    '// header\n{\n  "name": "Lead",\n  "capo": 0\n}',
+    '{\n  "capo": 0 /* inline block */\n}',
+    '{\n  "capo": 0\n  // trailing before close\n}',
+    '{"name": "Lead", "notes": []}',           # no comments at all
+])
+def test_save_text_always_round_trips(orig):
+    wire = _parse_jsonc(orig)
+    out = _jsonc_save_text(orig, wire)
+    assert _round_trips_to(out, wire)
+
+
+def test_save_text_preserves_safe_comments():
+    # The guard must not throw away a comment it CAN keep safely.
+    orig = '{\n  // section A\n  "name": "Lead",\n  "capo": 0\n}'
+    out = _jsonc_save_text(orig, _parse_jsonc(orig))
+    assert "// section A" in out
+
+
+def test_inline_comment_closes_line_comments():
+    # A // line comment placed inline must become a CLOSED /* */ block comment,
+    # not an unterminated /* that eats the rest of the file.
+    assert _jsonc_inline_comment("// hi") == "/* hi */"
+    assert _jsonc_inline_comment("//hi") == "/* hi */"
+    assert _jsonc_inline_comment("/* x */") == "/* x */"   # block unchanged
+    # An inline-rendered line comment is itself valid JSONC.
+    assert _parse_jsonc('{"a": 1 ' + _jsonc_inline_comment("// c") + ', "b": 2}') == {"a": 1, "b": 2}
