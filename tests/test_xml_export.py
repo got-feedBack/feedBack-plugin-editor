@@ -611,6 +611,34 @@ def test_arr_dict_to_wire_sanitizes_bend_curve():
     assert "bnv" not in wn2
 
 
+# ---- teaching marks fg/ch/sd (§6.2.2) --------------------------------------
+
+def test_arr_dict_to_wire_emits_teaching_marks():
+    """fg/ch/sd ride the wire under their literal short codes."""
+    notes = [_note(1.0, fret_finger=2, strum_group=5, scale_degree=7)]
+    wn = _arr_dict_to_wire("Lead", [0]*6, 0, notes, [], [])["notes"][0]
+    assert wn["fg"] == 2
+    assert wn["ch"] == 5
+    assert wn["sd"] == 7
+
+
+def test_arr_dict_to_wire_default_omits_teaching_marks():
+    """fg/ch/sd are default-omitted when unset (-1) so payloads stay tight."""
+    wn = _arr_dict_to_wire("Lead", [0]*6, 0, [_note(1.0)], [], [])["notes"][0]
+    for k in ("fg", "ch", "sd"):
+        assert k not in wn
+
+
+def test_fret_finger_round_trips_through_xml():
+    """fg exports as the `fretFinger` chart-XML attr (core's _parse_note reads
+    it back); strum_group/scale_degree have no chart-XML attribute."""
+    note_el = _parse(_build(notes=[_note(1.0, fret_finger=3)])).find(".//notes/note")
+    assert note_el.get("fretFinger") == "3"
+    # Default unset.
+    plain = _parse(_build(notes=[_note(1.0)])).find(".//notes/note")
+    assert plain.get("fretFinger") == "-1"
+
+
 def test_arr_dict_to_wire_chord_note_carries_bend_shape():
     """Chord member notes inherit bt/bnv through _note_in_chord -> _note."""
     chord = {
