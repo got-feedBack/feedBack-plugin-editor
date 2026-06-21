@@ -140,6 +140,18 @@
 <div id="editor-context-menu" class="hidden absolute z-50 bg-dark-700 border border-gray-700 rounded-lg shadow-xl py-1 min-w-[160px]">
 </div>
 
+<!-- Self-contained segmented toggle for the audio-source pickers. Inlined (not
+     Tailwind utilities) so it renders regardless of what the plugin's prebuilt
+     stylesheet scanned — same rationale as song_preview's toggle pill. -->
+<style>
+.aud-seg-wrap { display:inline-flex; gap:2px; margin-bottom:8px; padding:3px;
+    background:#15161c; border:1px solid #2c3040; border-radius:8px; }
+.aud-seg { padding:5px 14px; border:none; border-radius:6px; background:transparent;
+    color:#9aa0ad; font-size:12px; line-height:1; cursor:pointer; transition:background-color .15s, color .15s; }
+.aud-seg:hover { color:#f2f3f6; }
+.aud-seg.is-active { background:#4080e0; color:#fff; }
+</style>
+
 <!-- Create custom song modal -->
 <div id="editor-create-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
     <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-lg max-h-[85vh] flex flex-col overflow-y-auto">
@@ -155,6 +167,15 @@
                 <input type="file" id="editor-create-gp" accept=".gp3,.gp4,.gp5,.gpx,.gp"
                     onchange="editorGPFileSelected(this)"
                     class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+            </div>
+
+            <!-- Step 1 (alt): import EOF (Editor on Fire) arrangement XML -->
+            <div>
+                <label class="text-xs font-medium text-gray-400 mb-1 block">EOF Arrangement XML <span class="text-gray-600">(.xml — one or more; optional)</span></label>
+                <input type="file" id="editor-create-eof" accept=".xml" multiple
+                    onchange="editorEofFilesSelected(this)"
+                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+                <p class="text-[11px] text-gray-600 mt-1">Select the EOF arrangement file(s), then set the audio, art, preview and details below and click Import.</p>
             </div>
 
             <!-- Track selection (shown after GP upload) -->
@@ -201,7 +222,7 @@
                     Audio for auto-sync
                     <span class="text-gray-600 font-normal ml-1">— align tab to recording automatically</span>
                 </label>
-                <input type="file" id="editor-autosync-audio" accept=".mp3,.ogg,.wav,.flac,.m4a,.aac"
+                <input type="file" id="editor-autosync-audio" accept=".wem,.ogg,.flac,.mp3,.wav,.m4a,.aac"
                     onchange="editorAutoSyncAudioSelected(this)"
                     class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
                 <div id="editor-autosync-status" class="text-xs text-gray-600 mt-1"></div>
@@ -219,15 +240,15 @@
             <!-- Step 2: Audio source -->
             <div>
                 <label class="text-xs font-medium text-gray-400 mb-1 block">Audio Source</label>
-                <div class="flex gap-2 mb-2">
+                <div class="aud-seg-wrap" role="tablist" aria-label="Audio source">
                     <button onclick="editorSetAudioMode('file')" id="editor-audio-mode-file"
-                        class="px-3 py-1 bg-accent rounded text-xs">Upload File</button>
+                        class="aud-seg is-active">Upload File</button>
                     <button onclick="editorSetAudioMode('youtube')" id="editor-audio-mode-yt"
-                        class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs">YouTube URL</button>
+                        class="aud-seg">YouTube URL</button>
                 </div>
                 <!-- File upload -->
                 <div id="editor-audio-file-input">
-                    <input type="file" id="editor-create-audio" accept=".mp3,.wav,.ogg,.m4a,.flac,.opus"
+                    <input type="file" id="editor-create-audio" accept=".wem,.ogg,.flac,.mp3,.wav,.m4a,.opus"
                         class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
                 </div>
                 <!-- YouTube URL -->
@@ -269,6 +290,14 @@
                     class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
             </div>
 
+            <!-- Preview clip -->
+            <div>
+                <label class="text-xs text-gray-500">Preview Clip (optional)</label>
+                <input type="file" id="editor-create-preview" accept=".wem,.ogg,.flac,.mp3,.wav,.m4a,.opus"
+                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+                <p class="text-[11px] text-gray-600 mt-1">Baked into the .sloppak when you Build. Plays on hover in the library only if the Song Preview plugin is installed.</p>
+            </div>
+
             <!-- Import button -->
             <button onclick="editorDoCreate()" id="editor-create-go"
                 class="w-full px-4 py-2 bg-green-700 hover:bg-green-600 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
@@ -289,14 +318,14 @@
         <div class="p-4 space-y-4">
             <div>
                 <label class="text-xs font-medium text-gray-400 mb-1 block">Audio Source</label>
-                <div class="flex gap-2 mb-2">
+                <div class="aud-seg-wrap" role="tablist" aria-label="Audio source">
                     <button onclick="editorSetReplaceAudioMode('file')" id="editor-replace-mode-file"
-                        class="px-3 py-1 bg-accent rounded text-xs">Upload File</button>
+                        class="aud-seg is-active">Upload File</button>
                     <button onclick="editorSetReplaceAudioMode('youtube')" id="editor-replace-mode-yt"
-                        class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs">YouTube URL</button>
+                        class="aud-seg">YouTube URL</button>
                 </div>
                 <div id="editor-replace-audio-file-input">
-                    <input type="file" id="editor-replace-audio" accept=".mp3,.wav,.ogg,.m4a,.flac"
+                    <input type="file" id="editor-replace-audio" accept=".wem,.ogg,.flac,.mp3,.wav,.m4a"
                         class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
                 </div>
                 <div id="editor-replace-audio-yt-input" class="hidden">

@@ -3812,6 +3812,7 @@ window.editorSaveAsSloppakConfirm = async () => {
         // Prefer the relative filename over `data.path` so we don't
         // leak absolute server filesystem paths into the status UI.
         const displayName = data.filename || (data.path ? data.path.split('/').pop() : '');
+        _kickLibraryRescan();   // new file → surface it in the library automatically
         setStatus('Saved as Sloppak: ' + displayName);
     } catch (e) {
         setStatus('Save failed: ' + e.message);
@@ -3829,6 +3830,44 @@ window.editorSaveAsSloppakConfirm = async () => {
 function setStatus(msg) {
     const el = document.getElementById('editor-status');
     if (el) el.textContent = msg;
+}
+
+// Kick an incremental library rescan so a song the editor just wrote shows up
+// without the user manually rescanning from Settings — then refresh the library
+// view so it appears without a page reload too. Uses the mtime-based
+// /api/rescan, then (on the v3 UI) drops the cached library scroll snapshot so
+// the next visit re-fetches, and polls /api/scan-status to reload the grid the
+// moment the scan finishes (mirrors the v3 upload flow). No-ops gracefully on
+// other UIs — the server still indexes the file regardless.
+function _kickLibraryRescan(doneMsg) {
+    fetch('/api/rescan', { method: 'POST' }).catch(() => {});
+    // Signal plugins (e.g. Song Preview) that the library changed so they can
+    // refresh immediately — their own audits read the files on disk and don't
+    // need to wait for the core scan to finish.
+    try { window.slopsmith?.emit?.('library:changed'); } catch (_) {}
+    const songs = window.v3Songs;
+    // v3: drop the cached library scroll snapshot so the next Songs visit
+    // re-fetches instead of restoring the stale (pre-build) view.
+    if (songs) { try { songs._scrollHelpers?.clearSnapshot?.(); } catch (_) {} }
+    let sawRunning = false, ticks = 0;
+    const timer = setInterval(async () => {
+        ticks++;
+        let sd = null;
+        try { const r = await fetch('/api/scan-status'); if (r.ok) sd = await r.json(); } catch (_) {}
+        if (sd && sd.running) sawRunning = true;
+        // "Finished" = a scan we watched has stopped, OR we never caught one
+        // running within a few ticks (it was quick). Hard bail at ~90s.
+        const finished = (sawRunning && sd && !sd.running) || (!sawRunning && ticks >= 4);
+        if (finished || ticks >= 90) {
+            clearInterval(timer);
+            if (finished) {
+                if (songs && typeof songs.reload === 'function') {
+                    try { songs.reload(); } catch (_) {}   // refresh grid + count
+                }
+                if (doneMsg) setStatus(doneMsg);            // truthful confirmation
+            }
+        }
+    }, 1000);
 }
 
 function updateStatus() {
@@ -4882,6 +4921,8 @@ let createState = {
     audioUrl: null,
     audioMode: 'file', // 'file' or 'youtube'
     artPath: null,
+    previewPath: null,
+    eofFiles: null,    // FileList[] of selected EOF arrangement XMLs
 };
 
 // ════════════════════════════════════════════════════════════════════
@@ -5118,6 +5159,7 @@ window.editorShowCreateModal = () => {
     // (which would apply the previous song's audio/offset to a new import).
     createState = {
         gpPath: null, tracks: null, audioUrl: null, audioMode: 'file', artPath: null,
+        previewPath: null, eofFiles: null,
         gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null,
     };
     document.getElementById('editor-create-modal').classList.remove('hidden');
@@ -5128,6 +5170,8 @@ window.editorShowCreateModal = () => {
     document.getElementById('editor-create-gp').value = '';
     document.getElementById('editor-create-audio').value = '';
     document.getElementById('editor-create-yt-url').value = '';
+    const _eofIn = document.getElementById('editor-create-eof'); if (_eofIn) _eofIn.value = '';
+    const _pvIn = document.getElementById('editor-create-preview'); if (_pvIn) _pvIn.value = '';
     document.getElementById('editor-create-title').value = '';
     document.getElementById('editor-create-artist').value = '';
     document.getElementById('editor-create-album').value = '';
@@ -5399,6 +5443,7 @@ window.editorShowCreateSloppakModal = () => {
                 return;
             }
             modal.remove();
+            _kickLibraryRescan();   // surface the new song in the library automatically
             // Open the freshly-written sloppak via the existing load
             // path so the editor state initialises identically to a
             // normal sloppak load.
@@ -5437,10 +5482,8 @@ window.editorSetAudioMode = (mode) => {
     createState.audioMode = mode;
     document.getElementById('editor-audio-file-input').classList.toggle('hidden', mode !== 'file');
     document.getElementById('editor-audio-yt-input').classList.toggle('hidden', mode !== 'youtube');
-    document.getElementById('editor-audio-mode-file').className =
-        'px-3 py-1 rounded text-xs ' + (mode === 'file' ? 'bg-accent' : 'bg-dark-600 hover:bg-dark-500');
-    document.getElementById('editor-audio-mode-yt').className =
-        'px-3 py-1 rounded text-xs ' + (mode === 'youtube' ? 'bg-accent' : 'bg-dark-600 hover:bg-dark-500');
+    document.getElementById('editor-audio-mode-file').classList.toggle('is-active', mode === 'file');
+    document.getElementById('editor-audio-mode-yt').classList.toggle('is-active', mode === 'youtube');
 };
 
 window.editorGPFileSelected = async (input) => {
@@ -5579,10 +5622,8 @@ async function uploadCreateAudio() {
 
 function updateCreateButton() {
     const hasGP = !!createState.gpPath;
-    const hasAudio = createState.audioMode === 'youtube'
-        ? !!document.getElementById('editor-create-yt-url').value.trim()
-        : !!(document.getElementById('editor-create-audio').files || []).length;
-    document.getElementById('editor-create-go').disabled = !hasGP;
+    const hasEof = !!(createState.eofFiles && createState.eofFiles.length);
+    document.getElementById('editor-create-go').disabled = !(hasGP || hasEof);
 }
 
 // Wire up input change events for enabling the create button. Changing the
@@ -5676,6 +5717,11 @@ window.editorRefineSync = async () => {
 };
 
 window.editorDoCreate = async () => {
+    // EOF arrangement-XML import takes priority when XML files are selected.
+    if (createState.eofFiles && createState.eofFiles.length) {
+        await _editorDoEofCreate();
+        return;
+    }
     if (!createState.gpPath) return;
     const status = document.getElementById('editor-create-status');
     const btn = document.getElementById('editor-create-go');
@@ -5813,83 +5859,136 @@ window.editorDoCreate = async () => {
         const data = await resp.json();
         if (data.error) { status.textContent = 'Error: ' + data.error; btn.disabled = false; return; }
 
-        // Persist the audio URL the backend actually used (for embedded mode this
-        // is the extracted GP8 OGG, only known now) so editorBuild() and later
-        // build requests reuse it instead of an empty/stale value.
-        if (data.audio_url) createState.audioUrl = data.audio_url;
-
-        // Load into editor
-        editorHideCreateModal();
-        S.title = data.title || '';
-        S.artist = data.artist || '';
-        S.filename = '';
-        S.sessionId = data.session_id;
-        S.format = 'sloppak';
-        S.arrangements = data.arrangements || [];
-        // Create-mode (fresh GP import) — gp2rs builds tuning to the
-        // actual string count, so length 6 means a genuine 6-string
-        // bass / standard guitar (not RS-XML padding). Seed
-        // `_extendedStrings` to keep `_stringCountFor` honest.
-        _seedExtendedStringsFromTuning(S.arrangements, /* authoritative */ true);
-        S.beats = data.beats || [];
-        S.sections = data.sections || [];
-        S.duration = data.duration || 0;
-        S.offset = data.offset || 0;
-        S.currentArr = 0;
-        S.sel.clear();
-        S.toneSel = null;
-        S.anchorSel = null;
-        S.handshapeSel = null;
-        S.scrollX = 0;
-        S.cursorTime = 0;
-        S.history = new EditHistory();
-        S.createMode = true;
-
-        // A GP import may carry a drum track (convert-gp returns it as a
-        // `drum_tab`) and/or piano "Keys" arrangements. Sessions are always
-        // sloppak now; load the imported drum_tab into the drum editor and
-        // mark it dirty so the build persists it (freshly imported, not yet
-        // on disk). The +Drums / +Keys toolbar gates key on S.format='sloppak'.
-        S.drumTab = data.drum_tab ?? null;
-        if (S.drumTab && Array.isArray(S.drumTab.hits)) {
-            S.drumTab.hits.sort((a, b) => (a.t || 0) - (b.t || 0));
-        }
-        S.drumTabDirty = !!S.drumTab;
-        S.drumEditMode = false;
-        S.drumSel = new Set();
-        const _importHasDrums = !!(S.drumTab && (S.drumTab.hits || []).length);
-        const _importHasKeys = (S.arrangements || []).some(
-            a => KEYS_PATTERN.test(a.name || ''));
-        if (_importHasDrums || _importHasKeys) S.format = 'sloppak';
-
-        // Reset offset UI so _effectiveAudioOffset() doesn't carry over a
-        // delta from a previous session's sync nudge.
-        _resetOffsetUI();
-
-        flattenChords();
-        if (isKeysMode()) updatePianoRange();
-
-        document.getElementById('editor-song-title').textContent =
-            `${S.artist} — ${S.title} (new)`;
-        document.getElementById('editor-save-btn').classList.add('hidden');
-        document.getElementById('editor-build-btn').classList.remove('hidden');
-        document.getElementById('editor-play-btn').disabled = !data.audio_url;
-        document.getElementById('editor-sync-btn').classList.toggle('hidden', !data.audio_url);
-        document.getElementById('editor-replace-audio-btn').classList.remove('hidden');
-        _updateTonesButtonVisibility();
-        updateArrangementSelector();
-        updateStatus();
-        updateTimeDisplay();
-        updateBPMDisplay();
-
-        if (data.audio_url) await loadAudio(data.audio_url);
-        draw();
-        setStatus('Imported — edit notes then click Build Song');
+        await window.editorApplyCreateResult(data);
     } catch (e) {
         status.textContent = 'Import failed: ' + e.message;
         btn.disabled = false;
     }
 };
+
+// Apply a create-mode import result (from convert-gp OR import-xml-project) to
+// the editor and open it. The two import sources return the same shape
+// (_song_to_dict + session_id + create_mode), so this is shared.
+window.editorApplyCreateResult = async (data) => {
+    // Persist the audio URL the backend actually used (e.g. GP8-extracted or the
+    // project's uploaded mix) so editorBuild() reuses it on later builds.
+    if (data.audio_url) createState.audioUrl = data.audio_url;
+
+    // Load into editor
+    editorHideCreateModal();
+    S.title = data.title || '';
+    S.artist = data.artist || '';
+    S.filename = '';
+    S.sessionId = data.session_id;
+    S.format = 'sloppak';
+    S.arrangements = data.arrangements || [];
+    // Create-mode import — the source builds tuning to the actual string count,
+    // so length 6 means a genuine 6-string bass / standard guitar (not a
+    // padded tuning). Seed `_extendedStrings` to keep `_stringCountFor` honest.
+    _seedExtendedStringsFromTuning(S.arrangements, /* authoritative */ true);
+    S.beats = data.beats || [];
+    S.sections = data.sections || [];
+    S.duration = data.duration || 0;
+    S.offset = data.offset || 0;
+    S.currentArr = 0;
+    S.sel.clear();
+    S.toneSel = null;
+    S.anchorSel = null;
+    S.handshapeSel = null;
+    S.scrollX = 0;
+    S.cursorTime = 0;
+    S.history = new EditHistory();
+    S.createMode = true;
+
+    // An import may carry a drum track (returned as a `drum_tab`) and/or piano
+    // "Keys" arrangements. Sessions are always sloppak now; load the imported
+    // drum_tab into the drum editor and mark it dirty so the build persists it.
+    S.drumTab = data.drum_tab ?? null;
+    if (S.drumTab && Array.isArray(S.drumTab.hits)) {
+        S.drumTab.hits.sort((a, b) => (a.t || 0) - (b.t || 0));
+    }
+    S.drumTabDirty = !!S.drumTab;
+    S.drumEditMode = false;
+    S.drumSel = new Set();
+    const _importHasDrums = !!(S.drumTab && (S.drumTab.hits || []).length);
+    const _importHasKeys = (S.arrangements || []).some(
+        a => KEYS_PATTERN.test(a.name || ''));
+    if (_importHasDrums || _importHasKeys) S.format = 'sloppak';
+
+    // Reset offset UI so _effectiveAudioOffset() doesn't carry over a
+    // delta from a previous session's sync nudge.
+    _resetOffsetUI();
+
+    flattenChords();
+    if (isKeysMode()) updatePianoRange();
+
+    document.getElementById('editor-song-title').textContent =
+        `${S.artist} — ${S.title} (new)`;
+    document.getElementById('editor-save-btn').classList.add('hidden');
+    document.getElementById('editor-build-btn').classList.remove('hidden');
+    document.getElementById('editor-play-btn').disabled = !data.audio_url;
+    document.getElementById('editor-sync-btn').classList.toggle('hidden', !data.audio_url);
+    document.getElementById('editor-replace-audio-btn').classList.remove('hidden');
+    _updateTonesButtonVisibility();
+    updateArrangementSelector();
+    updateStatus();
+    updateTimeDisplay();
+    updateBPMDisplay();
+
+    if (data.audio_url) await loadAudio(data.audio_url);
+    draw();
+    setStatus('Imported — edit notes then click Build Song');
+};
+
+// EOF arrangement XML(s) selected — just record them. The shared "Import & Open"
+// button (editorDoCreate) then assembles audio/art/preview/metadata and imports.
+window.editorEofFilesSelected = (input) => {
+    const xmls = [...(input.files || [])].filter(f => /\.xml$/i.test(f.name));
+    createState.eofFiles = xmls.length ? xmls : null;
+    updateCreateButton();
+    const st = document.getElementById('editor-create-status');
+    if (st) st.textContent = xmls.length
+        ? `${xmls.length} EOF arrangement file(s) selected — set audio/art/preview, then Import.`
+        : '';
+};
+
+// EOF import path for editorDoCreate: upload the (optional) audio, POST the
+// arrangement XML(s) + audio URL + metadata, then open the result. Album art and
+// the preview clip are baked later at Build (editorBuild), from their own inputs.
+async function _editorDoEofCreate() {
+    const status = document.getElementById('editor-create-status');
+    const btn = document.getElementById('editor-create-go');
+    btn.disabled = true;
+    try {
+        // Audio is optional for EOF (the chart opens regardless), but upload it
+        // when supplied so the editor can play in sync.
+        const hasAudioFile = !!(document.getElementById('editor-create-audio').files || []).length;
+        const hasYt = createState.audioMode === 'youtube'
+            && !!document.getElementById('editor-create-yt-url').value.trim();
+        if (!createState.audioUrl && (hasAudioFile || hasYt)) {
+            status.textContent = 'Uploading audio…';
+            await uploadCreateAudio();   // sets createState.audioUrl on success
+        }
+
+        status.textContent = 'Importing EOF arrangement(s)…';
+        const form = new FormData();
+        for (const f of createState.eofFiles) form.append('files', f, f.name);
+        form.append('audio_url', createState.audioUrl || '');
+        form.append('title', document.getElementById('editor-create-title').value || '');
+        form.append('artist', document.getElementById('editor-create-artist').value || '');
+        form.append('album', document.getElementById('editor-create-album').value || '');
+        form.append('year', document.getElementById('editor-create-year').value || '');
+
+        const resp = await fetch('/api/plugins/editor/import-xml-project',
+            { method: 'POST', body: form });
+        const data = await resp.json();
+        if (data.error) { status.textContent = 'Error: ' + data.error; btn.disabled = false; return; }
+        await window.editorApplyCreateResult(data);
+    } catch (e) {
+        status.textContent = 'Import failed: ' + e.message;
+        btn.disabled = false;
+    }
+}
 
 window.editorBuild = async () => {
     if (!S.sessionId || !S.createMode) return;
@@ -5981,6 +6080,18 @@ window.editorBuild = async () => {
         } catch (_) {}
     }
 
+    // Upload preview clip if selected (baked into the .sloppak as preview.<ext>)
+    const previewInput = document.getElementById('editor-create-preview');
+    if (previewInput && previewInput.files && previewInput.files.length && !createState.previewPath) {
+        const form = new FormData();
+        form.append('file', previewInput.files[0]);
+        try {
+            const r = await fetch('/api/plugins/editor/upload-preview', { method: 'POST', body: form });
+            const d = await r.json();
+            if (d.preview_path) createState.previewPath = d.preview_path;
+        } catch (_) {}
+    }
+
     try {
         const resp = await fetch('/api/plugins/editor/build', {
             method: 'POST',
@@ -5992,6 +6103,7 @@ window.editorBuild = async () => {
                 sections: S.sections,
                 audio_url: createState.audioUrl || '',
                 art_path: createState.artPath || '',
+                preview_path: createState.previewPath || '',
                 // Drums and piano "Keys" arrangements can only live in a
                 // sloppak. editorDoCreate sets S.format='sloppak' when the GP
                 // import brought either; forward that as the build target so
@@ -6008,7 +6120,8 @@ window.editorBuild = async () => {
         });
         const data = await resp.json();
         if (data.error) { setStatus('Build error: ' + data.error); return; }
-        setStatus('custom song built: ' + data.path);
+        _kickLibraryRescan();   // refresh the library grid in the background
+        setStatus('Built - added to library!');
     } catch (e) {
         setStatus('Build failed: ' + e.message);
     } finally {
@@ -6044,10 +6157,8 @@ window.editorSetReplaceAudioMode = (mode) => {
     replaceAudioState.audioMode = mode;
     document.getElementById('editor-replace-audio-file-input').classList.toggle('hidden', mode !== 'file');
     document.getElementById('editor-replace-audio-yt-input').classList.toggle('hidden', mode !== 'youtube');
-    document.getElementById('editor-replace-mode-file').className =
-        'px-3 py-1 rounded text-xs ' + (mode === 'file' ? 'bg-accent' : 'bg-dark-600 hover:bg-dark-500');
-    document.getElementById('editor-replace-mode-yt').className =
-        'px-3 py-1 rounded text-xs ' + (mode === 'youtube' ? 'bg-accent' : 'bg-dark-600 hover:bg-dark-500');
+    document.getElementById('editor-replace-mode-file').classList.toggle('is-active', mode === 'file');
+    document.getElementById('editor-replace-mode-yt').classList.toggle('is-active', mode === 'youtube');
 };
 
 async function _uploadReplaceAudio() {

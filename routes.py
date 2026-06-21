@@ -628,6 +628,129 @@ def _split_stems_best_effort(sloppak_path) -> bool:
         return False
 
 
+def _wem_bytes_to_preferred_audio(content: bytes):
+    """Decode WEM bytes with vgmstream and encode to a preferred playback format.
+
+    Wwise ``.wem`` can't be read by browsers or ffmpeg directly. Returns
+    ``(Path, None)`` on success — the caller copies the file out and removes its
+    parent temp dir — or ``(None, error)``. Preference order: ogg > flac > mp3
+    (then the raw vgmstream WAV if no ffmpeg is present at all).
+    """
+    from lib.audio import (
+        _vgmstream_cmd, _decode_wem_to_wav, _ffmpeg_cmd, _ffmpeg_wav_to_ogg,
+    )
+    vg = _vgmstream_cmd()
+    if not vg:
+        return None, "vgmstream-cli not available to decode WEM"
+    work = Path(tempfile.mkdtemp(prefix="slopsmith_wem_"))
+    # On SUCCESS the returned Path lives in `work` and the caller removes `work`
+    # after copying it out. On ANY failure (decode error, exception writing/
+    # encoding) we own cleanup here so a temp dir is never leaked.
+    try:
+        wem = work / "in.wem"
+        wem.write_bytes(content)
+        wav = work / "out.wav"
+        ok, detail = _decode_wem_to_wav(vg, str(wem), str(wav))
+        if not ok or not wav.exists():
+            shutil.rmtree(work, ignore_errors=True)
+            return None, f"WEM decode failed: {detail}"
+        ff = _ffmpeg_cmd()
+        if ff:
+            ogg = work / "out.ogg"                       # 1) ogg (preferred)
+            r = _ffmpeg_wav_to_ogg(ff, wav, ogg)
+            if r.returncode == 0 and ogg.exists() and ogg.stat().st_size > 100:
+                return ogg, None
+            for suffix, args in ((".flac", ["-c:a", "flac"]),          # 2) flac
+                                 (".mp3", ["-c:a", "libmp3lame", "-b:a", "320k"])):  # 3) mp3
+                out = work / ("out" + suffix)
+                try:
+                    rr = subprocess.run([ff, "-y", "-i", str(wav), *args, str(out)],
+                                        capture_output=True, timeout=180)
+                except (OSError, subprocess.TimeoutExpired):
+                    continue
+                if rr.returncode == 0 and out.exists() and out.stat().st_size > 100:
+                    return out, None
+        return wav, None  # no ffmpeg / all encodes failed → keep the WAV
+    except Exception as e:
+        shutil.rmtree(work, ignore_errors=True)
+        return None, f"WEM decode error: {e}"
+
+
+def _apply_chart_offset(song, delta: float) -> None:
+    """Resolve a chart-level ``<offset>`` into ``song``'s absolute times in place.
+
+    Subtracts ``delta`` seconds from every absolute time so the chart becomes
+    audio-absolute — the same alignment the player produces when it reads the
+    loose-folder ``<offset>`` and applies ``chartTime = audioTime + offset``.
+    Bend curve points are onset-relative (``t`` = seconds-from-onset), so
+    shifting each note's ``time`` carries them; only absolute fields are touched.
+    """
+    if not delta:
+        return
+
+    def _n(n):
+        n.time = round(n.time - delta, 6)
+
+    def _c(c):
+        c.time = round(c.time - delta, 6)
+        for cn in (c.notes or []):
+            # Shift any chord note that carries a numeric absolute time — incl.
+            # exactly 0.0 (a note at the chart origin). The old `if cn.time:`
+            # skipped 0.0, leaving such a note un-shifted while its chord moved.
+            if cn.time is not None:
+                cn.time = round(cn.time - delta, 6)
+
+    def _a(a):
+        a.time = round(a.time - delta, 6)
+
+    def _h(h):
+        h.start_time = round(h.start_time - delta, 6)
+        h.end_time = round(h.end_time - delta, 6)
+
+    def _tones(t):
+        # `tones` is an opaque {base, changes, definitions} dict; its tone
+        # changes carry an absolute time (`t`, or `time` depending on source)
+        # that the editor re-emits as `<tone time=...>`, so it must move with
+        # everything else. Guard each field — the structure isn't guaranteed.
+        if not isinstance(t, dict):
+            return
+        for ch in t.get("changes") or []:
+            if not isinstance(ch, dict):
+                continue
+            for k in ("t", "time"):
+                if isinstance(ch.get(k), (int, float)) and not isinstance(ch.get(k), bool):
+                    ch[k] = round(ch[k] - delta, 6)
+
+    for arr in song.arrangements:
+        for n in arr.notes:
+            _n(n)
+        for c in arr.chords:
+            _c(c)
+        for a in arr.anchors:
+            _a(a)
+        for h in arr.hand_shapes:
+            _h(h)
+        _tones(getattr(arr, "tones", None))
+        for ph in (arr.phrases or []):
+            ph.start_time = round(ph.start_time - delta, 6)
+            ph.end_time = round(ph.end_time - delta, 6)
+            for lv in ph.levels:
+                for n in lv.notes:
+                    _n(n)
+                for c in lv.chords:
+                    _c(c)
+                for a in lv.anchors:
+                    _a(a)
+                for h in lv.hand_shapes:
+                    _h(h)
+
+    for b in song.beats:
+        b.time = round(b.time - delta, 6)
+    for s in song.sections:
+        s.start_time = round(s.start_time - delta, 6)
+    song.offset = 0.0
+
+
 def _arrangement_xml_candidates(tmp_dir):
     """Return the source XMLs that represent playable arrangements.
 
@@ -1909,6 +2032,20 @@ def setup(app, context):
                     return None
                 return candidate
         return None
+
+    def _safe_storage_asset(p) -> str:
+        """A client-supplied asset path (cover art / preview clip) is honoured
+        only when it resolves to an existing file INSIDE STORAGE_DIR — so a
+        crafted absolute path can't make the build copy arbitrary local files
+        into the sloppak. Mirrors the existing art_path guard on the save route."""
+        if not p or not isinstance(p, str):
+            return ""
+        try:
+            resolved = Path(p).resolve()
+            resolved.relative_to(STORAGE_DIR.resolve())
+        except (ValueError, OSError):
+            return ""
+        return str(resolved) if resolved.exists() else ""
 
     # Active editing sessions: session_id -> {dir, audio_file, filename, song_data}
     sessions = {}
@@ -3522,14 +3659,48 @@ def setup(app, context):
         dest.write_bytes(content)
         return {"art_path": str(dest)}
 
+    # ── Upload hover-preview clip ──────────────────────────────────────
+    @app.post("/api/plugins/editor/upload-preview")
+    async def upload_preview(file: UploadFile = File(...)):
+        pid = re.sub(r"[^A-Za-z0-9_-]", "_", Path(file.filename or "").stem) or "preview"
+        ext = (Path(file.filename or "").suffix or ".ogg").lower()
+        content = await file.read()
+        # A .wem preview would bake in unplayable — decode it (ogg > flac > mp3),
+        # same as the audio uploads.
+        if ext == ".wem":
+            out_path, err = await asyncio.get_event_loop().run_in_executor(
+                None, _wem_bytes_to_preferred_audio, content)
+            if out_path is None:
+                return JSONResponse({"error": err or "WEM decode failed"}, 400)
+            dest = STORAGE_DIR / f"editor_preview_{pid}{out_path.suffix.lower()}"
+            shutil.copy2(out_path, dest)
+            shutil.rmtree(out_path.parent, ignore_errors=True)
+            return {"preview_path": str(dest)}
+        dest = STORAGE_DIR / f"editor_preview_{pid}{ext}"
+        dest.write_bytes(content)
+        return {"preview_path": str(dest)}
+
     # ── Upload audio file ──────────────────────────────────────────────
 
     @app.post("/api/plugins/editor/upload-audio")
     async def upload_audio(file: UploadFile = File(...)):
-        audio_id = Path(file.filename).stem.replace(" ", "_")
-        ext = Path(file.filename).suffix or ".mp3"
-        dest = STORAGE_DIR / f"editor_audio_{audio_id}{ext}"
+        audio_id = re.sub(r"[^A-Za-z0-9_-]", "_", Path(file.filename or "").stem) or "audio"
+        ext = (Path(file.filename or "").suffix or ".mp3").lower()
         content = await file.read()
+
+        # Wwise .wem can't be read by browsers or ffmpeg directly — decode it
+        # (vgmstream → ogg > flac > mp3) before storing.
+        if ext == ".wem":
+            out_path, err = await asyncio.get_event_loop().run_in_executor(
+                None, _wem_bytes_to_preferred_audio, content)
+            if out_path is None:
+                return JSONResponse({"error": err or "WEM decode failed"}, 400)
+            dest = STORAGE_DIR / f"editor_audio_{audio_id}{out_path.suffix.lower()}"
+            shutil.copy2(out_path, dest)
+            shutil.rmtree(out_path.parent, ignore_errors=True)
+            return {"audio_url": f"{STORAGE_URL}/{dest.name}"}
+
+        dest = STORAGE_DIR / f"editor_audio_{audio_id}{ext}"
         dest.write_bytes(content)
         return {"audio_url": f"{STORAGE_URL}/editor_audio_{audio_id}{ext}"}
 
@@ -4327,6 +4498,139 @@ def setup(app, context):
             ]
         return result
 
+    # ── Import an EOF (Editor on Fire) project (arrangement XML) ───────────
+    @app.post("/api/plugins/editor/import-xml-project")
+    async def import_xml_project(
+        files: list[UploadFile] = File(...),
+        audio_url: str = Form(""),
+        title: str = Form(""),
+        artist: str = Form(""),
+        album: str = Form(""),
+        year: str = Form(""),
+    ):
+        """Import EOF (Editor on Fire) arrangement XML into a create session.
+
+        Takes the EOF-exported arrangement XML file(s) (``<song>`` roots) and
+        loads them with the same loader the app uses for loose folders, yielding
+        a create-mode session the editor opens — so the user can expand drums and
+        keys in sync, then Build a .sloppak.
+
+        Audio is supplied separately (uploaded via the modal's Audio input first,
+        then its ``audio_url`` passed here) and album art / preview clip are baked
+        at Build time from their own inputs — so this endpoint only deals with the
+        charts + metadata. Open authoring format only.
+        """
+        from lib.song import load_song as _load_arrangement_dir
+
+        tmp = tempfile.mkdtemp(prefix="slopsmith_xmlproj_")
+        try:
+            xml_count = 0
+            for idx, uf in enumerate(files):
+                raw = uf.filename or ""
+                if Path(raw).suffix.lower() != ".xml":
+                    continue  # only arrangement XML; audio/art/preview come elsewhere
+                # `filename` is attacker-controlled — collapse to a safe basename
+                # inside tmp (no `..`, no separators) before writing.
+                safe = re.sub(r"[^A-Za-z0-9._-]", "_", Path(raw).name) or f"arr_{idx}.xml"
+                (Path(tmp) / safe).write_bytes(await uf.read())
+                xml_count += 1
+
+            if xml_count == 0:
+                shutil.rmtree(tmp, ignore_errors=True)
+                return JSONResponse(
+                    {"error": "No arrangement XML (.xml) files were selected."}, 400)
+
+            def _load():
+                return _load_arrangement_dir(tmp)
+
+            song = await asyncio.get_event_loop().run_in_executor(None, _load)
+            if not song.arrangements:
+                shutil.rmtree(tmp, ignore_errors=True)
+                return JSONResponse(
+                    {"error": "No playable arrangements found — only vocals/showlights, "
+                              "or this isn't a recognised EOF arrangement XML."}, 400)
+
+            # User-entered metadata (from the modal fields) overrides what the XML
+            # carried; fall back to the XML values when a field was left blank.
+            if title.strip():
+                song.title = title.strip()
+            if artist.strip():
+                song.artist = artist.strip()
+            if album.strip():
+                song.album = album.strip()
+            if year.strip():
+                ym = re.search(r"\d{4}", year)
+                if ym:
+                    song.year = int(ym.group())
+
+            # Resolve the chart's start point into the times so they become
+            # audio-absolute (the editor plays on raw audio time and the built
+            # file carries no offset field). Exporters split the start between
+            # two header fields and use opposite conventions:
+            #   * a negative <offset> equal to -<startBeat>, with note times
+            #     already audio-absolute  → the two cancel, net shift 0
+            #   * a positive <offset> with <startBeat> 0                → shift = offset
+            # Summing them, shift = offset + startBeat, is correct for both
+            # without inspecting which kind of file it is.
+            start_beat = 0.0
+            for _xf in sorted(Path(tmp).glob("*.xml")):
+                try:
+                    _root = ET.parse(_xf).getroot()
+                except Exception:
+                    continue
+                if _root.tag != "song":
+                    continue
+                _arr = _root.find("arrangement")
+                if _arr is None or not _arr.text or _arr.text.strip().lower() in (
+                        "vocals", "showlights", "jvocals"):
+                    continue
+                _sb = _root.find("startBeat")
+                if _sb is not None and _sb.text:
+                    try:
+                        start_beat = float(_sb.text)
+                    except ValueError:
+                        start_beat = 0.0
+                break
+            shift = song.offset + start_beat
+            if shift:
+                _apply_chart_offset(song, shift)
+
+            # Audio was uploaded separately; keep its URL for editor playback and
+            # resolve it to a path for the build step (best-effort).
+            audio_url = (audio_url or "").strip() or None
+            audio_file = None
+            if audio_url:
+                resolved = _resolve_storage_url(audio_url)
+                if resolved and resolved.exists():
+                    audio_file = str(resolved)
+
+            result = _song_to_dict(song, audio_url)
+
+            session_id = f"create_{re.sub(r'[^a-z0-9]', '', (song.title or 'new').lower())[:30]}"
+            if session_id in sessions:
+                shutil.rmtree(sessions[session_id]["dir"], ignore_errors=True)
+            sessions[session_id] = {
+                "dir": tmp,
+                "audio_file": audio_file,
+                "filename": "",
+                "xml_files": [str(p) for p in sorted(Path(tmp).glob("*.xml"))],
+                "create_mode": True,
+                "gp_path": None,
+                "metadata": {
+                    "title": song.title, "artist": song.artist,
+                    "album": song.album, "year": song.year,
+                },
+                "last_touched": time.time(),
+            }
+            result["session_id"] = session_id
+            result["create_mode"] = True
+            return result
+        except Exception as e:
+            shutil.rmtree(tmp, ignore_errors=True)
+            import traceback
+            traceback.print_exc()
+            return JSONResponse({"error": f"XML project import failed: {e}"}, 500)
+
     # ── Import piano/keyboard tracks from a GP file ────────────────────
 
     @app.post("/api/plugins/editor/import-keys")
@@ -5032,6 +5336,7 @@ def setup(app, context):
         meta.update(data.get("metadata") or {})
         audio_url = data.get("audio_url", "")
         art_path = data.get("art_path", "")
+        preview_path = data.get("preview_path", "")
         # Drum tab (from a GP drum-track import or the +Drums modal).
         drum_tab = data.get("drum_tab")
         if drum_tab is not None:
@@ -5067,7 +5372,8 @@ def setup(app, context):
             output = dlc_dir / f"{safe_t}_{safe_a}_p.sloppak"
             return _write_sloppak_pak(
                 audio_file=audio_file,
-                art_path=art_path if art_path and Path(art_path).exists() else "",
+                art_path=_safe_storage_asset(art_path),
+                preview_path=_safe_storage_asset(preview_path),
                 arrangements_data=arrangements_data,
                 beats=beats,
                 sections=sections,
@@ -5109,6 +5415,7 @@ def setup(app, context):
                           arrangements_data: list, beats: list, sections: list,
                           meta: dict, output_path: Path,
                           drum_tab: dict | None = None,
+                          preview_path: str = "",
                           fail_if_exists: bool = False,
                           duration_override: float | None = None) -> str:
         """Stage a sloppak at `output_path` from the in-memory edit state.
@@ -5300,6 +5607,15 @@ def setup(app, context):
                 cover_name = f"cover{cover_ext}"
                 shutil.copy2(art_path, staging / cover_name)
                 manifest["cover"] = cover_name
+
+            # Optional hover-preview clip — copied verbatim under its own
+            # extension (no transcode) and referenced from the manifest's
+            # `preview:` key, the same key the Song Preview plugin reads.
+            if preview_path and Path(preview_path).exists():
+                pv_ext = Path(preview_path).suffix.lower() or ".ogg"
+                pv_name = f"preview{pv_ext}"
+                shutil.copy2(preview_path, staging / pv_name)
+                manifest["preview"] = pv_name
 
             if isinstance(drum_tab, dict):
                 # Validate the shape via the same permissive validator
