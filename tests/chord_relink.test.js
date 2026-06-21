@@ -22,12 +22,14 @@ const api = new Function(
     '"use strict";' + m[0] +
     '\nreturn { relinkChordTemplate, _fretKeyForL, _normFingers, _buildPreservedTemplates,' +
     ' buildHandshapeChordIdMap, remapHandshapeChordIds,' +
-    ' _normChordFn, _mergeChordFn, _groupFn };'
+    ' _normChordFn, _mergeChordFn, _groupFn,' +
+    ' _sanitizeCaged, _sanitizeGuideTones, _parseGuideTones };'
 )();
 const {
     relinkChordTemplate, _normFingers, _buildPreservedTemplates,
     buildHandshapeChordIdMap, remapHandshapeChordIds,
     _normChordFn, _mergeChordFn, _groupFn,
+    _sanitizeCaged, _sanitizeGuideTones, _parseGuideTones,
 } = api;
 
 let pass = 0, fail = 0;
@@ -218,6 +220,39 @@ t('preserves voicing through the rebuild; defaults to "" when absent', () => {
     assert.strictEqual(relinkChordTemplate([-1, 0, 2, 2, 1, 0], preserved, L).voicing, 'open');
     // Unknown fret pattern -> blank voicing, not stale metadata.
     assert.strictEqual(relinkChordTemplate([3, 2, 0, 0, 0, 3], preserved, L).voicing, '');
+});
+
+// 9b. caged + guideTones survive the rebuild (carry-forward), sanitized.
+t('preserves caged + guideTones through the rebuild; sanitizes + defaults', () => {
+    const L = 6;
+    const preserved = _buildPreservedTemplates([
+        { name: 'G7', frets: [3, 2, 0, 0, 0, 1], fingers: new Array(6).fill(-1),
+          caged: 'E', guideTones: [4, 10, 12, -1] },
+    ], L);
+    const kept = relinkChordTemplate([3, 2, 0, 0, 0, 1], preserved, L);
+    assert.strictEqual(kept.caged, 'E');
+    assert.deepStrictEqual(kept.guideTones, [4, 10]);   // out-of-range dropped on carry
+    // Unknown fret pattern -> defaults, not stale metadata.
+    const blank = relinkChordTemplate([-1, 0, 2, 2, 1, 0], preserved, L);
+    assert.strictEqual(blank.caged, '');
+    assert.deepStrictEqual(blank.guideTones, []);
+});
+
+// 9c. the pure sanitizer/parse helpers (shared with the inspector handlers).
+t('_sanitizeCaged keeps only the enum letters', () => {
+    assert.strictEqual(_sanitizeCaged(' C '), 'C');
+    assert.strictEqual(_sanitizeCaged('X'), '');
+    assert.strictEqual(_sanitizeCaged('e'), '');   // lower-case rejected
+    assert.strictEqual(_sanitizeCaged(7), '');
+});
+
+t('_sanitizeGuideTones + _parseGuideTones clamp/filter to 0..11 ints', () => {
+    assert.deepStrictEqual(_sanitizeGuideTones([4, 10, 12, -1, 'x', true]), [4, 10]);
+    assert.deepStrictEqual(_parseGuideTones('4, 10, 12, x'), [4, 10]);
+    assert.deepStrictEqual(_parseGuideTones(' 0 ,11'), [0, 11]);
+    assert.deepStrictEqual(_parseGuideTones(''), []);
+    assert.deepStrictEqual(_parseGuideTones([3, 5]), [3, 5]);   // array passthrough
+    assert.deepStrictEqual(_parseGuideTones(7), []);
 });
 
 // 10. _normChordFn keeps only set keys; drops partial deg/strings; null when empty.
