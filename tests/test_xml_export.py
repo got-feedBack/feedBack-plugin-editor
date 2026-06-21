@@ -629,6 +629,29 @@ def test_arr_dict_to_wire_default_omits_teaching_marks():
         assert k not in wn
 
 
+def test_arr_dict_to_wire_omits_out_of_range_teaching_marks():
+    """Out-of-range fg/ch/sd (the inspector clamps, but loaded / hand-edited
+    data may not) are treated as unset rather than emitted as schema-invalid
+    values (spec §6.2.2: fg 0–4, sd 0–11, ch ≥ 0)."""
+    notes = [_note(1.0, fret_finger=9, strum_group=-3, scale_degree=15)]
+    wn = _arr_dict_to_wire("Lead", [0]*6, 0, notes, [], [])["notes"][0]
+    for k in ("fg", "ch", "sd"):
+        assert k not in wn
+    # In-range boundary values still ride the wire.
+    ok = _arr_dict_to_wire(
+        "Lead", [0]*6, 0,
+        [_note(1.0, fret_finger=4, strum_group=0, scale_degree=11)], [], [],
+    )["notes"][0]
+    assert (ok["fg"], ok["ch"], ok["sd"]) == (4, 0, 11)
+
+
+def test_out_of_range_fret_finger_xml_attr_collapses_to_unset():
+    """An out-of-range fg collapses to fretFinger=-1 in chart XML so it can't
+    round-trip an invalid finger into core."""
+    note_el = _parse(_build(notes=[_note(1.0, fret_finger=9)])).find(".//notes/note")
+    assert note_el.get("fretFinger") == "-1"
+
+
 def test_fret_finger_round_trips_through_xml():
     """fg exports as the `fretFinger` chart-XML attr (core's _parse_note reads
     it back); strum_group/scale_degree have no chart-XML attribute."""

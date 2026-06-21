@@ -380,6 +380,14 @@ def _safe_int(v, default=-1):
             return default
 
 
+def _fret_finger_attr(techs):
+    """fret-hand finger (§6.2.2) for the chart-XML `fretFinger` attribute,
+    collapsed to -1 (unset) when out of the spec's 0–4 range — so a malformed
+    or hand-edited value can't round-trip an invalid finger into core."""
+    v = _safe_int(techs.get("fret_finger"), -1)
+    return v if 0 <= v <= 4 else -1
+
+
 def _safe_float(v, default=0.0):
     """Best-effort float coercion; returns `default` for bad input."""
     if v is None:
@@ -604,15 +612,18 @@ def _arr_dict_to_wire(
         if _bnv:
             out["bnv"] = _bnv
         # Teaching marks (§6.2.2) — default-omitted, matching core's note_to_wire.
-        # Display only; never used for grading.
+        # Display only; never used for grading. Range-guarded server-side so a
+        # malformed/out-of-range client value (the inspector clamps, but loaded
+        # or hand-edited data may not) is treated as unset rather than emitted as
+        # a schema-invalid `fg`/`ch`/`sd` (spec §6.2.2: fg 0–4, sd 0–11, ch ≥ 0).
         _fg = _safe_int(tech.get("fret_finger"), -1)
-        if _fg != -1:
+        if 0 <= _fg <= 4:
             out["fg"] = _fg
         _ch = _safe_int(tech.get("strum_group"), -1)
-        if _ch != -1:
+        if _ch >= 0:
             out["ch"] = _ch
         _sd = _safe_int(tech.get("scale_degree"), -1)
-        if _sd != -1:
+        if 0 <= _sd <= 11:
             out["sd"] = _sd
         return out
 
@@ -913,7 +924,8 @@ def _note_attrs_xml(n, *, include_time=True):
         # Teaching mark (§6.2.2): fret-hand finger. core's _parse_note reads
         # `fretFinger` back; strum_group/scale_degree have no chart-XML attribute
         # (they round-trip through the sloppak wire instead). Display only.
-        "fretFinger": str(_safe_int(techs.get("fret_finger"), -1)),
+        # Out-of-range values collapse to -1 (unset), matching the wire guard.
+        "fretFinger": str(_fret_finger_attr(techs)),
         "ignore": _flag("ignore"),
     })
     return attrs
