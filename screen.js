@@ -378,15 +378,16 @@ function chords() { return S.arrangements.length ? S.arrangements[S.currentArr].
 function flattenChords() {
     if (!S.arrangements.length) return;
     const arr = S.arrangements[S.currentArr];
-    // Harmony function (§6.3.1) rides the chord INSTANCE. There is exactly one
-    // chord per time in the reconstruct model, so we key fn by time on the
-    // arrangement rather than on the (movable) notes — a note dragged out of a
-    // chord can't carry a stale fn into another group. reconstructChords reads
-    // this map back and prunes orphans. Seed it from the loaded chords here.
-    if (!arr._chordFn) arr._chordFn = {};
+    // Harmony function (§6.3.1) rides the chord INSTANCE. We carry it on the
+    // spread note objects — every note of the chord gets the same `_fn` — so it
+    // travels with the notes through ANY edit that mutates note.time (drag,
+    // global shift, time-scale, tempo remap). reconstructChords adopts a group's
+    // fn by majority vote (_groupFn), so a single note dragged into another chord
+    // is outvoted and can't impose a stale fn. (Supersedes the old time-keyed
+    // `arr._chordFn` store, which silently lost fn whenever a chord moved.)
+    delete arr._chordFn;
     for (const ch of arr.chords) {
         const fn = _normChordFn(ch.fn);
-        if (fn) arr._chordFn[ch.time.toFixed(4)] = fn;
         for (const cn of ch.notes) {
             arr.notes.push({
                 time: cn.time || ch.time,
@@ -396,6 +397,7 @@ function flattenChords() {
                 techniques: cn.techniques || {},
                 _fromChord: true,
                 _chordId: ch.chord_id,
+                _fn: fn || null,
             });
         }
     }
@@ -543,6 +545,29 @@ function _mergeChordFn(base, patch) {
         merged.deg = (Number.isInteger(d) && d >= 0 && d <= 11) ? d : null;
     }
     return _normChordFn(merged);
+}
+
+// Adopt a note group's harmony function (§6.3.1) by MAJORITY: the `_fn` value
+// carried by more than half the group's notes, else null. fn rides the chord
+// instance and is carried on every note of the chord (so it travels with the
+// notes through moves / shifts / tempo remaps). Authoring writes the same `_fn`
+// to all of a chord's notes (unanimous), so a real chord always keeps its fn;
+// a single note dragged in from another chord is outvoted and can't impose a
+// stale fn — the property the time-keyed store used to guarantee.
+function _groupFn(groupNotes) {
+    if (!Array.isArray(groupNotes) || !groupNotes.length) return null;
+    const counts = new Map();   // normalized key -> { fn, n }
+    for (const n of groupNotes) {
+        const fn = _normChordFn(n && n._fn);
+        if (!fn) continue;
+        const key = JSON.stringify([fn.rn || '', fn.q || '',
+            Number.isInteger(fn.deg) ? fn.deg : null]);
+        const e = counts.get(key);
+        if (e) e.n++; else counts.set(key, { fn, n: 1 });
+    }
+    let best = null;
+    for (const e of counts.values()) if (!best || e.n > best.n) best = e;
+    return best && best.n * 2 > groupNotes.length ? best.fn : null;
 }
 // E2: build an old-template-index -> new-template-index map for handshapes'
 // `chord_id` references after reconstructChords() rebuilt the template list.
@@ -717,10 +742,6 @@ function reconstructChords() {
     // E2: keep the OLD template list so handshape `chord_id` references (old
     // indices) can be remapped to the rebuilt indices below.
     const oldTemplates = arr.chord_templates;
-    // Harmony function (§6.3.1) store, keyed by chord time; read back below and
-    // rebuilt to drop orphan entries for times that no longer hold a chord.
-    const _fnMap = arr._chordFn || {};
-    const _keptFn = {};
     const byTime = {};
     const soloNotes = [];
     for (const n of arr.notes) {
@@ -739,6 +760,10 @@ function reconstructChords() {
     for (const key of Object.keys(byTime).sort((a, b) => parseFloat(a) - parseFloat(b))) {
         const group = byTime[key];
         if (group.length === 1) {
+            // A lone note is not a chord, so it carries no harmony fn. Drop any
+            // `_fn` it inherited (e.g. a chord note dragged out) so the internal
+            // field can't ride into the saved wire via arr.notes.
+            delete group[0]._fn;
             newNotes.push(group[0]);
         } else {
             // Multiple notes at same time = chord
@@ -758,10 +783,11 @@ function reconstructChords() {
                 chordTemplates.push(relinkChordTemplate(frets, _preserved, L));
                 templateMap[fretKey] = tmplIdx;
             }
-            // Reattach the instance harmony function from the time-keyed store;
-            // a partial fn is kept here and dropped by the save range-guard.
-            const _fn = _normChordFn(_fnMap[key]);
-            if (_fn) _keptFn[key] = _fn;
+            // Harmony function (§6.3.1) rides the instance: adopt it from the
+            // group's notes by majority (_groupFn), so it survives chord moves and
+            // a stray dragged-in note can't impose a foreign fn. A partial fn is
+            // kept here and dropped by the save range-guard.
+            const _fn = _groupFn(group);
             newChords.push({
                 time: group[0].time,
                 chord_id: tmplIdx,
@@ -780,9 +806,6 @@ function reconstructChords() {
     arr.notes = newNotes;
     arr.chords = newChords;
     arr.chord_templates = chordTemplates;
-    // Prune the fn store to only times that still hold a chord (drops orphans
-    // left by deleted/moved chords so a future chord at that time can't inherit).
-    arr._chordFn = _keptFn;
     // #18: this rebuild just replaced arr.notes with fresh note objects (and
     // moved same-time groups into arr.chords), so every index-based undo command
     // now points at the wrong note. Reset the undo/redo history HERE — atomically
@@ -1512,34 +1535,35 @@ class SetTeachingMarkCmd {
     }
 }
 
-// Edit a chord-instance harmony function (§6.3.1). fn rides the instance, keyed
-// by chord time in `arr._chordFn` (one chord per time) — independent of the
-// movable notes. One undo unit; snapshots the prior map entry.
+// Edit a chord-instance harmony function (§6.3.1). fn rides the instance: it is
+// carried as `_fn` on EVERY note at the chord's time, so it travels with the
+// notes through any time-mutating edit and reconstructChords adopts it by
+// majority. One undo unit; snapshots each note's prior `_fn` by object ref.
 class EditChordFnCmd {
     constructor(arrIdx, timeKey, baseFn, patch) {
         this.arrIdx = arrIdx;
         this.timeKey = timeKey;
-        this.next = _mergeChordFn(baseFn, patch);
-        this._prev = undefined;   // sentinel: key was absent
+        this.next = _mergeChordFn(baseFn, patch) || null;
+        this._targets = null;   // [{ note, prev }] filled at exec()
     }
-    _map() {
+    _groupNotes() {
         const arr = S.arrangements[this.arrIdx];
-        if (!arr) return null;
-        if (!arr._chordFn) arr._chordFn = {};
-        return arr._chordFn;
+        if (!arr || !Array.isArray(arr.notes)) return [];
+        return arr.notes.filter(n => n.time.toFixed(4) === this.timeKey);
     }
     exec() {
-        const map = this._map();
-        if (!map) return;
-        this._prev = (this.timeKey in map) ? map[this.timeKey] : undefined;
-        if (this.next) map[this.timeKey] = this.next;
-        else delete map[this.timeKey];
+        const grp = this._groupNotes();
+        // Snapshot by object ref (not index) so undo is robust to reordering;
+        // `prev === undefined` marks a note that had no `_fn`.
+        this._targets = grp.map(n => ({ note: n, prev: ('_fn' in n) ? n._fn : undefined }));
+        for (const n of grp) n._fn = this.next;
     }
     rollback() {
-        const map = this._map();
-        if (!map) return;
-        if (this._prev === undefined) delete map[this.timeKey];
-        else map[this.timeKey] = this._prev;
+        if (!this._targets) return;
+        for (const t of this._targets) {
+            if (t.prev === undefined) delete t.note._fn;
+            else t.note._fn = t.prev;
+        }
     }
 }
 
@@ -4187,21 +4211,21 @@ function _selectedChordContext(sel) {
     for (const n of sel) { if (n.time.toFixed(4) !== key) return null; }
     const L = lanes();
     const frets = new Array(L).fill(-1);
-    let count = 0;
+    const group = [];
     for (const n of notes()) {
         if (n.time.toFixed(4) !== key) continue;
-        count++;
+        group.push(n);
         if (n.string >= 0 && n.string < L) frets[n.string] = n.fret;
     }
-    if (count < 2) return null; // single note at this time isn't a chord
+    if (group.length < 2) return null; // single note at this time isn't a chord
     const fretKey = _fretKeyForL(frets, L);
     let tmpl = null;
     for (const ct of (arr.chord_templates || [])) {
         if (ct && Array.isArray(ct.frets) && _fretKeyForL(ct.frets, L) === fretKey) { tmpl = ct; break; }
     }
-    // Harmony function rides the instance, keyed by chord time on the arrangement.
-    const fn = _normChordFn((arr._chordFn || {})[key]);
-    return { arr, L, frets, fretKey, tmpl, key, fn };
+    // Harmony function rides the instance — carried on the chord's notes (_fn).
+    const fn = _groupFn(group);
+    return { arr, L, frets, fretKey, tmpl, key, fn, group };
 }
 
 function _chordAttrEsc(s) {
