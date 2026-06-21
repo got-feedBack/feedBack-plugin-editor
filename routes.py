@@ -114,30 +114,37 @@ def _wem_bytes_to_preferred_audio(content: bytes):
     if not vg:
         return None, "vgmstream-cli not available to decode WEM"
     work = Path(tempfile.mkdtemp(prefix="slopsmith_wem_"))
-    wem = work / "in.wem"
-    wem.write_bytes(content)
-    wav = work / "out.wav"
-    ok, detail = _decode_wem_to_wav(vg, str(wem), str(wav))
-    if not ok or not wav.exists():
+    # On SUCCESS the returned Path lives in `work` and the caller removes `work`
+    # after copying it out. On ANY failure (decode error, exception writing/
+    # encoding) we own cleanup here so a temp dir is never leaked.
+    try:
+        wem = work / "in.wem"
+        wem.write_bytes(content)
+        wav = work / "out.wav"
+        ok, detail = _decode_wem_to_wav(vg, str(wem), str(wav))
+        if not ok or not wav.exists():
+            shutil.rmtree(work, ignore_errors=True)
+            return None, f"WEM decode failed: {detail}"
+        ff = _ffmpeg_cmd()
+        if ff:
+            ogg = work / "out.ogg"                       # 1) ogg (preferred)
+            r = _ffmpeg_wav_to_ogg(ff, wav, ogg)
+            if r.returncode == 0 and ogg.exists() and ogg.stat().st_size > 100:
+                return ogg, None
+            for suffix, args in ((".flac", ["-c:a", "flac"]),          # 2) flac
+                                 (".mp3", ["-c:a", "libmp3lame", "-b:a", "320k"])):  # 3) mp3
+                out = work / ("out" + suffix)
+                try:
+                    rr = subprocess.run([ff, "-y", "-i", str(wav), *args, str(out)],
+                                        capture_output=True, timeout=180)
+                except (OSError, subprocess.TimeoutExpired):
+                    continue
+                if rr.returncode == 0 and out.exists() and out.stat().st_size > 100:
+                    return out, None
+        return wav, None  # no ffmpeg / all encodes failed → keep the WAV
+    except Exception as e:
         shutil.rmtree(work, ignore_errors=True)
-        return None, f"WEM decode failed: {detail}"
-    ff = _ffmpeg_cmd()
-    if ff:
-        ogg = work / "out.ogg"                       # 1) ogg (preferred)
-        r = _ffmpeg_wav_to_ogg(ff, wav, ogg)
-        if r.returncode == 0 and ogg.exists() and ogg.stat().st_size > 100:
-            return ogg, None
-        for suffix, args in ((".flac", ["-c:a", "flac"]),          # 2) flac
-                             (".mp3", ["-c:a", "libmp3lame", "-b:a", "320k"])):  # 3) mp3
-            out = work / ("out" + suffix)
-            try:
-                rr = subprocess.run([ff, "-y", "-i", str(wav), *args, str(out)],
-                                    capture_output=True, timeout=180)
-            except (OSError, subprocess.TimeoutExpired):
-                continue
-            if rr.returncode == 0 and out.exists() and out.stat().st_size > 100:
-                return out, None
-    return wav, None  # no ffmpeg / all encodes failed → keep the WAV
+        return None, f"WEM decode error: {e}"
 
 
 def _apply_chart_offset(song, delta: float) -> None:
@@ -158,7 +165,10 @@ def _apply_chart_offset(song, delta: float) -> None:
     def _c(c):
         c.time = round(c.time - delta, 6)
         for cn in (c.notes or []):
-            if cn.time:                       # chord notes that carry an absolute time
+            # Shift any chord note that carries a numeric absolute time — incl.
+            # exactly 0.0 (a note at the chart origin). The old `if cn.time:`
+            # skipped 0.0, leaving such a note un-shifted while its chord moved.
+            if cn.time is not None:
                 cn.time = round(cn.time - delta, 6)
 
     def _a(a):
@@ -167,6 +177,20 @@ def _apply_chart_offset(song, delta: float) -> None:
     def _h(h):
         h.start_time = round(h.start_time - delta, 6)
         h.end_time = round(h.end_time - delta, 6)
+
+    def _tones(t):
+        # `tones` is an opaque {base, changes, definitions} dict; its tone
+        # changes carry an absolute time (`t`, or `time` depending on source)
+        # that the editor re-emits as `<tone time=...>`, so it must move with
+        # everything else. Guard each field — the structure isn't guaranteed.
+        if not isinstance(t, dict):
+            return
+        for ch in t.get("changes") or []:
+            if not isinstance(ch, dict):
+                continue
+            for k in ("t", "time"):
+                if isinstance(ch.get(k), (int, float)) and not isinstance(ch.get(k), bool):
+                    ch[k] = round(ch[k] - delta, 6)
 
     for arr in song.arrangements:
         for n in arr.notes:
@@ -177,6 +201,7 @@ def _apply_chart_offset(song, delta: float) -> None:
             _a(a)
         for h in arr.hand_shapes:
             _h(h)
+        _tones(getattr(arr, "tones", None))
         for ph in (arr.phrases or []):
             ph.start_time = round(ph.start_time - delta, 6)
             ph.end_time = round(ph.end_time - delta, 6)
@@ -1478,6 +1503,20 @@ def setup(app, context):
                     return None
                 return candidate
         return None
+
+    def _safe_storage_asset(p) -> str:
+        """A client-supplied asset path (cover art / preview clip) is honoured
+        only when it resolves to an existing file INSIDE STORAGE_DIR — so a
+        crafted absolute path can't make the build copy arbitrary local files
+        into the sloppak. Mirrors the existing art_path guard on the save route."""
+        if not p or not isinstance(p, str):
+            return ""
+        try:
+            resolved = Path(p).resolve()
+            resolved.relative_to(STORAGE_DIR.resolve())
+        except (ValueError, OSError):
+            return ""
+        return str(resolved) if resolved.exists() else ""
 
     # Active editing sessions: session_id -> {dir, audio_file, filename, song_data}
     sessions = {}
@@ -4759,8 +4798,8 @@ def setup(app, context):
             output = dlc_dir / f"{safe_t}_{safe_a}_p.sloppak"
             return _write_sloppak_pak(
                 audio_file=audio_file,
-                art_path=art_path if art_path and Path(art_path).exists() else "",
-                preview_path=preview_path if preview_path and Path(preview_path).exists() else "",
+                art_path=_safe_storage_asset(art_path),
+                preview_path=_safe_storage_asset(preview_path),
                 arrangements_data=arrangements_data,
                 beats=beats,
                 sections=sections,
