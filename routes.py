@@ -1263,6 +1263,11 @@ def _build_arrangement_xml(
 def setup(app, context):
     config_dir = context["config_dir"]
     get_dlc_dir = context["get_dlc_dir"]
+    # Shared metadata cache (title/artist/…), populated by the core library
+    # scan. Used to enrich the load-song list so the user can search by song
+    # name / artist, not just raw filename. Optional — degrade to filename-only
+    # if a host ever omits it.
+    meta_db = context.get("meta_db")
 
     from lib.song import load_song, phrase_to_wire
     from lib import sloppak as sloppak_mod
@@ -1551,6 +1556,27 @@ def setup(app, context):
             return []
         files = []
         seen: set = set()
+
+        def _name_meta(full: Path) -> tuple:
+            # Look up cached title/artist from the shared library cache so the
+            # frontend can search/show real song names. Keyed on the dlc-relative
+            # POSIX path — exactly how the core scanner stores it (lib/scan_worker
+            # ._relpath uses .as_posix()), so a Windows backslash relpath won't
+            # silently miss. Returns ("", "") when there's no fresh cache row
+            # (unscanned song, stale stat, or no meta_db) — the row then falls
+            # back to filename-only display, never an error.
+            if not meta_db:
+                return "", ""
+            try:
+                key = full.relative_to(dlc_dir).as_posix()
+                st = full.stat()
+                cached = meta_db.get(key, st.st_mtime, st.st_size)
+            except Exception:
+                return "", ""
+            if not cached:
+                return "", ""
+            return (cached.get("title") or ""), (cached.get("artist") or "")
+
         # Single os.walk pass so large libraries are traversed only once.
         # Sloppak has two valid forms: zip (`.sloppak` file) and authoring
         # directory (`.sloppak/`). Suffixes are lowercased so a `.SLOPPAK`
@@ -1567,7 +1593,9 @@ def setup(app, context):
                 rel = str(full.relative_to(dlc_dir))
                 if rel not in seen:
                     seen.add(rel)
-                    files.append({"filename": rel, "format": fmt})
+                    title, artist = _name_meta(full)
+                    files.append({"filename": rel, "format": fmt,
+                                  "title": title, "artist": artist})
             # Collect authoring-form .sloppak/ dirs and prune them from
             # dirnames so os.walk won't descend into their contents.
             to_prune = []
@@ -1578,7 +1606,9 @@ def setup(app, context):
                     rel = str(full.relative_to(dlc_dir))
                     if rel not in seen:
                         seen.add(rel)
-                        files.append({"filename": rel, "format": "sloppak"})
+                        title, artist = _name_meta(full)
+                        files.append({"filename": rel, "format": "sloppak",
+                                      "title": title, "artist": artist})
                     to_prune.append(name)
             for name in to_prune:
                 dirnames.remove(name)

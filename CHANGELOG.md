@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Load-song search now matches the real song name and artist, not just
+  the filename.** The "Load custom song" list previously showed raw
+  filenames and only searched against them. Each entry now displays its
+  song title (with artist) when the library has metadata for it, with the
+  filename kept as a dim subtitle, and the search box matches song name,
+  artist, **or** filename. Titles/artists come from the core library
+  metadata cache (`meta_db`); songs not yet scanned fall back to
+  filename-only display and remain pickable as before.
+
 ### Fixed
 - **Add / rename section, and edit fret/bend/slide/anchor now work in
   the desktop app.** These actions used `window.prompt()`, which Electron
