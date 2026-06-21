@@ -21,11 +21,13 @@ if (!m) {
 const api = new Function(
     '"use strict";' + m[0] +
     '\nreturn { relinkChordTemplate, _fretKeyForL, _normFingers, _buildPreservedTemplates,' +
-    ' buildHandshapeChordIdMap, remapHandshapeChordIds };'
+    ' buildHandshapeChordIdMap, remapHandshapeChordIds,' +
+    ' _normChordFn, _mergeChordFn };'
 )();
 const {
     relinkChordTemplate, _normFingers, _buildPreservedTemplates,
     buildHandshapeChordIdMap, remapHandshapeChordIds,
+    _normChordFn, _mergeChordFn,
 } = api;
 
 let pass = 0, fail = 0;
@@ -201,6 +203,43 @@ t('handles empty + nullish inputs without throwing', () => {
     assert.deepStrictEqual(remapHandshapeChordIds([], {}), []);
     assert.deepStrictEqual(remapHandshapeChordIds(null, {}), []);
     assert.deepStrictEqual(remapHandshapeChordIds([{ chord_id: 0 }], null), []);
+});
+
+// ════════════════════════════════════════════════════════════════════
+// §6.6 voicing carry-forward + §6.3.1 fn instance round-trip helpers.
+// ════════════════════════════════════════════════════════════════════
+
+// 9. voicing survives the rebuild (carry-forward), or it would blank on save.
+t('preserves voicing through the rebuild; defaults to "" when absent', () => {
+    const L = 6;
+    const preserved = _buildPreservedTemplates([
+        { name: 'Am', frets: [-1, 0, 2, 2, 1, 0], fingers: [-1] * 6, voicing: 'open' },
+    ], L);
+    assert.strictEqual(relinkChordTemplate([-1, 0, 2, 2, 1, 0], preserved, L).voicing, 'open');
+    // Unknown fret pattern -> blank voicing, not stale metadata.
+    assert.strictEqual(relinkChordTemplate([3, 2, 0, 0, 0, 3], preserved, L).voicing, '');
+});
+
+// 10. _normChordFn keeps only set keys; drops partial deg/strings; null when empty.
+t('_normChordFn normalizes + keeps only set keys', () => {
+    assert.deepStrictEqual(_normChordFn({ rn: ' V7 ', q: ' 7 ', deg: 7 }),
+        { rn: 'V7', q: '7', deg: 7 });
+    assert.deepStrictEqual(_normChordFn({ rn: 'ii7' }), { rn: 'ii7' });   // partial allowed
+    assert.strictEqual(_normChordFn({ rn: '', q: '  ' }), null);          // all blank -> null
+    assert.strictEqual(_normChordFn({ deg: 15 }), null);                  // out of range dropped
+    assert.strictEqual(_normChordFn({ deg: true }), null);                // bool rejected
+    assert.strictEqual(_normChordFn(null), null);
+});
+
+// 11. _mergeChordFn merges a partial patch onto the current fn (authoring path).
+t('_mergeChordFn merges patches + clears on blank/invalid', () => {
+    assert.deepStrictEqual(_mergeChordFn({ rn: 'ii7', q: 'm7' }, { deg: 2 }),
+        { rn: 'ii7', q: 'm7', deg: 2 });
+    assert.deepStrictEqual(_mergeChordFn({ rn: 'ii7', q: 'm7', deg: 2 }, { q: '' }),
+        { rn: 'ii7', deg: 2 });                                           // blank clears q
+    assert.deepStrictEqual(_mergeChordFn({ rn: 'ii7', q: 'm7', deg: 2 }, { deg: null }),
+        { rn: 'ii7', q: 'm7' });                                          // null clears deg
+    assert.strictEqual(_mergeChordFn(null, { deg: 99 }), null);          // invalid deg, nothing else
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -388,6 +388,30 @@ def _fret_finger_attr(techs):
     return v if 0 <= v <= 4 else -1
 
 
+def _chord_fn_wire(fn):
+    """Validate a chord-instance harmony function (§6.3.1) for the wire.
+
+    Returns a clean ``{"rn", "q", "deg"}`` dict only when ``fn`` is an object
+    with a non-empty ``rn`` string, a non-empty ``q`` string, and an int ``deg``
+    in 0..11 — else ``None``. The spec requires all three keys when ``fn`` is
+    present, so a partial / out-of-range fn (the inspector may hold one mid-edit)
+    is emitted as *omitted* rather than a schema-invalid object. Mirrors core's
+    `_validate_fn` and the teaching-marks range-guard. Display only — never grading."""
+    if not isinstance(fn, dict):
+        return None
+    rn = fn.get("rn")
+    q = fn.get("q")
+    deg = fn.get("deg")
+    if not isinstance(rn, str) or not rn.strip():
+        return None
+    if not isinstance(q, str) or not q.strip():
+        return None
+    # bool is an int subclass — reject so deg=True can't pass as 1.
+    if not isinstance(deg, int) or isinstance(deg, bool) or not (0 <= deg <= 11):
+        return None
+    return {"rn": rn.strip(), "q": q.strip(), "deg": deg}
+
+
 def _safe_float(v, default=0.0):
     """Best-effort float coercion; returns `default` for bad input."""
     if v is None:
@@ -643,6 +667,9 @@ def _arr_dict_to_wire(
                 "id": int(c.get("chord_id", -1)),
                 "hd": _safe_bool(c.get("high_density")),
                 "notes": [_note_in_chord(cn) for cn in c.get("notes", [])],
+                # Harmony function (§6.3.1) — default-omitted, range-guarded so a
+                # partial / out-of-range fn never rides the wire (matches core).
+                **({"fn": _cfn} if (_cfn := _chord_fn_wire(c.get("fn"))) else {}),
             }
             for c in chords
         ],
@@ -681,6 +708,9 @@ def _arr_dict_to_wire(
                 "arp": bool(ct.get("arp", False)),
                 "fingers": list(ct.get("fingers", [-1]*6)),
                 "frets": list(ct.get("frets", [-1]*6)),
+                # Voicing (§6.6) — default-omitted, only when a non-empty string.
+                **({"voicing": _v.strip()}
+                   if isinstance((_v := ct.get("voicing")), str) and _v.strip() else {}),
             }
             for ct in chord_templates
         ],
@@ -4817,6 +4847,9 @@ def setup(app, context):
                     "time": round(ch.time, 3),
                     "chord_id": ch.chord_id,
                     "high_density": ch.high_density,
+                    # Harmony function (§6.3.1) rides the instance; core already
+                    # validated it on decode (partial/invalid -> None).
+                    "fn": getattr(ch, "fn", None),
                     "notes": [],
                 }
                 for cn in ch.notes:
@@ -4836,6 +4869,8 @@ def setup(app, context):
                     "arp": bool(getattr(ct, "arpeggio", False)),
                     "frets": ct.frets,
                     "fingers": ct.fingers,
+                    # Voicing (§6.6) rides the template (display only).
+                    "voicing": getattr(ct, "voicing", "") or "",
                 })
 
             result["arrangements"].append(arr_data)

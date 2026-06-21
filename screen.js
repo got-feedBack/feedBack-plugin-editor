@@ -378,7 +378,15 @@ function chords() { return S.arrangements.length ? S.arrangements[S.currentArr].
 function flattenChords() {
     if (!S.arrangements.length) return;
     const arr = S.arrangements[S.currentArr];
+    // Harmony function (§6.3.1) rides the chord INSTANCE. There is exactly one
+    // chord per time in the reconstruct model, so we key fn by time on the
+    // arrangement rather than on the (movable) notes — a note dragged out of a
+    // chord can't carry a stale fn into another group. reconstructChords reads
+    // this map back and prunes orphans. Seed it from the loaded chords here.
+    if (!arr._chordFn) arr._chordFn = {};
     for (const ch of arr.chords) {
+        const fn = _normChordFn(ch.fn);
+        if (fn) arr._chordFn[ch.time.toFixed(4)] = fn;
         for (const cn of ch.notes) {
             arr.notes.push({
                 time: cn.time || ch.time,
@@ -499,7 +507,42 @@ function relinkChordTemplate(frets, preserved, L) {
         fingers: _normFingers(old && old.fingers, L),
         displayName: (old && typeof old.displayName === 'string') ? old.displayName : name,
         arp: !!(old && old.arp),
+        // §6.6 voicing — carry it forward or the save rebuild BLANKS it (same
+        // carry-forward gotcha as name/displayName/fingers/arp).
+        voicing: (old && typeof old.voicing === 'string') ? old.voicing : '',
     };
+}
+
+// Normalize a chord-instance harmony function (§6.3.1) to the round-trippable
+// shape, keeping only the set keys. Partial fns are allowed in-memory (the
+// inspector authors rn/q/deg incrementally); the save range-guard (routes.py)
+// is what enforces the spec's all-three-keys rule before it reaches the wire.
+// Returns null when nothing is set.
+function _normChordFn(fn) {
+    if (!fn || typeof fn !== 'object') return null;
+    const out = {};
+    if (typeof fn.rn === 'string' && fn.rn.trim()) out.rn = fn.rn.trim();
+    if (typeof fn.q === 'string' && fn.q.trim()) out.q = fn.q.trim();
+    if (Number.isInteger(fn.deg) && fn.deg >= 0 && fn.deg <= 11) out.deg = fn.deg;
+    return Object.keys(out).length ? out : null;
+}
+
+// Merge a partial harmony-function patch ({rn?|q?|deg?}) onto a base fn,
+// keeping only the set keys. A key present in `patch` overwrites (blank/invalid
+// clears it). Returns null when the result is empty.
+function _mergeChordFn(base, patch) {
+    const merged = {
+        rn: base && typeof base.rn === 'string' ? base.rn : '',
+        q: base && typeof base.q === 'string' ? base.q : '',
+        deg: base && Number.isInteger(base.deg) ? base.deg : null,
+    };
+    if (patch && 'rn' in patch) merged.rn = typeof patch.rn === 'string' ? patch.rn.trim() : '';
+    if (patch && 'q' in patch) merged.q = typeof patch.q === 'string' ? patch.q.trim() : '';
+    if (patch && 'deg' in patch) {
+        const d = patch.deg;
+        merged.deg = (Number.isInteger(d) && d >= 0 && d <= 11) ? d : null;
+    }
+    return _normChordFn(merged);
 }
 // E2: build an old-template-index -> new-template-index map for handshapes'
 // `chord_id` references after reconstructChords() rebuilt the template list.
@@ -674,6 +717,10 @@ function reconstructChords() {
     // E2: keep the OLD template list so handshape `chord_id` references (old
     // indices) can be remapped to the rebuilt indices below.
     const oldTemplates = arr.chord_templates;
+    // Harmony function (§6.3.1) store, keyed by chord time; read back below and
+    // rebuilt to drop orphan entries for times that no longer hold a chord.
+    const _fnMap = arr._chordFn || {};
+    const _keptFn = {};
     const byTime = {};
     const soloNotes = [];
     for (const n of arr.notes) {
@@ -711,10 +758,15 @@ function reconstructChords() {
                 chordTemplates.push(relinkChordTemplate(frets, _preserved, L));
                 templateMap[fretKey] = tmplIdx;
             }
+            // Reattach the instance harmony function from the time-keyed store;
+            // a partial fn is kept here and dropped by the save range-guard.
+            const _fn = _normChordFn(_fnMap[key]);
+            if (_fn) _keptFn[key] = _fn;
             newChords.push({
                 time: group[0].time,
                 chord_id: tmplIdx,
                 high_density: false,
+                fn: _fn,
                 notes: group.map(n => ({
                     time: n.time,
                     string: n.string,
@@ -728,6 +780,9 @@ function reconstructChords() {
     arr.notes = newNotes;
     arr.chords = newChords;
     arr.chord_templates = chordTemplates;
+    // Prune the fn store to only times that still hold a chord (drops orphans
+    // left by deleted/moved chords so a future chord at that time can't inherit).
+    arr._chordFn = _keptFn;
     // #18: this rebuild just replaced arr.notes with fresh note objects (and
     // moved same-time groups into arr.chords), so every index-based undo command
     // now points at the wrong note. Reset the undo/redo history HERE — atomically
@@ -1454,6 +1509,37 @@ class SetTeachingMarkCmd {
             if (!n.techniques) n.techniques = {};
             n.techniques[this.key] = this.old[k];
         });
+    }
+}
+
+// Edit a chord-instance harmony function (§6.3.1). fn rides the instance, keyed
+// by chord time in `arr._chordFn` (one chord per time) — independent of the
+// movable notes. One undo unit; snapshots the prior map entry.
+class EditChordFnCmd {
+    constructor(arrIdx, timeKey, baseFn, patch) {
+        this.arrIdx = arrIdx;
+        this.timeKey = timeKey;
+        this.next = _mergeChordFn(baseFn, patch);
+        this._prev = undefined;   // sentinel: key was absent
+    }
+    _map() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return null;
+        if (!arr._chordFn) arr._chordFn = {};
+        return arr._chordFn;
+    }
+    exec() {
+        const map = this._map();
+        if (!map) return;
+        this._prev = (this.timeKey in map) ? map[this.timeKey] : undefined;
+        if (this.next) map[this.timeKey] = this.next;
+        else delete map[this.timeKey];
+    }
+    rollback() {
+        const map = this._map();
+        if (!map) return;
+        if (this._prev === undefined) delete map[this.timeKey];
+        else map[this.timeKey] = this._prev;
     }
 }
 
@@ -4113,7 +4199,9 @@ function _selectedChordContext(sel) {
     for (const ct of (arr.chord_templates || [])) {
         if (ct && Array.isArray(ct.frets) && _fretKeyForL(ct.frets, L) === fretKey) { tmpl = ct; break; }
     }
-    return { arr, L, frets, fretKey, tmpl };
+    // Harmony function rides the instance, keyed by chord time on the arrangement.
+    const fn = _normChordFn((arr._chordFn || {})[key]);
+    return { arr, L, frets, fretKey, tmpl, key, fn };
 }
 
 function _chordAttrEsc(s) {
@@ -4131,6 +4219,15 @@ function _chordInspectorHtml(ctx) {
     const name = t && typeof t.name === 'string' ? t.name : '';
     const displayName = t && typeof t.displayName === 'string' ? t.displayName : '';
     const arp = !!(t && t.arp);
+    const voicing = t && typeof t.voicing === 'string' ? t.voicing : '';
+    // Harmony function (§6.3.1) rides the chord instance, not the template.
+    const fn = ctx.fn || {};
+    const fnRn = typeof fn.rn === 'string' ? fn.rn : '';
+    const fnQ = typeof fn.q === 'string' ? fn.q : '';
+    const fnDeg = Number.isInteger(fn.deg) ? String(fn.deg) : '';
+    const VOICINGS = ['', 'open', 'triad', 'shell', 'drop2', 'drop3', 'barre'];
+    const voicingOpts = VOICINGS.map(v =>
+        `<option value="${_chordAttrEsc(v)}"${v === voicing ? ' selected' : ''}>${v || '—'}</option>`).join('');
 
     let fingersHtml = '';
     for (let i = 0; i < ctx.L; i++) {
@@ -4171,6 +4268,38 @@ function _chordInspectorHtml(ctx) {
                     class="rounded border-gray-600 bg-dark-700">
                 <span>Arpeggio</span>
             </label>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Voicing</span>
+                <select onchange="editorChordSetVoicing(this.value)"
+                    title="§6.6 key-independent voicing type (display only)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                    ${voicingOpts}
+                </select>
+            </label>
+            <div class="space-y-2 border-t border-gray-700 pt-3">
+                <div class="text-gray-500 text-[10px] uppercase tracking-wide"
+                    title="§6.3.1 harmonic function — display only; all three needed to persist">Function</div>
+                <label class="flex items-center gap-2">
+                    <span class="w-24 text-gray-400">Numeral</span>
+                    <input type="text" value="${_chordAttrEsc(fnRn)}" placeholder="e.g. ii7"
+                        onchange="editorChordSetFnRn(this.value)"
+                        class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                </label>
+                <label class="flex items-center gap-2">
+                    <span class="w-24 text-gray-400">Quality</span>
+                    <input type="text" value="${_chordAttrEsc(fnQ)}" placeholder="e.g. m7"
+                        onchange="editorChordSetFnQuality(this.value)"
+                        class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                </label>
+                <label class="flex items-center gap-2">
+                    <span class="w-24 text-gray-400">Root deg.</span>
+                    <input type="number" min="0" max="11" step="1" value="${_chordAttrEsc(fnDeg)}"
+                        placeholder="0–11"
+                        title="0–11 semitones of the chord root above the key tonic"
+                        onchange="editorChordSetFnDeg(this.value)"
+                        class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                </label>
+            </div>
         </div>`;
 }
 
@@ -4187,6 +4316,27 @@ function _editorChordPatch(patch) {
 window.editorChordSetName = (raw) => _editorChordPatch({ name: String(raw == null ? '' : raw).trim() });
 window.editorChordSetDisplayName = (raw) => _editorChordPatch({ displayName: String(raw == null ? '' : raw).trim() });
 window.editorChordToggleArp = (on) => _editorChordPatch({ arp: !!on });
+window.editorChordSetVoicing = (raw) => _editorChordPatch({ voicing: String(raw == null ? '' : raw).trim() });
+
+// Apply a partial harmony-function patch ({rn?|q?|deg?}) to the selected
+// chord's instance (the notes at its time), merged onto the current fn, via the
+// undo history. fn rides the instance, so it is NOT a template patch.
+function _editorChordFnPatch(patch) {
+    const ctx = _selectedChordContext();
+    if (!ctx) return;
+    S.history.exec(new EditChordFnCmd(S.currentArr, ctx.key, ctx.fn, patch));
+    draw();
+    _renderInspector();
+}
+
+window.editorChordSetFnRn = (raw) => _editorChordFnPatch({ rn: String(raw == null ? '' : raw).trim() });
+window.editorChordSetFnQuality = (raw) => _editorChordFnPatch({ q: String(raw == null ? '' : raw).trim() });
+window.editorChordSetFnDeg = (raw) => {
+    const s = String(raw == null ? '' : raw).trim();
+    // Blank clears deg; otherwise parse and clamp-validate to 0..11 (else clear).
+    const d = s === '' ? null : parseInt(s, 10);
+    _editorChordFnPatch({ deg: (Number.isInteger(d) && d >= 0 && d <= 11) ? d : null });
+};
 window.editorChordSetFinger = (stringIdx, raw) => {
     const ctx = _selectedChordContext();
     if (!ctx) return;
