@@ -22,12 +22,12 @@ const api = new Function(
     '"use strict";' + m[0] +
     '\nreturn { relinkChordTemplate, _fretKeyForL, _normFingers, _buildPreservedTemplates,' +
     ' buildHandshapeChordIdMap, remapHandshapeChordIds,' +
-    ' _normChordFn, _mergeChordFn };'
+    ' _normChordFn, _mergeChordFn, _groupFn };'
 )();
 const {
     relinkChordTemplate, _normFingers, _buildPreservedTemplates,
     buildHandshapeChordIdMap, remapHandshapeChordIds,
-    _normChordFn, _mergeChordFn,
+    _normChordFn, _mergeChordFn, _groupFn,
 } = api;
 
 let pass = 0, fail = 0;
@@ -240,6 +240,30 @@ t('_mergeChordFn merges patches + clears on blank/invalid', () => {
     assert.deepStrictEqual(_mergeChordFn({ rn: 'ii7', q: 'm7', deg: 2 }, { deg: null }),
         { rn: 'ii7', q: 'm7' });                                          // null clears deg
     assert.strictEqual(_mergeChordFn(null, { deg: 99 }), null);          // invalid deg, nothing else
+});
+
+// 11. _groupFn adopts a chord's fn from its notes by majority, so fn rides the
+// instance across moves while a stray dragged-in note can't impose a foreign fn.
+const _FN = { rn: 'vi', q: 'm', deg: 9 };
+const _FN2 = { rn: 'V7', q: '7', deg: 7 };
+t('_groupFn: unanimous chord notes keep their fn (survives a whole-chord move)', () => {
+    // Every note of an authored chord carries the same _fn — as after a move,
+    // which mutates note.time but not the carried _fn.
+    assert.deepStrictEqual(
+        _groupFn([{ _fn: _FN }, { _fn: _FN }, { _fn: _FN }]), _FN);
+});
+t('_groupFn: a single stray fn note is outvoted (no leak into another chord)', () => {
+    // Two notes of the destination chord carry _FN; one note dragged in carries
+    // a foreign _FN2 — majority wins, the stray fn is dropped.
+    assert.deepStrictEqual(_groupFn([{ _fn: _FN }, { _fn: _FN }, { _fn: _FN2 }]), _FN);
+    // A lone fn note dragged into a no-fn chord is a minority -> none.
+    assert.strictEqual(_groupFn([{ _fn: _FN2 }, {}, {}]), null);
+});
+t('_groupFn: no majority / empty -> null', () => {
+    assert.strictEqual(_groupFn([{ _fn: _FN }, { _fn: _FN2 }]), null);  // 1 vs 1 tie
+    assert.strictEqual(_groupFn([{ _fn: _FN }, {}]), null);             // 1 of 2 (not > half)
+    assert.strictEqual(_groupFn([]), null);
+    assert.strictEqual(_groupFn(null), null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
