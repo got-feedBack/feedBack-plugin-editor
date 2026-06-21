@@ -728,6 +728,14 @@ function reconstructChords() {
     arr.notes = newNotes;
     arr.chords = newChords;
     arr.chord_templates = chordTemplates;
+    // #18: this rebuild just replaced arr.notes with fresh note objects (and
+    // moved same-time groups into arr.chords), so every index-based undo command
+    // now points at the wrong note. Reset the undo/redo history HERE — atomically
+    // with the identity-changing assignment, before the handshape remap below
+    // (which can throw) — so a stale stack can't survive a partial rebuild.
+    // reconstructChords() runs ONLY at save/build time, so this only ever drops
+    // cross-save undo. (Follow-up: stable note ids would preserve it — #18 Option 2.)
+    if (S.history) S.history.reset();
     // E2: remap authored handshapes' `chord_id` from the OLD template indices
     // to the rebuilt ones (matched by fret pattern). An arpeggio handshape
     // whose voicing produced no same-time chord gets its preserved template
@@ -3598,13 +3606,8 @@ async function saveCDLC() {
         setStatus('Save failed: ' + e.message);
     } finally {
         flattenChords();
-        // #18: the save rebuild (reconstructChords in _buildSaveBody) renumbered
-        // arr.notes, so every index-based undo command now points at the wrong
-        // note. Drop cross-save undo — the safe, simple fix. (Follow-up: stable
-        // note ids would preserve it, #18 Option 2.) Reset here in `finally` so
-        // a FAILED POST still clears the stale stack, since the model is rebuilt
-        // regardless of POST outcome.
-        if (S.history) S.history.reset();
+        // (Undo history was invalidated inside _buildSaveBody's reconstructChords
+        // rebuild — see #18 there; nothing to reset here.)
         draw();
     }
 }
@@ -3656,9 +3659,7 @@ window.editorSaveAsSloppakConfirm = async () => {
         setStatus('Save failed: ' + e.message);
     } finally {
         flattenChords();
-        // #18: model was rebuilt by reconstructChords — drop the stale
-        // index-based undo stack (see saveCDLC for the full rationale).
-        if (S.history) S.history.reset();
+        // (Undo history already invalidated by reconstructChords in _buildSaveBody — #18.)
         draw();
     }
 };
@@ -5710,10 +5711,7 @@ window.editorBuild = async () => {
     } finally {
         // Re-flatten current arrangement for continued editing
         flattenChords();
-        // #18: the all-arrangements reconstructChords pass above renumbered
-        // arr.notes, so the index-based undo stack would corrupt on rollback —
-        // drop it (see saveCDLC for the full rationale).
-        if (S.history) S.history.reset();
+        // (Undo history already invalidated by the reconstructChords pass above — #18.)
         draw();
     }
 };
