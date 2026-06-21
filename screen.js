@@ -4543,13 +4543,49 @@ window.editorSetBPM = (val) => {
     draw();
     setStatus(`Tempo changed: ${oldBPM.toFixed(1)} → ${newBPM.toFixed(1)} BPM`);
 };
+// Rigidly shift all of ONE arrangement's time-bearing fields by `delta` seconds:
+// notes, chords (+ their notes), source + authored anchors, handshape spans, and
+// phrase windows. Sustains are durations, so they do NOT move. Field set mirrors
+// the tempo-remap walk (_captureScopedTimes / the remap apply). Pure — node-tested.
+function _shiftArrangementTimes(arr, delta) {
+    if (!arr) return;
+    for (const n of (arr.notes || [])) {
+        if (typeof n.time === 'number') n.time += delta;
+    }
+    for (const ch of (arr.chords || [])) {
+        if (typeof ch.time === 'number') ch.time += delta;
+        for (const cn of (ch.notes || [])) {
+            if (typeof cn.time === 'number') cn.time += delta;
+        }
+    }
+    for (const a of (arr.anchors || [])) {
+        if (typeof a.time === 'number') a.time += delta;
+    }
+    for (const a of (arr.anchors_user || [])) {
+        if (typeof a.time === 'number') a.time += delta;
+    }
+    for (const hs of (arr.handshapes || [])) {
+        if (typeof hs.start_time === 'number') hs.start_time += delta;
+        if (typeof hs.end_time === 'number') hs.end_time += delta;
+    }
+    for (const ph of (arr.phrases || [])) {
+        if (typeof ph.time === 'number') ph.time += delta;
+    }
+}
+
 window.editorApplyOffset = (val) => {
     const offset = parseFloat(val) || 0;
     const currentOffset = parseFloat(document.getElementById('editor-offset').dataset.applied || '0');
     const delta = offset - currentOffset;
     if (Math.abs(delta) < 0.0001) return;
-    const nn = notes();
-    for (const n of nn) n.time += delta;
+    // Shift EVERY arrangement, not just the current one. Beats / sections / drums
+    // (below) are global, so shifting only the current arrangement's notes left
+    // the OTHER arrangements (and every arrangement's chords / anchors /
+    // handshapes / phrases) out of phase. The user then re-nudged each one to
+    // realign it — poisoning `dataset.applied`, so each later +Keys / +Drums
+    // import landed progressively further off (#2). One apply now moves
+    // everything together and `dataset.applied` stays the single source of truth.
+    for (const arr of S.arrangements) _shiftArrangementTimes(arr, delta);
     for (const b of S.beats) b.time += delta;
     for (const s of S.sections) s.start_time += delta;
     // Drum-tab hits live outside S.arrangements, so the loops above miss
