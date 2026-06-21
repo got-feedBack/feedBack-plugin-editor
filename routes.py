@@ -49,11 +49,17 @@ _sessions = None
 # content signature (`_align_xml_files_to_arrangements`) — keeping the two
 # in lockstep so a newly-added technique can't silently drop out of either.
 _NOTE_TECH_FIELDS = (
-    "bend", "slide_to", "slide_unpitch_to", "hammer_on", "pull_off",
-    "harmonic", "harmonic_pinch", "palm_mute", "mute", "vibrato",
+    "bend", "bend_intent", "slide_to", "slide_unpitch_to", "hammer_on",
+    "pull_off", "harmonic", "harmonic_pinch", "palm_mute", "mute", "vibrato",
     "tremolo", "accent", "tap", "link_next", "fret_hand_mute",
     "pluck", "slap", "right_hand", "pick_direction", "ignore",
+    # Teaching marks (§6.2.2) — display only, never grading.
+    "fret_finger", "strum_group", "scale_degree",
 )
+# `bend_values` (the §6.2.1 bend curve) is deliberately NOT in the tuple above:
+# it's a list, and the tuple feeds hashable content-signature tuples
+# (`_obj_note_sig` / `_dict_note_sig`). It's handled explicitly in `_tech_dict`
+# (load) and `_arr_dict_to_wire` (save) instead.
 
 
 # ── JSONC support (feedpak-spec §8) ──────────────────────────────────────────
@@ -669,7 +675,10 @@ def _align_xml_files_to_arrangements(tmp_dir, result):
     def _obj_note_sig(n):
         return (
             round(n.time, 3), n.string, n.fret, round(n.sustain or 0.0, 3),
-            tuple(getattr(n, f) for f in _NOTE_TECH_FIELDS),
+            # Default -1 so the signature stays stable against a core build that
+            # predates a field (e.g. the teaching marks before #534 lands) —
+            # parse_arrangement notes from older core simply lack the attribute.
+            tuple(getattr(n, f, -1) for f in _NOTE_TECH_FIELDS),
         )
 
     def _obj_chord_sig(c):
@@ -870,6 +879,61 @@ def _safe_int(v, default=-1):
             return default
 
 
+def _fret_finger_attr(techs):
+    """fret-hand finger (§6.2.2) for the chart-XML `fretFinger` attribute,
+    collapsed to -1 (unset) when out of the spec's 0–4 range — so a malformed
+    or hand-edited value can't round-trip an invalid finger into core."""
+    v = _safe_int(techs.get("fret_finger"), -1)
+    return v if 0 <= v <= 4 else -1
+
+
+def _chord_fn_wire(fn):
+    """Validate a chord-instance harmony function (§6.3.1) for the wire.
+
+    Returns a clean ``{"rn", "q", "deg"}`` dict only when ``fn`` is an object
+    with a non-empty ``rn`` string, a non-empty ``q`` string, and an int ``deg``
+    in 0..11 — else ``None``. The spec requires all three keys when ``fn`` is
+    present, so a partial / out-of-range fn (the inspector may hold one mid-edit)
+    is emitted as *omitted* rather than a schema-invalid object. Mirrors core's
+    `_validate_fn` and the teaching-marks range-guard. Display only — never grading."""
+    if not isinstance(fn, dict):
+        return None
+    rn = fn.get("rn")
+    q = fn.get("q")
+    deg = fn.get("deg")
+    if not isinstance(rn, str) or not rn.strip():
+        return None
+    if not isinstance(q, str) or not q.strip():
+        return None
+    # bool is an int subclass — reject so deg=True can't pass as 1.
+    if not isinstance(deg, int) or isinstance(deg, bool) or not (0 <= deg <= 11):
+        return None
+    return {"rn": rn.strip(), "q": q.strip(), "deg": deg}
+
+
+# §6.6 CAGED shape enum — the only values accepted onto the wire.
+_CAGED_SHAPES = ("C", "A", "G", "E", "D")
+
+
+def _caged_wire(caged):
+    """Validate a template CAGED shape (§6.6) for the wire: returns the trimmed
+    enum letter ("C"/"A"/"G"/"E"/"D"), else "" (omitted). Mirrors core's
+    `_sanitize_caged`. Display only — never grading."""
+    c = caged.strip() if isinstance(caged, str) else ""
+    return c if c in _CAGED_SHAPES else ""
+
+
+def _guide_tones_wire(tones):
+    """Validate template guide tones (§6.6) for the wire: returns the int entries
+    in 0..11, dropping non-ints (bool rejected) and out-of-range values so a
+    malformed value never reaches the wire. Mirrors core's `_sanitize_guide_tones`.
+    Display only — never grading."""
+    if not isinstance(tones, list):
+        return []
+    return [v for v in tones
+            if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 11]
+
+
 def _safe_float(v, default=0.0):
     """Best-effort float coercion; returns `default` for bad input."""
     if v is None:
@@ -904,6 +968,31 @@ def _safe_bool(v, default=False):
         if s in ("false", "0", "no", ""):
             return False
     return default
+
+
+def _safe_bend_curve(raw):
+    """Sanitize an editor bend curve ([{t, v}], §6.2.1) for the wire: drop
+    non-dict / non-finite entries, round (t to 3, v to 1, matching `bn`), and
+    sort by `t`. Returns None for non-list / empty / all-invalid input so an
+    absent curve round-trips as *omitted*, never []."""
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for p in raw:
+        if not isinstance(p, dict):
+            continue
+        t, v = p.get("t"), p.get("v")
+        if (not isinstance(t, (int, float)) or isinstance(t, bool)
+                or not math.isfinite(t)):
+            continue
+        if (not isinstance(v, (int, float)) or isinstance(v, bool)
+                or not math.isfinite(v)):
+            continue
+        out.append({"t": round(float(t), 3), "v": round(float(v), 1)})
+    if not out:
+        return None
+    out.sort(key=lambda e: e["t"])
+    return out
 
 
 def _valid_anchor_dicts(seq):
@@ -1060,6 +1149,28 @@ def _arr_dict_to_wire(
             "pkd": _safe_int(tech.get("pick_direction"), -1),
             "ig": _safe_bool(tech.get("ignore")),
         }
+        # Bend shape (§6.2.1) — default-omitted, matching core's note_to_wire:
+        # `bt` only when non-zero, `bnv` only when a curve is present.
+        _bt = _safe_int(tech.get("bend_intent"), 0)
+        if _bt:
+            out["bt"] = _bt
+        _bnv = _safe_bend_curve(tech.get("bend_values"))
+        if _bnv:
+            out["bnv"] = _bnv
+        # Teaching marks (§6.2.2) — default-omitted, matching core's note_to_wire.
+        # Display only; never used for grading. Range-guarded server-side so a
+        # malformed/out-of-range client value (the inspector clamps, but loaded
+        # or hand-edited data may not) is treated as unset rather than emitted as
+        # a schema-invalid `fg`/`ch`/`sd` (spec §6.2.2: fg 0–4, sd 0–11, ch ≥ 0).
+        _fg = _safe_int(tech.get("fret_finger"), -1)
+        if 0 <= _fg <= 4:
+            out["fg"] = _fg
+        _ch = _safe_int(tech.get("strum_group"), -1)
+        if _ch >= 0:
+            out["ch"] = _ch
+        _sd = _safe_int(tech.get("scale_degree"), -1)
+        if 0 <= _sd <= 11:
+            out["sd"] = _sd
         return out
 
     def _note_in_chord(n):
@@ -1078,6 +1189,9 @@ def _arr_dict_to_wire(
                 "id": int(c.get("chord_id", -1)),
                 "hd": _safe_bool(c.get("high_density")),
                 "notes": [_note_in_chord(cn) for cn in c.get("notes", [])],
+                # Harmony function (§6.3.1) — default-omitted, range-guarded so a
+                # partial / out-of-range fn never rides the wire (matches core).
+                **({"fn": _cfn} if (_cfn := _chord_fn_wire(c.get("fn"))) else {}),
             }
             for c in chords
         ],
@@ -1116,6 +1230,15 @@ def _arr_dict_to_wire(
                 "arp": bool(ct.get("arp", False)),
                 "fingers": list(ct.get("fingers", [-1]*6)),
                 "frets": list(ct.get("frets", [-1]*6)),
+                # Voicing (§6.6) — default-omitted, only when a non-empty string.
+                **({"voicing": _v.strip()}
+                   if isinstance((_v := ct.get("voicing")), str) and _v.strip() else {}),
+                # CAGED shape (§6.6) — default-omitted, only when a valid enum letter.
+                **({"caged": _c} if (_c := _caged_wire(ct.get("caged"))) else {}),
+                # Guide tones (§6.6) — default-omitted; only the int entries in 0..11
+                # (bool rejected), never an out-of-range value.
+                **({"guideTones": _gt}
+                   if (_gt := _guide_tones_wire(ct.get("guideTones"))) else {}),
             }
             for ct in chord_templates
         ],
@@ -1356,6 +1479,11 @@ def _note_attrs_xml(n, *, include_time=True):
         "slap": _flag("slap"),
         "rightHand": str(_safe_int(techs.get("right_hand"), -1)),
         "pickDirection": str(_safe_int(techs.get("pick_direction"), -1)),
+        # Teaching mark (§6.2.2): fret-hand finger. core's _parse_note reads
+        # `fretFinger` back; strum_group/scale_degree have no chart-XML attribute
+        # (they round-trip through the sloppak wire instead). Display only.
+        # Out-of-range values collapse to -1 (unset), matching the wire guard.
+        "fretFinger": str(_fret_finger_attr(techs)),
         "ignore": _flag("ignore"),
     })
     return attrs
@@ -1663,6 +1791,11 @@ def _build_arrangement_xml(
 def setup(app, context):
     config_dir = context["config_dir"]
     get_dlc_dir = context["get_dlc_dir"]
+    # Shared metadata cache (title/artist/…), populated by the core library
+    # scan. Used to enrich the load-song list so the user can search by song
+    # name / artist, not just raw filename. Optional — degrade to filename-only
+    # if a host ever omits it.
+    meta_db = context.get("meta_db")
 
     from lib.song import load_song, phrase_to_wire
     from lib import sloppak as sloppak_mod
@@ -1951,6 +2084,27 @@ def setup(app, context):
             return []
         files = []
         seen: set = set()
+
+        def _name_meta(full: Path) -> tuple:
+            # Look up cached title/artist from the shared library cache so the
+            # frontend can search/show real song names. Keyed on the dlc-relative
+            # POSIX path — exactly how the core scanner stores it (lib/scan_worker
+            # ._relpath uses .as_posix()), so a Windows backslash relpath won't
+            # silently miss. Returns ("", "") when there's no fresh cache row
+            # (unscanned song, stale stat, or no meta_db) — the row then falls
+            # back to filename-only display, never an error.
+            if not meta_db:
+                return "", ""
+            try:
+                key = full.relative_to(dlc_dir).as_posix()
+                st = full.stat()
+                cached = meta_db.get(key, st.st_mtime, st.st_size)
+            except Exception:
+                return "", ""
+            if not cached:
+                return "", ""
+            return (cached.get("title") or ""), (cached.get("artist") or "")
+
         # Single os.walk pass so large libraries are traversed only once.
         # Sloppak has two valid forms: zip (`.sloppak` file) and authoring
         # directory (`.sloppak/`). Suffixes are lowercased so a `.SLOPPAK`
@@ -1967,7 +2121,9 @@ def setup(app, context):
                 rel = str(full.relative_to(dlc_dir))
                 if rel not in seen:
                     seen.add(rel)
-                    files.append({"filename": rel, "format": fmt})
+                    title, artist = _name_meta(full)
+                    files.append({"filename": rel, "format": fmt,
+                                  "title": title, "artist": artist})
             # Collect authoring-form .sloppak/ dirs and prune them from
             # dirnames so os.walk won't descend into their contents.
             to_prune = []
@@ -1978,7 +2134,9 @@ def setup(app, context):
                     rel = str(full.relative_to(dlc_dir))
                     if rel not in seen:
                         seen.add(rel)
-                        files.append({"filename": rel, "format": "sloppak"})
+                        title, artist = _name_meta(full)
+                        files.append({"filename": rel, "format": "sloppak",
+                                      "title": title, "artist": artist})
                     to_prune.append(name)
             for name in to_prune:
                 dirnames.remove(name)
@@ -4153,7 +4311,13 @@ def setup(app, context):
         import guitarpro
 
         gp_path_raw = data.get("gp_path", "")
-        track_index = data.get("track_index")
+        # Accept a list of track indices (preferred — passing an RH/LH piano pair
+        # together lets convert_file's _find_piano_pairs merge them into one
+        # full-keyboard arrangement) or a single `track_index` (back-compat).
+        raw_indices = data.get("track_indices")
+        if raw_indices is None:
+            single = data.get("track_index")
+            raw_indices = [single] if single is not None else []
         try:
             audio_offset = float(data.get("audio_offset", 0.0))
         except (TypeError, ValueError):
@@ -4163,41 +4327,20 @@ def setup(app, context):
         if not validated:
             return JSONResponse({"error": "GP file not found"}, 400)
         gp_path = str(validated)
-        if track_index is None:
-            return JSONResponse({"error": "track_index required"}, 400)
+        if not raw_indices:
+            return JSONResponse({"error": "track_index(es) required"}, 400)
         try:
-            track_index = int(track_index)
+            track_indices = [int(i) for i in raw_indices]
         except (TypeError, ValueError):
-            return JSONResponse({"error": "track_index must be an integer"}, 400)
+            return JSONResponse({"error": "track indices must be integers"}, 400)
+        # De-dupe while preserving order.
+        _seen_idx: set = set()
+        track_indices = [i for i in track_indices
+                         if not (i in _seen_idx or _seen_idx.add(i))]
 
-        def _convert():
-            tmp = tempfile.mkdtemp(prefix="slopsmith_keys_")
-            # GP8 (.gp, ZIP) and GP6 (.gpx, BCFZ) can't be read by PyGuitarPro
-            # (GP3/4/5 binary only) — it raises "unsupported version '…'".
-            # Route those through convert_file, which dispatches to the gpx
-            # converter by extension; forcing the arrangement name to "Keys"
-            # makes the GP5 branch pick the piano converter too, so both
-            # formats resolve to the same per-track piano XML here.
-            if Path(gp_path).suffix.lower() in (".gp", ".gpx"):
-                xml_paths = convert_file(
-                    gp_path, tmp, track_indices=[track_index],
-                    audio_offset=audio_offset,
-                    arrangement_names={track_index: "Keys"},
-                )
-                if not xml_paths:
-                    raise RuntimeError("Keys track produced no arrangement")
-                xml_path = xml_paths[0]
-            else:
-                song = guitarpro.parse(gp_path)
-                xml_str = convert_piano_track(
-                    song, track_index, audio_offset, "Keys"
-                )
-                xml_path = os.path.join(tmp, "Keys.xml")
-                Path(xml_path).write_text(xml_str, encoding="utf-8")
-
-            arr = parse_arrangement(xml_path)
+        def _arr_to_data(arr, name):
             arr_data = {
-                "name": "Keys",
+                "name": name,
                 "tuning": arr.tuning,
                 "capo": arr.capo,
                 "notes": [],
@@ -4267,10 +4410,47 @@ def setup(app, context):
                     "fingers": ct.fingers,
                 })
 
-            return arr_data, tmp, xml_path
+            return arr_data
+
+        def _convert():
+            tmp = tempfile.mkdtemp(prefix="slopsmith_keys_")
+            # GP8 (.gp, ZIP) / GP6 (.gpx, BCFZ) go through convert_file's gpx
+            # converter: passing ALL chosen indices in one call lets
+            # gp2rs_gpx._find_piano_pairs merge an RH/LH pair into one
+            # full-keyboard arrangement (unrelated keys tracks stay separate),
+            # and the "Keys" name selects the piano converter. GP3/4/5 binary is
+            # read directly by PyGuitarPro, one track at a time — the piano-pair
+            # merge is gpx-only, so an RH/LH pair in a GP3/4/5 file still imports
+            # as two arrangements (a separate, pre-existing limitation; the common
+            # GP6/GP8 case is the one this fixes).
+            if Path(gp_path).suffix.lower() in (".gp", ".gpx"):
+                xml_paths = convert_file(
+                    gp_path, tmp, track_indices=track_indices,
+                    audio_offset=audio_offset,
+                    arrangement_names={i: "Keys" for i in track_indices},
+                )
+            else:
+                song = guitarpro.parse(gp_path)
+                xml_paths = []
+                for idx in track_indices:
+                    xml_str = convert_piano_track(song, idx, audio_offset, "Keys")
+                    xp = os.path.join(tmp, f"Keys_{idx}.xml")
+                    Path(xp).write_text(xml_str, encoding="utf-8")
+                    xml_paths.append(xp)
+            if not xml_paths:
+                raise RuntimeError("Keys track(s) produced no arrangement")
+
+            arrangements = []
+            for _n, xml_path in enumerate(xml_paths):
+                # Disambiguate names when >1 arrangement results (e.g. two
+                # unrelated keys tracks): Keys, Keys 2, Keys 3, …
+                name = "Keys" if _n == 0 else f"Keys {_n + 1}"
+                arrangements.append(
+                    _arr_to_data(parse_arrangement(xml_path), name))
+            return arrangements, tmp, xml_paths
 
         try:
-            arr_data, tmp_dir, xml_path = (
+            arrangements, tmp_dir, xml_paths = (
                 await asyncio.get_event_loop().run_in_executor(None, _convert)
             )
         except Exception as e:
@@ -4278,7 +4458,15 @@ def setup(app, context):
             traceback.print_exc()
             return JSONResponse({"error": str(e)}, 500)
 
-        return {"arrangement": arr_data, "tmp_dir": tmp_dir, "xml_path": xml_path}
+        # Multi-track shape; keep singular `arrangement`/`xml_path` for any
+        # caller still on the old single-track contract.
+        return {
+            "arrangements": arrangements,
+            "xml_paths": xml_paths,
+            "arrangement": arrangements[0],
+            "xml_path": xml_paths[0],
+            "tmp_dir": tmp_dir,
+        }
 
     # ── Import drum/percussion tracks from a GP file ─────────────────
 
@@ -5202,7 +5390,11 @@ def setup(app, context):
             # round-trips so the editor can render and re-emit them. Field
             # set lives in `_NOTE_TECH_FIELDS` so the content signature
             # stays in sync (attr name == wire key for each).
-            return {f: getattr(n, f) for f in _NOTE_TECH_FIELDS}
+            d = {f: getattr(n, f, -1) for f in _NOTE_TECH_FIELDS}
+            # `bend_values` (§6.2.1 curve) is a list, kept out of the signature
+            # tuple — carry it explicitly so an authored/imported curve loads.
+            d["bend_values"] = getattr(n, "bend_values", None)
+            return d
 
         for arr in song.arrangements:
             arr_data = {
@@ -5262,6 +5454,9 @@ def setup(app, context):
                     "time": round(ch.time, 3),
                     "chord_id": ch.chord_id,
                     "high_density": ch.high_density,
+                    # Harmony function (§6.3.1) rides the instance; core already
+                    # validated it on decode (partial/invalid -> None).
+                    "fn": getattr(ch, "fn", None),
                     "notes": [],
                 }
                 for cn in ch.notes:
@@ -5281,6 +5476,14 @@ def setup(app, context):
                     "arp": bool(getattr(ct, "arpeggio", False)),
                     "frets": ct.frets,
                     "fingers": ct.fingers,
+                    # Voicing (§6.6) rides the template (display only).
+                    "voicing": getattr(ct, "voicing", "") or "",
+                    # CAGED shape + guide tones (§6.6) ride the template too
+                    # (display only); guarded so an invalid value can't leak.
+                    # Core's ChordTemplate exposes guide_tones as snake_case
+                    # (wire/camelCase only on the dict side).
+                    "caged": _caged_wire(getattr(ct, "caged", "")),
+                    "guideTones": _guide_tones_wire(getattr(ct, "guide_tones", [])),
                 })
 
             result["arrangements"].append(arr_data)

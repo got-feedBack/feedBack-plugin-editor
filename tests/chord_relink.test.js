@@ -21,11 +21,15 @@ if (!m) {
 const api = new Function(
     '"use strict";' + m[0] +
     '\nreturn { relinkChordTemplate, _fretKeyForL, _normFingers, _buildPreservedTemplates,' +
-    ' buildHandshapeChordIdMap, remapHandshapeChordIds };'
+    ' buildHandshapeChordIdMap, remapHandshapeChordIds,' +
+    ' _normChordFn, _mergeChordFn, _groupFn,' +
+    ' _sanitizeCaged, _sanitizeGuideTones, _parseGuideTones };'
 )();
 const {
     relinkChordTemplate, _normFingers, _buildPreservedTemplates,
     buildHandshapeChordIdMap, remapHandshapeChordIds,
+    _normChordFn, _mergeChordFn, _groupFn,
+    _sanitizeCaged, _sanitizeGuideTones, _parseGuideTones,
 } = api;
 
 let pass = 0, fail = 0;
@@ -201,6 +205,100 @@ t('handles empty + nullish inputs without throwing', () => {
     assert.deepStrictEqual(remapHandshapeChordIds([], {}), []);
     assert.deepStrictEqual(remapHandshapeChordIds(null, {}), []);
     assert.deepStrictEqual(remapHandshapeChordIds([{ chord_id: 0 }], null), []);
+});
+
+// ════════════════════════════════════════════════════════════════════
+// §6.6 voicing carry-forward + §6.3.1 fn instance round-trip helpers.
+// ════════════════════════════════════════════════════════════════════
+
+// 9. voicing survives the rebuild (carry-forward), or it would blank on save.
+t('preserves voicing through the rebuild; defaults to "" when absent', () => {
+    const L = 6;
+    const preserved = _buildPreservedTemplates([
+        { name: 'Am', frets: [-1, 0, 2, 2, 1, 0], fingers: [-1] * 6, voicing: 'open' },
+    ], L);
+    assert.strictEqual(relinkChordTemplate([-1, 0, 2, 2, 1, 0], preserved, L).voicing, 'open');
+    // Unknown fret pattern -> blank voicing, not stale metadata.
+    assert.strictEqual(relinkChordTemplate([3, 2, 0, 0, 0, 3], preserved, L).voicing, '');
+});
+
+// 9b. caged + guideTones survive the rebuild (carry-forward), sanitized.
+t('preserves caged + guideTones through the rebuild; sanitizes + defaults', () => {
+    const L = 6;
+    const preserved = _buildPreservedTemplates([
+        { name: 'G7', frets: [3, 2, 0, 0, 0, 1], fingers: new Array(6).fill(-1),
+          caged: 'E', guideTones: [4, 10, 12, -1] },
+    ], L);
+    const kept = relinkChordTemplate([3, 2, 0, 0, 0, 1], preserved, L);
+    assert.strictEqual(kept.caged, 'E');
+    assert.deepStrictEqual(kept.guideTones, [4, 10]);   // out-of-range dropped on carry
+    // Unknown fret pattern -> defaults, not stale metadata.
+    const blank = relinkChordTemplate([-1, 0, 2, 2, 1, 0], preserved, L);
+    assert.strictEqual(blank.caged, '');
+    assert.deepStrictEqual(blank.guideTones, []);
+});
+
+// 9c. the pure sanitizer/parse helpers (shared with the inspector handlers).
+t('_sanitizeCaged keeps only the enum letters', () => {
+    assert.strictEqual(_sanitizeCaged(' C '), 'C');
+    assert.strictEqual(_sanitizeCaged('X'), '');
+    assert.strictEqual(_sanitizeCaged('e'), '');   // lower-case rejected
+    assert.strictEqual(_sanitizeCaged(7), '');
+});
+
+t('_sanitizeGuideTones + _parseGuideTones clamp/filter to 0..11 ints', () => {
+    assert.deepStrictEqual(_sanitizeGuideTones([4, 10, 12, -1, 'x', true]), [4, 10]);
+    assert.deepStrictEqual(_parseGuideTones('4, 10, 12, x'), [4, 10]);
+    assert.deepStrictEqual(_parseGuideTones(' 0 ,11'), [0, 11]);
+    assert.deepStrictEqual(_parseGuideTones(''), []);
+    assert.deepStrictEqual(_parseGuideTones([3, 5]), [3, 5]);   // array passthrough
+    assert.deepStrictEqual(_parseGuideTones(7), []);
+});
+
+// 10. _normChordFn keeps only set keys; drops partial deg/strings; null when empty.
+t('_normChordFn normalizes + keeps only set keys', () => {
+    assert.deepStrictEqual(_normChordFn({ rn: ' V7 ', q: ' 7 ', deg: 7 }),
+        { rn: 'V7', q: '7', deg: 7 });
+    assert.deepStrictEqual(_normChordFn({ rn: 'ii7' }), { rn: 'ii7' });   // partial allowed
+    assert.strictEqual(_normChordFn({ rn: '', q: '  ' }), null);          // all blank -> null
+    assert.strictEqual(_normChordFn({ deg: 15 }), null);                  // out of range dropped
+    assert.strictEqual(_normChordFn({ deg: true }), null);                // bool rejected
+    assert.strictEqual(_normChordFn(null), null);
+});
+
+// 11. _mergeChordFn merges a partial patch onto the current fn (authoring path).
+t('_mergeChordFn merges patches + clears on blank/invalid', () => {
+    assert.deepStrictEqual(_mergeChordFn({ rn: 'ii7', q: 'm7' }, { deg: 2 }),
+        { rn: 'ii7', q: 'm7', deg: 2 });
+    assert.deepStrictEqual(_mergeChordFn({ rn: 'ii7', q: 'm7', deg: 2 }, { q: '' }),
+        { rn: 'ii7', deg: 2 });                                           // blank clears q
+    assert.deepStrictEqual(_mergeChordFn({ rn: 'ii7', q: 'm7', deg: 2 }, { deg: null }),
+        { rn: 'ii7', q: 'm7' });                                          // null clears deg
+    assert.strictEqual(_mergeChordFn(null, { deg: 99 }), null);          // invalid deg, nothing else
+});
+
+// 11. _groupFn adopts a chord's fn from its notes by majority, so fn rides the
+// instance across moves while a stray dragged-in note can't impose a foreign fn.
+const _FN = { rn: 'vi', q: 'm', deg: 9 };
+const _FN2 = { rn: 'V7', q: '7', deg: 7 };
+t('_groupFn: unanimous chord notes keep their fn (survives a whole-chord move)', () => {
+    // Every note of an authored chord carries the same _fn — as after a move,
+    // which mutates note.time but not the carried _fn.
+    assert.deepStrictEqual(
+        _groupFn([{ _fn: _FN }, { _fn: _FN }, { _fn: _FN }]), _FN);
+});
+t('_groupFn: a single stray fn note is outvoted (no leak into another chord)', () => {
+    // Two notes of the destination chord carry _FN; one note dragged in carries
+    // a foreign _FN2 — majority wins, the stray fn is dropped.
+    assert.deepStrictEqual(_groupFn([{ _fn: _FN }, { _fn: _FN }, { _fn: _FN2 }]), _FN);
+    // A lone fn note dragged into a no-fn chord is a minority -> none.
+    assert.strictEqual(_groupFn([{ _fn: _FN2 }, {}, {}]), null);
+});
+t('_groupFn: no majority / empty -> null', () => {
+    assert.strictEqual(_groupFn([{ _fn: _FN }, { _fn: _FN2 }]), null);  // 1 vs 1 tie
+    assert.strictEqual(_groupFn([{ _fn: _FN }, {}]), null);             // 1 of 2 (not > half)
+    assert.strictEqual(_groupFn([]), null);
+    assert.strictEqual(_groupFn(null), null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

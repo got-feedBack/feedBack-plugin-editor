@@ -378,7 +378,16 @@ function chords() { return S.arrangements.length ? S.arrangements[S.currentArr].
 function flattenChords() {
     if (!S.arrangements.length) return;
     const arr = S.arrangements[S.currentArr];
+    // Harmony function (§6.3.1) rides the chord INSTANCE. We carry it on the
+    // spread note objects — every note of the chord gets the same `_fn` — so it
+    // travels with the notes through ANY edit that mutates note.time (drag,
+    // global shift, time-scale, tempo remap). reconstructChords adopts a group's
+    // fn by majority vote (_groupFn), so a single note dragged into another chord
+    // is outvoted and can't impose a stale fn. (Supersedes the old time-keyed
+    // `arr._chordFn` store, which silently lost fn whenever a chord moved.)
+    delete arr._chordFn;
     for (const ch of arr.chords) {
+        const fn = _normChordFn(ch.fn);
         for (const cn of ch.notes) {
             arr.notes.push({
                 time: cn.time || ch.time,
@@ -388,6 +397,7 @@ function flattenChords() {
                 techniques: cn.techniques || {},
                 _fromChord: true,
                 _chordId: ch.chord_id,
+                _fn: fn || null,
             });
         }
     }
@@ -465,6 +475,28 @@ function _normFingers(fingers, L) {
     }
     return out;
 }
+// §6.6 CAGED shape (display only): keep only the enum letters, else "".
+function _sanitizeCaged(caged) {
+    const c = (typeof caged === 'string') ? caged.trim() : '';
+    return /^[CAGED]$/.test(c) ? c : '';
+}
+// §6.6 guide tones (display only): keep only the int entries in 0..11, dropping
+// non-ints (bool excluded) and out-of-range values. Mirrors core's wire guard.
+function _sanitizeGuideTones(tones) {
+    if (!Array.isArray(tones)) return [];
+    return tones.filter(n => Number.isInteger(n) && n >= 0 && n <= 11);
+}
+// Parse a comma-separated guide-tone string (inspector text input) into a clean
+// int array via _sanitizeGuideTones — e.g. "4, 10, 12, x" -> [4, 10].
+function _parseGuideTones(raw) {
+    if (Array.isArray(raw)) return _sanitizeGuideTones(raw);
+    if (typeof raw !== 'string') return [];
+    return _sanitizeGuideTones(
+        raw.split(',').map(s => {
+            const t = s.trim();
+            return /^-?\d+$/.test(t) ? parseInt(t, 10) : NaN;
+        }));
+}
 // fret-pattern (width-L) -> authored template; first occurrence wins.
 // Note: the flattened editor model has exactly ONE template per fret pattern,
 // so two authored chords that share frets but differ in name/fingers
@@ -499,7 +531,69 @@ function relinkChordTemplate(frets, preserved, L) {
         fingers: _normFingers(old && old.fingers, L),
         displayName: (old && typeof old.displayName === 'string') ? old.displayName : name,
         arp: !!(old && old.arp),
+        // §6.6 voicing — carry it forward or the save rebuild BLANKS it (same
+        // carry-forward gotcha as name/displayName/fingers/arp).
+        voicing: (old && typeof old.voicing === 'string') ? old.voicing : '',
+        // §6.6 caged + guideTones — same carry-forward gotcha as voicing; sanitize
+        // here too so a stale invalid value can't survive the rebuild.
+        caged: _sanitizeCaged(old && old.caged),
+        guideTones: _sanitizeGuideTones(old && old.guideTones),
     };
+}
+
+// Normalize a chord-instance harmony function (§6.3.1) to the round-trippable
+// shape, keeping only the set keys. Partial fns are allowed in-memory (the
+// inspector authors rn/q/deg incrementally); the save range-guard (routes.py)
+// is what enforces the spec's all-three-keys rule before it reaches the wire.
+// Returns null when nothing is set.
+function _normChordFn(fn) {
+    if (!fn || typeof fn !== 'object') return null;
+    const out = {};
+    if (typeof fn.rn === 'string' && fn.rn.trim()) out.rn = fn.rn.trim();
+    if (typeof fn.q === 'string' && fn.q.trim()) out.q = fn.q.trim();
+    if (Number.isInteger(fn.deg) && fn.deg >= 0 && fn.deg <= 11) out.deg = fn.deg;
+    return Object.keys(out).length ? out : null;
+}
+
+// Merge a partial harmony-function patch ({rn?|q?|deg?}) onto a base fn,
+// keeping only the set keys. A key present in `patch` overwrites (blank/invalid
+// clears it). Returns null when the result is empty.
+function _mergeChordFn(base, patch) {
+    const merged = {
+        rn: base && typeof base.rn === 'string' ? base.rn : '',
+        q: base && typeof base.q === 'string' ? base.q : '',
+        deg: base && Number.isInteger(base.deg) ? base.deg : null,
+    };
+    if (patch && 'rn' in patch) merged.rn = typeof patch.rn === 'string' ? patch.rn.trim() : '';
+    if (patch && 'q' in patch) merged.q = typeof patch.q === 'string' ? patch.q.trim() : '';
+    if (patch && 'deg' in patch) {
+        const d = patch.deg;
+        merged.deg = (Number.isInteger(d) && d >= 0 && d <= 11) ? d : null;
+    }
+    return _normChordFn(merged);
+}
+
+// Adopt a note group's harmony function (§6.3.1) by MAJORITY: the `_fn` value
+// carried by more than half the group's notes, else null. fn rides the chord
+// instance and is carried on every note of the chord (so it travels with the
+// notes through moves / shifts / tempo remaps). Authoring writes the same `_fn`
+// to all of a chord's notes (unanimous), so a real chord always keeps its fn;
+// a single note dragged in from another chord is outvoted and can't impose a
+// stale fn — the property the time-keyed store used to guarantee.
+function _groupFn(groupNotes) {
+    if (!Array.isArray(groupNotes) || !groupNotes.length) return null;
+    const counts = new Map();   // normalized key -> { fn, n }
+    for (const n of groupNotes) {
+        const fn = _normChordFn(n && n._fn);
+        if (!fn) continue;
+        const key = JSON.stringify([fn.rn || '', fn.q || '',
+            Number.isInteger(fn.deg) ? fn.deg : null]);
+        const e = counts.get(key);
+        if (e) e.n++; else counts.set(key, { fn, n: 1 });
+    }
+    let best = null;
+    for (const e of counts.values()) if (!best || e.n > best.n) best = e;
+    return best && best.n * 2 > groupNotes.length ? best.fn : null;
 }
 // E2: build an old-template-index -> new-template-index map for handshapes'
 // `chord_id` references after reconstructChords() rebuilt the template list.
@@ -555,6 +649,113 @@ function remapHandshapeChordIds(handshapes, oldToNew) {
 }
 /* @pure:chord-relink:end */
 
+/* @pure:bend-shape:start — pure, no browser deps; node-tested by
+ * tests/bend_shape.test.js. Helpers for authoring the §6.2.1 bend curve. */
+
+// Bend-intent (`bt`) options, in spec order.
+const BEND_INTENTS = [
+    { v: 0, label: 'Bend up' },
+    { v: 1, label: 'Release' },
+    { v: 2, label: 'Pre-bend' },
+    { v: 3, label: 'Pre-bend + release' },
+    { v: 4, label: 'Round-trip' },
+];
+
+// Generate a sensible bend curve ([{t, v}], t = seconds-from-onset) for a
+// given intent `bt`, peak `bn` and note `sustain`. Used to seed the curve
+// editor and by the preset buttons.
+function bendPresetCurve(bt, bn, sustain) {
+    const T = sustain > 0 ? sustain : 1.0;
+    const peak = Math.max(0, bn) || 0;
+    const mid = Math.round(T * 0.5 * 1000) / 1000;
+    const end = Math.round(T * 1000) / 1000;
+    switch (Number(bt) || 0) {
+        case 1: // release: held bend let down to pitch
+            return [{ t: 0, v: peak }, { t: end, v: 0 }];
+        case 2: // pre-bend: already bent, held
+            return [{ t: 0, v: peak }, { t: end, v: peak }];
+        case 3: // pre-bend + release
+            return [{ t: 0, v: peak }, { t: mid, v: peak }, { t: end, v: 0 }];
+        case 4: // round-trip: up then back down
+            return [{ t: 0, v: 0 }, { t: mid, v: peak }, { t: end, v: 0 }];
+        default: // 0 up
+            return [{ t: 0, v: 0 }, { t: end, v: peak }];
+    }
+}
+
+// Sanitize an authored curve for persistence: drop non-finite / non-dict
+// entries, round (t to 3, v to 1) and sort by t. No magnitude clamp — mirrors
+// core's `_sanitize_bend_curve` / the backend `_safe_bend_curve` (a bend can
+// legitimately exceed the editor's 3-semitone authoring cap), and the curve
+// canvas already bounds authored values. Returns null for empty / all-invalid
+// input so an absent curve serializes as omitted, never [].
+function sanitizeBendCurve(raw) {
+    if (!Array.isArray(raw)) return null;
+    const out = [];
+    for (const p of raw) {
+        if (!p || typeof p !== 'object') continue;
+        const t = Number(p.t);
+        const v = Number(p.v);
+        if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
+        out.push({
+            t: Math.round(t * 1000) / 1000,
+            v: Math.round(v * 10) / 10,
+        });
+    }
+    if (!out.length) return null;
+    out.sort((a, b) => a.t - b.t);
+    return out;
+}
+
+// Rescale a bend curve so its peak == `peak` (preserves shape). Returns null
+// when the curve is empty/invalid, `peak <= 0`, or the curve is all-zero
+// (unscalable) — callers then drop the curve so the scalar `bn` and `bnv` can
+// never contradict each other.
+function rescaleBendCurveToPeak(raw, peak) {
+    const clean = sanitizeBendCurve(raw);
+    if (!clean || !(peak > 0)) return null;
+    const oldPeak = clean.reduce((m, p) => Math.max(m, p.v), 0);
+    if (!(oldPeak > 0)) return null;
+    const k = peak / oldPeak;
+    const out = clean.map(p => ({ t: p.t, v: Math.round(p.v * k * 10) / 10 }));
+    // A target peak below bnv's 0.1 precision (e.g. 0.04) rounds every point to
+    // 0 — the curve can't carry the peak. Report unscalable so the caller drops
+    // it and keeps the scalar bn, rather than deriving a contradictory 0.
+    if (!(out.reduce((m, p) => Math.max(m, p.v), 0) > 0)) return null;
+    return out;
+}
+/* @pure:bend-shape:end */
+
+/* @pure:teaching-marks:start — pure, no browser deps; node-tested by
+ * tests/teaching_marks.test.js. Helpers for authoring the §6.2.2 teaching
+ * marks (fg fret-hand finger, ch strum group, sd scale degree). Display only —
+ * the editor authors them; nothing here feeds grading. */
+
+// Fret-hand-finger (`fg`) picker options, in spec order (-1 unset … 4 pinky).
+const FRET_FINGER_OPTIONS = [
+    { v: -1, label: 'Unset' },
+    { v: 0, label: 'Thumb' },
+    { v: 1, label: 'Index' },
+    { v: 2, label: 'Middle' },
+    { v: 3, label: 'Ring' },
+    { v: 4, label: 'Pinky' },
+];
+
+// Next free strum-group key (`ch`) across a note list: max used (>= 0) + 1, or
+// 0 when none is grouped yet. Used by "Group as strum" so a new gesture never
+// collides with an existing one.
+function nextUnusedStrumGroup(noteList) {
+    let max = -1;
+    if (Array.isArray(noteList)) {
+        for (const n of noteList) {
+            const ch = n && n.techniques ? n.techniques.strum_group : undefined;
+            if (Number.isInteger(ch) && ch > max) max = ch;
+        }
+    }
+    return max + 1;
+}
+/* @pure:teaching-marks:end */
+
 // Reconstruct chords from notes at the same time before saving
 function reconstructChords() {
     if (!S.arrangements.length) return;
@@ -585,6 +786,10 @@ function reconstructChords() {
     for (const key of Object.keys(byTime).sort((a, b) => parseFloat(a) - parseFloat(b))) {
         const group = byTime[key];
         if (group.length === 1) {
+            // A lone note is not a chord, so it carries no harmony fn. Drop any
+            // `_fn` it inherited (e.g. a chord note dragged out) so the internal
+            // field can't ride into the saved wire via arr.notes.
+            delete group[0]._fn;
             newNotes.push(group[0]);
         } else {
             // Multiple notes at same time = chord
@@ -604,10 +809,16 @@ function reconstructChords() {
                 chordTemplates.push(relinkChordTemplate(frets, _preserved, L));
                 templateMap[fretKey] = tmplIdx;
             }
+            // Harmony function (§6.3.1) rides the instance: adopt it from the
+            // group's notes by majority (_groupFn), so it survives chord moves and
+            // a stray dragged-in note can't impose a foreign fn. A partial fn is
+            // kept here and dropped by the save range-guard.
+            const _fn = _groupFn(group);
             newChords.push({
                 time: group[0].time,
                 chord_id: tmplIdx,
                 high_density: false,
+                fn: _fn,
                 notes: group.map(n => ({
                     time: n.time,
                     string: n.string,
@@ -621,6 +832,14 @@ function reconstructChords() {
     arr.notes = newNotes;
     arr.chords = newChords;
     arr.chord_templates = chordTemplates;
+    // #18: this rebuild just replaced arr.notes with fresh note objects (and
+    // moved same-time groups into arr.chords), so every index-based undo command
+    // now points at the wrong note. Reset the undo/redo history HERE — atomically
+    // with the identity-changing assignment, before the handshape remap below
+    // (which can throw) — so a stale stack can't survive a partial rebuild.
+    // reconstructChords() runs ONLY at save/build time, so this only ever drops
+    // cross-save undo. (Follow-up: stable note ids would preserve it — #18 Option 2.)
+    if (S.history) S.history.reset();
     // E2: remap authored handshapes' `chord_id` from the OLD template indices
     // to the rebuilt ones (matched by fret pattern). An arpeggio handshape
     // whose voicing produced no same-time chord gets its preserved template
@@ -1093,11 +1312,18 @@ function hitNoteEdge(mx, my) {
 // Undo / Redo
 // ════════════════════════════════════════════════════════════════════
 
+/* @pure:edit-history:start */
 class EditHistory {
     constructor() { this.undo = []; this.redo = []; }
     exec(cmd) { cmd.exec(); this.undo.push(cmd); this.redo = []; this._afterEdit(); this._ui(); }
     doUndo() { if (!this.undo.length) return; const c = this.undo.pop(); c.rollback(); this.redo.push(c); this._afterEdit(); this._ui(); draw(); updateStatus(); }
     doRedo() { if (!this.redo.length) return; const c = this.redo.pop(); c.exec(); this.undo.push(c); this._afterEdit(); this._ui(); draw(); updateStatus(); }
+    // #18: drop the whole stack when the model is rebuilt under us (the save /
+    // build flatten+reconstructChords round-trip renumbers arr.notes, so every
+    // index-based command would now roll back into the wrong note). Reuse the
+    // live instance + its _ui() wiring rather than reassigning S.history.
+    // Not _afterEdit() — that nudges the piano viewport, which a clear shouldn't.
+    reset() { this.undo = []; this.redo = []; this._ui(); }
     _afterEdit() {
         // Keep the keys viewport in sync with the current note range so
         // multi-octave authoring works without manual range control.
@@ -1112,6 +1338,7 @@ class EditHistory {
         if (r) r.disabled = !this.redo.length;
     }
 }
+/* @pure:edit-history:end */
 
 class MoveNoteCmd {
     constructor(indices, dtimes, dstrings, dfrets) {
@@ -1233,6 +1460,137 @@ class ChangeFretCmd {
     }
     exec() { notes()[this.index].fret = this.newFret; }
     rollback() { notes()[this.index].fret = this.oldFret; }
+}
+
+// Set the full bend shape (peak `bend`, intent `bend_intent`, curve
+// `bend_values` — §6.2.1) on one or more notes as a single undoable edit.
+// Snapshots the prior bend triple per note so undo restores it exactly.
+class SetBendShapeCmd {
+    constructor(indices, bn, bt, bnv) {
+        this.indices = indices.slice();
+        this.bn = bn;
+        this.bt = bt;
+        // Store a defensive copy; null when the note has no curve.
+        this.bnv = Array.isArray(bnv) && bnv.length
+            ? bnv.map(p => ({ t: p.t, v: p.v }))
+            : null;
+        this.old = this.indices.map(i => {
+            const t = notes()[i].techniques || {};
+            return {
+                bend: t.bend,
+                bend_intent: t.bend_intent,
+                bend_values: t.bend_values,
+            };
+        });
+    }
+    exec() {
+        for (const i of this.indices) {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques.bend = this.bn;
+            n.techniques.bend_intent = this.bt;
+            n.techniques.bend_values = this.bnv
+                ? this.bnv.map(p => ({ t: p.t, v: p.v }))
+                : null;
+        }
+    }
+    rollback() {
+        this.indices.forEach((i, k) => {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            const o = this.old[k];
+            n.techniques.bend = o.bend;
+            n.techniques.bend_intent = o.bend_intent;
+            n.techniques.bend_values = o.bend_values;
+        });
+    }
+}
+
+// Set only the bend intent (`bt`) on a set of notes — used by the inspector
+// dropdown so changing intent across a multi-selection doesn't flatten each
+// note's distinct peak/curve (which the full SetBendShapeCmd would).
+class SetBendIntentCmd {
+    constructor(indices, bt) {
+        this.indices = indices.slice();
+        this.bt = Number(bt) || 0;
+        this.old = this.indices.map(i => (notes()[i].techniques || {}).bend_intent);
+    }
+    exec() {
+        for (const i of this.indices) {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques.bend_intent = this.bt;
+        }
+    }
+    rollback() {
+        this.indices.forEach((i, k) => {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques.bend_intent = this.old[k];
+        });
+    }
+}
+
+// Teaching marks (§6.2.2) — set one integer technique field (fret_finger /
+// scale_degree / strum_group) across a set of notes as one undoable edit,
+// snapshotting the prior per-note value. -1 is the unset sentinel (the save
+// path omits it from the wire). Display only — never feeds grading.
+class SetTeachingMarkCmd {
+    constructor(indices, key, value) {
+        this.indices = indices.slice();
+        this.key = key;
+        this.value = Number.isInteger(value) ? value : -1;
+        this.old = this.indices.map(i => {
+            const t = notes()[i].techniques || {};
+            return t[key];
+        });
+    }
+    exec() {
+        for (const i of this.indices) {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.value;
+        }
+    }
+    rollback() {
+        this.indices.forEach((i, k) => {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.old[k];
+        });
+    }
+}
+
+// Edit a chord-instance harmony function (§6.3.1). fn rides the instance: it is
+// carried as `_fn` on EVERY note at the chord's time, so it travels with the
+// notes through any time-mutating edit and reconstructChords adopts it by
+// majority. One undo unit; snapshots each note's prior `_fn` by object ref.
+class EditChordFnCmd {
+    constructor(arrIdx, timeKey, baseFn, patch) {
+        this.arrIdx = arrIdx;
+        this.timeKey = timeKey;
+        this.next = _mergeChordFn(baseFn, patch) || null;
+        this._targets = null;   // [{ note, prev }] filled at exec()
+    }
+    _groupNotes() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr || !Array.isArray(arr.notes)) return [];
+        return arr.notes.filter(n => n.time.toFixed(4) === this.timeKey);
+    }
+    exec() {
+        const grp = this._groupNotes();
+        // Snapshot by object ref (not index) so undo is robust to reordering;
+        // `prev === undefined` marks a note that had no `_fn`.
+        this._targets = grp.map(n => ({ note: n, prev: ('_fn' in n) ? n._fn : undefined }));
+        for (const n of grp) n._fn = this.next;
+    }
+    rollback() {
+        if (!this._targets) return;
+        for (const t of this._targets) {
+            if (t.prev === undefined) delete t.note._fn;
+            else t.note._fn = t.prev;
+        }
+    }
 }
 
 // ── Move-to-string helpers ──────────────────────────────────────────
@@ -2445,29 +2803,214 @@ async function promptFret(idx) {
     _renderInspector();
 }
 
+// Bend authoring (§6.2.1): a modal with the peak amount (`bn`), an intent
+// dropdown (`bt`) and an interactive drag-point curve editor (`bnv`). Applies
+// to the full selection when the right-clicked note is part of it, else just
+// that note. Wrapped in SetBendShapeCmd so the whole edit is one undo step.
 async function promptBend(idx) {
     hideContextMenu();
     const n = notes()[idx];
+    if (!n) return;
+    const targets = (S.sel && S.sel.size && S.sel.has(idx)) ? [...S.sel] : [idx];
     const techs = n.techniques || {};
-    const current = techs.bend || 0;
-    const val = await _editorPromptText({
-        title: 'Bend',
-        label: 'Bend amount in semitones (0 = none, 1 = full, 0.5 = half)',
-        value: String(current),
+    const startBn = Number(techs.bend) || 0;
+    const startBt = Number(techs.bend_intent) || 0;
+    const startBnv = sanitizeBendCurve(techs.bend_values)
+        || bendPresetCurve(startBt, startBn || 1, n.sustain);
+    const result = await _editorBendModal({
+        bn: startBn, bt: startBt, bnv: startBnv, sustain: n.sustain,
     });
-    if (val === null) return;
-    // Strict-numeric parse — `Number('1abc')` is NaN, while
-    // `parseFloat('1abc')` would partial-parse to `1`. Matches the
-    // inspector's `_coerceInspectorNumber` for the same field so both
-    // entry points accept/reject the same set of inputs.
-    const s = String(val).trim();
-    const parsed = s === '' ? NaN : Number(s);
-    if (!Number.isFinite(parsed)) return;
-    const bend = Math.max(0, Math.min(3, parsed));
-    if (!n.techniques) n.techniques = {};
-    n.techniques.bend = bend;
+    if (result === null) return;  // cancelled
+    S.history.exec(new SetBendShapeCmd(
+        targets, result.bn, result.bt, sanitizeBendCurve(result.bnv)));
     draw();
     _renderInspector();
+    updateStatus();
+}
+
+// The bend-shape modal. Resolves to {bn, bt, bnv} on OK, or null on Cancel.
+// The curve editor: left-click empty space adds a point, drag moves it,
+// right-click deletes it; x = time across the note, y = semitones.
+function _editorBendModal({ bn = 0, bt = 0, bnv = null, sustain = 0 } = {}) {
+    return new Promise((resolve) => {
+        document.getElementById('editor-bend-modal')?.remove();
+        const Tmax = sustain > 0 ? sustain : 1.0;
+        let curBn = Math.max(0, Math.min(3, Number(bn) || 0));
+        let curBt = Number(bt) || 0;
+        let pts = (sanitizeBendCurve(bnv) || []).map(p => ({ t: p.t, v: p.v }));
+
+        const modal = document.createElement('div');
+        modal.id = 'editor-bend-modal';
+        modal.className = 'fixed inset-0 bg-black/70 z-50 flex items-center justify-center';
+        const inner = document.createElement('div');
+        inner.className = 'bg-dark-800 border border-gray-700 rounded-lg p-6 w-full max-w-md mx-4';
+        inner.setAttribute('role', 'dialog');
+        inner.setAttribute('aria-modal', 'true');
+        inner.setAttribute('aria-label', 'Edit bend');
+
+        let settled = false;
+        const done = (val) => {
+            if (settled) return;
+            settled = true;
+            modal.remove();
+            resolve(val);
+        };
+
+        // Vmax: keep the peak and any authored point visible (>= 3 semis).
+        const vmax = () => Math.max(3, curBn, ...pts.map(p => p.v), 1);
+        const W = 380, H = 170, pad = 26;
+        const toX = (t) => pad + (Tmax > 0 ? t / Tmax : 0) * (W - 2 * pad);
+        const toY = (v) => H - pad - (v / vmax()) * (H - 2 * pad);
+        const fromX = (px) => Math.max(0, Math.min(1, (px - pad) / (W - 2 * pad))) * Tmax;
+        const fromY = (py) => Math.max(0, Math.min(1, (H - pad - py) / (H - 2 * pad))) * vmax();
+
+        inner.innerHTML = `
+            <h3 class="text-lg font-semibold mb-3">Edit bend</h3>
+            <div class="flex items-center gap-3 mb-3">
+                <label class="flex items-center gap-2">
+                    <span class="text-xs text-gray-400">Peak (semi)</span>
+                    <input id="bend-bn" type="number" min="0" max="3" step="0.5" value="${curBn}"
+                        class="w-20 bg-dark-700 border border-gray-600 rounded px-1 py-0.5 text-xs">
+                </label>
+                <label class="flex items-center gap-2 flex-1">
+                    <span class="text-xs text-gray-400">Intent</span>
+                    <select id="bend-bt" class="flex-1 bg-dark-700 border border-gray-600 rounded px-1 py-0.5 text-xs">
+                        ${BEND_INTENTS.map(o => `<option value="${o.v}"${o.v === curBt ? ' selected' : ''}>${o.label}</option>`).join('')}
+                    </select>
+                </label>
+            </div>
+            <canvas id="bend-canvas" width="${W}" height="${H}"
+                class="w-full bg-dark-900 border border-gray-700 rounded cursor-crosshair"></canvas>
+            <p class="text-[11px] text-gray-500 mt-1">Click to add a point · drag to move · right-click to remove. Preset from intent:</p>
+            <div class="flex gap-2 mt-2">
+                <button type="button" id="bend-preset" class="px-2 py-1 bg-dark-700 hover:bg-dark-600 rounded text-xs">Apply preset</button>
+                <button type="button" id="bend-clear" class="px-2 py-1 bg-dark-700 hover:bg-dark-600 rounded text-xs">Clear curve</button>
+                <div class="flex-1"></div>
+                <button type="button" id="bend-cancel" class="px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-sm">Cancel</button>
+                <button type="button" id="bend-ok" class="px-3 py-1 bg-blue-700 hover:bg-blue-600 rounded text-sm">OK</button>
+            </div>`;
+        modal.appendChild(inner);
+        document.body.appendChild(modal);
+
+        const canvas = inner.querySelector('#bend-canvas');
+        const cx = canvas.getContext('2d');
+        const bnInput = inner.querySelector('#bend-bn');
+        const btSelect = inner.querySelector('#bend-bt');
+
+        const redraw = () => {
+            cx.clearRect(0, 0, W, H);
+            // Baseline (0 semis) + frame.
+            cx.strokeStyle = '#374151';
+            cx.lineWidth = 1;
+            cx.strokeRect(pad, pad, W - 2 * pad, H - 2 * pad);
+            cx.beginPath();
+            cx.moveTo(pad, toY(0)); cx.lineTo(W - pad, toY(0));
+            cx.stroke();
+            // Curve through the time-sorted points.
+            const sorted = pts.slice().sort((a, b) => a.t - b.t);
+            if (sorted.length) {
+                cx.strokeStyle = '#60a5fa';
+                cx.lineWidth = 2;
+                cx.beginPath();
+                sorted.forEach((p, i) => {
+                    const X = toX(p.t), Y = toY(p.v);
+                    if (i === 0) cx.moveTo(X, Y); else cx.lineTo(X, Y);
+                });
+                cx.stroke();
+                cx.fillStyle = '#93c5fd';
+                for (const p of sorted) {
+                    cx.beginPath();
+                    cx.arc(toX(p.t), toY(p.v), 4, 0, Math.PI * 2);
+                    cx.fill();
+                }
+            }
+        };
+        redraw();
+
+        const evtPos = (e) => {
+            const r = canvas.getBoundingClientRect();
+            return {
+                px: (e.clientX - r.left) * (W / r.width),
+                py: (e.clientY - r.top) * (H / r.height),
+            };
+        };
+        const nearest = (px, py) => {
+            let best = -1, bestD = 12 * 12;
+            pts.forEach((p, i) => {
+                const dx = toX(p.t) - px, dy = toY(p.v) - py;
+                const d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; best = i; }
+            });
+            return best;
+        };
+        let drag = null;  // dragged point object reference
+        canvas.addEventListener('pointerdown', (e) => {
+            if (e.button !== 0) return;
+            const { px, py } = evtPos(e);
+            const hit = nearest(px, py);
+            if (hit >= 0) {
+                drag = pts[hit];
+            } else {
+                drag = { t: fromX(px), v: fromY(py) };
+                pts.push(drag);
+            }
+            canvas.setPointerCapture(e.pointerId);
+            redraw();
+        });
+        canvas.addEventListener('pointermove', (e) => {
+            if (!drag) return;
+            const { px, py } = evtPos(e);
+            drag.t = fromX(px);
+            drag.v = fromY(py);
+            redraw();
+        });
+        const endDrag = () => {
+            if (!drag) return;
+            drag = null;
+            pts.sort((a, b) => a.t - b.t);
+            redraw();
+        };
+        canvas.addEventListener('pointerup', endDrag);
+        canvas.addEventListener('pointercancel', endDrag);
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            const { px, py } = evtPos(e);
+            const hit = nearest(px, py);
+            if (hit >= 0) { pts.splice(hit, 1); redraw(); }
+        });
+
+        bnInput.addEventListener('change', () => {
+            const v = Number(bnInput.value);
+            curBn = Number.isFinite(v) ? Math.max(0, Math.min(3, v)) : 0;
+            // Keep the curve consistent with the Peak input: rescale to the new
+            // peak (preserves shape), or clear it — when Peak is 0 (= no bend),
+            // or when the curve is empty/all-zero so it can't carry the peak
+            // (else OK would derive bn=0 and silently discard the Peak edit).
+            pts = curBn > 0 ? (rescaleBendCurveToPeak(pts, curBn) || []) : [];
+            bnInput.value = String(curBn);
+            redraw();
+        });
+        btSelect.addEventListener('change', () => { curBt = Number(btSelect.value) || 0; });
+        inner.querySelector('#bend-preset').onclick = () => {
+            pts = bendPresetCurve(curBt, curBn || 1, sustain).map(p => ({ t: p.t, v: p.v }));
+            redraw();
+        };
+        inner.querySelector('#bend-clear').onclick = () => { pts = []; redraw(); };
+        inner.querySelector('#bend-cancel').onclick = () => done(null);
+        inner.querySelector('#bend-ok').onclick = () => {
+            const cleanBnv = sanitizeBendCurve(pts);
+            // `bn` is the PEAK; when a curve exists it MUST equal the curve's
+            // peak (renderers/graders treat bnv as authoritative). Reconcile so
+            // a saved `bn` can never contradict `bnv`.
+            const finalBn = (cleanBnv && cleanBnv.length)
+                ? Math.max(0, ...cleanBnv.map(p => p.v))
+                : curBn;
+            done({ bn: finalBn, bt: curBt, bnv: cleanBnv });
+        };
+
+        _installModalKeyboard(modal, inner, () => done(null));
+        bnInput.focus();
+    });
 }
 
 // Parse a `prompt()` fret input strictly: a plain decimal integer
@@ -2940,7 +3483,7 @@ async function showLoadModal() {
 function renderSongPrompt() {
     const list = document.getElementById('editor-load-list');
     if (list) {
-        list.innerHTML = '<div class="text-xs text-gray-500 p-3 text-center">Start typing to search your custom song…</div>';
+        list.innerHTML = '<div class="text-xs text-gray-500 p-3 text-center">Start typing to search by song, artist, or filename…</div>';
     }
 }
 
@@ -2971,12 +3514,15 @@ function _normalizeSongList(raw) {
             return {
                 filename: item,
                 format: item.toLowerCase().endsWith('.sloppak') ? 'sloppak' : 'archive',
+                title: '', artist: '',
             };
         }
         const filename = String(item?.filename ?? '');
         const format = String(item?.format
             ?? (filename.toLowerCase().endsWith('.sloppak') ? 'sloppak' : 'archive'));
-        return { filename, format };
+        // title/artist are best-effort enrichment from the library cache;
+        // absent for unscanned songs, in which case we show the filename only.
+        return { filename, format, title: String(item?.title ?? ''), artist: String(item?.artist ?? '') };
     });
 }
 
@@ -2998,10 +3544,25 @@ function renderSongList(files) {
         btn.className = 'w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-dark-500 rounded flex items-center gap-2';
         btn.addEventListener('click', () => editorLoadFile(f.filename));
 
-        const name = document.createElement('span');
-        name.className = 'flex-1 truncate';
-        name.textContent = f.filename;
-        btn.appendChild(name);
+        // Prefer the real song name (title — artist) when the library cache
+        // had it; fall back to the raw filename otherwise. The filename is
+        // always shown as a dim subtitle so it stays identifiable/pickable.
+        const songName = f.title
+            ? (f.artist ? `${f.title} — ${f.artist}` : f.title)
+            : '';
+        const col = document.createElement('span');
+        col.className = 'flex-1 min-w-0';
+        const primary = document.createElement('span');
+        primary.className = 'block truncate';
+        primary.textContent = songName || f.filename;
+        col.appendChild(primary);
+        if (songName) {
+            const sub = document.createElement('span');
+            sub.className = 'block truncate text-[10px] text-gray-500';
+            sub.textContent = f.filename;
+            col.appendChild(sub);
+        }
+        btn.appendChild(col);
 
         const badge = document.createElement('span');
         const badgeColor = f.format === 'sloppak'
@@ -3028,7 +3589,11 @@ function filterSongs(q) {
     // to search) instead of the entire library.
     if (!query) { if (S.songsList.length) renderSongPrompt(); else renderSongList([]); return; }
     const list = _normalizeSongList(S.songsList);
-    const filtered = list.filter(f => f.filename.toLowerCase().includes(query));
+    // Match song name, artist, OR raw filename so users can search either way.
+    const filtered = list.filter(f =>
+        f.filename.toLowerCase().includes(query)
+        || (f.title && f.title.toLowerCase().includes(query))
+        || (f.artist && f.artist.toLowerCase().includes(query)));
     renderSongList(filtered);
 }
 
@@ -3199,6 +3764,8 @@ async function saveCDLC() {
         setStatus('Save failed: ' + e.message);
     } finally {
         flattenChords();
+        // (Undo history was invalidated inside _buildSaveBody's reconstructChords
+        // rebuild — see #18 there; nothing to reset here.)
         draw();
     }
 }
@@ -3250,6 +3817,7 @@ window.editorSaveAsSloppakConfirm = async () => {
         setStatus('Save failed: ' + e.message);
     } finally {
         flattenChords();
+        // (Undo history already invalidated by reconstructChords in _buildSaveBody — #18.)
         draw();
     }
 };
@@ -3359,6 +3927,7 @@ function _renderInspector() {
     // it; when mixed, leave blank and let the user supply a new value
     // that applies to all.
     const sharedBend = _selSharedValue(sel, n => (n.techniques && n.techniques.bend) || 0);
+    const sharedBt = _selSharedValue(sel, n => (n.techniques && n.techniques.bend_intent) || 0);
     const sharedSlide = _selSharedValue(sel, n => {
         const v = n.techniques && n.techniques.slide_to;
         return v === undefined ? -1 : v;
@@ -3366,6 +3935,21 @@ function _renderInspector() {
     const sharedSlideU = _selSharedValue(sel, n => {
         const v = n.techniques && n.techniques.slide_unpitch_to;
         return v === undefined ? -1 : v;
+    });
+    // Teaching marks (§6.2.2): fret-hand finger, scale-degree override, strum
+    // group. Default to -1 (unset) so a note that never authored them reads as
+    // unset rather than "mixed" against an authored sibling.
+    const sharedFinger = _selSharedValue(sel, n => {
+        const v = n.techniques && n.techniques.fret_finger;
+        return Number.isInteger(v) ? v : -1;
+    });
+    const sharedScaleDeg = _selSharedValue(sel, n => {
+        const v = n.techniques && n.techniques.scale_degree;
+        return Number.isInteger(v) ? v : -1;
+    });
+    const sharedStrum = _selSharedValue(sel, n => {
+        const v = n.techniques && n.techniques.strum_group;
+        return Number.isInteger(v) ? v : -1;
     });
     const inputVal = v => v === null ? '' : String(v);
 
@@ -3401,6 +3985,18 @@ function _renderInspector() {
                     class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
             </label>
             <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Bend intent</span>
+                <select onchange="editorInspectorSetBendIntent(this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                    ${BEND_INTENTS.map(o => `<option value="${o.v}"${o.v === (sharedBt ?? 0) ? ' selected' : ''}>${o.label}</option>`).join('')}
+                </select>
+            </label>
+            <div class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Bend curve</span>
+                <button type="button" onclick="editorOpenBendCurve()"
+                    class="flex-1 bg-dark-700 hover:bg-dark-600 border border-gray-700 rounded px-1 py-0.5 text-xs">Edit curve…</button>
+            </div>
+            <label class="flex items-center gap-2">
                 <span class="w-24 text-gray-400">Slide to</span>
                 <input type="number" min="-1" max="24" step="1" value="${inputVal(sharedSlide)}"
                     placeholder="${sharedSlide === null ? 'mixed' : ''}"
@@ -3414,6 +4010,31 @@ function _renderInspector() {
                     onchange="editorInspectorSetTech('slide_unpitch_to', this.value)"
                     class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
             </label>
+        </div>
+        <div class="space-y-2 border-t border-gray-700 pt-3">
+            <div class="text-gray-500 text-[10px] uppercase tracking-wide">Teaching marks</div>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Finger</span>
+                <select onchange="editorInspectorSetFretFinger(this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                    ${FRET_FINGER_OPTIONS.map(o => `<option value="${o.v}"${o.v === (sharedFinger ?? -1) ? ' selected' : ''}>${o.label}</option>`).join('')}
+                </select>
+            </label>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Scale deg.</span>
+                <input type="number" min="-1" max="11" step="1" value="${inputVal(sharedScaleDeg)}"
+                    placeholder="${sharedScaleDeg === null ? 'mixed' : 'auto'}"
+                    title="0–11 semitones above the key tonic; -1 / blank = auto-derive"
+                    onchange="editorInspectorSetScaleDegree(this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+            </label>
+            <div class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Strum grp ${sharedStrum === null ? '(mixed)' : (sharedStrum >= 0 ? '#' + sharedStrum : '—')}</span>
+                <button type="button" onclick="editorGroupAsStrum()"
+                    class="flex-1 bg-dark-700 hover:bg-dark-600 border border-gray-700 rounded px-1 py-0.5 text-xs">Group</button>
+                <button type="button" onclick="editorUngroupStrum()"
+                    class="flex-1 bg-dark-700 hover:bg-dark-600 border border-gray-700 rounded px-1 py-0.5 text-xs">Ungroup</button>
+            </div>
         </div>
         <div class="space-y-1 border-t border-gray-700 pt-3">`;
 
@@ -3531,9 +4152,38 @@ window.editorInspectorSetTech = (key, raw) => {
     for (const n of sel) {
         if (!n.techniques) n.techniques = {};
         n.techniques[key] = v;
+        // Editing the scalar peak must keep any authored curve consistent
+        // (renderers/graders read bnv as authoritative): rescale the curve to
+        // the new peak, or drop it when the peak is 0 / the curve is unscalable.
+        if (key === 'bend' && sanitizeBendCurve(n.techniques.bend_values)) {
+            const scaled = v > 0
+                ? rescaleBendCurveToPeak(n.techniques.bend_values, v)
+                : null;
+            n.techniques.bend_values = scaled;
+            // bnv rounds points to 0.1, so a non-0.1 `v` (e.g. 0.25) would leave
+            // bn disagreeing with the curve's real peak. Snap bn to the curve.
+            if (scaled) n.techniques.bend = scaled.reduce((m, p) => Math.max(m, p.v), 0);
+        }
     }
     draw();
     updateStatus();
+};
+
+window.editorInspectorSetBendIntent = (raw) => {
+    const idxs = [...(S.sel || [])];
+    if (!idxs.length) return;
+    const bt = Number(raw) || 0;
+    S.history.exec(new SetBendIntentCmd(idxs, bt));
+    draw();
+    updateStatus();
+    _renderInspector();
+};
+
+window.editorOpenBendCurve = () => {
+    const idxs = [...(S.sel || [])];
+    if (!idxs.length) return;
+    // promptBend re-derives the target set from S.sel; pass any selected index.
+    promptBend(idxs[0]);
 };
 
 window.editorInspectorSetFlag = (key, on) => {
@@ -3545,6 +4195,46 @@ window.editorInspectorSetFlag = (key, on) => {
     }
     draw();
     updateStatus();
+};
+
+// ─── Teaching marks (§6.2.2) ────────────────────────────────────────
+// Author fg (fret-hand finger), sd (scale-degree override) and ch (strum
+// group) on the current selection. Each is one undoable batch edit
+// (SetTeachingMarkCmd). Display only — these never affect grading.
+function _applyTeachingMark(key, value) {
+    const idxs = [...(S.sel || [])];
+    if (!idxs.length) return;
+    S.history.exec(new SetTeachingMarkCmd(idxs, key, value));
+    draw();
+    updateStatus();
+    _renderInspector();
+}
+
+window.editorInspectorSetFretFinger = (raw) => {
+    const v = Math.trunc(Number(raw));
+    if (!Number.isFinite(v)) return;
+    _applyTeachingMark('fret_finger', Math.max(-1, Math.min(4, v)));
+};
+
+window.editorInspectorSetScaleDegree = (raw) => {
+    const s = String(raw).trim();
+    // Empty input clears the override back to -1 (auto/unset).
+    const v = s === '' ? -1 : Math.trunc(Number(s));
+    if (!Number.isFinite(v)) { _renderInspector(); return; }
+    _applyTeachingMark('scale_degree', Math.max(-1, Math.min(11, v)));
+};
+
+// "Group as strum": assign every selected note a shared, unused ch key so the
+// highway renders them as one strum/rake gesture (pkd gives direction).
+window.editorGroupAsStrum = () => {
+    if (!(S.sel && S.sel.size)) return;
+    _applyTeachingMark('strum_group', nextUnusedStrumGroup(notes()));
+};
+
+// "Ungroup": clear the strum-group key on the selection (-1 = not grouped).
+window.editorUngroupStrum = () => {
+    if (!(S.sel && S.sel.size)) return;
+    _applyTeachingMark('strum_group', -1);
 };
 
 // ─── Chord inspector (E1) ───────────────────────────────────────────
@@ -3569,19 +4259,21 @@ function _selectedChordContext(sel) {
     for (const n of sel) { if (n.time.toFixed(4) !== key) return null; }
     const L = lanes();
     const frets = new Array(L).fill(-1);
-    let count = 0;
+    const group = [];
     for (const n of notes()) {
         if (n.time.toFixed(4) !== key) continue;
-        count++;
+        group.push(n);
         if (n.string >= 0 && n.string < L) frets[n.string] = n.fret;
     }
-    if (count < 2) return null; // single note at this time isn't a chord
+    if (group.length < 2) return null; // single note at this time isn't a chord
     const fretKey = _fretKeyForL(frets, L);
     let tmpl = null;
     for (const ct of (arr.chord_templates || [])) {
         if (ct && Array.isArray(ct.frets) && _fretKeyForL(ct.frets, L) === fretKey) { tmpl = ct; break; }
     }
-    return { arr, L, frets, fretKey, tmpl };
+    // Harmony function rides the instance — carried on the chord's notes (_fn).
+    const fn = _groupFn(group);
+    return { arr, L, frets, fretKey, tmpl, key, fn, group };
 }
 
 function _chordAttrEsc(s) {
@@ -3599,6 +4291,21 @@ function _chordInspectorHtml(ctx) {
     const name = t && typeof t.name === 'string' ? t.name : '';
     const displayName = t && typeof t.displayName === 'string' ? t.displayName : '';
     const arp = !!(t && t.arp);
+    const voicing = t && typeof t.voicing === 'string' ? t.voicing : '';
+    // Harmony function (§6.3.1) rides the chord instance, not the template.
+    const fn = ctx.fn || {};
+    const fnRn = typeof fn.rn === 'string' ? fn.rn : '';
+    const fnQ = typeof fn.q === 'string' ? fn.q : '';
+    const fnDeg = Number.isInteger(fn.deg) ? String(fn.deg) : '';
+    const VOICINGS = ['', 'open', 'triad', 'shell', 'drop2', 'drop3', 'barre'];
+    const voicingOpts = VOICINGS.map(v =>
+        `<option value="${_chordAttrEsc(v)}"${v === voicing ? ' selected' : ''}>${v || '—'}</option>`).join('');
+    // §6.6 CAGED shape + guide tones (template fields, display only).
+    const caged = _sanitizeCaged(t && t.caged);
+    const CAGED_SHAPES = ['', 'C', 'A', 'G', 'E', 'D'];
+    const cagedOpts = CAGED_SHAPES.map(v =>
+        `<option value="${_chordAttrEsc(v)}"${v === caged ? ' selected' : ''}>${v || '—'}</option>`).join('');
+    const guideTonesStr = _sanitizeGuideTones(t && t.guideTones).join(', ');
 
     let fingersHtml = '';
     for (let i = 0; i < ctx.L; i++) {
@@ -3639,6 +4346,53 @@ function _chordInspectorHtml(ctx) {
                     class="rounded border-gray-600 bg-dark-700">
                 <span>Arpeggio</span>
             </label>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Voicing</span>
+                <select onchange="editorChordSetVoicing(this.value)"
+                    title="§6.6 key-independent voicing type (display only)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                    ${voicingOpts}
+                </select>
+            </label>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">CAGED</span>
+                <select onchange="editorChordSetCaged(this.value)"
+                    title="§6.6 CAGED shape the fingering derives from (display only)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                    ${cagedOpts}
+                </select>
+            </label>
+            <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Guide tones</span>
+                <input type="text" value="${_chordAttrEsc(guideTonesStr)}" placeholder="e.g. 4, 10"
+                    onchange="editorChordSetGuideTones(this.value)"
+                    title="§6.6 semitone offsets 0-11 above the root (display only)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+            </label>
+            <div class="space-y-2 border-t border-gray-700 pt-3">
+                <div class="text-gray-500 text-[10px] uppercase tracking-wide"
+                    title="§6.3.1 harmonic function — display only; all three needed to persist">Function</div>
+                <label class="flex items-center gap-2">
+                    <span class="w-24 text-gray-400">Numeral</span>
+                    <input type="text" value="${_chordAttrEsc(fnRn)}" placeholder="e.g. ii7"
+                        onchange="editorChordSetFnRn(this.value)"
+                        class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                </label>
+                <label class="flex items-center gap-2">
+                    <span class="w-24 text-gray-400">Quality</span>
+                    <input type="text" value="${_chordAttrEsc(fnQ)}" placeholder="e.g. m7"
+                        onchange="editorChordSetFnQuality(this.value)"
+                        class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                </label>
+                <label class="flex items-center gap-2">
+                    <span class="w-24 text-gray-400">Root deg.</span>
+                    <input type="number" min="0" max="11" step="1" value="${_chordAttrEsc(fnDeg)}"
+                        placeholder="0–11"
+                        title="0–11 semitones of the chord root above the key tonic"
+                        onchange="editorChordSetFnDeg(this.value)"
+                        class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs">
+                </label>
+            </div>
         </div>`;
 }
 
@@ -3655,6 +4409,31 @@ function _editorChordPatch(patch) {
 window.editorChordSetName = (raw) => _editorChordPatch({ name: String(raw == null ? '' : raw).trim() });
 window.editorChordSetDisplayName = (raw) => _editorChordPatch({ displayName: String(raw == null ? '' : raw).trim() });
 window.editorChordToggleArp = (on) => _editorChordPatch({ arp: !!on });
+window.editorChordSetVoicing = (raw) => _editorChordPatch({ voicing: String(raw == null ? '' : raw).trim() });
+// §6.6 CAGED shape + guide tones — enum/range-guarded, routed as one undoable
+// template patch like voicing (sanitizers live in the @pure:chord-relink block).
+window.editorChordSetCaged = (raw) => _editorChordPatch({ caged: _sanitizeCaged(raw) });
+window.editorChordSetGuideTones = (raw) => _editorChordPatch({ guideTones: _parseGuideTones(raw) });
+
+// Apply a partial harmony-function patch ({rn?|q?|deg?}) to the selected
+// chord's instance (the notes at its time), merged onto the current fn, via the
+// undo history. fn rides the instance, so it is NOT a template patch.
+function _editorChordFnPatch(patch) {
+    const ctx = _selectedChordContext();
+    if (!ctx) return;
+    S.history.exec(new EditChordFnCmd(S.currentArr, ctx.key, ctx.fn, patch));
+    draw();
+    _renderInspector();
+}
+
+window.editorChordSetFnRn = (raw) => _editorChordFnPatch({ rn: String(raw == null ? '' : raw).trim() });
+window.editorChordSetFnQuality = (raw) => _editorChordFnPatch({ q: String(raw == null ? '' : raw).trim() });
+window.editorChordSetFnDeg = (raw) => {
+    const s = String(raw == null ? '' : raw).trim();
+    // Blank clears deg; otherwise parse and clamp-validate to 0..11 (else clear).
+    const d = s === '' ? null : parseInt(s, 10);
+    _editorChordFnPatch({ deg: (Number.isInteger(d) && d >= 0 && d <= 11) ? d : null });
+};
 window.editorChordSetFinger = (stringIdx, raw) => {
     const ctx = _selectedChordContext();
     if (!ctx) return;
@@ -3840,6 +4619,26 @@ window.editSong = (filename) => {
     showScreen('plugin-editor');
     loadCDLC(filename);
 };
+
+// Register an "Open in editor" action on the v3 song-card three-dot menu, so a
+// song can be loaded straight into the editor (sibling to core's "Edit
+// metadata"). Routed through the shared ui.library-card-injection registry, so
+// it only appears when this plugin is loaded — and only in v3, where the
+// registry exists (guarded for v2, which has no such menu). register() rejects
+// duplicate ids, so re-running the script is a no-op.
+(function _registerEditorCardAction() {
+    const sm = window.slopsmith;
+    if (!sm || !sm.libraryCardActions) return;
+    sm.libraryCardActions.register({
+        id: 'editor.open-in-editor',
+        pluginId: 'editor',
+        label: 'Open in editor',
+        placement: 'menu',
+        order: 15, // just under core's "Edit metadata" (10)
+        applies: (song) => !!(song && song.filename),
+        run: (song) => window.editSong(song.filename),
+    });
+})();
 
 // ════════════════════════════════════════════════════════════════════
 // Sync Tempo — detect audio BPM and scale notes to match
@@ -5179,6 +5978,7 @@ window.editorBuild = async () => {
     } finally {
         // Re-flatten current arrangement for continued editing
         flattenChords();
+        // (Undo history already invalidated by the reconstructChords pass above — #18.)
         draw();
     }
 };
@@ -5947,19 +6747,19 @@ window.editorKeysFileSelected = async (input) => {
         _addKeysSortedTracks = sorted;
 
         const listEl = document.getElementById('editor-add-keys-track-list');
-        const firstPianoPos = sorted.findIndex(t => t.is_piano);
-        const defaultPos = firstPianoPos >= 0 ? firstPianoPos : 0;
-        // Radio value is the position in `sorted` (not t.index) because
-        // format-0 channel splits produce multiple entries that share the
-        // same MIDI track_index — we need a unique key.
+        const defaultChecked = _keysDefaultSelection(sorted);
+        // Checkbox value is the position in `sorted` (not t.index) because
+        // format-0 channel splits produce multiple entries that share the same
+        // MIDI track_index — we need a unique key. Multi-select: a detected
+        // RH/LH piano pair is pre-checked so both hands import and merge.
         listEl.innerHTML = sorted.map((t, pos) => {
-            const checked = pos === defaultPos ? 'checked' : '';
+            const checked = defaultChecked.has(pos) ? 'checked' : '';
             const isDrums = !!(t.is_drums || t.is_percussion);
             const flag = t.is_piano ? '<span class="text-indigo-300">[keys]</span>' : '';
             const drumsTag = isDrums ? '<span class="text-red-400">[drums]</span>' : '';
             const safeName = _editorEscHtml(t.name || '') || _editorEscHtml('Track ' + t.index);
             return `<label class="flex items-center gap-2 text-xs text-gray-300 py-0.5">
-                <input type="radio" name="keys-track" value="${pos}" ${checked} class="accent-indigo-500">
+                <input type="checkbox" name="keys-track" value="${pos}" ${checked} class="accent-indigo-500">
                 <span class="text-gray-200">${safeName}</span>
                 ${flag} ${drumsTag}
                 <span class="text-gray-600 ml-auto">${Number(t.notes) || 0} notes</span>
@@ -5968,13 +6768,45 @@ window.editorKeysFileSelected = async (input) => {
         document.getElementById('editor-add-keys-tracks').classList.remove('hidden');
         document.getElementById('editor-add-keys-go').disabled = false;
         const found = sorted.filter(t => t.is_piano).length;
+        const pairHint = defaultChecked.size > 1
+            ? ' An RH/LH pair is pre-selected — both hands merge into one piano.'
+            : '';
         statusEl.textContent = found > 0
-            ? `Found ${found} keyboard track(s). Pick one.`
-            : `No tracks auto-flagged as keyboard — pick one manually.`;
+            ? `Found ${found} keyboard track(s). Select one or more.${pairHint}`
+            : `No tracks auto-flagged as keyboard — select one or more manually.`;
     } catch (e) {
         statusEl.textContent = 'Failed: ' + e.message;
     }
 };
+
+// Mirror gp2rs_gpx._find_piano_pairs: a keys track named "<stem> RH" pairs with
+// "<stem> LH" (word-boundary, case-insensitive). Pre-select detected pairs so
+// both hands import and merge into one piano by default; if none pair, select
+// the first keyboard track. Returns a Set of positions in `tracks`.
+function _keysDefaultSelection(tracks) {
+    const checked = new Set();
+    const keys = tracks
+        .map((t, pos) => ({ pos, name: String(t.name || '').trim().toLowerCase(), is: !!t.is_piano }))
+        .filter(t => t.is);
+    const consumed = new Set();
+    for (const a of keys) {
+        if (consumed.has(a.pos) || !/\brh\b/.test(a.name)) continue;
+        const stem = a.name.replace(/\s*\brh\b\s*$/, '').trim();
+        for (const b of keys) {
+            if (b.pos === a.pos || consumed.has(b.pos) || !/\blh\b/.test(b.name)) continue;
+            if (b.name.replace(/\s*\blh\b\s*$/, '').trim() === stem) {
+                checked.add(a.pos); checked.add(b.pos);
+                consumed.add(a.pos); consumed.add(b.pos);
+                break;
+            }
+        }
+    }
+    if (checked.size === 0) {
+        const firstPiano = tracks.findIndex(t => t.is_piano);
+        checked.add(firstPiano >= 0 ? firstPiano : 0);
+    }
+    return checked;
+}
 
 window.editorDoAddKeys = async () => {
     if (!_addKeysSourcePath || !S.sessionId) return;
@@ -5983,12 +6815,18 @@ window.editorDoAddKeys = async () => {
     goBtn.disabled = true;
     statusEl.textContent = 'Importing keys track...';
 
-    const radio = document.querySelector('input[name="keys-track"]:checked');
-    // Radio value is a position in _addKeysSortedTracks; resolve it back to
-    // the full entry so we can pull both `index` and `channel_filter`.
-    const pos = radio ? parseInt(radio.value) : 0;
-    const picked = _addKeysSortedTracks[pos] || _addKeysSortedTracks[0];
-    if (!picked) { statusEl.textContent = 'No track selected.'; goBtn.disabled = false; return; }
+    // Checkbox values are positions in _addKeysSortedTracks; resolve them back
+    // to full entries (each carries `index` and `channel_filter`). Multiple
+    // keys tracks can be imported at once — an RH/LH piano pair is merged into
+    // one arrangement server-side (convert_file._find_piano_pairs).
+    const checkedEls = Array.from(
+        document.querySelectorAll('input[name="keys-track"]:checked'));
+    const positions = checkedEls.length ? checkedEls.map(el => parseInt(el.value)) : [0];
+    const pickedList = positions.map(p => _addKeysSortedTracks[p]).filter(Boolean);
+    if (!pickedList.length) { statusEl.textContent = 'No track selected.'; goBtn.disabled = false; return; }
+    const trackIndices = pickedList.map(p => Number(p.index) || 0);
+    // MIDI keys import is single-track; use the first selected track + channel.
+    const picked = pickedList[0];
     const trackIndex = Number(picked.index) || 0;
     const channelFilter = (picked.channel_filter == null) ? null : Number(picked.channel_filter);
 
@@ -6000,7 +6838,7 @@ window.editorDoAddKeys = async () => {
         const body = _addKeysSourceFormat === 'midi'
             ? { midi_path: _addKeysSourcePath, track_index: trackIndex, audio_offset: audioOffset,
                 channel_filter: channelFilter }
-            : { gp_path: _addKeysSourcePath, track_index: trackIndex, audio_offset: audioOffset };
+            : { gp_path: _addKeysSourcePath, track_indices: trackIndices, audio_offset: audioOffset };
         const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -6013,10 +6851,20 @@ window.editorDoAddKeys = async () => {
             return;
         }
 
-        const ok = await _editorAppendKeysArrangement(data.arrangement, statusEl, {
-            xml_path: data.xml_path || '',
-        });
-        if (!ok) goBtn.disabled = false;
+        // The GP path may return several arrangements (one per non-merged keys
+        // track); the MIDI path returns one. Append each in order.
+        const arrangements = Array.isArray(data.arrangements)
+            ? data.arrangements
+            : (data.arrangement ? [data.arrangement] : []);
+        const xmlPaths = Array.isArray(data.xml_paths) ? data.xml_paths : [];
+        let allOk = arrangements.length > 0;
+        for (let i = 0; i < arrangements.length; i++) {
+            const ok = await _editorAppendKeysArrangement(arrangements[i], statusEl, {
+                xml_path: xmlPaths[i] || data.xml_path || '',
+            });
+            if (!ok) { allOk = false; break; }
+        }
+        if (!allOk) goBtn.disabled = false;
     } catch (e) {
         statusEl.textContent = 'Failed: ' + e.message;
         goBtn.disabled = false;

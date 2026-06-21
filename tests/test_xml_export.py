@@ -581,6 +581,108 @@ def test_arr_dict_to_wire_tolerates_none_for_slide_and_bend():
     assert wn["bn"] == 0
 
 
+def test_arr_dict_to_wire_emits_bend_shape():
+    """bt/bnv (§6.2.1) ride the wire alongside the scalar bn peak."""
+    notes = [_note(1.0, bend=2.0, bend_intent=4, bend_values=[
+        {"t": 0.0, "v": 0.0}, {"t": 0.25, "v": 2.0}, {"t": 0.5, "v": 0.0}])]
+    wn = _arr_dict_to_wire("Lead", [0]*6, 0, notes, [], [])["notes"][0]
+    assert wn["bn"] == 2.0
+    assert wn["bt"] == 4
+    assert wn["bnv"] == [
+        {"t": 0.0, "v": 0.0}, {"t": 0.25, "v": 2.0}, {"t": 0.5, "v": 0.0}]
+
+
+def test_arr_dict_to_wire_default_omits_bend_shape():
+    """bt omitted when 0, bnv omitted when absent — keeps payloads tight."""
+    wn = _arr_dict_to_wire(
+        "Lead", [0]*6, 0, [_note(1.0, bend=1.0)], [], [])["notes"][0]
+    assert "bt" not in wn
+    assert "bnv" not in wn
+
+
+def test_arr_dict_to_wire_sanitizes_bend_curve():
+    """Malformed bnv entries dropped and sorted by t; empty/garbage -> omitted."""
+    notes = [_note(1.0, bend=2.0, bend_values=[
+        {"t": 0.5, "v": 2.0}, {"t": "x", "v": 1}, {"t": 0.0, "v": 0.0}, "junk"])]
+    wn = _arr_dict_to_wire("Lead", [0]*6, 0, notes, [], [])["notes"][0]
+    assert wn["bnv"] == [{"t": 0.0, "v": 0.0}, {"t": 0.5, "v": 2.0}]
+    notes2 = [_note(1.0, bend=2.0, bend_values=[{"t": "a", "v": "b"}])]
+    wn2 = _arr_dict_to_wire("Lead", [0]*6, 0, notes2, [], [])["notes"][0]
+    assert "bnv" not in wn2
+
+
+# ---- teaching marks fg/ch/sd (§6.2.2) --------------------------------------
+
+def test_arr_dict_to_wire_emits_teaching_marks():
+    """fg/ch/sd ride the wire under their literal short codes."""
+    notes = [_note(1.0, fret_finger=2, strum_group=5, scale_degree=7)]
+    wn = _arr_dict_to_wire("Lead", [0]*6, 0, notes, [], [])["notes"][0]
+    assert wn["fg"] == 2
+    assert wn["ch"] == 5
+    assert wn["sd"] == 7
+
+
+def test_arr_dict_to_wire_default_omits_teaching_marks():
+    """fg/ch/sd are default-omitted when unset (-1) so payloads stay tight."""
+    wn = _arr_dict_to_wire("Lead", [0]*6, 0, [_note(1.0)], [], [])["notes"][0]
+    for k in ("fg", "ch", "sd"):
+        assert k not in wn
+
+
+def test_arr_dict_to_wire_omits_out_of_range_teaching_marks():
+    """Out-of-range fg/ch/sd (the inspector clamps, but loaded / hand-edited
+    data may not) are treated as unset rather than emitted as schema-invalid
+    values (spec §6.2.2: fg 0–4, sd 0–11, ch ≥ 0)."""
+    notes = [_note(1.0, fret_finger=9, strum_group=-3, scale_degree=15)]
+    wn = _arr_dict_to_wire("Lead", [0]*6, 0, notes, [], [])["notes"][0]
+    for k in ("fg", "ch", "sd"):
+        assert k not in wn
+    # In-range boundary values still ride the wire.
+    ok = _arr_dict_to_wire(
+        "Lead", [0]*6, 0,
+        [_note(1.0, fret_finger=4, strum_group=0, scale_degree=11)], [], [],
+    )["notes"][0]
+    assert (ok["fg"], ok["ch"], ok["sd"]) == (4, 0, 11)
+
+
+def test_out_of_range_fret_finger_xml_attr_collapses_to_unset():
+    """An out-of-range fg collapses to fretFinger=-1 in chart XML so it can't
+    round-trip an invalid finger into core."""
+    note_el = _parse(_build(notes=[_note(1.0, fret_finger=9)])).find(".//notes/note")
+    assert note_el.get("fretFinger") == "-1"
+
+
+def test_fret_finger_round_trips_through_xml():
+    """fg exports as the `fretFinger` chart-XML attr (core's _parse_note reads
+    it back); strum_group/scale_degree have no chart-XML attribute."""
+    note_el = _parse(_build(notes=[_note(1.0, fret_finger=3)])).find(".//notes/note")
+    assert note_el.get("fretFinger") == "3"
+    # Default unset.
+    plain = _parse(_build(notes=[_note(1.0)])).find(".//notes/note")
+    assert plain.get("fretFinger") == "-1"
+
+
+def test_arr_dict_to_wire_chord_note_carries_bend_shape():
+    """Chord member notes inherit bt/bnv through _note_in_chord -> _note."""
+    chord = {
+        "time": 2.0, "chord_id": 0, "high_density": False,
+        "notes": [_note(2.0, string=1, fret=5, bend=1.0, bend_intent=2,
+                        bend_values=[{"t": 0.0, "v": 1.0}, {"t": 0.3, "v": 0.0}])],
+    }
+    wire = _arr_dict_to_wire("Lead", [0]*6, 0, [], [chord], _stub_templates(2))
+    cn = wire["chords"][0]["notes"][0]
+    assert cn["bt"] == 2
+    assert cn["bnv"] == [{"t": 0.0, "v": 1.0}, {"t": 0.3, "v": 0.0}]
+
+
+def test_note_tech_fields_include_bend_intent_not_values():
+    """bend_intent joins the signature-backed field set; bend_values (a list)
+    is handled explicitly so it can't land in the hashable content signatures."""
+    from routes import _NOTE_TECH_FIELDS
+    assert "bend_intent" in _NOTE_TECH_FIELDS
+    assert "bend_values" not in _NOTE_TECH_FIELDS
+
+
 def test_chord_high_density_string_false_decodes_to_false():
     """Wire-style "false" / "0" for `high_density` must not flip the flag on.
 

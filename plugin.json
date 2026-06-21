@@ -6,7 +6,7 @@
     "category": "creation",
     "icon": "assets/thumb.png",
     "nav": {
-        "label": "Editor",
+        "label": "Song Editor",
         "screen": "editor"
     },
     "screen": "screen.html",
