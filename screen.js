@@ -1200,11 +1200,18 @@ function hitNoteEdge(mx, my) {
 // Undo / Redo
 // ════════════════════════════════════════════════════════════════════
 
+/* @pure:edit-history:start */
 class EditHistory {
     constructor() { this.undo = []; this.redo = []; }
     exec(cmd) { cmd.exec(); this.undo.push(cmd); this.redo = []; this._afterEdit(); this._ui(); }
     doUndo() { if (!this.undo.length) return; const c = this.undo.pop(); c.rollback(); this.redo.push(c); this._afterEdit(); this._ui(); draw(); updateStatus(); }
     doRedo() { if (!this.redo.length) return; const c = this.redo.pop(); c.exec(); this.undo.push(c); this._afterEdit(); this._ui(); draw(); updateStatus(); }
+    // #18: drop the whole stack when the model is rebuilt under us (the save /
+    // build flatten+reconstructChords round-trip renumbers arr.notes, so every
+    // index-based command would now roll back into the wrong note). Reuse the
+    // live instance + its _ui() wiring rather than reassigning S.history.
+    // Not _afterEdit() — that nudges the piano viewport, which a clear shouldn't.
+    reset() { this.undo = []; this.redo = []; this._ui(); }
     _afterEdit() {
         // Keep the keys viewport in sync with the current note range so
         // multi-octave authoring works without manual range control.
@@ -1219,6 +1226,7 @@ class EditHistory {
         if (r) r.disabled = !this.redo.length;
     }
 }
+/* @pure:edit-history:end */
 
 class MoveNoteCmd {
     constructor(indices, dtimes, dstrings, dfrets) {
@@ -3590,6 +3598,13 @@ async function saveCDLC() {
         setStatus('Save failed: ' + e.message);
     } finally {
         flattenChords();
+        // #18: the save rebuild (reconstructChords in _buildSaveBody) renumbered
+        // arr.notes, so every index-based undo command now points at the wrong
+        // note. Drop cross-save undo — the safe, simple fix. (Follow-up: stable
+        // note ids would preserve it, #18 Option 2.) Reset here in `finally` so
+        // a FAILED POST still clears the stale stack, since the model is rebuilt
+        // regardless of POST outcome.
+        if (S.history) S.history.reset();
         draw();
     }
 }
@@ -3641,6 +3656,9 @@ window.editorSaveAsSloppakConfirm = async () => {
         setStatus('Save failed: ' + e.message);
     } finally {
         flattenChords();
+        // #18: model was rebuilt by reconstructChords — drop the stale
+        // index-based undo stack (see saveCDLC for the full rationale).
+        if (S.history) S.history.reset();
         draw();
     }
 };
@@ -5692,6 +5710,10 @@ window.editorBuild = async () => {
     } finally {
         // Re-flatten current arrangement for continued editing
         flattenChords();
+        // #18: the all-arrangements reconstructChords pass above renumbered
+        // arr.notes, so the index-based undo stack would corrupt on rollback —
+        // drop it (see saveCDLC for the full rationale).
+        if (S.history) S.history.reset();
         draw();
     }
 };
