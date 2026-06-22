@@ -2273,10 +2273,12 @@ def setup(app, context):
             return (cached.get("title") or ""), (cached.get("artist") or "")
 
         # Single os.walk pass so large libraries are traversed only once.
-        # Sloppak has two valid forms: zip (`.sloppak` file) and authoring
-        # directory (`.sloppak/`). Suffixes are lowercased so a `.SLOPPAK`
-        # from an older backend is still recognised.
-        _FORMATS = {".sloppak": "sloppak"}
+        # A song package has two valid forms: zip file and authoring
+        # directory, across both `.feedpak` (current) and `.sloppak` (legacy)
+        # suffixes. Suffixes are lowercased so a `.FEEDPAK`/`.SLOPPAK` from an
+        # older backend is still recognised. Both map to the `sloppak` format
+        # tag — same on-disk format.
+        _FORMATS = {".feedpak": "sloppak", ".sloppak": "sloppak"}
         for dirpath, dirnames, filenames in os.walk(dlc_dir):
             dirnames.sort()
             for name in filenames:
@@ -2291,12 +2293,12 @@ def setup(app, context):
                     title, artist = _name_meta(full)
                     files.append({"filename": rel, "format": fmt,
                                   "title": title, "artist": artist})
-            # Collect authoring-form .sloppak/ dirs and prune them from
-            # dirnames so os.walk won't descend into their contents.
+            # Collect authoring-form package dirs (.feedpak/ or .sloppak/) and
+            # prune them from dirnames so os.walk won't descend into them.
             to_prune = []
             for name in dirnames:
                 ext = os.path.splitext(name)[1].lower()
-                if ext == ".sloppak":
+                if ext in (".feedpak", ".sloppak"):
                     full = Path(dirpath) / name
                     rel = str(full.relative_to(dlc_dir))
                     if rel not in seen:
@@ -2330,8 +2332,8 @@ def setup(app, context):
         except ValueError:
             return JSONResponse({"error": "Invalid filename"}, 400)
         # external `.archive` loading has been removed. The editor only opens
-        # native `.sloppak` authoring/distribution containers now.
-        if filepath.suffix.lower() != ".sloppak":
+        # native `.feedpak`/`.sloppak` authoring/distribution containers now.
+        if filepath.suffix.lower() not in (".feedpak", ".sloppak"):
             return JSONResponse({"error": "Unsupported file type"}, 400)
         if not filepath.exists():
             return JSONResponse({"error": "File not found"}, 404)
@@ -3125,23 +3127,23 @@ def setup(app, context):
             return JSONResponse({"error": "forbidden"}, 403)
 
         # Output sits next to the source archive, sharing its stem so the
-        # library shows both `MySong_p.archive` and `MySong_p.sloppak`.
+        # library shows both `MySong_p.archive` and `MySong_p.feedpak`.
         # Keep any subdirectory prefix from `filename` (the picker
         # supports nested layouts like `Artist/Song_p.archive`); using
-        # just the bare stem here would put the sloppak in the right
+        # just the bare stem here would put the feedpak in the right
         # place on disk but `resolve_source_dir(new_filename, ...)`
         # downstream would later look for it at the DLC root.
         source_relpath = Path(source_filename)
-        new_filename = str(source_relpath.with_suffix(".sloppak").as_posix())
-        output_path = source_path.with_suffix(".sloppak")
-        # Refuse to write the zip on top of an authoring-form sloppak
-        # directory at the same path — the picker supports `.sloppak/`
+        new_filename = str(source_relpath.with_suffix(".feedpak").as_posix())
+        output_path = source_path.with_suffix(".feedpak")
+        # Refuse to write the zip on top of an authoring-form package
+        # directory at the same path — the picker supports `.feedpak/`
         # directories, and `_write_sloppak_pak` would fail trying to
         # replace it. Better a clear 409 than a half-written conflict.
         if output_path.exists() and output_path.is_dir():
             return JSONResponse(
                 {"error": (
-                    f"A sloppak directory already exists at "
+                    f"A feedpak directory already exists at "
                     f"{new_filename}. Remove or rename it before "
                     "converting the archive."
                 )},
@@ -3365,7 +3367,7 @@ def setup(app, context):
                 {"error": "title and artist must contain non-blank characters"},
                 400,
             )
-        new_filename = f"{safe_t}_{safe_a}_p.sloppak"
+        new_filename = f"{safe_t}_{safe_a}.feedpak"
         output_path = (dlc_dir / new_filename).resolve()
         # Containment check — the sanitiser above strips path separators,
         # but defend against a `.. .. ..` -style title that somehow
@@ -5369,7 +5371,7 @@ def setup(app, context):
             artist = meta.get("artistName") or meta.get("artist", "Unknown")
             safe_t = re.sub(r'[<>:"/\\|?*]', '_', title)
             safe_a = re.sub(r'[<>:"/\\|?*]', '_', artist)
-            output = dlc_dir / f"{safe_t}_{safe_a}_p.sloppak"
+            output = dlc_dir / f"{safe_t}_{safe_a}.feedpak"
             return _write_sloppak_pak(
                 audio_file=audio_file,
                 art_path=_safe_storage_asset(art_path),

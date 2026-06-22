@@ -3513,13 +3513,13 @@ function _normalizeSongList(raw) {
         if (typeof item === 'string') {
             return {
                 filename: item,
-                format: item.toLowerCase().endsWith('.sloppak') ? 'sloppak' : 'archive',
+                format: /\.(feedpak|sloppak)$/.test(item.toLowerCase()) ? 'sloppak' : 'archive',
                 title: '', artist: '',
             };
         }
         const filename = String(item?.filename ?? '');
         const format = String(item?.format
-            ?? (filename.toLowerCase().endsWith('.sloppak') ? 'sloppak' : 'archive'));
+            ?? (/\.(feedpak|sloppak)$/.test(filename.toLowerCase()) ? 'sloppak' : 'archive'));
         // title/artist are best-effort enrichment from the library cache;
         // absent for unscanned songs, in which case we show the filename only.
         return { filename, format, title: String(item?.title ?? ''), artist: String(item?.artist ?? '') };

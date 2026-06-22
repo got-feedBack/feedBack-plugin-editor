@@ -1,8 +1,8 @@
 {
     "id": "editor",
     "name": "Arrangement Editor",
-    "version": "1.5.0",
-    "description": "Build and edit sloppak arrangements — import Guitar Pro tabs, sync audio, and tune every note.",
+    "version": "1.6.0",
+    "description": "Build and edit feedpak arrangements — import Guitar Pro tabs, sync audio, and tune every note.",
     "category": "creation",
     "icon": "assets/thumb.png",
     "nav": {
