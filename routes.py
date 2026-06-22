@@ -3367,7 +3367,7 @@ def setup(app, context):
                 {"error": "title and artist must contain non-blank characters"},
                 400,
             )
-        new_filename = f"{safe_t}_{safe_a}_p.feedpak"
+        new_filename = f"{safe_t}_{safe_a}.feedpak"
         output_path = (dlc_dir / new_filename).resolve()
         # Containment check — the sanitiser above strips path separators,
         # but defend against a `.. .. ..` -style title that somehow
@@ -5371,7 +5371,7 @@ def setup(app, context):
             artist = meta.get("artistName") or meta.get("artist", "Unknown")
             safe_t = re.sub(r'[<>:"/\\|?*]', '_', title)
             safe_a = re.sub(r'[<>:"/\\|?*]', '_', artist)
-            output = dlc_dir / f"{safe_t}_{safe_a}_p.feedpak"
+            output = dlc_dir / f"{safe_t}_{safe_a}.feedpak"
             return _write_sloppak_pak(
                 audio_file=audio_file,
                 art_path=_safe_storage_asset(art_path),
