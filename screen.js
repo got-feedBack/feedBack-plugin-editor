@@ -4836,6 +4836,15 @@ window._editorUpdateLoopIn3DBtn = _updateLoopIn3DBtn;
 window.editorLoopIn3D = async () => {
     const region = _effectiveLoopRegion();
     if (!region || !S.filename || S.createMode) return;
+    // If saving would defer to the archive-overflow format modal (the
+    // arrangement no longer fits the archive's string limit), let the user
+    // resolve that first — don't pop the modal AND navigate to the highway on
+    // top of it (which would also stream the un-saved chart). saveCDLC() shows
+    // the modal; bail out of the handoff so the user can retry after choosing.
+    if (S.format === 'archive' && _activeArrangementExceedsArchiveLimit()) {
+        await saveCDLC();
+        return;
+    }
     // Pin the resolved region as the bar selection so it's highlighted and
     // carried in the return context.
     S.barSel = { startTime: region.startTime, endTime: region.endTime };
