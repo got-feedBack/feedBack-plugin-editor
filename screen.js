@@ -956,18 +956,60 @@ function draw() {
 function drawWaveform(w) {
     ctx.fillStyle = '#08081a';
     ctx.fillRect(0, 0, w, WAVEFORM_H);
-    if (!S.waveformPeaks) return;
+    const pk = S.waveformPeaks;
+    const dur = S.duration || 0;
+    if (!pk || !pk.bins || dur <= 0) return;
 
-    const peaks = S.waveformPeaks;
+    const N = pk.bins;
     const mid = WAVEFORM_H / 2;
-    ctx.fillStyle = '#4080e060';
-    for (let px = LABEL_W; px < w; px++) {
-        const t = xToTime(px);
-        if (t < 0 || t >= S.duration) continue;
-        const i = Math.floor(t / S.duration * peaks.length);
-        if (i < 0 || i >= peaks.length) continue;
-        const bh = peaks[i] * (WAVEFORM_H / 2 - 4);
-        ctx.fillRect(px, mid - bh, 1, bh * 2);
+    const amp = WAVEFORM_H / 2 - 4;
+    // Visible pixel span of the audio (clamped to the waveform lane).
+    const xLo = Math.max(LABEL_W, Math.floor(timeToX(0)));
+    const xHi = Math.min(w, Math.ceil(timeToX(dur)));
+    if (xHi <= xLo) return;
+
+    // Per-column bin range for the pixel [px, px+1). Each column aggregates
+    // every bin it spans, so the shape stays correct from full-song zoom-out
+    // down to a single bin per pixel.
+    const binRange = (px) => {
+        let i0 = Math.floor(xToTime(px) / dur * N);
+        let i1 = Math.floor(xToTime(px + 1) / dur * N);
+        if (i0 < 0) i0 = 0;
+        if (i1 >= N) i1 = N - 1;
+        if (i1 < i0) i1 = i0;
+        return [i0, i1];
+    };
+
+    // Faint zero line.
+    ctx.strokeStyle = 'rgba(120,150,210,0.18)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(xLo, mid + 0.5);
+    ctx.lineTo(xHi, mid + 0.5);
+    ctx.stroke();
+
+    // Peak (min→max) envelope — the true asymmetric outline, drawn light.
+    ctx.fillStyle = 'rgba(90,150,235,0.40)';
+    for (let px = xLo; px < xHi; px++) {
+        const [i0, i1] = binRange(px);
+        let lo = pk.min[i0], hi = pk.max[i0];
+        for (let i = i0 + 1; i <= i1; i++) {
+            if (pk.min[i] < lo) lo = pk.min[i];
+            if (pk.max[i] > hi) hi = pk.max[i];
+        }
+        const yHi = mid - hi * amp;
+        const yLo = mid - lo * amp;
+        ctx.fillRect(px, yHi, 1, Math.max(1, yLo - yHi));
+    }
+
+    // RMS body — loudness, drawn brighter and symmetric around the zero line.
+    ctx.fillStyle = 'rgba(130,185,255,0.85)';
+    for (let px = xLo; px < xHi; px++) {
+        const [i0, i1] = binRange(px);
+        let sumSq = 0, cnt = 0;
+        for (let i = i0; i <= i1; i++) { const r = pk.rms[i]; sumSq += r * r; cnt++; }
+        const h = (cnt ? Math.sqrt(sumSq / cnt) : 0) * amp;
+        if (h > 0.5) ctx.fillRect(px, mid - h, 1, Math.max(1, 2 * h));
     }
 }
 
@@ -3239,22 +3281,42 @@ async function loadAudio(url) {
     }
 }
 
+// Build a high-resolution min / max / RMS cache from one channel of PCM so
+// the waveform can render its true (asymmetric) shape and stay sharp when
+// zoomed in: `min`/`max` are the signed sample extremes per bin (the peak
+// envelope), `rms` is the per-bin loudness (the body). Pure — channel data
+// in, typed arrays out — so it's unit-testable. `bins` is the entry count.
+function _buildWaveformPeaks(data, binSamples) {
+    const bins = Math.max(1, Math.floor(data.length / binSamples));
+    const min = new Float32Array(bins);
+    const max = new Float32Array(bins);
+    const rms = new Float32Array(bins);
+    for (let b = 0; b < bins; b++) {
+        const start = b * binSamples;
+        // The last bin soaks up any remainder so no tail samples are dropped.
+        const end = (b === bins - 1) ? data.length : start + binSamples;
+        let lo = Infinity, hi = -Infinity, sumSq = 0, cnt = 0;
+        for (let s = start; s < end; s++) {
+            const v = data[s];
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+            sumSq += v * v;
+            cnt++;
+        }
+        min[b] = cnt ? lo : 0;
+        max[b] = cnt ? hi : 0;
+        rms[b] = cnt ? Math.sqrt(sumSq / cnt) : 0;
+    }
+    return { min, max, rms, bins };
+}
+
 function computeWaveform() {
     if (!S.audioBuffer) return;
     const data = S.audioBuffer.getChannelData(0);
-    const buckets = 4000;
-    const peaks = new Float32Array(buckets);
-    const samplesPerBucket = Math.floor(data.length / buckets);
-    for (let b = 0; b < buckets; b++) {
-        let max = 0;
-        const start = b * samplesPerBucket;
-        for (let s = 0; s < samplesPerBucket; s++) {
-            const v = Math.abs(data[start + s]);
-            if (v > max) max = v;
-        }
-        peaks[b] = max;
-    }
-    S.waveformPeaks = peaks;
+    // ~3 ms per bin: fine enough that each pixel covers ≥1 bin even at high
+    // zoom, yet bounded (≈1 MB of typed arrays for a 5-minute song).
+    const binSamples = Math.max(64, Math.round(S.audioBuffer.sampleRate * 0.003));
+    S.waveformPeaks = _buildWaveformPeaks(data, binSamples);
 }
 
 function startPlayback() {
