@@ -137,6 +137,11 @@ const S = {
     // Selection
     sel: new Set(),
 
+    // Bar-range selection for the "Loop in 3D" handoff. Drag on the bottom
+    // beat bar (measure strip) to set { startTime, endTime } in seconds,
+    // snapped to downbeat boundaries. `null` = no bar range selected.
+    barSel: null,
+
     // Drag state
     drag: null, // { type, startX, startY, startTime, startString, noteIdx, origTimes, origStrings }
 
@@ -279,6 +284,27 @@ function laneLabels() {
 
 function timeToX(t)  { return LABEL_W + (t - S.scrollX) * S.zoom; }
 function xToTime(x)  { return (x - LABEL_W) / S.zoom + S.scrollX; }
+
+// ── Bar selection (Loop-in-3D handoff) ──────────────────────────────
+// Downbeat times in ascending order, from the song-wide beat grid.
+function _downbeatTimes() {
+    return S.beats.filter(b => b.measure > 0).map(b => b.time).sort((a, b) => a - b);
+}
+// Snap a pair of raw times to a whole-bar span: start = the downbeat at or
+// before the earlier time, end = the downbeat strictly after the later time
+// (falling back to the song end). Returns null when the chart has no
+// downbeats (so the beat bar can't define bars).
+function _barSpanForTimes(t0, t1) {
+    const dbs = _downbeatTimes();
+    if (!dbs.length) return null;
+    const lo = Math.min(t0, t1), hi = Math.max(t0, t1);
+    let start = dbs[0];
+    for (const t of dbs) { if (t <= lo + 1e-6) start = t; else break; }
+    let end = null;
+    for (const t of dbs) { if (t > hi + 1e-6) { end = t; break; } }
+    if (end === null) end = Math.max(S.duration || hi, hi);
+    return (end > start) ? { startTime: start, endTime: end } : null;
+}
 function laneToY(l)  { return WAVEFORM_H + l * LANE_H; }
 function yToLane(y)  { return Math.floor((y - WAVEFORM_H) / LANE_H); }
 function strToLane(s) { return (lanes() - 1) - s; }
@@ -904,6 +930,7 @@ function draw() {
         drawLanes(w);
         drawGrid(w);
         drawSections(w);
+        drawBarSel(w);
         drawBeatBar(w);
         drawNotes(w);
         drawSelectionRect(w);
@@ -1038,12 +1065,41 @@ function _beatBarTopY() {
         : WAVEFORM_H + lanes() * LANE_H;
 }
 
+// Highlight the bar range selected for "Loop in 3D" — a translucent blue
+// band with bright edges spanning the full chart height, drawn under the
+// notes so they stay legible.
+function drawBarSel(w) {
+    if (!S.barSel) return;
+    const x1 = timeToX(S.barSel.startTime);
+    const x2 = timeToX(S.barSel.endTime);
+    if (x2 < LABEL_W || x1 > w) return;
+    const cx1 = Math.max(LABEL_W, x1);
+    const cx2 = Math.min(w, x2);
+    const bot = canvasH();
+    ctx.save();
+    ctx.fillStyle = 'rgba(80,160,255,0.10)';
+    ctx.fillRect(cx1, 0, Math.max(0, cx2 - cx1), bot);
+    ctx.strokeStyle = 'rgba(80,160,255,0.7)';
+    ctx.lineWidth = 1.5;
+    if (x1 >= LABEL_W && x1 <= w) { ctx.beginPath(); ctx.moveTo(x1, 0); ctx.lineTo(x1, bot); ctx.stroke(); }
+    if (x2 >= LABEL_W && x2 <= w) { ctx.beginPath(); ctx.moveTo(x2, 0); ctx.lineTo(x2, bot); ctx.stroke(); }
+    ctx.restore();
+}
+
 function drawBeatBar(w) {
     const y = _beatBarTopY();
     ctx.fillStyle = '#08081a';
     ctx.fillRect(0, y, w, BEAT_H);
     ctx.fillStyle = '#08081a';
     ctx.fillRect(0, y, LABEL_W, BEAT_H);
+
+    // Left gutter label — identifies the strip and hints that it's
+    // drag-to-select for "Loop in 3D".
+    ctx.fillStyle = S.barSel ? '#6aa0ff' : '#667';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('⇆ bars', LABEL_W / 2, y + BEAT_H / 2);
 
     ctx.fillStyle = '#555';
     ctx.font = '9px monospace';
@@ -1998,6 +2054,19 @@ function onMouseDown(e) {
             if (onHandshapeLaneMouseDown(e, x, y)) return;
         }
     }
+    // Beat bar (bottom measure strip) → drag-select a bar range for the
+    // "Loop in 3D" handoff. Left button only; right-click still opens the
+    // section menu via onContextMenu.
+    if (e.button === 0 && S.beats.length) {
+        const bbTop = _beatBarTopY();
+        if (y >= bbTop && y < bbTop + BEAT_H) {
+            const t = xToTime(x);
+            S.drag = { type: 'barsel', startTime: t };
+            S.barSel = _barSpanForTimes(t, t);
+            draw();
+            return;
+        }
+    }
     // Click outside the tone lane → clear the tone selection so the
     // next Del press targets the note path instead of the previously
     // selected tone marker.
@@ -2119,6 +2188,13 @@ function onMouseMove(e) {
 
 function _onMouseMoveBody(e, x, y, L) {
 
+    // Bar-range drag on the beat bar — re-snap the span to the cursor.
+    if (S.drag && S.drag.type === 'barsel') {
+        S.barSel = _barSpanForTimes(S.drag.startTime, xToTime(x));
+        draw();
+        return;
+    }
+
     // Tone-marker drag — hijack before any of the existing
     // drag-handler branches so the marker tracks the cursor.
     if (S.drag && S.drag.type === 'tone') {
@@ -2149,7 +2225,12 @@ function _onMouseMoveBody(e, x, y, L) {
             if (canvas) canvas.style.cursor = hit >= 0 ? 'ew-resize' : '';
             return;
         }
-        if (canvas && y >= WAVEFORM_H && y < WAVEFORM_H + L * LANE_H) {
+        // Beat bar (bottom measure strip) → text-ish cursor to signal it's
+        // drag-to-select-bars for "Loop in 3D".
+        const bbTop = _beatBarTopY();
+        if (canvas && S.beats.length && y >= bbTop && y < bbTop + BEAT_H) {
+            canvas.style.cursor = 'col-resize';
+        } else if (canvas && y >= WAVEFORM_H && y < WAVEFORM_H + L * LANE_H) {
             canvas.style.cursor = hitNoteEdge(x, y) >= 0 ? 'ew-resize' : '';
         } else if (canvas) {
             canvas.style.cursor = '';
@@ -2248,6 +2329,14 @@ function _onMouseMoveBody(e, x, y, L) {
 function onMouseUp(e) {
     if (!S.drag) return;
     const { x, y } = getMousePos(e);
+
+    // Bar-range select finalise — refresh the Loop-in-3D button state.
+    if (S.drag.type === 'barsel') {
+        S.drag = null;
+        _updateLoopIn3DBtn();
+        draw();
+        return;
+    }
 
     // Drum-edit drag finalise: sort hits, remap selection indices, clear
     // S.drag. No undo command — out of scope for the initial drum editor
@@ -3322,6 +3411,9 @@ async function loadCDLC(filename) {
         S.handshapeSel = null;
         S.scrollX = 0;
         S.cursorTime = 0;
+        // Drop any bar-range selection from the previously-loaded song; a
+        // pending view (highway handoff / return trip) re-sets it below.
+        S.barSel = null;
         S.history = new EditHistory();
 
         // Reset offset UI so _effectiveAudioOffset() doesn't carry over a
@@ -3355,6 +3447,11 @@ async function loadCDLC(filename) {
 
         draw();
         setStatus('Loaded: ' + S.artist + ' — ' + S.title);
+        // Apply a pending view (highway "Edit region" handoff or our own
+        // return trip) now that the song is fully loaded, then refresh the
+        // Loop-in-3D button's enabled state.
+        _applyEditorPendingView(filename);
+        _updateLoopIn3DBtn();
     } catch (e) {
         setStatus('Load failed: ' + e.message);
     }
@@ -3876,6 +3973,9 @@ function updateStatus() {
     document.getElementById('editor-note-count').textContent =
         `${nn.length} notes, ${cc.length} chords` + (S.sel.size ? ` | ${S.sel.size} selected` : '');
     _renderInspector();
+    // Selection drives the Loop-in-3D fallback region, so keep the button's
+    // enabled state in sync whenever the status (selection count) refreshes.
+    _updateLoopIn3DBtn();
     setStatus('Ready');
 }
 
@@ -4688,6 +4788,107 @@ window.editorToggleTech = (idx, tech) => {
     // mutation or it stays stale until the next selection change.
     _renderInspector();
 };
+
+// ════════════════════════════════════════════════════════════════════
+// Loop in 3D — hand the selected bar range to the 3D highway, then come
+// back to the exact edit position. Pairs with app.js's song:ready loop
+// applier (consumes window._pendingHighwayLoop) and the highway's
+// "Edit region" button (sets window._editorPendingView). See
+// docs / CLAUDE.md "Editor ⇄ 3D Highway region round-trip".
+// ════════════════════════════════════════════════════════════════════
+
+// The region to preview, in seconds. Prefer an explicit bar-bar drag
+// (S.barSel); otherwise fall back to the span of the current note selection,
+// snapped to whole bars — so the user can just select notes (which they
+// already know how to do) and hit the button. Returns null when neither
+// exists.
+function _effectiveLoopRegion() {
+    if (S.barSel) return { startTime: S.barSel.startTime, endTime: S.barSel.endTime };
+    const sel = _selectedNotes();
+    if (sel.length) {
+        let lo = Infinity, hi = -Infinity;
+        for (const n of sel) {
+            lo = Math.min(lo, n.time);
+            hi = Math.max(hi, n.time + (n.sustain || 0));
+        }
+        if (Number.isFinite(lo) && Number.isFinite(hi)) return _barSpanForTimes(lo, hi);
+    }
+    return null;
+}
+
+// Enable the toolbar button when there's a region to preview (a bar drag OR a
+// note selection) on a loaded, playable song. Create-mode sessions have
+// nothing on disk for the highway to stream, so they stay disabled.
+function _updateLoopIn3DBtn() {
+    const btn = document.getElementById('editor-loop3d-btn');
+    if (!btn) return;
+    const region = _effectiveLoopRegion();
+    const ok = !!(region && S.filename && !S.createMode);
+    btn.disabled = !ok;
+    btn.title = S.createMode
+        ? 'Build the song first to preview it on the 3D highway'
+        : (region
+            ? 'Loop this region on the 3D highway'
+            : 'Select some notes, or drag across the bottom beat bar, to pick a region');
+}
+window._editorUpdateLoopIn3DBtn = _updateLoopIn3DBtn;
+
+window.editorLoopIn3D = async () => {
+    const region = _effectiveLoopRegion();
+    if (!region || !S.filename || S.createMode) return;
+    // Pin the resolved region as the bar selection so it's highlighted and
+    // carried in the return context.
+    S.barSel = { startTime: region.startTime, endTime: region.endTime };
+    const sel = { startTime: region.startTime, endTime: region.endTime };
+    // Persist edits in place so the highway streams the latest chart. Uses
+    // the same save path as the Save button (in-place sloppak write, not the
+    // heavy create-mode build).
+    if (S.sessionId) {
+        try { await saveCDLC(); } catch (e) { /* surfaced via setStatus */ }
+    }
+    // Capture where we are so the return trip lands on the same spot.
+    const returnCtx = {
+        filename: S.filename,
+        arrangement: S.currentArr,
+        scrollX: S.scrollX,
+        zoom: S.zoom,
+        cursorTime: S.cursorTime,
+        barSel: sel,
+    };
+    window._pendingHighwayLoop = { a: sel.startTime, b: sel.endTime, returnCtx };
+    if (typeof window.playSong === 'function') {
+        await window.playSong(S.filename, S.currentArr, {});
+    }
+};
+
+// Consume a pending view handed over by the highway's "Edit region" button
+// (or by our own return trip). Called at the tail of loadCDLC once the song
+// is loaded, so scroll/arrangement/selection land on the intended region.
+function _applyEditorPendingView(filename) {
+    const pv = window._editorPendingView;
+    if (!pv || pv.filename !== filename) return;
+    window._editorPendingView = null;
+    if (typeof pv.arrangement === 'number' &&
+        pv.arrangement >= 0 && pv.arrangement < S.arrangements.length &&
+        pv.arrangement !== S.currentArr) {
+        // Reuse the arrangement switch (re-flattens chords, redraws).
+        window.editorSelectArrangement(pv.arrangement);
+    }
+    if (pv.barSel) S.barSel = { startTime: pv.barSel.startTime, endTime: pv.barSel.endTime };
+    if (typeof pv.zoom === 'number' && pv.zoom > 0) { S.zoom = pv.zoom; updateZoomDisplay(); }
+    if (typeof pv.cursorTime === 'number') S.cursorTime = pv.cursorTime;
+    if (typeof pv.scrollX === 'number') {
+        S.scrollX = Math.max(0, pv.scrollX);
+    } else if (pv.barSel) {
+        // No explicit scroll captured (came straight from the highway) —
+        // center the region with a little lead-in margin.
+        const w = canvas ? canvas.width / DPR : 800;
+        const margin = (w - LABEL_W) * 0.25 / S.zoom;
+        S.scrollX = Math.max(0, pv.barSel.startTime - margin);
+    }
+    updateStatus();
+    draw();
+}
 
 // Allow loading from other plugins/screens
 window.editSong = (filename) => {

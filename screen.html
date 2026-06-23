@@ -48,6 +48,9 @@
             <svg id="editor-play-icon" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
         </button>
         <span id="editor-time-display" class="text-xs text-gray-500 font-mono w-20">0:00 / 0:00</span>
+        <!-- Loop selected bars on the 3D highway (drag the bottom beat bar to
+             select a range first). Returns to this exact edit position on exit. -->
+        <button id="editor-loop3d-btn" onclick="editorLoopIn3D()" class="px-3 py-1 bg-accent hover:bg-accent-light rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled title="Drag across the bottom beat bar to select bars first">▶ Loop in 3D</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
 
@@ -115,7 +118,7 @@
         <span id="editor-status" class="text-xs text-gray-500">Ready</span>
         <div class="flex-1"></div>
         <span id="editor-note-count" class="text-xs text-gray-600"></span>
-        <span class="text-xs text-gray-600">Scroll: zoom | Middle-drag: pan | Dbl-click: add note | Del: delete</span>
+        <span class="text-xs text-gray-600">Scroll: zoom | Middle-drag: pan | Dbl-click: add note | Del: delete | Select notes or drag the ⇆ bars strip → ▶ Loop in 3D</span>
     </div>
 </div>
 
