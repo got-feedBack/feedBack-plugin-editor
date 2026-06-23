@@ -1,7 +1,7 @@
 {
     "id": "editor",
     "name": "Arrangement Editor",
-    "version": "1.7.0",
+    "version": "1.8.0",
     "description": "Build and edit feedpak arrangements — import Guitar Pro tabs, sync audio, and tune every note.",
     "category": "creation",
     "icon": "assets/thumb.png",

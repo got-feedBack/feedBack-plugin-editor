@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The audio lane now draws a real waveform.** It previously showed a
+  symmetric magnitude band (absolute-peak per bucket, mirrored about the
+  centre line), which hid the signal's actual shape and went blocky on zoom.
+  It now renders the true signed **min→max peak envelope** with a brighter
+  **RMS body** inside it (Audacity-style), built from a high-resolution
+  per-bin min/max/RMS cache (~3 ms/bin) and aggregated per pixel column so the
+  shape stays sharp at any zoom. Same lane, same seek behaviour — no layout or
+  API change. Pure helper `_buildWaveformPeaks` covered by tests.
+
 ### Added
 - **"Loop in 3D" — preview selected bars on the 3D highway, then return to
   the exact edit position** (Editor ⇄ 3D Highway region round-trip). Drag
