@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **"Loop in 3D" — preview selected bars on the 3D highway, then return to
+  the exact edit position** (Editor ⇄ 3D Highway region round-trip). Drag
+  across the bottom beat bar (measure strip) to select a bar range — it
+  highlights across the chart — then click **▶ Loop in 3D** in the toolbar.
+  The editor saves in place (so the highway streams your latest edits), hands
+  the region to the player as an A–B loop, and starts playback looping just
+  that section. The reverse direction adds an **✎ Edit region** button to the
+  player's loop controls (both v2 and v3) that opens the editor scrolled to
+  the active loop (or the section under the playhead); after a Loop-in-3D
+  handoff an **↩ Editor** button returns you to where you were editing.
+  Bar↔time uses real downbeat times from the beat grid (no BPM assumption);
+  the handoff rides the existing core A/B loop API
+  (`window.slopsmith.setLoop`/`getLoop`). New state `S.barSel`; new globals
+  `editorLoopIn3D` / `_editorPendingView` / `_pendingHighwayLoop`. Pairs with
+  core's song:ready loop applier and `editRegionInEditor` in `static/app.js`.
 - **`.jsonc` arrangement support** (feedpak-spec §8, FEP #3 / PR #13). The
   editor now reads and writes `.jsonc` arrangement files (JSON with C-style
   `//` line and `/* */` block comments). The read path (which loads the
