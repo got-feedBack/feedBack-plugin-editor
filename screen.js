@@ -211,7 +211,15 @@ function _seedExtendedStringsFromTuning(arrangements, authoritativeLength) {
         const tuningLen = Array.isArray(arr.tuning) ? arr.tuning.length : baseline;
         if (tuningLen > 6) {
             arr._extendedStrings = tuningLen - baseline;
-        } else if (authoritativeLength && tuningLen > baseline) {
+        } else if (authoritativeLength && tuningLen > baseline
+                   && !(isBass && tuningLen === 6)) {
+            // A length-EXACTLY-6 bass tuning is ambiguous — RS-converted
+            // sloppaks pad a 4-string bass to 6 zero-slots, identical on the
+            // wire to a genuine 6-string bass. Never infer 6-string from it
+            // (matches core arrangement_string_count, which ignores len==6);
+            // let the actual note/chord string indices decide. Without this a
+            // padded 4-string bass feedpak is read as 6-string, so every note
+            // shifts up a lane and low-E renders on the low-B lane.
             arr._extendedStrings = tuningLen - baseline;
         }
     }
