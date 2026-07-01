@@ -1455,6 +1455,21 @@ def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4)):
             nt_path.unlink(missing_ok=True)
             _log.info("keys arrangement %r: cleared stale notation sidecar", aid)
 
+    # Use the GP-sourced notation payload when available — it has exact
+    # per-stave assignments that notation_lift cannot reliably re-derive.
+    # Pop it so it never leaks into the manifest JSON.
+    gp_notation = entry.pop("_gp_notation", None)
+    if isinstance(gp_notation, dict):
+        try:
+            nt_path.write_text(
+                json.dumps(gp_notation, separators=(",", ":")), encoding="utf-8")
+            entry["notation"] = nt_name
+            _log.info("keys arrangement %r: wrote GP-sourced notation sidecar", aid)
+            return nt_name
+        except (OSError, ValueError):
+            _log.warning("keys arrangement %r: failed to write GP notation, "
+                         "falling back to lift", aid)
+
     try:
         import notation_lift  # core slopsmith lib (on the host app's path)
     except ImportError:
@@ -2927,16 +2942,16 @@ def setup(app, context):
                         aid = _arrangement_id(ad.get("name", "arr"), used_ids)
                     used_ids.add(aid)
                     wire = _build_wire(ad, i == 0)
-                    merged_arrangements.append({
-                        "entry": {
-                            "id": aid,
-                            "name": ad.get("name", "arr"),
-                            "file": f"arrangements/{aid}.json",
-                            "tuning": list(ad.get("tuning", [0]*6)),
-                            "capo": int(ad.get("capo", 0)),
-                        },
-                        "wire": wire,
-                    })
+                    _entry = {
+                        "id": aid,
+                        "name": ad.get("name", "arr"),
+                        "file": f"arrangements/{aid}.json",
+                        "tuning": list(ad.get("tuning", [0]*6)),
+                        "capo": int(ad.get("capo", 0)),
+                    }
+                    if "_gp_notation" in ad:
+                        _entry["_gp_notation"] = ad["_gp_notation"]
+                    merged_arrangements.append({"entry": _entry, "wire": wire})
 
             # Write/update arrangement JSON files inside source_dir/arrangements
             arr_dir = (source_dir / "arrangements").resolve()
@@ -4565,6 +4580,19 @@ def setup(app, context):
                 "hits": hits,
             }
 
+        # Inject GP-sourced notation sidecars into keys arrangements so the
+        # build step uses accurate GP voice/stave data instead of notation_lift.
+        for _arr, _xp in zip(result.get("arrangements", []), xml_files):
+            if not _KEYS_NAME_RE.search(_arr.get("name", "")):
+                continue
+            _nt_sc = Path(_xp).with_suffix("").with_suffix(".notation.json")
+            if _nt_sc.exists():
+                try:
+                    _arr["_gp_notation"] = json.loads(
+                        _nt_sc.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    pass
+
         _arrs = result.get("arrangements", [])
         _drum_idx = {
             i for i, a in enumerate(_arrs)
@@ -4801,6 +4829,24 @@ def setup(app, context):
             import traceback
             traceback.print_exc()
             return JSONResponse({"error": str(e)}, 500)
+
+        # Embed GP-sourced notation payloads so the save path can write them
+        # directly instead of re-deriving via notation_lift (which has no
+        # knowledge of GP stave assignments and produces wrong hand splits).
+        # gp2notation writes "{xml_stem}.notation.json" next to each XML;
+        # arrangement ids don't exist yet at this point, so match by XML path.
+        for arr, xml_path in zip(arrangements, xml_paths):
+            sidecar = Path(xml_path).with_suffix("").with_suffix(".notation.json")
+            if not sidecar.exists():
+                # Fallback: any *.notation.json in the tmp dir
+                found = list(Path(tmp_dir).glob("*.notation.json"))
+                sidecar = found[0] if found else sidecar
+            if sidecar.exists():
+                try:
+                    arr["_gp_notation"] = json.loads(
+                        sidecar.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    pass
 
         # Multi-track shape; keep singular `arrangement`/`xml_path` for any
         # caller still on the old single-track contract.
@@ -5620,6 +5666,12 @@ def setup(app, context):
                     except (TypeError, ValueError):
                         pass
 
+            import logging as _log_build
+            _log_build.getLogger("slopsmith.plugin.editor").warning(
+                "BUILD: %d arrangements; _gp_notation present: %s",
+                len(arrangements_data),
+                [("_gp_notation" in ad) for ad in arrangements_data],
+            )
             for i, ad in enumerate(arrangements_data):
                 name = ad.get("name", f"Arr{i}")
                 # `_arrangement_id` already inserts into `used_ids` for us.
@@ -5683,6 +5735,8 @@ def setup(app, context):
                     "tuning": normalized_tuning,
                     "capo": int(ad.get("capo", 0)),
                 }
+                if "_gp_notation" in ad:
+                    arr_entry["_gp_notation"] = ad["_gp_notation"]
                 # Dual-write notation sidecar for keys-family arrangements here
                 # too, so Save-As-Sloppak / create charts get notation-renderer
                 # support without a reopen-and-save round trip (no-op otherwise).
