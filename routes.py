@@ -1941,6 +1941,89 @@ def _build_arrangement_xml(
     return dom.toprettyxml(indent="  ", encoding=None)
 
 
+def _arr_to_data(arr, name):
+    """Turn a parsed `lib.song` arrangement into the editor's arrangement dict.
+
+    Shared by the GP keys import (`import-keys`) and the GP guitar/bass import
+    (`import-guitar-track`) so both round-trip a converted arrangement into the
+    same wire shape the frontend appends to `S.arrangements`. Pure — reads only
+    the passed arrangement's attributes, so it's unit-testable with a fake arr.
+    """
+    arr_data = {
+        "name": name,
+        "tuning": arr.tuning,
+        "capo": arr.capo,
+        "notes": [],
+        "chords": [],
+        "chord_templates": [],
+    }
+
+    for n in arr.notes:
+        arr_data["notes"].append({
+            "time": round(n.time, 3),
+            "string": n.string,
+            "fret": n.fret,
+            "sustain": round(n.sustain, 3),
+            "techniques": {
+                "bend": n.bend,
+                "slide_to": n.slide_to,
+                "slide_unpitch_to": n.slide_unpitch_to,
+                "hammer_on": n.hammer_on,
+                "pull_off": n.pull_off,
+                "harmonic": n.harmonic,
+                "harmonic_pinch": n.harmonic_pinch,
+                "palm_mute": n.palm_mute,
+                "mute": n.mute,
+                "tremolo": n.tremolo,
+                "accent": n.accent,
+                "tap": n.tap,
+                "link_next": n.link_next,
+            },
+        })
+
+    for ch in arr.chords:
+        chord_data = {
+            "time": round(ch.time, 3),
+            "chord_id": ch.chord_id,
+            "high_density": ch.high_density,
+            "notes": [],
+        }
+        for cn in ch.notes:
+            chord_data["notes"].append({
+                "time": round(cn.time, 3),
+                "string": cn.string,
+                "fret": cn.fret,
+                "sustain": round(cn.sustain, 3),
+                "techniques": {
+                    "bend": cn.bend,
+                    "slide_to": cn.slide_to,
+                    "slide_unpitch_to": cn.slide_unpitch_to,
+                    "hammer_on": cn.hammer_on,
+                    "pull_off": cn.pull_off,
+                    "harmonic": cn.harmonic,
+                    "harmonic_pinch": cn.harmonic_pinch,
+                    "palm_mute": cn.palm_mute,
+                    "mute": cn.mute,
+                    "tremolo": cn.tremolo,
+                    "accent": cn.accent,
+                    "tap": cn.tap,
+                    "link_next": cn.link_next,
+                },
+            })
+        arr_data["chords"].append(chord_data)
+
+    for ct in arr.chord_templates:
+        arr_data["chord_templates"].append({
+            "name": ct.name,
+            "displayName": getattr(ct, "display_name", "") or ct.name,
+            "arp": bool(getattr(ct, "arpeggio", False)),
+            "frets": ct.frets,
+            "fingers": ct.fingers,
+        })
+
+    return arr_data
+
+
 def setup(app, context):
     config_dir = context["config_dir"]
     get_dlc_dir = context["get_dlc_dir"]
@@ -4670,79 +4753,8 @@ def setup(app, context):
         track_indices = [i for i in track_indices
                          if not (i in _seen_idx or _seen_idx.add(i))]
 
-        def _arr_to_data(arr, name):
-            arr_data = {
-                "name": name,
-                "tuning": arr.tuning,
-                "capo": arr.capo,
-                "notes": [],
-                "chords": [],
-                "chord_templates": [],
-            }
-
-            for n in arr.notes:
-                arr_data["notes"].append({
-                    "time": round(n.time, 3),
-                    "string": n.string,
-                    "fret": n.fret,
-                    "sustain": round(n.sustain, 3),
-                    "techniques": {
-                        "bend": n.bend,
-                        "slide_to": n.slide_to,
-                        "slide_unpitch_to": n.slide_unpitch_to,
-                        "hammer_on": n.hammer_on,
-                        "pull_off": n.pull_off,
-                        "harmonic": n.harmonic,
-                        "harmonic_pinch": n.harmonic_pinch,
-                        "palm_mute": n.palm_mute,
-                        "mute": n.mute,
-                        "tremolo": n.tremolo,
-                        "accent": n.accent,
-                        "tap": n.tap,
-                        "link_next": n.link_next,
-                    },
-                })
-
-            for ch in arr.chords:
-                chord_data = {
-                    "time": round(ch.time, 3),
-                    "chord_id": ch.chord_id,
-                    "high_density": ch.high_density,
-                    "notes": [],
-                }
-                for cn in ch.notes:
-                    chord_data["notes"].append({
-                        "time": round(cn.time, 3),
-                        "string": cn.string,
-                        "fret": cn.fret,
-                        "sustain": round(cn.sustain, 3),
-                        "techniques": {
-                            "bend": cn.bend,
-                            "slide_to": cn.slide_to,
-                            "slide_unpitch_to": cn.slide_unpitch_to,
-                            "hammer_on": cn.hammer_on,
-                            "pull_off": cn.pull_off,
-                            "harmonic": cn.harmonic,
-                            "palm_mute": cn.palm_mute,
-                            "mute": cn.mute,
-                            "tremolo": cn.tremolo,
-                            "accent": cn.accent,
-                            "tap": cn.tap,
-                            "link_next": cn.link_next,
-                        },
-                    })
-                arr_data["chords"].append(chord_data)
-
-            for ct in arr.chord_templates:
-                arr_data["chord_templates"].append({
-                    "name": ct.name,
-                    "displayName": getattr(ct, "display_name", "") or ct.name,
-                    "arp": bool(getattr(ct, "arpeggio", False)),
-                    "frets": ct.frets,
-                    "fingers": ct.fingers,
-                })
-
-            return arr_data
+        # `_arr_to_data` is now a module-level helper (shared with the
+        # guitar/bass import) — see the top of this file.
 
         def _convert():
             tmp = tempfile.mkdtemp(prefix="slopsmith_keys_")
@@ -4797,6 +4809,95 @@ def setup(app, context):
             "xml_paths": xml_paths,
             "arrangement": arrangements[0],
             "xml_path": xml_paths[0],
+            "tmp_dir": tmp_dir,
+        }
+
+    # ── Import a guitar/bass track from a GP file into the session ───
+
+    @app.post("/api/plugins/editor/import-guitar-track")
+    async def import_guitar_track(data: dict):
+        """Import a single GUITAR/BASS track from a GP file as an arrangement.
+
+        Mirrors `import_keys_track` but for string instruments: no piano
+        forcing, single track, and the caller supplies the arrangement `name`
+        (a bass name MUST match /bass/i so the editor lays out 4 lanes). Notes
+        are aligned to the session's existing audio via `audio_offset`; the
+        song-level beats/sections/audio are untouched. Returns the arrangement
+        dict for the frontend to either append (Add) or swap in (Replace).
+        """
+        from lib.gp2rs import convert_file, list_tracks
+        from lib.song import parse_arrangement
+
+        gp_path_raw = data.get("gp_path", "")
+        track_index = data.get("track_index")
+        name = str(data.get("name", "") or "").strip()
+
+        # Reject a malformed/non-finite offset rather than silently aligning to
+        # 0.0 (mirrors convert_gp) — a wrong offset imports mis-timed notes.
+        _raw_offset = data.get("audio_offset")
+        if _raw_offset is None:
+            audio_offset = 0.0
+        else:
+            try:
+                audio_offset = float(_raw_offset)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "audio_offset must be a number"}, 400)
+            if not math.isfinite(audio_offset):
+                return JSONResponse({"error": "audio_offset must be finite"}, 400)
+
+        validated = _validate_editor_upload_path(gp_path_raw, "slopsmith_gp_")
+        if not validated:
+            return JSONResponse({"error": "GP file not found"}, 400)
+        gp_path = str(validated)
+        if track_index is None:
+            return JSONResponse({"error": "track_index required"}, 400)
+        try:
+            track_index = int(track_index)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "track_index must be an integer"}, 400)
+        if not name:
+            return JSONResponse({"error": "name required"}, 400)
+
+        def _convert():
+            # Guard: this endpoint only produces string-instrument charts, so
+            # reject piano/drums/percussion/vocal tracks (the frontend already
+            # filters them out, but a crafted request could still ask for one).
+            tracks = list_tracks(gp_path)
+            tinfo = next(
+                (t for t in tracks if int(t.get("index", -1)) == track_index),
+                None,
+            )
+            if tinfo is None:
+                raise ValueError(f"track {track_index} not found")
+            if (tinfo.get("is_piano") or tinfo.get("is_drums")
+                    or tinfo.get("is_percussion") or tinfo.get("is_vocal")):
+                raise ValueError("Only guitar or bass tracks can be imported here")
+
+            tmp = tempfile.mkdtemp(prefix="slopsmith_gtr_")
+            xml_paths = convert_file(
+                gp_path, tmp, track_indices=[track_index],
+                audio_offset=audio_offset,
+                arrangement_names={track_index: name},
+            )
+            if not xml_paths:
+                raise RuntimeError("Guitar/bass track produced no arrangement")
+            arr_data = _arr_to_data(parse_arrangement(xml_paths[0]), name)
+            return arr_data, tmp, xml_paths[0]
+
+        try:
+            arrangement, tmp_dir, xml_path = (
+                await asyncio.get_event_loop().run_in_executor(None, _convert)
+            )
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return JSONResponse({"error": str(e)}, 500)
+
+        return {
+            "arrangement": arrangement,
+            "xml_path": xml_path,
             "tmp_dir": tmp_dir,
         }
 
