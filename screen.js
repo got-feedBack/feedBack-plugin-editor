@@ -411,7 +411,15 @@ function chords() { return S.arrangements.length ? S.arrangements[S.currentArr].
 // On save, reconstruct chords from notes sharing the same time+_fromChord group.
 function flattenChords() {
     if (!S.arrangements.length) return;
-    const arr = S.arrangements[S.currentArr];
+    _flattenArrChords(S.arrangements[S.currentArr]);
+}
+
+// Fold a SPECIFIC arrangement's chord notes into its `notes` array (the body of
+// flattenChords, but arr-scoped instead of reading S.currentArr). Used by the
+// replace-chart command so its exec()/redo flatten the TARGET arrangement — and
+// produce identical state each time — regardless of which arrangement is active.
+function _flattenArrChords(arr) {
+    if (!arr) return;
     // Harmony function (§6.3.1) rides the chord INSTANCE. We carry it on the
     // spread note objects — every note of the chord gets the same `_fn` — so it
     // travels with the notes through ANY edit that mutates note.time (drag,
@@ -420,9 +428,10 @@ function flattenChords() {
     // is outvoted and can't impose a stale fn. (Supersedes the old time-keyed
     // `arr._chordFn` store, which silently lost fn whenever a chord moved.)
     delete arr._chordFn;
-    for (const ch of arr.chords) {
+    if (!Array.isArray(arr.notes)) arr.notes = [];
+    for (const ch of arr.chords || []) {
         const fn = _normChordFn(ch.fn);
-        for (const cn of ch.notes) {
+        for (const cn of ch.notes || []) {
             arr.notes.push({
                 time: cn.time || ch.time,
                 string: cn.string,
@@ -2045,6 +2054,95 @@ class RemoveStringCmd {
     }
 }
 
+/* @pure:replace-chart:start */
+// The chart fields ReplaceArrangementChartCmd swaps out — everything tied to
+// the note content of an arrangement. Song-level timing (beats/sections/audio)
+// and the arrangement's identity (name, tones) are deliberately NOT here.
+const _REPLACE_CHART_FIELDS = [
+    'notes', 'chords', 'chord_templates', 'tuning', 'capo',
+    '_extendedStrings', 'anchors_user', 'anchors', 'handshapes',
+];
+
+// Overwrite `arr`'s chart from a freshly imported `incoming` arrangement while
+// keeping `arr`'s name (so keys/bass mode detection stays stable). Returns a
+// snapshot for _restoreChartFields() to roll back exactly. Pure (no S / DOM) so
+// it's unit-testable. Snapshots whole values/arrays by reference — never by
+// index — so undo survives an arrangement switch.
+function _swapChartFields(arr, incoming) {
+    const snap = {};
+    for (const k of _REPLACE_CHART_FIELDS) snap[k] = arr[k];
+    // Force the swapped-in chart to carry the target's display name (callers
+    // set this too; belt-and-braces so a stray incoming.name can't rename the
+    // arrangement or flip its keys/bass rendering mode).
+    incoming.name = arr.name;
+    // Deep-copy the incoming chart so the arrangement owns INDEPENDENT arrays.
+    // The command flattens chords into `notes` in place after this, and redo
+    // re-runs the swap from the SAME `incoming` object — sharing references
+    // would bake the flattened chord notes back into `incoming` and duplicate
+    // them on the next flatten/save. Chart data is plain and JSON-safe.
+    const clone = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
+    arr.notes = clone(incoming.notes) || [];
+    arr.chords = clone(incoming.chords) || [];
+    arr.chord_templates = clone(incoming.chord_templates) || [];
+    if (Array.isArray(incoming.tuning)) arr.tuning = clone(incoming.tuning);
+    if (typeof incoming.capo === 'number') arr.capo = incoming.capo;
+    // These were derived from the OLD notes: `_extendedStrings` tracked the old
+    // tuning's lane count (let _stringCountFor re-derive from the new tuning);
+    // `anchors_user`/`anchors` were hand positions at old fret/note positions
+    // (the backend re-computes anchors from the new notes on save when there's
+    // no authored `anchors_user`); handshapes referenced old chord instances.
+    // `arr.phrases` is deliberately KEPT — phrases are time-anchored to the
+    // song's sections (which this swap does not touch) and their per-level notes
+    // repopulate from the new chart on save (_repopulate_phrase_levels).
+    delete arr._extendedStrings;
+    delete arr.anchors_user;
+    delete arr.anchors;
+    delete arr.handshapes;
+    return snap;
+}
+
+// Restore a snapshot from _swapChartFields(). A field absent (undefined) in the
+// pre-swap arrangement is deleted, not set to undefined, so the object shape
+// round-trips exactly.
+function _restoreChartFields(arr, snap) {
+    for (const k of Object.keys(snap)) {
+        if (snap[k] === undefined) delete arr[k];
+        else arr[k] = snap[k];
+    }
+}
+/* @pure:replace-chart:end */
+
+// Replace an existing arrangement's CHART (notes/chords/templates/tuning) with a
+// freshly imported guitar/bass chart, keeping the arrangement's name, tones, and
+// the song-level timeline. Undoable within the session (one step); the save
+// round-trip resets history, so a snapshot-based rollback is all this needs.
+class ReplaceArrangementChartCmd {
+    constructor(arrIdx, incoming) {
+        this.arrIdx = arrIdx;
+        this.incoming = incoming;
+        this._snap = null;
+    }
+    _arr() { return S.arrangements[this.arrIdx]; }
+    exec() {
+        const arr = this._arr();
+        this._snap = _swapChartFields(arr, this.incoming);
+        // Fold the imported chords into `notes` (the editor's live model keeps
+        // the active chart flattened). Doing it INSIDE exec — on the target arr,
+        // from a fresh deep copy — means a redo reproduces the identical state
+        // and never double-flattens.
+        _flattenArrChords(arr);
+        // The new chart may change the lane count (4↔5/6 bass, 6↔7/8 guitar), so
+        // recompute LANE_H if the target is the visible arrangement (rAF-guarded;
+        // no-op otherwise). Covers redo; the initial import also resizes from the
+        // handler after it switches S.currentArr.
+        _resizeForLaneChange(this.arrIdx);
+    }
+    rollback() {
+        _restoreChartFields(this._arr(), this._snap);
+        _resizeForLaneChange(this.arrIdx);
+    }
+}
+
 // ════════════════════════════════════════════════════════════════════
 // Mouse interactions
 // ════════════════════════════════════════════════════════════════════
@@ -3581,6 +3679,14 @@ function updateArrangementSelector() {
     const keysBtn = document.getElementById('editor-add-keys-btn');
     if (keysBtn) {
         keysBtn.classList.toggle('hidden', !S.sessionId || S.format !== 'sloppak');
+    }
+
+    // Show "+ Guitar/Bass" (GP guitar/bass import → add or replace) on sloppak
+    // sessions only — same gate as +Keys (add-arrangement / chart swap persist
+    // only through the sloppak save path).
+    const importGuitarBtn = document.getElementById('editor-import-guitar-btn');
+    if (importGuitarBtn) {
+        importGuitarBtn.classList.toggle('hidden', !S.sessionId || S.format !== 'sloppak');
     }
 
     // Show "⋮ Strings" tuning editor whenever a guitar/bass arrangement is
@@ -7355,8 +7461,11 @@ async function _editorAppendKeysArrangement(arrangement, statusEl, opts = {}) {
         updateStatus();
         draw();
 
-        editorHideAddKeysModal();
-        setStatus('Added Keys arrangement (' + (arrangement.notes || []).length + ' notes). Save to commit.');
+        // Shared with the guitar/bass import — hide whichever modal opened this
+        // (default: the Add-Keys modal) and label the toast accordingly.
+        (opts.hideModal || editorHideAddKeysModal)();
+        const label = opts.label || 'Keys';
+        setStatus('Added ' + label + ' arrangement (' + (arrangement.notes || []).length + ' notes). Save to commit.');
         return true;
     } catch (e) {
         if (statusEl) statusEl.textContent = 'Failed: ' + e.message;
@@ -7418,6 +7527,276 @@ window.editorAddEmptyKeys = async () => {
         statusEl.textContent = 'Failed: ' + e.message;
     } finally {
         _addingEmptyKeys = false;
+    }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// Import a GUITAR / BASS track from a GP file (add or replace)
+// ════════════════════════════════════════════════════════════════════
+
+let _importGuitarPath = null;      // server-side path to the uploaded GP file
+let _importGuitarTracks = [];      // guitar/bass tracks from the last parse
+let _importGuitarReqSeq = 0;       // invalidates in-flight parses when superseded
+
+/* @pure:guitar-import:start */
+// Keep only guitar/bass tracks — drop piano/drums/percussion/vocal. Mirrors the
+// backend guard in import-guitar-track so the picker and the server agree.
+function _isGuitarBassTrack(t) {
+    return !!t && !t.is_piano && !t.is_drums && !t.is_percussion && !t.is_vocal;
+}
+
+// Derive an arrangement name for an imported guitar/bass track, de-duped
+// against `existingNames`. A BASS track's name MUST contain "bass" so
+// _stringCountFor / isBassArr lay out 4 lanes (E/A/D/G) instead of 6 — the same
+// invariant the "don't mis-read a 4-string bass as 6-string" fix relies on. A
+// guitar track whose name would start with keys/drums/… is renamed to a neutral
+// guitar role so convert_file routes it through the guitar converter (it
+// dispatches by name), not the piano/drum one.
+function _guitarImportName(track, existingNames) {
+    const taken = new Set((existingNames || [])
+        .map(n => String(n || '').trim().toLowerCase()));
+    const dedupe = (base) => {
+        if (!taken.has(base.toLowerCase())) return base;
+        // A free slot is guaranteed within taken.size + 1 tries; +2 is margin.
+        for (let i = 2; i <= taken.size + 2; i++) {
+            const cand = `${base} ${i}`;
+            if (!taken.has(cand.toLowerCase())) return cand;
+        }
+        return `${base} ${Date.now()}`;
+    };
+    if (track && track.is_bass) return dedupe('Bass');
+    let base = String((track && track.name) || '').trim();
+    if (!base || /^(keys|piano|keyboard|synth|drums|percussion)/i.test(base)) {
+        base = 'Lead';
+    }
+    return dedupe(base);
+}
+/* @pure:guitar-import:end */
+
+window.editorShowImportGuitarModal = () => {
+    if (S.format !== 'sloppak' || !S.sessionId) return;
+    document.getElementById('editor-import-guitar-modal').classList.remove('hidden');
+    document.getElementById('editor-import-guitar-tracks').classList.add('hidden');
+    document.getElementById('editor-import-guitar-dest').classList.add('hidden');
+    document.getElementById('editor-import-guitar-go').disabled = true;
+    document.getElementById('editor-import-guitar-status').textContent = '';
+    const fi = document.getElementById('editor-import-guitar-file');
+    if (fi) fi.value = '';
+    _importGuitarPath = null;
+    _importGuitarTracks = [];
+};
+
+window.editorHideImportGuitarModal = () => {
+    document.getElementById('editor-import-guitar-modal').classList.add('hidden');
+    // Invalidate any in-flight upload so closing the modal cancels the import.
+    _importGuitarReqSeq++;
+};
+
+window.editorImportGuitarDestChanged = () => {
+    const dest = (document.querySelector('input[name="guitar-dest"]:checked') || {}).value;
+    const sel = document.getElementById('editor-import-guitar-replace-target');
+    if (sel) sel.classList.toggle('hidden', dest !== 'replace');
+};
+
+// The guitar/bass track currently selected in the picker (or null).
+function _importGuitarSelectedTrack() {
+    const checked = document.querySelector('input[name="guitar-track"]:checked');
+    return checked ? _importGuitarTracks[parseInt(checked.value)] : null;
+}
+
+// Rebuild the Replace-target dropdown for the currently-selected track. Only
+// SAME-FAMILY guitar/bass arrangements are offered (Keys/Drums always excluded):
+// the swap keeps the TARGET's name, so dropping a bass chart onto a guitar
+// arrangement — or vice-versa — would render/save it with the wrong lane count
+// (bass lanes are name-driven, /bass/i). Option value is the REAL arrangement
+// index so the family filter can't misroute the swap. With no eligible target,
+// Replace is disabled and the destination falls back to Add.
+window.editorImportGuitarRefreshReplaceTargets = () => {
+    const picked = _importGuitarSelectedTrack();
+    const wantBass = !!(picked && picked.is_bass);
+    const replaceSel = document.getElementById('editor-import-guitar-replace-target');
+    const replaceRadio = document.querySelector('input[name="guitar-dest"][value="replace"]');
+    const eligible = S.arrangements
+        .map((a, i) => ({ a, i }))
+        .filter(({ a }) => {
+            const nm = a.name || '';
+            if (KEYS_PATTERN.test(nm) || /^drums/i.test(nm)) return false;
+            return /bass/i.test(nm) === wantBass;
+        });
+    if (replaceSel) {
+        replaceSel.innerHTML = eligible.map(({ a, i }) =>
+            `<option value="${i}">${_editorEscHtml(a.name || ('Arrangement ' + (i + 1)))}</option>`
+        ).join('');
+    }
+    if (replaceRadio) {
+        replaceRadio.disabled = eligible.length === 0;
+        replaceRadio.title = eligible.length === 0
+            ? `No ${wantBass ? 'bass' : 'guitar'} arrangement to replace.`
+            : '';
+        if (eligible.length === 0 && replaceRadio.checked) {
+            const addRadio = document.querySelector('input[name="guitar-dest"][value="add"]');
+            if (addRadio) addRadio.checked = true;
+        }
+    }
+    editorImportGuitarDestChanged();
+};
+
+window.editorImportGuitarFileSelected = async (input) => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const statusEl = document.getElementById('editor-import-guitar-status');
+    statusEl.textContent = 'Parsing ' + file.name + '...';
+
+    // Drop any prior parse so a later failure can't be committed with the old
+    // file's path, and invalidate any in-flight upload for an earlier file.
+    _importGuitarPath = null;
+    _importGuitarTracks = [];
+    const reqSeq = ++_importGuitarReqSeq;
+    document.getElementById('editor-import-guitar-go').disabled = true;
+    document.getElementById('editor-import-guitar-tracks').classList.add('hidden');
+    document.getElementById('editor-import-guitar-dest').classList.add('hidden');
+
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+        const resp = await fetch('/api/plugins/editor/import-gp', { method: 'POST', body: fd });
+        const data = await resp.json();
+        // A newer file was selected while this parse was in flight — drop it.
+        if (reqSeq !== _importGuitarReqSeq) return;
+        if (data.error) { statusEl.textContent = 'Error: ' + data.error; return; }
+
+        // Guitar/bass only; surface the most-played tracks first.
+        const tracks = (data.tracks || [])
+            .filter(_isGuitarBassTrack)
+            .sort((a, b) => (b.notes || 0) - (a.notes || 0));
+        if (tracks.length === 0) {
+            statusEl.textContent = 'No guitar or bass tracks found in this file.';
+            return;
+        }
+
+        _importGuitarPath = data.gp_path;
+        _importGuitarTracks = tracks;
+
+        const listEl = document.getElementById('editor-import-guitar-track-list');
+        listEl.innerHTML = tracks.map((t, pos) => {
+            const checked = pos === 0 ? 'checked' : '';
+            const bassTag = t.is_bass ? '<span class="text-blue-300">[bass]</span>' : '';
+            const safeName = _editorEscHtml(t.name || '') || _editorEscHtml('Track ' + t.index);
+            return `<label class="flex items-center gap-2 text-xs text-gray-300 py-0.5">
+                <input type="radio" name="guitar-track" value="${pos}" ${checked} onchange="editorImportGuitarRefreshReplaceTargets()" class="accent-blue-500">
+                <span class="text-gray-200">${safeName}</span>
+                ${bassTag}
+                <span class="text-gray-600 ml-auto">${Number(t.notes) || 0} notes</span>
+            </label>`;
+        }).join('');
+
+        // Reset the destination to Add each time a file is (re)picked, then
+        // populate the Replace target dropdown for the default-selected track.
+        const addRadio = document.querySelector('input[name="guitar-dest"][value="add"]');
+        if (addRadio) addRadio.checked = true;
+        editorImportGuitarRefreshReplaceTargets();
+
+        document.getElementById('editor-import-guitar-tracks').classList.remove('hidden');
+        document.getElementById('editor-import-guitar-dest').classList.remove('hidden');
+        document.getElementById('editor-import-guitar-go').disabled = false;
+        const bassCount = tracks.filter(t => t.is_bass).length;
+        statusEl.textContent =
+            `Found ${tracks.length} guitar/bass track(s)` +
+            (bassCount ? ` (${bassCount} bass)` : '') + '. Pick one and a destination.';
+    } catch (e) {
+        statusEl.textContent = 'Failed: ' + e.message;
+    }
+};
+
+window.editorDoImportGuitar = async () => {
+    if (!_importGuitarPath || !S.sessionId) return;
+    const statusEl = document.getElementById('editor-import-guitar-status');
+    const goBtn = document.getElementById('editor-import-guitar-go');
+    goBtn.disabled = true;
+
+    const checked = document.querySelector('input[name="guitar-track"]:checked');
+    const picked = checked ? _importGuitarTracks[parseInt(checked.value)] : null;
+    if (!picked) { statusEl.textContent = 'No track selected.'; goBtn.disabled = false; return; }
+    const trackIndex = Number(picked.index) || 0;
+
+    const dest = (document.querySelector('input[name="guitar-dest"]:checked') || {}).value || 'add';
+    let targetIdx = -1;
+    if (dest === 'replace') {
+        const sel = document.getElementById('editor-import-guitar-replace-target');
+        targetIdx = sel ? parseInt(sel.value) : -1;
+        if (!(targetIdx >= 0 && targetIdx < S.arrangements.length)) {
+            statusEl.textContent = 'Pick an arrangement to replace.'; goBtn.disabled = false; return;
+        }
+    }
+
+    // Convert under a guitar/bass-safe name so the guitar converter runs (and a
+    // bass gets a /bass/i name → 4 lanes). On Replace the target's name may be
+    // "Keys"/"Drums" or anything, so derive a fresh conversion name from the
+    // TRACK; the chart adopts the target's display name in the replace command.
+    const reqSeq = _importGuitarReqSeq;
+    const existingNames = S.arrangements.map(a => a.name || '');
+    const name = dest === 'replace'
+        ? _guitarImportName(picked, [])
+        : _guitarImportName(picked, existingNames);
+
+    statusEl.textContent = dest === 'replace' ? 'Importing (replace)...' : 'Importing track...';
+    try {
+        const resp = await fetch('/api/plugins/editor/import-guitar-track', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                gp_path: _importGuitarPath,
+                track_index: trackIndex,
+                audio_offset: _effectiveAudioOffset(),
+                name,
+            }),
+        });
+        const data = await resp.json();
+        if (data.error) { statusEl.textContent = 'Error: ' + data.error; goBtn.disabled = false; return; }
+        // The modal was closed / a new file picked while this was in flight.
+        if (reqSeq !== _importGuitarReqSeq) return;
+        const arrangement = data.arrangement;
+        if (!arrangement) { statusEl.textContent = 'No arrangement returned.'; goBtn.disabled = false; return; }
+
+        if (dest === 'replace') {
+            // Keep the target's existing name (it already reflects the
+            // instrument) — swap only the chart. One undo step.
+            const cmd = new ReplaceArrangementChartCmd(targetIdx, arrangement);
+            // exec() swaps the chart AND flattens it (see the command).
+            S.history.exec(cmd);
+            S.currentArr = targetIdx;
+            // Drop selections/marker refs — they pointed at the OLD chart, so a
+            // stale index/ref could now hit an unintended imported note or
+            // marker on the next edit. Mirrors editorSelectArrangement.
+            S.sel.clear();
+            S.toneSel = null;
+            S.anchorSel = null;
+            S.handshapeSel = null;
+            const arrSel = document.getElementById('editor-arrangement');
+            if (arrSel) arrSel.value = String(targetIdx);
+            // Recompute LANE_H for the now-visible replaced chart (exec's own
+            // resize ran before this currentArr switch, so it no-op'd then).
+            _resizeForLaneChange(targetIdx);
+            if (typeof updatePianoRange === 'function') updatePianoRange();
+            updateArrangementSelector();
+            updateStatus();
+            draw();
+            editorHideImportGuitarModal();
+            const nm = S.arrangements[targetIdx] && S.arrangements[targetIdx].name;
+            setStatus('Replaced "' + nm + '" chart (' + (arrangement.notes || []).length +
+                ' notes). Undo (Ctrl+Z) reverts it. Save to commit.');
+        } else {
+            const ok = await _editorAppendKeysArrangement(arrangement, statusEl, {
+                xml_path: data.xml_path || '',
+                label: 'Guitar/Bass',
+                hideModal: editorHideImportGuitarModal,
+                isStale: () => reqSeq !== _importGuitarReqSeq,
+            });
+            if (!ok) goBtn.disabled = false;
+        }
+    } catch (e) {
+        statusEl.textContent = 'Failed: ' + e.message;
+        goBtn.disabled = false;
     }
 };
 

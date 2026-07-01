@@ -26,6 +26,7 @@
         <button id="editor-build-btn" onclick="editorBuild()" class="px-3 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs font-medium hidden">Build Song</button>
         <button id="editor-add-drums-btn" onclick="editorShowAddDrumsModal()" class="px-3 py-1 bg-red-900 hover:bg-red-800 rounded text-xs font-medium hidden">+ Drums</button>
         <button id="editor-add-keys-btn" onclick="editorShowAddKeysModal()" class="px-3 py-1 bg-indigo-900 hover:bg-indigo-800 rounded text-xs font-medium hidden">+ Keys</button>
+        <button id="editor-import-guitar-btn" onclick="editorShowImportGuitarModal()" class="px-3 py-1 bg-blue-900 hover:bg-blue-800 rounded text-xs font-medium hidden" title="Import a guitar or bass track from a Guitar Pro file — add it or replace an existing arrangement">+ Guitar/Bass</button>
         <button id="editor-strings-btn" onclick="editorShowStringsModal()" class="px-3 py-1 bg-amber-800 hover:bg-amber-700 rounded text-xs font-medium hidden" title="Add or remove strings on the active arrangement (extended-range guitar / bass)">⋮ Strings</button>
         <button id="editor-record-midi-btn" onclick="editorShowRecordMidiModal()" class="px-3 py-1 bg-rose-900 hover:bg-rose-800 rounded text-xs font-medium hidden disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-rose-900" title="Record a Keys arrangement live from a MIDI keyboard (Chrome/Edge)">● Record</button>
         <button id="editor-tones-btn" onclick="editorShowTonesModal()" class="px-3 py-1 bg-cyan-900 hover:bg-cyan-800 rounded text-xs font-medium hidden" title="Tone slot names and base tone for this arrangement">♪ Tones…</button>
@@ -435,6 +436,47 @@
                 Start Empty (no source file)
             </button>
             <div id="editor-add-keys-status" class="text-xs text-gray-500"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Import guitar/bass track modal -->
+<div id="editor-import-guitar-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-md flex flex-col">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+            <span class="text-sm font-medium">Import Guitar / Bass from GP</span>
+            <button onclick="editorHideImportGuitarModal()" class="text-gray-500 hover:text-white">&times;</button>
+        </div>
+        <div class="p-4 space-y-3">
+            <div>
+                <label class="text-xs font-medium text-gray-400 mb-1 block">Guitar Pro File</label>
+                <input type="file" id="editor-import-guitar-file" accept=".gp3,.gp4,.gp5,.gpx,.gp"
+                    onchange="editorImportGuitarFileSelected(this)"
+                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+                <p class="text-[11px] text-gray-600 mt-1">Notes align to this song's current audio offset. Beats, sections and audio are left untouched.</p>
+            </div>
+            <div id="editor-import-guitar-tracks" class="hidden">
+                <label class="text-xs font-medium text-gray-400 mb-1 block">Select Guitar / Bass Track</label>
+                <div id="editor-import-guitar-track-list" class="space-y-1 max-h-40 overflow-y-auto bg-dark-800 rounded p-2"></div>
+            </div>
+            <div id="editor-import-guitar-dest" class="hidden space-y-2">
+                <label class="text-xs font-medium text-gray-400 block">Destination</label>
+                <label class="flex items-center gap-2 text-xs text-gray-300">
+                    <input type="radio" name="guitar-dest" value="add" checked onchange="editorImportGuitarDestChanged()" class="accent-blue-500">
+                    <span>Add as a new arrangement</span>
+                </label>
+                <label class="flex items-center gap-2 text-xs text-gray-300">
+                    <input type="radio" name="guitar-dest" value="replace" onchange="editorImportGuitarDestChanged()" class="accent-blue-500">
+                    <span>Replace an existing arrangement</span>
+                </label>
+                <select id="editor-import-guitar-replace-target"
+                    class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 hidden"></select>
+            </div>
+            <button onclick="editorDoImportGuitar()" id="editor-import-guitar-go"
+                class="w-full px-4 py-2 bg-blue-700 hover:bg-blue-600 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                Import Track
+            </button>
+            <div id="editor-import-guitar-status" class="text-xs text-gray-500"></div>
         </div>
     </div>
 </div>

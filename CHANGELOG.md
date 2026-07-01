@@ -18,6 +18,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   API change. Pure helper `_buildWaveformPeaks` covered by tests.
 
 ### Added
+- **Import a Guitar Pro guitar/bass track into the song you're editing —
+  as a new arrangement, or to replace an existing one.** The editor could
+  already Add Keys/Drums from a GP file and create a whole new song from GP,
+  but there was no way to bring a GP **guitar or bass** track into an open
+  session. A new **"+ Guitar/Bass"** toolbar button opens a modal: upload a GP
+  file, pick a guitar/bass track (piano/drums/percussion/vocal tracks are
+  filtered out), then choose a destination — **Add as a new arrangement** or
+  **Replace** an existing same-instrument arrangement. Imported notes are
+  aligned to the song's **current audio offset** (`_effectiveAudioOffset()`);
+  the song's beats, sections, and audio are left untouched. Bass tracks are
+  named so they render on E/A/D/G (4 lanes), not shifted. Replace is a single
+  undo step and preserves the target arrangement's name, tones, and the
+  song-level timeline. New backend endpoint `POST /api/plugins/editor/
+  import-guitar-track` (reuses the shared `_arr_to_data` arrangement builder);
+  frontend `ReplaceArrangementChartCmd` swaps the chart via snapshot/rollback.
+  Pure helpers (`_isGuitarBassTrack`, `_guitarImportName`, `_swapChartFields` /
+  `_restoreChartFields`) and the endpoint's dict shape are covered by tests.
 - **"Loop in 3D" — preview selected bars on the 3D highway, then return to
   the exact edit position** (Editor ⇄ 3D Highway region round-trip). Drag
   across the bottom beat bar (measure strip) to select a bar range — it
