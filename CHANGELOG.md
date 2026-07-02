@@ -99,6 +99,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nav.label`, so the dedicated sidebar item reads "Song Editor".
 
 ### Fixed
+- **GP8 piano/keys imports keep their accurate GP notation across edits and
+  reopens — and can no longer bloat or mis-fill the shipped feedpak.** Importing
+  a GP8 grand-staff keys track carries the GP-sourced per-stave/voice notation
+  (companion to got-feedback/feedBack#692), but the first cut of that pass froze
+  it at import time: editing notes then building rendered the *pre-edit* chart in
+  Staff View / Keys Highway while the piano-roll showed the edits, and the first
+  save after a reopen regenerated (and could delete) it via the less-accurate
+  `notation_lift` heuristic. The GP payload is now stamped `source:"gp"` plus a
+  **fingerprint of the notes it was derived from**, and the save/build path keeps
+  it only while that fingerprint still matches the current notes — from the fresh
+  import payload or, on a reopened pak, the existing `source:"gp"` sidecar on
+  disk. Any note edit flips the fingerprint and falls through to the lift, so
+  **edits always win** and an untouched reopen-save no longer clobbers the GP
+  data. The payload is also **schema-validated before writing** (never vouch for
+  a truncated/tampered sidecar); the `_gp_notation` blob is passed as an argument
+  and never copied onto a manifest entry, so it **can't leak into `manifest.yaml`**
+  (a keys arrangement renamed to a non-keys name previously serialized the whole
+  multi-hundred-KB dict into the manifest); the sidecar filename now matches
+  gp2notation exactly (`stem + ".notation.json"`), fixing a silent miss for track
+  names with an interior dot (e.g. "Piano v1.2") that quietly reintroduced the
+  wrong-hands lift; and a blind glob fallback that could persist **another
+  track's** notation for a missing sidecar was removed (missing → lift, never the
+  wrong part). Tests in `tests/test_notation_save.py`.
 - **Add / rename section, and edit fret/bend/slide/anchor now work in
   the desktop app.** These actions used `window.prompt()`, which Electron
   does not implement — on the desktop app it returns `null` and logs a

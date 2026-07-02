@@ -1412,7 +1412,112 @@ _KEYS_NAME_RE = re.compile(r"\b(keys|piano|keyboard|synth)\b", re.IGNORECASE)
 _NOTATION_SAFE_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
-def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4)):
+def _notes_fingerprint(notes, chords) -> str:
+    """Stable fingerprint of an arrangement's note identities (pitch, position,
+    timing, duration) — the parts GP-sourced notation reflects. Deliberately
+    ignores guitar techniques (irrelevant to keys/staff notation). Accepts both
+    the editor note shape ({time, string, fret, sustain}) and the wire shape
+    ({t, s, f, sus}) so the same value can be computed at GP-import time (from
+    the editor arrangement) and at save time (from the built wire); the two
+    agree exactly when the notes are unedited. This is the invalidation key:
+    GP notation is kept only while it matches, so any note edit falls through
+    to the notation_lift re-derivation (edits win)."""
+    import hashlib
+
+    def _tup(n):
+        return (
+            round(float(n.get("t", n.get("time", 0)) or 0), 3),
+            int(n.get("s", n.get("string", 0)) or 0),
+            int(n.get("f", n.get("fret", 0)) or 0),
+            round(float(n.get("sus", n.get("sustain", 0)) or 0), 3),
+        )
+
+    note_tuples = sorted(_tup(n) for n in (notes or []))
+    chord_tuples = sorted(
+        (
+            round(float(c.get("t", c.get("time", 0)) or 0), 3),
+            tuple(sorted(_tup(cn) for cn in (c.get("notes") or []))),
+        )
+        for c in (chords or [])
+    )
+    blob = json.dumps([note_tuples, chord_tuples], separators=(",", ":"))
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()
+
+
+def _read_gp_sidecar(nt_path):
+    """Return a previously-written GP-sourced (``source == "gp"``) notation
+    payload from disk, else ``None``. Used on reopen: an existing GP sidecar in
+    the pak's working dir is honored (subject to the fingerprint check) so a
+    save that didn't touch the notes doesn't clobber it with a fresh, less
+    accurate ``notation_lift`` pass."""
+    try:
+        data = json.loads(Path(nt_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("source") == "gp" else None
+
+
+def _validate_notation(payload):
+    """(ok, reason) via the core notation schema. Conservative: if the core
+    validator can't be imported, treat as invalid so we never write an
+    unvouched sidecar (the caller falls back to the self-validating lift)."""
+    try:
+        from lib import notation as _notation_mod
+    except ImportError:
+        try:
+            import notation as _notation_mod  # lib/ flat on path (tests / some hosts)
+        except ImportError:
+            return False, "core notation validator unavailable"
+    validate = getattr(_notation_mod, "validate_notation", None)
+    if not callable(validate):
+        return False, "core notation validator unavailable"
+    try:
+        return validate(payload)
+    except Exception as e:  # a validator crash must not abort the save
+        return False, f"validator error: {e}"
+
+
+def _gp_notation_sidecar_path(xml_path):
+    """``{xml_stem}.notation.json`` next to ``xml_path`` — matching gp2notation's
+    writer exactly. The writer uses ``p.with_name(p.stem + ".notation.json")``,
+    NOT ``p.with_suffix("").with_suffix(".notation.json")`` — the latter mangles
+    a track name with an interior dot (e.g. ``Piano v1.2`` →
+    ``Piano v1.notation.json``), silently missing the sidecar and dropping the
+    GP notation. Uses the core lib's own contract when importable, else the
+    identical local derivation."""
+    p = Path(xml_path)
+    try:
+        from gp2notation import notation_sidecar_path
+        return Path(notation_sidecar_path(str(p)))
+    except Exception:
+        return p.with_name(p.stem + ".notation.json")
+
+
+def _attach_gp_notation(arr, xml_path):
+    """Attach the GP-emitted notation sidecar for ``xml_path`` to ``arr`` as
+    ``_gp_notation``, stamped ``source:"gp"`` plus a fingerprint of ``arr``'s
+    notes. The stamp is what lets the save/build path keep the GP notation only
+    while the notes are unedited (see ``_write_keys_notation_sidecar``). Matches
+    strictly by stem: a missing sidecar is left missing (the save falls back to
+    ``notation_lift``) — never back-filled from an unrelated track's sidecar,
+    which would persist the wrong part's notation."""
+    sidecar = _gp_notation_sidecar_path(xml_path)
+    if not sidecar.exists():
+        return
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(payload, dict):
+        return
+    payload["source"] = "gp"
+    payload["source_notes_fp"] = _notes_fingerprint(
+        arr.get("notes"), arr.get("chords"))
+    arr["_gp_notation"] = payload
+
+
+def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4),
+                                 gp_notation=None):
     """Derive ``notation_<id>.json`` for one keys arrangement and add the
     per-arrangement ``notation:`` key to ``entry`` (mutated in place) so the
     manifest dump picks it up (sloppak-spec §5.3).
@@ -1454,6 +1559,43 @@ def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4)):
         if had_key or nt_path.exists():
             nt_path.unlink(missing_ok=True)
             _log.info("keys arrangement %r: cleared stale notation sidecar", aid)
+
+    # Prefer GP-sourced notation — it carries exact per-stave/voice hand
+    # assignments that notation_lift can only heuristically re-derive — but
+    # only while it still matches the current notes. The candidate is either
+    # the payload forwarded from a fresh GP import (`gp_notation`) or, on a
+    # reopened pak, the existing `source:"gp"` sidecar on disk. It is honored
+    # only when its stored note-fingerprint equals the arrangement's current
+    # notes: any edit since import/load flips the fingerprint and we fall
+    # through to the lift so the user's edits win (never a frozen import-time
+    # payload rendered over edited notes, and never clobbered on an untouched
+    # reopen-save). The payload is schema-validated first — we never stamp a
+    # server-vouched `notation:` for a truncated/tampered client payload — and
+    # re-stamped so provenance + fingerprint persist for the next save.
+    gp_candidate = gp_notation if isinstance(gp_notation, dict) \
+        else _read_gp_sidecar(nt_path)
+    if isinstance(gp_candidate, dict) and gp_candidate.get("source") == "gp":
+        fp_now = _notes_fingerprint(wire.get("notes"), wire.get("chords"))
+        if gp_candidate.get("source_notes_fp") == fp_now:
+            payload = dict(gp_candidate)
+            payload["source"] = "gp"
+            payload["source_notes_fp"] = fp_now
+            ok, reason = _validate_notation(payload)
+            if ok:
+                try:
+                    nt_path.write_text(
+                        json.dumps(payload, separators=(",", ":")),
+                        encoding="utf-8")
+                    entry["notation"] = nt_name
+                    _log.info(
+                        "keys arrangement %r: kept GP-sourced notation sidecar", aid)
+                    return nt_name
+                except OSError:
+                    _log.warning("keys arrangement %r: failed to write GP "
+                                 "notation, falling back to lift", aid)
+            else:
+                _log.warning("keys arrangement %r: GP notation failed validation "
+                             "(%s), falling back to lift", aid, reason)
 
     try:
         import notation_lift  # core slopsmith lib (on the host app's path)
@@ -2927,15 +3069,19 @@ def setup(app, context):
                         aid = _arrangement_id(ad.get("name", "arr"), used_ids)
                     used_ids.add(aid)
                     wire = _build_wire(ad, i == 0)
+                    _entry = {
+                        "id": aid,
+                        "name": ad.get("name", "arr"),
+                        "file": f"arrangements/{aid}.json",
+                        "tuning": list(ad.get("tuning", [0]*6)),
+                        "capo": int(ad.get("capo", 0)),
+                    }
+                    # Carry any GP-import notation alongside the entry (NOT on
+                    # it — keeping it off the manifest entry means it can never
+                    # leak into manifest.yaml); the sidecar writer consumes it.
                     merged_arrangements.append({
-                        "entry": {
-                            "id": aid,
-                            "name": ad.get("name", "arr"),
-                            "file": f"arrangements/{aid}.json",
-                            "tuning": list(ad.get("tuning", [0]*6)),
-                            "capo": int(ad.get("capo", 0)),
-                        },
-                        "wire": wire,
+                        "entry": _entry, "wire": wire,
+                        "gp_notation": ad.get("_gp_notation"),
                     })
 
             # Write/update arrangement JSON files inside source_dir/arrangements
@@ -2981,7 +3127,9 @@ def setup(app, context):
                     # `notation:` key on this entry (no-op for non-keys names or
                     # when there's nothing to lift). The legacy wire arrangement
                     # written just above stays intact for the 2D piano plugin.
-                    _write_keys_notation_sidecar(source_dir, entry, wire, beats)
+                    _write_keys_notation_sidecar(
+                        source_dir, entry, wire, beats,
+                        gp_notation=item.get("gp_notation"))
                 rel_kept = entry.get("file")
                 if rel_kept:
                     kept_paths.add((source_dir / rel_kept).resolve())
@@ -4565,6 +4713,13 @@ def setup(app, context):
                 "hits": hits,
             }
 
+        # Inject GP-sourced notation sidecars into keys arrangements so the
+        # build step uses accurate GP voice/stave data instead of notation_lift.
+        for _arr, _xp in zip(result.get("arrangements", []), xml_files):
+            if not _KEYS_NAME_RE.search(_arr.get("name", "")):
+                continue
+            _attach_gp_notation(_arr, _xp)
+
         _arrs = result.get("arrangements", [])
         _drum_idx = {
             i for i, a in enumerate(_arrs)
@@ -4801,6 +4956,18 @@ def setup(app, context):
             import traceback
             traceback.print_exc()
             return JSONResponse({"error": str(e)}, 500)
+
+        # Embed GP-sourced notation payloads so the save path can write them
+        # directly instead of re-deriving via notation_lift (which has no
+        # knowledge of GP stave assignments and produces wrong hand splits).
+        # gp2notation writes "{xml_stem}.notation.json" next to each XML;
+        # arrangement ids don't exist yet at this point, so match by XML stem.
+        # No glob fallback: a missing sidecar for one track must never be
+        # back-filled from the *first* sidecar in the dir (that persists another
+        # track's notation as this arrangement's) — better to fall back to the
+        # lift than to ship the wrong part's notes.
+        for arr, xml_path in zip(arrangements, xml_paths):
+            _attach_gp_notation(arr, xml_path)
 
         # Multi-track shape; keep singular `arrangement`/`xml_path` for any
         # caller still on the old single-track contract.
@@ -5686,7 +5853,11 @@ def setup(app, context):
                 # Dual-write notation sidecar for keys-family arrangements here
                 # too, so Save-As-Sloppak / create charts get notation-renderer
                 # support without a reopen-and-save round trip (no-op otherwise).
-                _write_keys_notation_sidecar(staging, arr_entry, wire, beats)
+                # `_gp_notation` is passed as an argument, never copied onto the
+                # manifest entry, so it can't leak into the shipped manifest.
+                _write_keys_notation_sidecar(
+                    staging, arr_entry, wire, beats,
+                    gp_notation=ad.get("_gp_notation"))
                 manifest_arrangements.append(arr_entry)
 
             manifest = {

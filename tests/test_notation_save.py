@@ -53,7 +53,10 @@ pytest.importorskip(
 )
 
 import notation  # noqa: E402  (core lib, now on path)
-from routes import _write_keys_notation_sidecar  # noqa: E402
+from routes import (  # noqa: E402
+    _notes_fingerprint,
+    _write_keys_notation_sidecar,
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -146,6 +149,114 @@ def test_stale_notation_cleared_when_no_longer_liftable(tmp_path):
     assert _write_keys_notation_sidecar(tmp_path, entry, empty_wire, _beats_4_4(2)) is None
     assert "notation" not in entry
     assert not (tmp_path / "notation_keys.json").exists()
+
+
+# ── GP-sourced notation provenance (source:"gp" + fingerprint) ────────────────
+
+def _valid_gp_payload(tmp_path, wire, beats, *, marker="from-gp"):
+    """A schema-valid notation payload, produced by running the lift once, then
+    stamped as GP-sourced (with a marker so we can tell it apart from a fresh
+    lift) and fingerprinted against ``wire``."""
+    seed = {"id": "seed", "name": "Keys", "file": "arrangements/seed.json"}
+    assert _write_keys_notation_sidecar(tmp_path, seed, wire, beats)
+    payload = json.loads((tmp_path / "notation_seed.json").read_text())
+    (tmp_path / "notation_seed.json").unlink()
+    payload["source"] = "gp"
+    payload["source_notes_fp"] = _notes_fingerprint(wire.get("notes"), wire.get("chords"))
+    payload["_marker"] = marker
+    return payload
+
+
+def test_notes_fingerprint_agrees_across_editor_and_wire_shapes():
+    # Same notes in editor shape ({time,string,fret,sustain}) and wire shape
+    # ({t,s,f,sus}) must fingerprint identically — that equality is what lets
+    # the import-time stamp match the save-time wire when nothing was edited.
+    editor = [{"time": 0.0, "string": 2, "fret": 12, "sustain": 0.5}]
+    wire = [{"t": 0.0, "s": 2, "f": 12, "sus": 0.5}]
+    assert _notes_fingerprint(editor, []) == _notes_fingerprint(wire, [])
+    # A pitch change flips it.
+    assert _notes_fingerprint(editor, []) != _notes_fingerprint(
+        [{"time": 0.0, "string": 2, "fret": 13, "sustain": 0.5}], [])
+
+
+def test_gp_notation_kept_when_notes_unchanged(tmp_path):
+    wire = _keys_wire()
+    beats = _beats_4_4(2)
+    gp = _valid_gp_payload(tmp_path, wire, beats)
+
+    entry = {"id": "keys", "name": "Keys", "file": "arrangements/keys.json"}
+    nt = _write_keys_notation_sidecar(tmp_path, entry, wire, beats, gp_notation=gp)
+    assert nt == "notation_keys.json"
+    payload = json.loads((tmp_path / "notation_keys.json").read_text())
+    # GP payload was kept (marker + provenance survive), NOT re-derived by lift.
+    assert payload["source"] == "gp"
+    assert payload["_marker"] == "from-gp"
+
+
+def test_gp_notation_invalidated_when_notes_edited(tmp_path):
+    # gp_notation whose fingerprint no longer matches the wire (the user edited
+    # notes since import) must be ignored — the lift re-derives from the edits.
+    beats = _beats_4_4(2)
+    gp = _valid_gp_payload(tmp_path, _keys_wire(), beats)
+    gp["source_notes_fp"] = "stale-fingerprint-000"
+
+    entry = {"id": "keys", "name": "Keys", "file": "arrangements/keys.json"}
+    nt = _write_keys_notation_sidecar(tmp_path, entry, _keys_wire(), beats, gp_notation=gp)
+    assert nt == "notation_keys.json"
+    payload = json.loads((tmp_path / "notation_keys.json").read_text())
+    assert payload.get("source") != "gp"      # lift output, not the frozen GP one
+    assert "_marker" not in payload
+
+
+def test_gp_notation_survives_reopen_via_on_disk_sidecar(tmp_path):
+    # Reopen path: no gp_notation forwarded from the client, but an on-disk
+    # source:"gp" sidecar exists. An untouched-notes save keeps it.
+    wire = _keys_wire()
+    beats = _beats_4_4(2)
+    gp = _valid_gp_payload(tmp_path, wire, beats)
+    (tmp_path / "notation_keys.json").write_text(json.dumps(gp), encoding="utf-8")
+
+    entry = {"id": "keys", "name": "Keys", "file": "arrangements/keys.json"}
+    _write_keys_notation_sidecar(tmp_path, entry, wire, beats, gp_notation=None)
+    payload = json.loads((tmp_path / "notation_keys.json").read_text())
+    assert payload["source"] == "gp" and payload["_marker"] == "from-gp"
+
+    # ...but once the notes change, the on-disk GP sidecar is no longer kept.
+    edited = _keys_wire()
+    edited["notes"].append(_wire_note(1.0, 72, 0.25))
+    _write_keys_notation_sidecar(tmp_path, entry, edited, beats, gp_notation=None)
+    payload2 = json.loads((tmp_path / "notation_keys.json").read_text())
+    assert payload2.get("source") != "gp" and "_marker" not in payload2
+
+
+def test_invalid_gp_payload_falls_back_to_lift(tmp_path):
+    # A GP payload that fails the notation schema (missing required `staves`)
+    # must never be written as a server-vouched sidecar — fall back to the lift.
+    wire = _keys_wire()
+    beats = _beats_4_4(2)
+    bad = {
+        "source": "gp",
+        "source_notes_fp": _notes_fingerprint(wire["notes"], wire["chords"]),
+        "instrument": "piano",
+        "measures": [],           # missing "staves" → invalid
+        "_marker": "from-gp",
+    }
+    entry = {"id": "keys", "name": "Keys", "file": "arrangements/keys.json"}
+    nt = _write_keys_notation_sidecar(tmp_path, entry, wire, beats, gp_notation=bad)
+    assert nt == "notation_keys.json"
+    payload = json.loads((tmp_path / "notation_keys.json").read_text())
+    assert payload.get("source") != "gp" and "_marker" not in payload
+
+
+def test_gp_notation_never_stamped_onto_entry_for_non_keys(tmp_path):
+    # Leak guard: even handed a GP payload, a non-keys arrangement writes no
+    # sidecar and the helper never puts _gp_notation (or notation) on the entry.
+    entry = {"id": "lead", "name": "Lead Guitar", "file": "arrangements/lead.json"}
+    gp = {"source": "gp", "source_notes_fp": "x", "staves": [], "measures": []}
+    assert _write_keys_notation_sidecar(
+        tmp_path, entry, _keys_wire(), _beats_4_4(2), gp_notation=gp) is None
+    assert "notation" not in entry and "_gp_notation" not in entry
+    assert not list(tmp_path.glob("notation_*.json"))
 
 
 def test_notation_round_trips_chord_notes(tmp_path):

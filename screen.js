@@ -2268,14 +2268,17 @@ function onMouseDown(e) {
     const idx = hitNote(x, y);
 
     if (idx >= 0) {
-        // Click on note — also select all chord siblings (same time)
+        // Click on note — also select all chord siblings (same time).
+        // In keys mode same-timestamp notes are independent voices (not
+        // a strummed chord), so skip the sibling expansion.
         const nn = notes();
         const clickedTime = nn[idx].time;
-        const chordSiblings = [];
-        for (let i = 0; i < nn.length; i++) {
-            if (Math.abs(nn[i].time - clickedTime) < 0.001) chordSiblings.push(i);
+        const chordSiblings = [idx];
+        if (!isKeysMode()) {
+            for (let i = 0; i < nn.length; i++) {
+                if (i !== idx && Math.abs(nn[i].time - clickedTime) < 0.001) chordSiblings.push(i);
+            }
         }
-        const isChord = chordSiblings.length > 1;
 
         if (e.shiftKey) {
             // Multi-select toggle — toggle the whole chord group
@@ -6434,6 +6437,7 @@ window.editorBuild = async () => {
             chord_templates: arr.chord_templates,
         };
         if (buildTones) arrEntry.tones = buildTones;
+        if (arr._gp_notation) arrEntry._gp_notation = arr._gp_notation;
         // PR3d: include authored anchors too — same dirty-gate as
         // tones so an unauthored build doesn't ship empties. The
         // `_anchorEditCount` counter lives on `arr`, not on the
