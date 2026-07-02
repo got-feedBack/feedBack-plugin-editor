@@ -591,43 +591,6 @@ def _preserve_jsonc_comments(original_text: str, new_json_str: str) -> str:
     return out
 
 
-def _split_stems_best_effort(sloppak_path) -> bool:
-    """Separate a freshly-written sloppak's audio into per-instrument stems,
-    in place, using the best available method (the configured Demucs server,
-    else local Demucs). Best-effort: returns False (leaving the full-mix
-    sloppak intact) when no separation backend exists or the split fails, so a
-    create/build never breaks just because stem separation isn't available.
-
-    `split_sloppak_stems` replaces `stems/full.ogg` with drums/bass/vocals/…
-    stems and rewrites the manifest; the editor (`_mix_stems_for_editor`) and
-    the player's stem mixer then use those stems automatically.
-    """
-    from pathlib import Path as _Path
-    try:
-        from lib.sloppak_convert import (
-            split_sloppak_stems, _get_demucs_server_url, demucs_available,
-        )
-    except Exception:
-        return False
-    try:
-        has_backend = bool(_get_demucs_server_url()) or demucs_available()
-    except Exception:
-        has_backend = False
-    if not has_backend:
-        return False
-    try:
-        # htdemucs_6s = 6-source model (guitar + piano as distinct stems),
-        # the variant guitar-focused users want.
-        split_sloppak_stems(_Path(sloppak_path), model="htdemucs_6s")
-        return True
-    except Exception:
-        import logging as _log
-        _log.getLogger("slopsmith.plugin.editor").exception(
-            "stem separation failed for %s — keeping full mix", sloppak_path,
-        )
-        return False
-
-
 def _wem_bytes_to_preferred_audio(content: bytes):
     """Decode WEM bytes with vgmstream and encode to a preferred playback format.
 
@@ -3866,18 +3829,9 @@ def setup(app, context):
                     500,
                 )
 
-            # Split the new sloppak's audio into per-instrument stems (best
-            # available method). Runs in a worker thread so the event loop
-            # isn't blocked; best-effort, so an unavailable/failed separator
-            # just leaves the full-mix sloppak. Editor + player pick up the
-            # stems automatically on open.
-            stems_split = await asyncio.get_event_loop().run_in_executor(
-                None, _split_stems_best_effort, output_path,
-            )
-
             # Don't leak the absolute disk path back to the client; the
             # frontend only needs `filename` to call loadCDLC.
-            return {"success": True, "filename": new_filename, "stems_split": stems_split}
+            return {"success": True, "filename": new_filename}
         finally:
             shutil.rmtree(upload_dir, ignore_errors=True)
 
@@ -5666,17 +5620,10 @@ def setup(app, context):
             traceback.print_exc()
             return JSONResponse({"error": str(e)}, 500)
 
-        # Split the built sloppak's audio into stems (best available method)
-        # so the editor + player use per-instrument stems. Best-effort.
-        stems_split = await asyncio.get_event_loop().run_in_executor(
-            None, _split_stems_best_effort, output_path,
-        )
-
         return {
             "success": True,
             "path": output_path,
             "format": "sloppak",
-            "stems_split": stems_split,
         }
 
     # ── Helpers ──────────────────────────────────────────────────────────
@@ -5731,12 +5678,11 @@ def setup(app, context):
             # Single combined-audio stem — the editor only carries one
             # audio source per session (archive load decodes the WEM to a
             # single ogg; create-mode imports one audio file). Name it
-            # `full.ogg` to match the ecosystem convention (archive→sloppak
-            # conversion + `split_sloppak_stems` both key on `stems/full.ogg`);
-            # naming it `audio.ogg` here meant the stem separator couldn't
-            # find the source mix. Transcode to OGG when the source isn't
-            # already OGG so on-create stem separation works regardless of the
-            # uploaded audio format.
+            # `full.ogg` to match the ecosystem convention (the player's stem
+            # mixer + `_mix_stems_for_editor` key on `stems/full.ogg`); naming
+            # it `audio.ogg` here meant those consumers couldn't find the mix.
+            # Transcode to OGG when the source isn't already OGG so playback
+            # works regardless of the uploaded audio format.
             audio_ext = Path(audio_file).suffix.lower()
             if audio_ext == ".ogg":
                 stem_filename = "full.ogg"
