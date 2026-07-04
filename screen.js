@@ -2919,8 +2919,11 @@ function onWheel(e) {
 
 
 const EDITOR_SHORTCUT_PROFILE_KEY = 'editor.shortcutProfile';
+const EDITOR_RIGHT_CLICK_BEHAVIOR_KEY = 'editor.rightClickBehavior';
 const EDITOR_SHORTCUT_PROFILES = new Set(['feedback', 'eof']);
+const EDITOR_RIGHT_CLICK_BEHAVIORS = new Set(['context', 'eofEdit']);
 let editorShortcutProfile = 'feedback';
+let editorRightClickBehavior = null;
 let editorWaveformVisible = true;
 
 /* @pure:shortcut-profile:start */
@@ -3071,6 +3074,17 @@ function _editorEofCommandForKeyPure(e) {
     return null;
 }
 
+
+function _editorDefaultRightClickBehaviorPure(profile) {
+    return profile === 'eof' ? 'eofEdit' : 'context';
+}
+
+function _editorEffectiveRightClickBehaviorPure(profile, savedBehavior) {
+    return (savedBehavior === 'context' || savedBehavior === 'eofEdit')
+        ? savedBehavior
+        : _editorDefaultRightClickBehaviorPure(profile);
+}
+
 function _editorFeedbackCommandForKeyPure(e) {
     const sig = _editorKeySigPure(e);
     const key = (e.key || '').toLowerCase();
@@ -3131,15 +3145,41 @@ function _editorIsTypingTarget(e) {
     return !!(e && e.target && e.target.matches && e.target.matches('input, select, textarea'));
 }
 
+function _editorSyncRightClickBehaviorControls() {
+    const val = _editorEffectiveRightClickBehaviorPure(editorShortcutProfile, editorRightClickBehavior);
+    const el = document.getElementById('editor-right-click-behavior');
+    if (el) el.value = val;
+    const hint = document.getElementById('editor-right-click-hint');
+    if (hint) {
+        hint.textContent = val === 'eofEdit'
+            ? 'Right-click note lanes add/remove notes; lanes and markers keep context menus.'
+            : 'Right-click opens context menus.';
+    }
+}
+
 function _editorLoadShortcutProfile() {
     try {
         const saved = localStorage.getItem(EDITOR_SHORTCUT_PROFILE_KEY);
         if (EDITOR_SHORTCUT_PROFILES.has(saved)) editorShortcutProfile = saved;
+        const savedRightClick = localStorage.getItem(EDITOR_RIGHT_CLICK_BEHAVIOR_KEY);
+        if (EDITOR_RIGHT_CLICK_BEHAVIORS.has(savedRightClick)) editorRightClickBehavior = savedRightClick;
     } catch (_) {}
     const el = document.getElementById('editor-shortcut-profile');
     if (el) el.value = editorShortcutProfile;
+    _editorSyncRightClickBehaviorControls();
 }
 
+window.editorSetRightClickBehavior = (behavior) => {
+    editorRightClickBehavior = EDITOR_RIGHT_CLICK_BEHAVIORS.has(behavior) ? behavior : null;
+    try {
+        if (editorRightClickBehavior) localStorage.setItem(EDITOR_RIGHT_CLICK_BEHAVIOR_KEY, editorRightClickBehavior);
+        else localStorage.removeItem(EDITOR_RIGHT_CLICK_BEHAVIOR_KEY);
+    } catch (_) {}
+    _editorSyncRightClickBehaviorControls();
+    setStatus(_editorEffectiveRightClickBehaviorPure(editorShortcutProfile, editorRightClickBehavior) === 'eofEdit'
+        ? 'Right-click behavior: add/remove notes'
+        : 'Right-click behavior: context menus');
+};
 window.editorSetShortcutProfile = (profile) => {
     editorShortcutProfile = EDITOR_SHORTCUT_PROFILES.has(profile) ? profile : 'feedback';
     try { localStorage.setItem(EDITOR_SHORTCUT_PROFILE_KEY, editorShortcutProfile); } catch (_) {}
@@ -3147,6 +3187,7 @@ window.editorSetShortcutProfile = (profile) => {
     if (el) el.value = editorShortcutProfile;
     const panelEl = document.getElementById('editor-shortcut-panel-profile');
     if (panelEl) panelEl.value = editorShortcutProfile;
+    _editorSyncRightClickBehaviorControls();
     _editorRenderShortcutPanel();
     setStatus(editorShortcutProfile === 'eof' ? 'Shortcut profile: EOF Legacy' : 'Shortcut profile: FeedBack');
 };
@@ -3161,6 +3202,7 @@ function _editorRenderShortcutPanel() {
     if (!panel || !list || panel.classList.contains('hidden')) return;
     const profileEl = document.getElementById('editor-shortcut-panel-profile');
     if (profileEl) profileEl.value = editorShortcutProfile;
+    _editorSyncRightClickBehaviorControls();
     const subtitle = document.getElementById('editor-shortcut-panel-subtitle');
     if (subtitle) {
         subtitle.textContent = editorShortcutProfile === 'eof'
@@ -3539,6 +3581,41 @@ function _editorDispatchEofShortcut(e) {
     return _editorRunEofCommand(cmd);
 }
 
+function _editorRightClickNoteEdit(e, x, y) {
+    const behavior = _editorEffectiveRightClickBehaviorPure(editorShortcutProfile, editorRightClickBehavior);
+    if (behavior !== 'eofEdit' || !S.arrangements.length) return false;
+    const keysMode = isKeysMode();
+    const laneBottom = keysMode
+        ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
+        : WAVEFORM_H + lanes() * LANE_H;
+    if (y < WAVEFORM_H || y > laneBottom) return false;
+
+    const idx = hitNote(x, y);
+    if (idx >= 0) {
+        S.history.exec(new DeleteNotesCmd([idx]));
+        draw();
+        updateStatus();
+        setStatus('Note removed');
+        return true;
+    }
+
+    const time = snapTime(Math.max(0, xToTime(x)));
+    let note;
+    if (keysMode) {
+        const midi = yToMidi(y);
+        note = { time, string: midiToString(midi), fret: midiToFret(midi), sustain: 0, techniques: {} };
+    } else {
+        note = { time, string: yToStr(y), fret: 0, sustain: 0, techniques: {} };
+    }
+    const cmd = new AddNoteCmd(note);
+    S.history.exec(cmd);
+    S.sel.clear();
+    if (cmd.idx >= 0) S.sel.add(cmd.idx);
+    draw();
+    updateStatus();
+    setStatus('Note added');
+    return true;
+}
 function onContextMenu(e) {
     if (S.drumEditMode) { e.preventDefault(); return; }  // drum-edit mode handles interaction
     if (S.tempoMapMode) { e.preventDefault(); _tempoMapOnContextMenu(e); return; }
@@ -3565,6 +3642,8 @@ function onContextMenu(e) {
             if (onHandshapeLaneContextMenu(e, x, y)) return;
         }
     }
+
+    if (_editorRightClickNoteEdit(e, x, y)) return;
 
     // Right-click on beat bar or lanes with no note = section menu
     const beatBarY = isKeysMode()
