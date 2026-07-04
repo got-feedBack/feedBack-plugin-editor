@@ -325,6 +325,45 @@ function laneLabels() {
 function timeToX(t)  { return LABEL_W + (t - S.scrollX) * S.zoom; }
 function xToTime(x)  { return (x - LABEL_W) / S.zoom + S.scrollX; }
 
+const EDITOR_SCROLL_TAIL_SECONDS = 2;
+
+/* @pure:scroll-bounds:start */
+function _editorViewportDurationPure(canvasWidthPx, labelWidthPx, zoomPxPerSecond) {
+    const w = Number(canvasWidthPx);
+    const label = Number(labelWidthPx);
+    const zoom = Number(zoomPxPerSecond);
+    if (!Number.isFinite(w) || !Number.isFinite(label) || !Number.isFinite(zoom) || zoom <= 0) return 0;
+    return Math.max(0, (w - label) / zoom);
+}
+
+function _editorMaxScrollXPure(durationSeconds, viewportDurationSeconds, tailSeconds) {
+    const duration = Number(durationSeconds);
+    const view = Number(viewportDurationSeconds);
+    const tail = Number(tailSeconds);
+    if (!Number.isFinite(duration) || duration <= 0) return 0;
+    return Math.max(0, duration + Math.max(0, Number.isFinite(tail) ? tail : 0) - Math.max(0, Number.isFinite(view) ? view : 0));
+}
+
+function _editorClampScrollXPure(scrollX, durationSeconds, viewportDurationSeconds, tailSeconds) {
+    const raw = Number(scrollX);
+    const safe = Number.isFinite(raw) ? raw : 0;
+    return Math.max(0, Math.min(safe, _editorMaxScrollXPure(durationSeconds, viewportDurationSeconds, tailSeconds)));
+}
+/* @pure:scroll-bounds:end */
+
+function _editorViewportDuration() {
+    const w = canvas ? canvas.width / DPR : 800;
+    return _editorViewportDurationPure(w, LABEL_W, S.zoom);
+}
+
+function _editorClampScrollX(scrollX) {
+    return _editorClampScrollXPure(scrollX, S.duration, _editorViewportDuration(), EDITOR_SCROLL_TAIL_SECONDS);
+}
+
+function _editorApplyScrollBounds() {
+    S.scrollX = _editorClampScrollX(S.scrollX);
+    return S.scrollX;
+}
 // ── Bar selection (Loop-in-3D handoff) ──────────────────────────────
 /* @pure:loop-region:start */
 function _barSpanForTimesPure(downbeats, duration, t0, t1) {
@@ -2711,7 +2750,7 @@ function _onMouseMoveBody(e, x, y, L) {
 
     if (S.drag.type === 'pan') {
         const dx = x - S.drag.startX;
-        S.scrollX = Math.max(0, S.drag.origScroll - dx / S.zoom);
+        S.scrollX = _editorClampScrollX(S.drag.origScroll - dx / S.zoom);
         draw();
         return;
     }
@@ -2941,10 +2980,10 @@ function onWheel(e) {
         S.zoom = Math.max(20, Math.min(2000, S.zoom * factor));
         // Keep the time under cursor stable
         S.scrollX = timeBefore - (x - LABEL_W) / S.zoom;
-        S.scrollX = Math.max(0, S.scrollX);
+        S.scrollX = _editorClampScrollX(S.scrollX);
     } else {
         // Scroll = pan
-        S.scrollX = Math.max(0, S.scrollX + e.deltaY / S.zoom * 2);
+        S.scrollX = _editorClampScrollX(S.scrollX + e.deltaY / S.zoom * 2);
     }
     updateZoomDisplay();
     draw();
@@ -3373,9 +3412,9 @@ function _editorSnapStepSeconds() {
 function _editorSeekToTime(t) {
     S.cursorTime = Math.max(0, Math.min(S.duration || Infinity, t));
     const margin = 0.15 * (canvas ? canvas.width / S.zoom : 10);
-    if (S.cursorTime < S.scrollX) S.scrollX = Math.max(0, S.cursorTime - margin);
+    if (S.cursorTime < S.scrollX) S.scrollX = _editorClampScrollX(S.cursorTime - margin);
     const right = S.scrollX + ((canvas ? canvas.width : 800) - LABEL_W) / S.zoom;
-    if (S.cursorTime > right) S.scrollX = Math.max(0, S.cursorTime - margin);
+    if (S.cursorTime > right) S.scrollX = _editorClampScrollX(S.cursorTime - margin);
     if (S.playing) { stopPlayback(); startPlayback(); }
     draw();
     updateTimeDisplay();
@@ -4433,6 +4472,7 @@ async function loadAudio(url) {
         const buf = await resp.arrayBuffer();
         S.audioBuffer = await S.audioCtx.decodeAudioData(buf);
         S.duration = S.audioBuffer.duration;
+        _editorApplyScrollBounds();
         computeWaveform();
     } catch (e) {
         console.error('Audio load error:', e);
@@ -4523,7 +4563,7 @@ function playbackTick() {
     const cx = timeToX(S.cursorTime);
     const w = canvas ? canvas.width / DPR : 800;
     if (cx > w * 0.8) {
-        S.scrollX = S.cursorTime - (w * 0.3) / S.zoom;
+        S.scrollX = _editorClampScrollX(S.cursorTime - (w * 0.3) / S.zoom);
     }
 
     updateTimeDisplay();
@@ -5921,6 +5961,7 @@ window.editorTogglePlay = () => {
 window.editorZoom = (dir) => {
     const factor = dir > 0 ? 1.3 : 0.77;
     S.zoom = Math.max(20, Math.min(2000, S.zoom * factor));
+    _editorApplyScrollBounds();
     updateZoomDisplay();
     draw();
 };
@@ -6224,7 +6265,8 @@ function _applyEditorPendingView(filename) {
     if (next.barSel) S.barSel = next.barSel;
     if (typeof next.zoom === 'number' && next.zoom > 0) { S.zoom = next.zoom; updateZoomDisplay(); }
     if (typeof next.cursorTime === 'number') S.cursorTime = next.cursorTime;
-    if (typeof next.scrollX === 'number') S.scrollX = next.scrollX;
+    if (typeof next.scrollX === 'number') S.scrollX = _editorClampScrollX(next.scrollX);
+    else _editorApplyScrollBounds();
     updateStatus();
     _updateLoopIn3DBtn();
     draw();
@@ -7910,6 +7952,7 @@ window.editorApplyReplaceAudio = async () => {
             return;
         }
         if (S.cursorTime > S.duration) S.cursorTime = 0;
+        _editorApplyScrollBounds();
         document.getElementById('editor-play-btn').disabled = false;
         document.getElementById('editor-sync-btn').classList.remove('hidden');
         updateTimeDisplay();
