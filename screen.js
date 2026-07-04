@@ -5939,6 +5939,9 @@ function resizeCanvas() {
     canvas.height = h * DPR;
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
+    // The max scroll depends on the (now-changed) canvas width — re-clamp so a
+    // widen doesn't leave the timeline scrolled past the new max with blank tail.
+    _editorApplyScrollBounds();
     draw();
 }
 
