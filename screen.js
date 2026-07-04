@@ -10712,20 +10712,22 @@ function _hitAnchorMarker(x, y) {
     return { anchor: best, isAuto: snap.isAuto };
 }
 
-// Promote an auto-fallback anchor into `arr.anchors_user` by
-// inserting a freshly-allocated copy via `AddAnchorCmd`. Returns the
-// promoted ref so callers can use it for selection / drag. Idempotent
-// for already-authored markers (returns the input as-is).
+// Promote a computed/source-fallback anchor into `arr.anchors_user`.
+//
+// The backend treats a NON-EMPTY `anchors_user` as the complete authored
+// list (empty => recompute from notes/source), so promoting only the clicked
+// marker would silently drop every OTHER computed/source anchor on the next
+// save. Seed fresh copies of the WHOLE fallback set on this first authored
+// interaction, and return the copy standing in for the clicked marker (so
+// select / drag / edit operate on an authored member). Idempotent for
+// already-authored markers (returns the input as-is).
 function _promoteAnchor(arr, anchor, isAuto) {
     if (!arr || !anchor) return anchor;
     if (!isAuto) return anchor;
-    const copy = {
-        time: typeof anchor.time === 'number' ? anchor.time : 0,
-        fret: Number.isFinite(anchor.fret) ? anchor.fret : 1,
-        width: Number.isFinite(anchor.width) ? anchor.width : 4,
-    };
-    S.history.exec(new AddAnchorCmd(S.currentArr, copy));
-    return copy;
+    const autoList = Array.isArray(arr.anchors) ? arr.anchors : [];
+    const cmd = new PromoteAnchorsCmd(S.currentArr, autoList, anchor);
+    S.history.exec(cmd);
+    return cmd.target || anchor;
 }
 
 // ─── Cmd classes ────────────────────────────────────────────────────
@@ -10747,6 +10749,69 @@ class AddAnchorCmd {
         _bumpAnchorsDirty(arr, -1);
         const i = arr.anchors_user.indexOf(this.anchor);
         if (i >= 0) arr.anchors_user.splice(i, 1);
+    }
+}
+
+// Seed `arr.anchors_user` with fresh copies of a computed/source fallback
+// set — the first authored interaction against fallback anchors. This is the
+// single choke point that prevents a lone promote/insert from collapsing the
+// whole computed set (a non-empty `anchors_user` is authoritative on save).
+// Undo removes exactly the seeded copies, restoring the empty => recompute
+// state. `clicked`, when given, is the fallback marker the caller interacted
+// with; `.target` exposes its authored copy for selection / drag.
+class PromoteAnchorsCmd {
+    constructor(arrIdx, autoAnchors, clicked, extra) {
+        this.arrIdx = arrIdx;
+        this.copies = [];
+        this.target = null;
+        for (const a of (Array.isArray(autoAnchors) ? autoAnchors : [])) {
+            if (!a || typeof a.time !== 'number' || !isFinite(a.time)) continue;
+            const copy = {
+                time: a.time,
+                fret: Number.isFinite(a.fret) ? a.fret : 1,
+                width: Number.isFinite(a.width) ? a.width : 4,
+            };
+            this.copies.push(copy);
+            if (a === clicked) this.target = copy;
+        }
+        // Clicked marker wasn't in the fallback list (defensive) — seed a lone
+        // copy so the caller still gets a usable authored ref to work with.
+        if (clicked && !this.target) {
+            const copy = {
+                time: typeof clicked.time === 'number' ? clicked.time : 0,
+                fret: Number.isFinite(clicked.fret) ? clicked.fret : 1,
+                width: Number.isFinite(clicked.width) ? clicked.width : 4,
+            };
+            this.copies.push(copy);
+            this.target = copy;
+        }
+        // A brand-new anchor authored in the SAME gesture (first insert in empty
+        // lane space while on the fallback): seed it alongside the promoted set
+        // so the whole gesture is ONE undoable step — a single undo returns to
+        // the empty => recompute-on-save fallback (two separate commands would
+        // leave the seeded set behind after one undo). Kept by reference, not
+        // copied, so the caller's selection/drag ref stays live; it's the target.
+        if (extra) {
+            this.copies.push(extra);
+            this.target = extra;
+        }
+    }
+    exec() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        _bumpAnchorsDirty(arr, +1);
+        _ensureAnchors(arr);
+        for (const c of this.copies) arr.anchors_user.push(c);
+        arr.anchors_user.sort((a, b) => a.time - b.time);
+    }
+    rollback() {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr || !Array.isArray(arr.anchors_user)) return;
+        _bumpAnchorsDirty(arr, -1);
+        for (const c of this.copies) {
+            const i = arr.anchors_user.indexOf(c);
+            if (i >= 0) arr.anchors_user.splice(i, 1);
+        }
     }
 }
 
@@ -10904,7 +10969,19 @@ function onAnchorLaneMouseDown(e, x, y) {
     const t = snapTime(Math.max(0, xToTime(x)));
     if (t < 0) return false;
     const anchor = { time: t, fret: 1, width: 4 };
-    S.history.exec(new AddAnchorCmd(S.currentArr, anchor));
+    const userList = Array.isArray(arr.anchors_user) ? arr.anchors_user : null;
+    if (userList && userList.length > 0) {
+        // Already authoring — a plain single-command add.
+        S.history.exec(new AddAnchorCmd(S.currentArr, anchor));
+    } else {
+        // Still on the fallback: seed the whole computed/source set the user can
+        // see AND this new anchor as ONE undoable command, so a single undo
+        // returns to the empty => recompute-on-save fallback. A bare add would
+        // make `anchors_user` = [the new one] and drop every computed anchor on
+        // save; two separate commands would leave the seed behind after one undo.
+        const autoList = Array.isArray(arr.anchors) ? arr.anchors : [];
+        S.history.exec(new PromoteAnchorsCmd(S.currentArr, autoList, null, anchor));
+    }
     S.anchorSel = anchor;
     draw();
     return true;
@@ -10963,11 +11040,11 @@ function onAnchorLaneContextMenu(e, x, y) {
     editBtn.onclick = async () => {
         hideContextMenu();
         const fretStr = await _editorPromptText({
-            title: 'Edit Anchor', label: 'Anchor fret (1–24)', value: String(hit.fret),
+            title: 'Edit Anchor', label: 'Hand-position fret — index finger (1–24)', value: String(hit.fret),
         });
         if (fretStr === null) return;
         const widthStr = await _editorPromptText({
-            title: 'Edit Anchor', label: 'Anchor width (frets, 1–24)', value: String(hit.width),
+            title: 'Edit Anchor', label: 'Hand span (frets, 1–24)', value: String(hit.width),
         });
         if (widthStr === null) return;
         // Strict-integer parse matching `_parseFretInput` semantics so

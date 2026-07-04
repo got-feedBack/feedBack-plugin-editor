@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Editing a computed anchor no longer wipes the rest of the anchors.** The
+  anchor lane shows the backend's computed/source anchors until you author your
+  own, and the backend treats a non-empty `anchors_user` as the *complete*
+  authored list (empty = recompute on save). Clicking, right-click-editing, or
+  dragging one of those computed anchors — or adding your first anchor in empty
+  lane space — previously promoted only that single anchor into `anchors_user`,
+  so every **other** computed anchor was silently dropped on the next save (and
+  vanished from the lane). Both authoring entry points now materialize the
+  **whole** computed set on that first interaction, as one undoable step (Ctrl+Z
+  returns to the recompute-on-save fallback), so only the anchor you actually
+  edit changes. The anchor edit dialog also labels the value as the
+  **hand-position fret (index finger)** and the width as **hand span**, so
+  "fret" no longer reads as an arbitrary number. Tests:
+  `tests/anchor_authoring.test.js` (full-set promotion on click + on add-new,
+  undo-restores-fallback, idempotent-when-authored).
+
 ### Changed
 - **The audio lane now draws a real waveform.** It previously showed a
   symmetric magnitude band (absolute-peak per bucket, mirrored about the
