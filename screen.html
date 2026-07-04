@@ -97,8 +97,10 @@
             <option>1/48</option>
             <option>1/64</option>
             <option>1/96</option>
-            <option>Off</option>
         </select>
+        <label class="flex items-center gap-1 text-xs text-gray-400" title="Toggle grid snapping without changing the selected resolution">
+            <input id="editor-snap-enabled" type="checkbox" checked onchange="editorSetSnapEnabled(this.checked)" class="accent-accent"> On
+        </label>
 
         <div class="h-4 w-px bg-gray-700"></div>
 

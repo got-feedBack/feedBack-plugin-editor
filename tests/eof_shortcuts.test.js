@@ -92,6 +92,7 @@ t('exposes wired FeedBack Native key labels', () => {
 
 t('maps FeedBack Native timeline and grid shortcuts', () => {
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('w')), 'toggleWaveform');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('g')), 'toggleSnap');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('PageUp')), 'prevBeat');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('ArrowRight', { alt: true })), 'nextNote');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('PageDown', { ctrl: true })), 'nextGrid');

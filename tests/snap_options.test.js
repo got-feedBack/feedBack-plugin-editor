@@ -16,7 +16,7 @@ if (!m) {
 }
 
 const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { SNAP_OPTIONS, SNAP_VALUES, _editorSnapOptionLabelsPure, _editorSnapSubdivisionsPure };'
+    '"use strict";' + m[0] + '\nreturn { SNAP_OPTIONS, SNAP_VALUES, _editorSnapOptionLabelsPure, _editorSnapSubdivisionsPure, _editorEffectiveSnapValuePure };'
 )();
 
 let pass = 0;
@@ -31,10 +31,10 @@ t('keeps 1/4 as the default snap index', () => {
     assert.strictEqual(api.SNAP_VALUES[2], 0.25);
 });
 
-t('includes dense and triplet-friendly snap divisions before Off', () => {
+t('includes dense and triplet-friendly snap divisions', () => {
     assert.deepStrictEqual(api._editorSnapOptionLabelsPure(), [
         '1/1', '1/2', '1/4', '1/8', '1/12', '1/16',
-        '1/24', '1/32', '1/48', '1/64', '1/96', 'Off',
+        '1/24', '1/32', '1/48', '1/64', '1/96',
     ]);
 });
 
@@ -45,5 +45,10 @@ t('maps snap values to beat subdivisions', () => {
     assert.strictEqual(api._editorSnapSubdivisionsPure(0), 0);
 });
 
+
+t('separates snap enabled state from selected resolution', () => {
+    assert.strictEqual(api._editorEffectiveSnapValuePure(true, 1 / 32), 1 / 32);
+    assert.strictEqual(api._editorEffectiveSnapValuePure(false, 1 / 32), 0);
+});
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
