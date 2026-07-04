@@ -5582,6 +5582,8 @@ let createState = {
     artPath: null,
     previewPath: null,
     eofFiles: null,    // FileList[] of selected EOF arrangement XMLs
+    initialArrangement: 'Lead',
+    initDrumTab: true,
 };
 
 // ════════════════════════════════════════════════════════════════════
@@ -5819,6 +5821,7 @@ window.editorShowCreateModal = () => {
     createState = {
         gpPath: null, tracks: null, audioUrl: null, audioMode: 'file', artPath: null,
         previewPath: null, eofFiles: null,
+        initialArrangement: 'Lead', initDrumTab: true,
         gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null,
     };
     document.getElementById('editor-create-modal').classList.remove('hidden');
@@ -5835,6 +5838,10 @@ window.editorShowCreateModal = () => {
     document.getElementById('editor-create-artist').value = '';
     document.getElementById('editor-create-album').value = '';
     document.getElementById('editor-create-year').value = '';
+    const _drumTab = document.getElementById('editor-create-drum-tab');
+    if (_drumTab) _drumTab.checked = true;
+    const _goBtn = document.getElementById('editor-create-go');
+    if (_goBtn) _goBtn.textContent = 'Import & Open in Editor';
     // Reset the GP8/auto-sync UI so stale banner/section/refine state from a
     // previous session isn't shown before a file is chosen.
     document.getElementById('editor-gp8-audio-banner')?.classList.add('hidden');
@@ -5844,7 +5851,10 @@ window.editorShowCreateModal = () => {
     if (_gas) _gas.textContent = '';
     const _refineStatus = document.getElementById('editor-refine-status');
     if (_refineStatus) _refineStatus.textContent = '';
+    _renderCreateArrangementButtons();
+    _refreshCreateBlankOptions();
     editorSetAudioMode('file');
+    updateCreateButton();
 };
 
 window.editorHideCreateModal = () => {
@@ -6218,6 +6228,7 @@ window.editorGPFileSelected = async (input) => {
         }
 
         status.textContent = `Parsed: ${data.tracks.length} tracks found`;
+        _refreshCreateBlankOptions();
         updateCreateButton();
     } catch (e) {
         status.textContent = 'Upload failed: ' + e.message;
@@ -6279,10 +6290,62 @@ async function uploadCreateAudio() {
     return true;
 }
 
+function _createHasAudioInput() {
+    if (createState.audioMode === 'youtube') {
+        return !!document.getElementById('editor-create-yt-url')?.value.trim();
+    }
+    return !!(document.getElementById('editor-create-audio')?.files || []).length;
+}
+
+/* @pure:create-gate:start */
+function _createGateOpenPure(state, ctx) {
+    const hasGP = !!state.gpPath;
+    const hasEof = !!(state.eofFiles && state.eofFiles.length);
+    if (hasGP || hasEof) return true;
+    return !!(ctx && ctx.hasAudio && ctx.title && ctx.artist);
+}
+/* @pure:create-gate:end */
+
+function _renderCreateArrangementButtons() {
+    const wrap = document.getElementById('editor-create-arr-buttons');
+    if (!wrap) return;
+    const choices = ['Lead', 'Rhythm', 'Bass'];
+    if (!choices.includes(createState.initialArrangement)) {
+        createState.initialArrangement = 'Lead';
+    }
+    wrap.replaceChildren();
+    for (const name of choices) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = name;
+        btn.className = 'px-2 py-1 rounded text-xs font-medium '
+            + (name === createState.initialArrangement
+                ? 'bg-accent text-white'
+                : 'bg-dark-600 text-gray-300 hover:bg-dark-500');
+        btn.onclick = () => {
+            createState.initialArrangement = name;
+            _renderCreateArrangementButtons();
+            updateCreateButton();
+        };
+        wrap.appendChild(btn);
+    }
+}
+
+function _refreshCreateBlankOptions() {
+    const blankOpts = document.getElementById('editor-create-blank-opts');
+    if (!blankOpts) return;
+    blankOpts.classList.toggle('hidden', !!createState.gpPath || !!(createState.eofFiles && createState.eofFiles.length));
+}
+
 function updateCreateButton() {
-    const hasGP = !!createState.gpPath;
-    const hasEof = !!(createState.eofFiles && createState.eofFiles.length);
-    document.getElementById('editor-create-go').disabled = !(hasGP || hasEof);
+    const title = !!document.getElementById('editor-create-title')?.value.trim();
+    const artist = !!document.getElementById('editor-create-artist')?.value.trim();
+    const canCreate = _createGateOpenPure(createState, {
+        hasAudio: _createHasAudioInput(),
+        title,
+        artist,
+    });
+    document.getElementById('editor-create-go').disabled = !canCreate;
 }
 
 // Wire up input change events for enabling the create button. Changing the
@@ -6293,11 +6356,15 @@ document.addEventListener('change', (e) => {
     if (e.target.id === 'editor-create-audio') {
         createState.audioUrl = null;
         updateCreateButton();
+    } else if (e.target.id === 'editor-create-drum-tab') {
+        createState.initDrumTab = !!e.target.checked;
     }
 });
 document.addEventListener('input', (e) => {
     if (e.target.id === 'editor-create-yt-url') {
         createState.audioUrl = null;
+        updateCreateButton();
+    } else if (e.target.id === 'editor-create-title' || e.target.id === 'editor-create-artist') {
         updateCreateButton();
     }
 });
@@ -6381,7 +6448,10 @@ window.editorDoCreate = async () => {
         await _editorDoEofCreate();
         return;
     }
-    if (!createState.gpPath) return;
+    if (!createState.gpPath) {
+        await _editorDoBlankCreate();
+        return;
+    }
     const status = document.getElementById('editor-create-status');
     const btn = document.getElementById('editor-create-go');
     btn.disabled = true;
@@ -6525,6 +6595,78 @@ window.editorDoCreate = async () => {
     }
 };
 
+async function _editorDoBlankCreate() {
+    const status = document.getElementById('editor-create-status');
+    const btn = document.getElementById('editor-create-go');
+    const val = (id) => ((document.getElementById(id)?.value) || '').trim();
+    const title = val('editor-create-title');
+    const artist = val('editor-create-artist');
+    if (!title) {
+        if (status) status.textContent = 'Title is required.';
+        if (btn) btn.disabled = false;
+        return;
+    }
+    if (!artist) {
+        if (status) status.textContent = 'Artist is required.';
+        if (btn) btn.disabled = false;
+        return;
+    }
+    if (!_createHasAudioInput()) {
+        if (status) status.textContent = 'Audio is required for an audio-only project.';
+        if (btn) btn.disabled = false;
+        return;
+    }
+    if (btn) btn.disabled = true;
+
+    if (!createState.audioUrl) {
+        status.textContent = 'Uploading audio...';
+        const ok = await uploadCreateAudio();
+        if (!ok) { if (btn) btn.disabled = false; return; }
+    }
+
+    const artInput = document.getElementById('editor-create-art');
+    if (artInput && artInput.files && artInput.files.length && !createState.artPath) {
+        const form = new FormData();
+        form.append('file', artInput.files[0]);
+        try {
+            const r = await fetch('/api/plugins/editor/upload-art', { method: 'POST', body: form });
+            const d = await r.json();
+            if (d.art_path) createState.artPath = d.art_path;
+        } catch (_) {}
+    }
+
+    createState.initDrumTab = !!document.getElementById('editor-create-drum-tab')?.checked;
+    const metadata = {
+        title,
+        artist,
+        album: val('editor-create-album'),
+        year: val('editor-create-year'),
+        audio_url: createState.audioUrl,
+        initial_arrangement: createState.initialArrangement || 'Lead',
+        init_drum_tab: !!createState.initDrumTab,
+    };
+    if (createState.artPath) metadata.art_path = createState.artPath;
+
+    const form = new FormData();
+    form.append('metadata', JSON.stringify(metadata));
+    status.textContent = 'Building sloppak...';
+    try {
+        const resp = await fetch('/api/plugins/editor/create_sloppak', { method: 'POST', body: form });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            status.textContent = 'Error: ' + (data.error || resp.statusText);
+            if (btn) btn.disabled = false;
+            return;
+        }
+        editorHideCreateModal();
+        if (typeof _kickLibraryRescan === 'function') _kickLibraryRescan();
+        await loadCDLC(data.filename);
+    } catch (e) {
+        status.textContent = 'Failed: ' + e.message;
+        if (btn) btn.disabled = false;
+    }
+}
+
 // Apply a create-mode import result (from convert-gp OR import-xml-project) to
 // the editor and open it. The two import sources return the same shape
 // (_song_to_dict + session_id + create_mode), so this is shared.
@@ -6606,6 +6748,7 @@ window.editorApplyCreateResult = async (data) => {
 window.editorEofFilesSelected = (input) => {
     const xmls = [...(input.files || [])].filter(f => /\.xml$/i.test(f.name));
     createState.eofFiles = xmls.length ? xmls : null;
+    _refreshCreateBlankOptions();
     updateCreateButton();
     const st = document.getElementById('editor-create-status');
     if (st) st.textContent = xmls.length
