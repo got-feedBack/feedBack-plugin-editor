@@ -42,10 +42,9 @@ const sandbox = new Function('S', '"use strict";' + [
     extractDecl('class PromoteAnchorsCmd '),
     extractDecl('class AddAnchorCmd '),
     extractDecl('function _promoteAnchor('),
-    extractDecl('function _promoteAutoAnchorsIfNeeded('),
 ].join('\n') +
     '\nreturn { _readAnchorSnapshot, _ensureAnchors, _bumpAnchorsDirty, _anchorsAreDirty,' +
-    ' PromoteAnchorsCmd, AddAnchorCmd, _promoteAnchor, _promoteAutoAnchorsIfNeeded };');
+    ' PromoteAnchorsCmd, AddAnchorCmd, _promoteAnchor };');
 
 function makeEnv(arr) {
     const undoStack = [];
@@ -122,31 +121,39 @@ t('promote is a no-op for an already-authored marker', () => {
     assert.strictEqual(arr.anchors_user.length, 1);
 });
 
-// 4. Second entry point: adding a new anchor in empty space seeds the fallback
-//    first, so the computed anchors aren't dropped by the first authored insert.
-t('add-new seeds the fallback before the first authored insert', () => {
+// 4. Second entry point: adding a new anchor in empty space while on the
+//    fallback seeds the whole computed set AND the new anchor in ONE command,
+//    so the computed anchors aren't dropped — and a single undo fully reverts
+//    the gesture back to the empty => recompute fallback (the regression: two
+//    commands left the seeded set behind, still saved as authored).
+t('add-new on fallback: one command seeds the set + new anchor, one undo reverts', () => {
     const arr = computedArr();
     const { S, api } = makeEnv(arr);
-    api._promoteAutoAnchorsIfNeeded(arr);
-    assert.strictEqual(arr.anchors_user.length, 3, 'fallback materialized first');
-    S.history.exec(new api.AddAnchorCmd(0, { time: 7, fret: 2, width: 4 }));
+    const anchor = { time: 7, fret: 2, width: 4 };
+    S.history.exec(new api.PromoteAnchorsCmd(0, arr.anchors, null, anchor));
     assert.strictEqual(arr.anchors_user.length, 4, '3 computed + 1 new');
-    assert.ok(arr.anchors_user.some(a => a.time === 7 && a.fret === 2), 'new anchor present');
+    assert.ok(arr.anchors_user.includes(anchor), 'the new anchor is seeded by reference');
+    assert.strictEqual(api._anchorsAreDirty(arr), true);
     assert.deepStrictEqual(
-        arr.anchors_user.filter(a => a.time !== 7).map(a => [a.time, a.fret, a.width]),
+        arr.anchors_user.filter(a => a !== anchor).map(a => [a.time, a.fret, a.width]),
         [[0, 1, 4], [5, 5, 4], [10, 9, 5]], 'computed anchors intact');
+    // A SINGLE undo returns to the empty => recompute-on-save fallback.
+    S.history.undo();
+    assert.strictEqual(arr.anchors_user.length, 0, 'one undo clears the whole gesture');
+    assert.strictEqual(api._anchorsAreDirty(arr), false, 'not dirty -> not saved as authored');
+    assert.strictEqual(api._readAnchorSnapshot(arr).isAuto, true);
 });
 
-// 5. _promoteAutoAnchorsIfNeeded is a no-op once authored, and seeds an empty
-//    list (no phantom anchor) when there's nothing to preserve.
-t('_promoteAutoAnchorsIfNeeded: no-op when authored; empty when nothing to seed', () => {
-    const authored = { anchors: [{ time: 0, fret: 1, width: 4 }], anchors_user: [{ time: 3, fret: 4, width: 4 }] };
-    makeEnv(authored).api._promoteAutoAnchorsIfNeeded(authored);
-    assert.strictEqual(authored.anchors_user.length, 1, 'authored list untouched');
-
-    const empty = { anchors: [] };
-    makeEnv(empty).api._promoteAutoAnchorsIfNeeded(empty);
-    assert.ok(Array.isArray(empty.anchors_user) && empty.anchors_user.length === 0);
+// 5. On an already-authored arrangement a new anchor is a plain single add
+//    (no re-seeding of the computed set), reverted by a single undo.
+t('add-new when already authored is a plain single add', () => {
+    const arr = { anchors: [{ time: 0, fret: 1, width: 4 }], anchors_user: [{ time: 3, fret: 4, width: 4 }] };
+    const { S, api } = makeEnv(arr);
+    const anchor = { time: 8, fret: 6, width: 4 };
+    S.history.exec(new api.AddAnchorCmd(0, anchor));
+    assert.strictEqual(arr.anchors_user.length, 2, 'existing authored anchor + the new one');
+    S.history.undo();
+    assert.strictEqual(arr.anchors_user.length, 1, 'back to the single authored anchor');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

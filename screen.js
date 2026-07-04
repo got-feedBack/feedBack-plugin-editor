@@ -10730,20 +10730,6 @@ function _promoteAnchor(arr, anchor, isAuto) {
     return cmd.target || anchor;
 }
 
-// Materialize the whole computed/source fallback set into `arr.anchors_user`
-// when the arrangement is still on the fallback (empty `anchors_user`), so the
-// first authored INSERT in empty space doesn't drop the computed anchors the
-// user can see (a bare add would make `anchors_user` = [the new one]). No-op
-// once authored; seeds an empty list when there's nothing to preserve.
-function _promoteAutoAnchorsIfNeeded(arr) {
-    if (!arr) return;
-    const userList = Array.isArray(arr.anchors_user) ? arr.anchors_user : null;
-    if (userList && userList.length > 0) return;
-    const autoList = Array.isArray(arr.anchors) ? arr.anchors : [];
-    if (autoList.length === 0) { _ensureAnchors(arr); return; }
-    S.history.exec(new PromoteAnchorsCmd(S.currentArr, autoList, null));
-}
-
 // ─── Cmd classes ────────────────────────────────────────────────────
 
 class AddAnchorCmd {
@@ -10774,7 +10760,7 @@ class AddAnchorCmd {
 // state. `clicked`, when given, is the fallback marker the caller interacted
 // with; `.target` exposes its authored copy for selection / drag.
 class PromoteAnchorsCmd {
-    constructor(arrIdx, autoAnchors, clicked) {
+    constructor(arrIdx, autoAnchors, clicked, extra) {
         this.arrIdx = arrIdx;
         this.copies = [];
         this.target = null;
@@ -10798,6 +10784,16 @@ class PromoteAnchorsCmd {
             };
             this.copies.push(copy);
             this.target = copy;
+        }
+        // A brand-new anchor authored in the SAME gesture (first insert in empty
+        // lane space while on the fallback): seed it alongside the promoted set
+        // so the whole gesture is ONE undoable step — a single undo returns to
+        // the empty => recompute-on-save fallback (two separate commands would
+        // leave the seeded set behind after one undo). Kept by reference, not
+        // copied, so the caller's selection/drag ref stays live; it's the target.
+        if (extra) {
+            this.copies.push(extra);
+            this.target = extra;
         }
     }
     exec() {
@@ -10972,13 +10968,20 @@ function onAnchorLaneMouseDown(e, x, y) {
     // menu lets the user edit fret/width afterwards.
     const t = snapTime(Math.max(0, xToTime(x)));
     if (t < 0) return false;
-    // Preserve the computed/source anchors the user can see: if we're still on
-    // the fallback, seed the whole set before this first authored insert (a
-    // bare add would make `anchors_user` = [the new one] and drop every
-    // computed anchor on save).
-    _promoteAutoAnchorsIfNeeded(arr);
     const anchor = { time: t, fret: 1, width: 4 };
-    S.history.exec(new AddAnchorCmd(S.currentArr, anchor));
+    const userList = Array.isArray(arr.anchors_user) ? arr.anchors_user : null;
+    if (userList && userList.length > 0) {
+        // Already authoring — a plain single-command add.
+        S.history.exec(new AddAnchorCmd(S.currentArr, anchor));
+    } else {
+        // Still on the fallback: seed the whole computed/source set the user can
+        // see AND this new anchor as ONE undoable command, so a single undo
+        // returns to the empty => recompute-on-save fallback. A bare add would
+        // make `anchors_user` = [the new one] and drop every computed anchor on
+        // save; two separate commands would leave the seed behind after one undo.
+        const autoList = Array.isArray(arr.anchors) ? arr.anchors : [];
+        S.history.exec(new PromoteAnchorsCmd(S.currentArr, autoList, null, anchor));
+    }
     S.anchorSel = anchor;
     draw();
     return true;
