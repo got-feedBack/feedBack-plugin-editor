@@ -1090,6 +1090,58 @@ def _guide_tones_wire(tones):
             if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 11]
 
 
+def _extended_manifest_meta(src) -> dict:
+    """Normalize the spec-complete optional manifest fields (album_artist, track,
+    disc, genres, isrc, mbid, language, authors) from a create/import request
+    into the shapes `_write_sloppak_pak` expects — so a Guitar Pro / EOF import
+    persists the same metadata the blank-create path does (these fields are shown
+    for every create flow but were previously written only for blank projects).
+    Lenient: a malformed field is skipped, not an error (secondary to the import).
+    """
+    if not isinstance(src, dict):
+        return {}
+    out: dict = {}
+
+    def _s(name):
+        v = src.get(name)
+        return v.strip() if isinstance(v, str) else ""
+
+    for _k in ("album_artist", "language"):
+        if _s(_k):
+            out[_k] = _s(_k)
+    if _s("mbid"):
+        out["mbid"] = _s("mbid").lower()
+    if _s("isrc"):
+        out["isrc"] = re.sub(r"[\s-]", "", _s("isrc")).upper()
+    for _k in ("track", "disc"):
+        v = src.get(_k)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, int):
+            out[_k] = v
+        elif isinstance(v, str) and v.strip().lstrip("-").isdigit():
+            out[_k] = int(v.strip())
+
+    def _list(name):
+        v = src.get(name)
+        if isinstance(v, str):
+            v = re.split(r"[,\n]", v)
+        items, seen = [], set()
+        if isinstance(v, list):
+            for it in v:
+                s = str(it).strip() if it is not None else ""
+                if s and s not in seen:
+                    seen.add(s)
+                    items.append(s)
+        return items
+
+    for _k in ("genres", "authors"):
+        vals = _list(_k)
+        if vals:
+            out[_k] = vals
+    return out
+
+
 def _safe_float(v, default=0.0):
     """Best-effort float coercion; returns `default` for bad input."""
     if v is None:
@@ -4989,6 +5041,9 @@ def setup(app, context):
             "metadata": {
                 "title": title, "artist": artist,
                 "album": album, "year": year,
+                # Spec-complete metadata typed in the create modal is merged into
+                # the session so /build persists it too (not just blank projects).
+                **_extended_manifest_meta(data),
             },
             "last_touched": time.time(),
         }
@@ -5072,6 +5127,7 @@ def setup(app, context):
         artist: str = Form(""),
         album: str = Form(""),
         year: str = Form(""),
+        extended_meta: str = Form(""),
     ):
         """Import EOF (Editor on Fire) arrangement XML into a create session.
 
@@ -5086,6 +5142,13 @@ def setup(app, context):
         charts + metadata. Open authoring format only.
         """
         from lib.song import load_song as _load_arrangement_dir
+
+        # Spec-complete metadata arrives as one JSON form field so we don't need
+        # eight more Form() params; a malformed blob is tolerated (just ignored).
+        try:
+            _ext_meta = json.loads(extended_meta) if extended_meta.strip() else {}
+        except (ValueError, TypeError):
+            _ext_meta = {}
 
         tmp = tempfile.mkdtemp(prefix="slopsmith_xmlproj_")
         try:
@@ -5184,6 +5247,10 @@ def setup(app, context):
                 "metadata": {
                     "title": song.title, "artist": song.artist,
                     "album": song.album, "year": song.year,
+                    # Spec-complete metadata from the create modal (a JSON blob
+                    # form field) is merged so /build persists it, matching the
+                    # blank-create and GP-import paths.
+                    **_extended_manifest_meta(_ext_meta),
                 },
                 "last_touched": time.time(),
             }

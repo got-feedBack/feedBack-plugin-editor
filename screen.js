@@ -6214,6 +6214,24 @@ function _createHasAudioInput() {
     return !!((document.getElementById('editor-create-yt-url')?.value) || '').trim();
 }
 
+// The spec-complete metadata typed in the create modal, so a Guitar Pro / EOF
+// import carries the same fields the blank-create path sends (the backend
+// normalizes + persists them at Build). Values are raw strings; the server
+// coerces track/disc to ints and genres/authors to lists.
+function _createExtendedMeta() {
+    const v = (id) => ((document.getElementById(id)?.value) || '').trim();
+    return {
+        album_artist: v('editor-create-album-artist'),
+        track: v('editor-create-track'),
+        disc: v('editor-create-disc'),
+        genres: v('editor-create-genre'),
+        language: v('editor-create-language'),
+        isrc: v('editor-create-isrc'),
+        mbid: v('editor-create-mbid'),
+        authors: v('editor-create-authors'),
+    };
+}
+
 function updateCreateButton() {
     const open = _createGateOpen(createState, {
         hasTitle: !!((document.getElementById('editor-create-title')?.value) || '').trim(),
@@ -7425,6 +7443,8 @@ window.editorDoCreate = async () => {
                 artist: document.getElementById('editor-create-artist').value || 'Unknown',
                 album: document.getElementById('editor-create-album').value || '',
                 year: document.getElementById('editor-create-year').value || '',
+                // Spec-complete metadata → persisted into the session for Build.
+                ..._createExtendedMeta(),
             }),
         });
         const data = await resp.json();
@@ -7557,6 +7577,8 @@ async function _editorDoEofCreate() {
         form.append('artist', document.getElementById('editor-create-artist').value || '');
         form.append('album', document.getElementById('editor-create-album').value || '');
         form.append('year', document.getElementById('editor-create-year').value || '');
+        // Spec-complete metadata as one JSON blob → persisted into the session.
+        form.append('extended_meta', JSON.stringify(_createExtendedMeta()));
 
         const resp = await fetch('/api/plugins/editor/import-xml-project',
             { method: 'POST', body: form });
