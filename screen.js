@@ -2934,6 +2934,72 @@ function _editorKeySigPure(e) {
     return mods.concat(key).join('+');
 }
 
+const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
+    { id: 'save', label: 'Save project', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+S', eof: 'F2 / Ctrl+S' } },
+    { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
+    { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+I', eof: 'F6' } },
+    { id: 'importXml', label: 'Import XML source', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+I', eof: 'F7' } },
+    { id: 'importGp', label: 'Import Guitar Pro source', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+I', eof: 'F12' } },
+    { id: 'prevBeat', label: 'Jump to previous beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Up', eof: 'Page Up' } },
+    { id: 'nextBeat', label: 'Jump to next beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Down', eof: 'Page Down' } },
+    { id: 'prevNote', label: 'Jump to previous note', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+Left', eof: 'Shift+Page Up' } },
+    { id: 'nextNote', label: 'Jump to next note', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+Right', eof: 'Shift+Page Down' } },
+    { id: 'prevGrid', label: 'Jump to previous grid line', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Page Up', eof: 'Ctrl+Shift+Page Up' } },
+    { id: 'nextGrid', label: 'Jump to next grid line', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Page Down', eof: 'Ctrl+Shift+Page Down' } },
+    { id: 'prevAnchor', label: 'Jump to previous anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Left', eof: 'Alt+Page Up' } },
+    { id: 'nextAnchor', label: 'Jump to next anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Right', eof: 'Alt+Page Down' } },
+    { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+Q', eof: '[' } },
+    { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+Q', eof: ']' } },
+    { id: 'snapDown', label: 'Decrease snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: ',', eof: ',' } },
+    { id: 'snapUp', label: 'Increase snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: '.', eof: '.' } },
+    { id: 'editFret', label: 'Edit fret / fingering', group: 'Notes', status: 'ready', keys: { feedback: 'F', eof: 'F / Ctrl+F' } },
+    { id: 'noteMenu', label: 'Open note edit menu', group: 'Notes', status: 'ready', keys: { feedback: 'Double-click note', eof: 'N' } },
+    { id: 'bend', label: 'Edit bend', group: 'Notes', status: 'ready', keys: { feedback: 'B', eof: 'Ctrl+B' } },
+    { id: 'unpitchedSlide', label: 'Edit unpitched slide', group: 'Notes', status: 'ready', keys: { feedback: 'U', eof: 'Ctrl+U' } },
+    { id: 'transposeStringUp', label: 'Move selection up one string', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Up', eof: 'Shift+Up' } },
+    { id: 'transposeStringDown', label: 'Move selection down one string', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Down', eof: 'Shift+Down' } },
+    { id: 'slideUp', label: 'Pitched slide up', group: 'Notes', status: 'planned', keys: { feedback: 'Ctrl+Up', eof: 'Ctrl+Up' } },
+    { id: 'slideDown', label: 'Pitched slide down', group: 'Notes', status: 'planned', keys: { feedback: 'Ctrl+Down', eof: 'Ctrl+Down' } },
+    { id: 'toggleHammerOn', label: 'Toggle hammer-on', group: 'Techniques', status: 'ready', keys: { feedback: 'H', eof: 'H' } },
+    { id: 'togglePullOff', label: 'Toggle pull-off', group: 'Techniques', status: 'ready', keys: { feedback: 'P', eof: 'P' } },
+    { id: 'toggleTap', label: 'Toggle tap', group: 'Techniques', status: 'ready', keys: { feedback: 'Y', eof: 'T / Ctrl+T' } },
+    { id: 'togglePinchHarmonic', label: 'Toggle pinch harmonic', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+N', eof: 'Shift+H' } },
+    { id: 'toggleNaturalHarmonic', label: 'Toggle natural harmonic', group: 'Techniques', status: 'ready', keys: { feedback: 'N', eof: 'Ctrl+H' } },
+    { id: 'togglePalmMute', label: 'Toggle palm mute', group: 'Techniques', status: 'ready', keys: { feedback: 'M', eof: 'Ctrl+M' } },
+    { id: 'toggleMuteOpen', label: 'Mute and set fret open', group: 'Techniques', status: 'ready', keys: { feedback: 'X', eof: 'Ctrl+X' } },
+    { id: 'toggleMuteRetain', label: 'Mute and retain fret', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+X', eof: 'Shift+X' } },
+    { id: 'toggleVibrato', label: 'Toggle vibrato', group: 'Techniques', status: 'ready', keys: { feedback: 'V', eof: 'Shift+V' } },
+    { id: 'toggleLinkNext', label: 'Toggle link-next', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+N', eof: 'Shift+N' } },
+    { id: 'toggleAccent', label: 'Toggle accent', group: 'Techniques', status: 'ready', keys: { feedback: 'A', eof: 'Ctrl+Shift+A' } },
+    { id: 'toggleIgnore', label: 'Toggle ignore', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+I', eof: 'Ctrl+Shift+I' } },
+    { id: 'toggleTremolo', label: 'Toggle tremolo', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+O', eof: 'Ctrl+Shift+O' } },
+    { id: 'togglePop', label: 'Toggle pop / pluck', group: 'Techniques', status: 'ready', keys: { feedback: 'O', eof: 'Ctrl+Shift+P' } },
+    { id: 'fretUp', label: 'Increase selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl++', eof: 'Ctrl++' } },
+    { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+-' } },
+    { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
+    { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', eof: 'Ctrl+L' } },
+    { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+R', eof: 'Shift+R' } },
+    { id: 'addSection', label: 'Add section at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+M', eof: 'Shift+S' } },
+    { id: 'addPhrase', label: 'Add phrase at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+P', eof: 'Shift+P' } },
+    { id: 'addToneChange', label: 'Add tone change at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+Shift+T', eof: 'Ctrl+Shift+T' } },
+    { id: 'addHandshape', label: 'Add handshape from selection', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+H', eof: 'Ctrl+Shift+H' } },
+    { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+I' } },
+    { id: 'toggleGridDisplay', label: 'Toggle grid display density', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Shift+G', eof: 'Shift+G' } },
+    { id: 'customGridSnap', label: 'Open custom snap settings', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Alt+G', eof: 'Ctrl+Shift+G' } },
+    { id: 'midiTones', label: 'MIDI tone spot-check', group: 'Preview', status: 'planned', keys: { feedback: 'Shift+T', eof: 'Shift+T' } },
+    { id: 'placeMoverPhrase', label: 'Place mover phrase', group: 'Structure', status: 'planned', keys: { feedback: 'Ctrl+Shift+R', eof: 'Ctrl+Shift+R' } },
+]);
+
+function _editorShortcutRowsPure(profile) {
+    const p = profile === 'eof' ? 'eof' : 'feedback';
+    return EDITOR_SHORTCUT_COMMANDS.map(cmd => ({
+        id: cmd.id,
+        label: cmd.label,
+        group: cmd.group,
+        status: cmd.status,
+        key: p === 'eof' ? ((cmd.keys && cmd.keys.eof) || '') : (cmd.id === 'save' ? 'Ctrl+S' : ''),
+    }));
+}
 function _editorEofCommandForKeyPure(e) {
     const sig = _editorKeySigPure(e);
     const key = (e.key || '').toLowerCase();
@@ -3024,9 +3090,89 @@ window.editorSetShortcutProfile = (profile) => {
     try { localStorage.setItem(EDITOR_SHORTCUT_PROFILE_KEY, editorShortcutProfile); } catch (_) {}
     const el = document.getElementById('editor-shortcut-profile');
     if (el) el.value = editorShortcutProfile;
+    const panelEl = document.getElementById('editor-shortcut-panel-profile');
+    if (panelEl) panelEl.value = editorShortcutProfile;
+    _editorRenderShortcutPanel();
     setStatus(editorShortcutProfile === 'eof' ? 'Shortcut profile: EOF Legacy' : 'Shortcut profile: FeedBack');
 };
 
+function _editorCommandById(id) {
+    return EDITOR_SHORTCUT_COMMANDS.find(cmd => cmd.id === id) || null;
+}
+
+function _editorRenderShortcutPanel() {
+    const panel = document.getElementById('editor-shortcut-panel');
+    const list = document.getElementById('editor-shortcut-command-list');
+    if (!panel || !list || panel.classList.contains('hidden')) return;
+    const profileEl = document.getElementById('editor-shortcut-panel-profile');
+    if (profileEl) profileEl.value = editorShortcutProfile;
+    const subtitle = document.getElementById('editor-shortcut-panel-subtitle');
+    if (subtitle) {
+        subtitle.textContent = editorShortcutProfile === 'eof'
+            ? 'EOF Legacy shows migration-friendly keys and clickable command controls.'
+            : 'FeedBack shows clickable command controls; the native key map will expand in a later pass.';
+    }
+    list.replaceChildren();
+    const groups = new Map();
+    for (const row of _editorShortcutRowsPure(editorShortcutProfile)) {
+        if (!groups.has(row.group)) groups.set(row.group, []);
+        groups.get(row.group).push(row);
+    }
+    for (const [group, rows] of groups) {
+        const section = document.createElement('div');
+        section.className = 'rounded border border-gray-700/70 bg-dark-900/45';
+        const title = document.createElement('div');
+        title.className = 'px-2 py-1.5 border-b border-gray-700/70 text-[11px] uppercase tracking-wide text-gray-500';
+        title.textContent = group;
+        section.appendChild(title);
+        const body = document.createElement('div');
+        body.className = 'divide-y divide-gray-800';
+        for (const row of rows) {
+            const line = document.createElement('div');
+            line.className = 'flex items-center gap-2 px-2 py-1.5';
+            const label = document.createElement('button');
+            label.type = 'button';
+            label.className = row.status === 'ready'
+                ? 'min-w-0 flex-1 text-left text-gray-200 hover:text-white'
+                : 'min-w-0 flex-1 text-left text-gray-500 cursor-not-allowed';
+            label.textContent = row.label;
+            label.disabled = row.status !== 'ready';
+            label.onclick = () => window.editorRunShortcutCommand(row.id);
+            const key = document.createElement('span');
+            key.className = 'shrink-0 rounded bg-dark-700 border border-gray-700 px-1.5 py-0.5 font-mono text-[11px] text-gray-300';
+            key.textContent = row.key || 'Button';
+            const badge = document.createElement('span');
+            badge.className = row.status === 'ready'
+                ? 'shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-green-900/50 text-green-300 border border-green-800/60'
+                : 'shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-dark-700 text-gray-500 border border-gray-700';
+            badge.textContent = row.status === 'ready' ? 'Ready' : 'Planned';
+            line.append(label, key, badge);
+            body.appendChild(line);
+        }
+        section.appendChild(body);
+        list.appendChild(section);
+    }
+}
+
+window.editorToggleShortcutPanel = (force) => {
+    const panel = document.getElementById('editor-shortcut-panel');
+    if (!panel) return;
+    const show = force === undefined ? panel.classList.contains('hidden') : !!force;
+    panel.classList.toggle('hidden', !show);
+    if (show) _editorRenderShortcutPanel();
+};
+
+window.editorRunShortcutCommand = (id) => {
+    const def = _editorCommandById(id);
+    if (!def) return false;
+    if (def.status !== 'ready') {
+        setStatus(`${def.label} is planned but not wired yet.`);
+        return true;
+    }
+    const handled = _editorRunEofCommand(id);
+    _editorRenderShortcutPanel();
+    return handled;
+};
 function _editorCurrentNoteIndices() {
     return (!S.drumEditMode && !S.tempoMapMode && S.sel && S.sel.size) ? [...S.sel] : [];
 }

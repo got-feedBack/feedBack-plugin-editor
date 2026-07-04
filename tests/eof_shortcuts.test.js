@@ -16,7 +16,7 @@ if (!m) {
 }
 
 const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _editorKeySigPure, _editorEofCommandForKeyPure };'
+    '"use strict";' + m[0] + '\nreturn { _editorKeySigPure, _editorEofCommandForKeyPure, _editorShortcutRowsPure };'
 )();
 
 let pass = 0;
@@ -69,5 +69,24 @@ t('maps EOF import and save function keys', () => {
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('F12')), 'importGp');
 });
 
+
+t('exposes ready and planned shortcut command rows', () => {
+    const rows = api._editorShortcutRowsPure('eof');
+    const save = rows.find(r => r.id === 'save');
+    const customSnap = rows.find(r => r.id === 'customGridSnap');
+    assert.ok(save);
+    assert.strictEqual(save.status, 'ready');
+    assert.strictEqual(save.key, 'F2 / Ctrl+S');
+    assert.ok(customSnap);
+    assert.strictEqual(customSnap.status, 'planned');
+    assert.strictEqual(customSnap.key, 'Ctrl+Shift+G');
+});
+
+t('does not overstate unfinished FeedBack-native key coverage', () => {
+    const rows = api._editorShortcutRowsPure('feedback');
+    assert.strictEqual(rows.find(r => r.id === 'save').key, 'Ctrl+S');
+    assert.strictEqual(rows.find(r => r.id === 'prevNote').key, '');
+    assert.strictEqual(rows.find(r => r.id === 'toggleWaveform').key, '');
+});
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
