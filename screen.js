@@ -5684,7 +5684,7 @@ window.editorShowCreateModal = () => {
         roster: ['Lead'],
         gpPath: null, tracks: null, gpName: null, gpHasEmbedded: false, gpSyncCount: 0,
         eofFiles: null, eofName: null,
-        audioUrl: null, audioName: null, audioDuration: null, midiInfo: null,
+        audioUrl: null, audioName: null, audioDuration: null, audioFile: null, midiInfo: null,
         artPath: null, previewPath: null,
         gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null, autoSyncCoupled: false,
     };
@@ -5714,6 +5714,7 @@ window.editorShowCreateModal = () => {
     renderStaged();
     _syncYtFieldState();
     updateCreateButton();
+    _updateIdentifyButton();   // disabled until a master track is staged
 };
 
 window.editorHideCreateModal = () => {
@@ -6389,6 +6390,7 @@ async function _stageAudio(file) {
     createState.audioUrl = null;
     createState.audioName = null;
     createState.audioDuration = null;
+    createState.audioFile = null;
     const form = new FormData();
     form.append('file', file);
     let url = null, dur = null;
@@ -6404,12 +6406,16 @@ async function _stageAudio(file) {
         createState.audioUrl = url;
         createState.audioName = file.name;
         createState.audioDuration = (Number(dur) > 0) ? Number(dur) : null;
+        // Keep the File itself so "Identify from audio" can re-POST the raw bytes
+        // to core /identify (cross-plugin: the core can't read our stored copy).
+        createState.audioFile = file;
         const titleEl = document.getElementById('editor-create-title');
         if (titleEl && !titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^.]+$/, '');
         if (iStatus) iStatus.textContent = 'Master audio added.';
     }
     _refreshGpAudioUI();       // couple into GP auto-sync if a chart is present
     _syncYtFieldState();
+    _updateIdentifyButton();
 }
 
 function _stageEofFiles(xmls) {
@@ -6516,8 +6522,10 @@ function renderStaged() {
 window.editorStagedRemove = (role) => {
     if (role === 'audio') {
         createState.audioUrl = null; createState.audioName = null; createState.audioDuration = null;
+        createState.audioFile = null;
         _refreshGpAudioUI();        // un-couple: restore embedded/manual GP audio UI
         _syncYtFieldState();
+        _updateIdentifyButton();
     } else if (role === 'yt') {
         const yt = document.getElementById('editor-create-yt-url'); if (yt) yt.value = '';
         _syncYtFieldState();
@@ -6563,6 +6571,134 @@ function _updateMbButton() {
 window.editorMbMatch = () => {
     _editorMbOpenPopup(_cval('editor-create-title'), _cval('editor-create-artist'));
 };
+
+// "Identify from audio" is enabled once a master track is staged — it fingerprints
+// THAT file, so it doesn't need a title/artist (that's the whole point: it's the
+// reliable path when you don't know the metadata yet).
+function _updateIdentifyButton() {
+    const btn = document.getElementById('editor-create-identify-btn');
+    if (!btn) return;
+    const has = !!createState.audioFile;
+    btn.disabled = !has;
+    btn.title = has
+        ? 'Identify the exact recording by fingerprinting your master audio'
+        : 'Add master audio first to identify by fingerprint';
+}
+
+// Fingerprint the staged master audio → the EXACT MusicBrainz recording (AcoustID).
+// Reliable where text search can't be (comp/live takes tie in MusicBrainz). The
+// endpoint returns candidates in the SAME shape as /search, so the popup reuses
+// the MB row + apply renderers.
+window.editorIdentifyAudio = async () => {
+    if (!createState.audioFile) return;
+    document.getElementById('editor-mb-popup')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'editor-mb-popup';
+    modal.className = 'fixed inset-0 bg-black/70 z-50 flex items-center justify-center';
+    const inner = document.createElement('div');
+    inner.className = 'bg-dark-800 border border-gray-700 rounded-xl w-full max-w-md mx-4 flex flex-col';
+    inner.style.maxHeight = '75vh';
+    const head = document.createElement('div');
+    head.className = 'flex items-center justify-between px-4 py-3 border-b border-gray-700';
+    const h = document.createElement('span'); h.className = 'text-sm font-medium'; h.textContent = 'Identify from audio';
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'text-gray-500 hover:text-white'; close.textContent = '×';
+    close.onclick = () => modal.remove();
+    head.appendChild(h); head.appendChild(close); inner.appendChild(head);
+    const results = document.createElement('div');
+    results.id = 'editor-mb-results';
+    results.className = 'flex-1 overflow-y-auto p-2 space-y-1';
+    inner.appendChild(results);
+    modal.appendChild(inner);
+    if (typeof _installModalKeyboard === 'function') _installModalKeyboard(modal, inner, () => modal.remove());
+    document.body.appendChild(modal);
+    _mbMsg(results, 'Fingerprinting your audio…');
+    const form = new FormData();
+    form.append('file', createState.audioFile);
+    let data = null, status = 0;
+    try {
+        const resp = await fetch('/api/enrichment/identify', { method: 'POST', body: form });
+        status = resp.status;
+        data = await resp.json().catch(() => null);
+    } catch (_) { data = null; }
+    results.replaceChildren();
+    // 412 = not set up (opt-in off / no key). Expand an inline enable + key form
+    // right here (self-serve) — never fake a hit, and no separate settings trip.
+    if (status === 412 || (data && data.needs_setup)) {
+        _editorRenderAcoustidSetup(results);
+        return;
+    }
+    if (status === 503) {
+        // 503 here is usually a rejected key (AcoustID 400) or a transient
+        // outage. Either way, let the user re-enter the key — don't dead-end.
+        results.replaceChildren();
+        const wrap = document.createElement('div'); wrap.className = 'p-3 space-y-2';
+        const m = document.createElement('p'); m.className = 'text-xs text-gray-400';
+        m.textContent = "Couldn't identify — the AcoustID key was rejected, or the service is "
+            + "unreachable. Check the key (use your application's API key, not your account key), "
+            + "or try again.";
+        const change = document.createElement('button');
+        change.type = 'button';
+        change.className = 'px-3 py-1.5 rounded text-xs font-medium bg-dark-600 text-gray-200 hover:bg-dark-500';
+        change.textContent = 'Change AcoustID key';
+        change.onclick = () => _editorRenderAcoustidSetup(results);
+        wrap.appendChild(m); wrap.appendChild(change); results.appendChild(wrap);
+        return;
+    }
+    if (status === 429) { _mbMsg(results, 'AcoustID is busy — try again in a moment.'); return; }
+    if (!data || data.error) { _mbMsg(results, "Couldn't identify this audio — try the text Match instead."); return; }
+    const cands = data.candidates || [];
+    if (!cands.length) { _mbMsg(results, 'No fingerprint match found — try the text Match instead.'); return; }
+    // A fingerprint hit IS this recording, so flag the top row as matching the
+    // audio and focus it; the user confirms by clicking.
+    cands.forEach((c, i) => results.appendChild(_editorMbRow(c, i === 0, i === 0)));
+};
+
+// Inline "turn on audio identification" form, shown in the Identify popup when
+// AcoustID is off / keyless (the 412 needs_setup state). Saves the user's own
+// free key to core settings, then re-runs the fingerprint — self-serve, no
+// separate settings screen (that UI is part of the library-metadata work).
+function _editorRenderAcoustidSetup(el) {
+    el.replaceChildren();
+    const wrap = document.createElement('div'); wrap.className = 'p-3 space-y-2';
+    const msg = document.createElement('p'); msg.className = 'text-xs text-gray-400';
+    msg.textContent = 'Audio identification reads the recording itself — far more reliable than text '
+        + 'search for picking the exact version. It needs your own free AcoustID key (one-time).';
+    const link = document.createElement('a');
+    link.href = 'https://acoustid.org/new-application'; link.target = '_blank'; link.rel = 'noopener';
+    link.className = 'text-xs text-blue-400 hover:underline block';
+    link.textContent = 'Register an application for a free key →';
+    const hint = document.createElement('p'); hint.className = 'text-[11px] text-gray-600';
+    hint.textContent = "Use the application's API key (from acoustid.org/my-applications) — not your account's user key.";
+    const key = document.createElement('input');
+    key.type = 'text'; key.placeholder = 'Paste your AcoustID API key';
+    key.className = 'w-full bg-dark-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none focus:border-accent/50';
+    const err = document.createElement('div'); err.className = 'text-[11px] text-red-400';
+    const go = document.createElement('button');
+    go.type = 'button'; go.className = 'px-3 py-1.5 rounded text-xs font-medium text-white';
+    go.style.background = '#2563eb'; go.textContent = 'Enable & identify';
+    const submit = async () => {
+        const k = key.value.trim();
+        if (!k) { err.textContent = 'Paste your key first.'; return; }
+        go.disabled = true; err.textContent = ''; go.textContent = 'Saving…';
+        let ok = false;
+        try {
+            const r = await fetch('/api/settings', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ acoustid_enabled: true, acoustid_api_key: k }),
+            });
+            const d = await r.json().catch(() => null);
+            ok = r.ok && !(d && d.error);
+            if (!ok && d && d.error) err.textContent = d.error;
+        } catch (_) {}
+        if (ok) { window.editorIdentifyAudio(); }   // re-open + run the fingerprint
+        else { go.disabled = false; go.textContent = 'Enable & identify'; if (!err.textContent) err.textContent = "Couldn't save the key."; }
+    };
+    go.onclick = submit;
+    key.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+    wrap.appendChild(msg); wrap.appendChild(link); wrap.appendChild(hint); wrap.appendChild(key); wrap.appendChild(err); wrap.appendChild(go);
+    el.appendChild(wrap);
+    setTimeout(() => { try { key.focus(); } catch (_) {} }, 0);
+}
 
 function _editorMbOpenPopup(title, artist) {
     document.getElementById('editor-mb-popup')?.remove();
@@ -6719,7 +6855,9 @@ function _editorMbApply(c) {
     set('editor-create-mbid', c.recording_id);
     if (Array.isArray(c.genres) && c.genres.length) set('editor-create-genre', c.genres.join(', '));
     const note = document.getElementById('editor-create-autofill-note');
-    if (note) note.textContent = 'Filled from MusicBrainz — edit anything.';
+    if (note) note.textContent = (c.source === 'acoustid')
+        ? 'Filled from an audio fingerprint (AcoustID) — edit anything.'
+        : 'Filled from MusicBrainz — edit anything.';
     document.getElementById('editor-mb-popup')?.remove();
     _updateMbButton();
     updateCreateButton();
