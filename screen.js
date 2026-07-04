@@ -102,24 +102,36 @@ function _nextGridTime(beats, snapValue, enabled, current, dir) {
         return _nextBeatTime(beats, current, dir);
     }
     const eps = 1e-6;
-    for (let i = 0; i < beats.length - 1; i++) {
-        const bt = beats[i].time;
-        const nt = beats[i + 1].time;
-        const bd = nt - bt;
-        const subs = Math.max(1, Math.round(1 / snapValue));
-        const sd = bd / subs;
-        if (dir > 0) {
+    const _subsFor = (bt, nt) => Math.max(1, Math.round(1 / snapValue));
+    if (dir > 0) {
+        // Walk intervals forward; first grid point strictly past `current` wins.
+        for (let i = 0; i < beats.length - 1; i++) {
+            const bt = beats[i].time;
+            const nt = beats[i + 1].time;
+            const subs = _subsFor(bt, nt);
+            const sd = (nt - bt) / subs;
             const start = current >= bt - eps ? Math.max(0, Math.floor((current - bt) / sd) + 1) : 0;
             for (let j = start; j <= subs; j++) {
                 const candidate = bt + j * sd;
                 if (candidate > current + eps && candidate <= nt + eps) return candidate;
             }
-        } else if (current > bt + eps) {
-            const start = Math.min(subs, Math.ceil((current - bt) / sd) - 1);
-            for (let j = start; j >= 0; j--) {
-                const candidate = bt + j * sd;
-                if (candidate < current - eps && candidate >= bt - eps) return candidate;
-            }
+        }
+        return null;
+    }
+    // Backward: walk intervals in REVERSE so the grid point immediately before
+    // `current` (in the interval CONTAINING it) wins — not the end of the first
+    // interval. Skip intervals that start at/after `current` (all their grid
+    // points are >= current).
+    for (let i = beats.length - 2; i >= 0; i--) {
+        const bt = beats[i].time;
+        if (bt >= current - eps) continue;
+        const nt = beats[i + 1].time;
+        const subs = _subsFor(bt, nt);
+        const sd = (nt - bt) / subs;
+        const start = Math.min(subs, Math.ceil((current - bt) / sd) - 1);
+        for (let j = start; j >= 0; j--) {
+            const candidate = bt + j * sd;
+            if (candidate < current - eps && candidate >= bt - eps) return candidate;
         }
     }
     return null;

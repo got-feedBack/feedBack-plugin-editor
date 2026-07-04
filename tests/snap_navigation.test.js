@@ -67,6 +67,16 @@ t('grid jump follows snap spacing instead of whole beats', () => {
     assert.strictEqual(api._nextGridTime(beats, 0.25, true, 0.26, -1), 0.25);
 });
 
+t('backward grid jump lands in the interval containing the cursor', () => {
+    // Regression: from a cursor past the first beat, backward must return the
+    // grid point just before it (in ITS interval), not the end of interval 0.
+    assert.strictEqual(api._nextGridTime(beats, 0.25, true, 1.5, -1), 1.25);
+    assert.strictEqual(api._nextGridTime(beats, 0.25, true, 2.6, -1), 2.5);
+    assert.strictEqual(api._nextGridTime(beats, 0.25, true, 1.0, -1), 0.75);
+    // Forward still works from a later cursor.
+    assert.strictEqual(api._nextGridTime(beats, 0.25, true, 1.5, 1), 1.75);
+});
+
 t('generic list jumps ignore duplicate current hits', () => {
     const times = [0.0, 1.0, 1.0, 2.5];
     assert.strictEqual(api._nextTimeInList(times, 1.0, 1), 2.5);
