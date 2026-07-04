@@ -16,7 +16,7 @@ if (!m) {
 }
 
 const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _barSpanForTimesPure, _adjustBarSelEdgePure };'
+    '"use strict";' + m[0] + '\nreturn { _barSpanForTimesPure, _adjustBarSelEdgePure, _normalizeLoopRegionPure, _loopPlaybackRestartTimePure };'
 )();
 
 let pass = 0;
@@ -46,6 +46,21 @@ t('end handle snaps to the next downbeat or duration', () => {
     const region = { startTime: 2, endTime: 6 };
     assert.deepStrictEqual(api._adjustBarSelEdgePure(region, 'end', 6.1, downbeats, 10), { startTime: 2, endTime: 8 });
     assert.deepStrictEqual(api._adjustBarSelEdgePure(region, 'end', 8.2, downbeats, 10), { startTime: 2, endTime: 10 });
+});
+
+t('normalizes loop regions and rejects empty spans', () => {
+    assert.deepStrictEqual(api._normalizeLoopRegionPure({ startTime: 8, endTime: 2 }, 10), { startTime: 2, endTime: 8 });
+    assert.deepStrictEqual(api._normalizeLoopRegionPure({ startTime: -1, endTime: 12 }, 10), { startTime: 0, endTime: 10 });
+    assert.strictEqual(api._normalizeLoopRegionPure({ startTime: 3, endTime: 3 }, 10), null);
+    assert.strictEqual(api._normalizeLoopRegionPure({ startTime: 'x', endTime: 4 }, 10), null);
+});
+
+t('active loop playback restarts when the cursor reaches the region end', () => {
+    const region = { startTime: 2, endTime: 6 };
+    assert.strictEqual(api._loopPlaybackRestartTimePure(5.9, region, true, 10), null);
+    assert.strictEqual(api._loopPlaybackRestartTimePure(6, region, true, 10), 2);
+    assert.strictEqual(api._loopPlaybackRestartTimePure(8, region, false, 10), null);
+    assert.strictEqual(api._loopPlaybackRestartTimePure(6, null, true, 10), null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
