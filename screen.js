@@ -6739,6 +6739,135 @@ window.editorCreateArtSelected = async (input) => {
     } catch (_) { /* art just won't be baked if the upload fails */ }
 };
 
+// ════════════════════════════════════════════════════════════════════
+// Album-art picker — a Plex-style grid of covers from the Cover Art Archive.
+// Reuses the MusicBrainz search to get candidate release MBIDs, then shows one
+// tile per release's CAA front cover (served same-origin via the editor plugin,
+// so it loads under the app's CSP). Pick one → baked as the pack's art.
+// ════════════════════════════════════════════════════════════════════
+window.editorArtSearch = () => {
+    _editorArtOpenPopup(_cval('editor-create-artist'), _cval('editor-create-title'));
+};
+
+function _editorArtOpenPopup(artist, title) {
+    document.getElementById('editor-art-popup')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'editor-art-popup';
+    modal.className = 'fixed inset-0 bg-black/70 z-50 flex items-center justify-center';
+    const inner = document.createElement('div');
+    inner.className = 'bg-dark-800 border border-gray-700 rounded-xl w-full max-w-lg mx-4 flex flex-col';
+    inner.style.maxHeight = '80vh';
+    const head = document.createElement('div');
+    head.className = 'flex items-center justify-between px-4 py-3 border-b border-gray-700';
+    const h = document.createElement('span'); h.className = 'text-sm font-medium'; h.textContent = 'Choose album art';
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'text-gray-500 hover:text-white'; close.textContent = '×';
+    close.onclick = () => modal.remove();
+    head.appendChild(h); head.appendChild(close); inner.appendChild(head);
+    const qrow = document.createElement('div');
+    qrow.className = 'flex items-center gap-2 px-4 py-2 border-b border-gray-700';
+    const mk = (ph, val) => {
+        const i = document.createElement('input');
+        i.type = 'text'; i.placeholder = ph; i.value = val || '';
+        i.className = 'flex-1 min-w-0 bg-dark-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none focus:border-accent/50';
+        return i;
+    };
+    const aIn = mk('Artist', artist);
+    const tIn = mk('Title', title);
+    const go = document.createElement('button');
+    go.type = 'button'; go.className = 'px-2 py-1 rounded text-xs font-medium bg-dark-600 text-gray-300 hover:bg-dark-500 shrink-0';
+    go.textContent = 'Search';
+    qrow.appendChild(aIn); qrow.appendChild(tIn); qrow.appendChild(go); inner.appendChild(qrow);
+    const grid = document.createElement('div');
+    grid.id = 'editor-art-grid';
+    grid.className = 'flex-1 overflow-y-auto p-3';
+    grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:8px;';
+    inner.appendChild(grid);
+    modal.appendChild(inner);
+    if (typeof _installModalKeyboard === 'function') _installModalKeyboard(modal, inner, () => modal.remove());
+    document.body.appendChild(modal);
+    const run = () => _editorArtRunSearch(aIn.value.trim(), tIn.value.trim(), grid);
+    go.onclick = run;
+    const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } };
+    aIn.addEventListener('keydown', onEnter); tIn.addEventListener('keydown', onEnter);
+    run();
+}
+
+function _editorArtMsg(grid, text) {
+    const d = document.createElement('div');
+    d.className = 'text-xs text-gray-500 p-2';
+    d.style.gridColumn = '1 / -1';
+    d.textContent = text;
+    grid.appendChild(d);
+}
+
+async function _editorArtRunSearch(artist, title, grid) {
+    grid.replaceChildren();
+    if (!artist && !title) { _editorArtMsg(grid, 'Enter an artist or title.'); return; }
+    _editorArtMsg(grid, 'Searching for covers…');
+    const params = new URLSearchParams();
+    if (artist) params.set('artist', artist);
+    if (title) params.set('title', title);
+    params.set('limit', '20');
+    let data = null;
+    try {
+        const resp = await fetch('/api/enrichment/search?' + params.toString());
+        data = await resp.json().catch(() => null);
+    } catch (_) { data = null; }
+    grid.replaceChildren();
+    const cands = (data && data.candidates) || [];
+    // One tile per unique release (a release MBID = one CAA cover).
+    const seen = new Set(); const rels = [];
+    for (const c of cands) {
+        const rid = c && c.release_id;
+        if (rid && !seen.has(rid)) { seen.add(rid); rels.push({ id: rid, label: c.album || c.title || '' }); }
+    }
+    if (!rels.length) { _editorArtMsg(grid, 'No covers found — refine the artist/title.'); return; }
+    const hint = document.createElement('div');
+    hint.className = 'text-[11px] text-gray-600 pb-1'; hint.style.gridColumn = '1 / -1';
+    hint.textContent = 'Covers with no art are hidden. Click one to use it.';
+    grid.appendChild(hint);
+    for (const r of rels) grid.appendChild(_editorArtTile(r));
+}
+
+function _editorArtTile(r) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'rounded overflow-hidden border border-gray-700 hover:border-accent bg-dark-900 text-left';
+    btn.style.cssText = 'display:flex;flex-direction:column;';
+    const img = document.createElement('img');
+    img.src = '/api/plugins/editor/caa-cover/' + encodeURIComponent(r.id);
+    img.alt = r.label;
+    img.loading = 'lazy';
+    img.style.cssText = 'width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:#15161c;';
+    // 404 (no art for this release) → hide the whole tile.
+    img.onerror = () => { btn.style.display = 'none'; };
+    const cap = document.createElement('span');
+    cap.className = 'text-[10px] text-gray-400 px-1 py-0.5';
+    cap.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    cap.textContent = r.label;
+    btn.appendChild(img); btn.appendChild(cap);
+    btn.onclick = () => _editorPickCaaCover(r.id);
+    return btn;
+}
+
+async function _editorPickCaaCover(release_id) {
+    try {
+        const resp = await fetch('/api/plugins/editor/use-caa-cover', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ release_id }),
+        });
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || !data || !data.art_path) return;
+        createState.artPath = data.art_path;
+        const prev = document.getElementById('editor-create-art-preview');
+        if (prev) {
+            prev.style.backgroundImage = 'url("/api/plugins/editor/caa-cover/' + encodeURIComponent(release_id) + '")';
+            prev.textContent = '';
+        }
+    } catch (_) { /* leave art unset on failure */ }
+    document.getElementById('editor-art-popup')?.remove();
+}
+
 function _populateCreateArrButtons() {
     const wrap = document.getElementById('editor-create-arr-buttons');
     if (!wrap) return;

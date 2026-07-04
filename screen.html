@@ -268,17 +268,21 @@
               <!-- ===== RIGHT: album art + song details ===== -->
               <div class="space-y-4">
 
-            <!-- Album Art — promoted to a proper preview + browse on the wide side. -->
+            <!-- Album Art — upload a file OR pick a cover from the Cover Art Archive. -->
             <div class="rounded-lg border border-gray-800 p-3">
                 <div class="text-xs font-semibold text-gray-300 mb-2">Album Art <span class="text-gray-600 font-normal">— optional</span></div>
                 <div class="flex items-center gap-3">
                     <div id="editor-create-art-preview" style="width:5.5rem;height:5.5rem;background-size:cover;background-position:center"
                         class="rounded bg-dark-800 border border-gray-700 flex items-center justify-center text-gray-600 text-[10px] text-center shrink-0 overflow-hidden">No art yet</div>
-                    <div class="flex-1">
-                        <input type="file" id="editor-create-art" accept=".png,.jpg,.jpeg,.dds"
-                            onchange="editorCreateArtSelected(this)"
-                            class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
-                        <p class="text-[11px] text-gray-600 mt-1">PNG or JPG. Shown in the library and player.</p>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                            <input type="file" id="editor-create-art" accept=".png,.jpg,.jpeg,.dds"
+                                onchange="editorCreateArtSelected(this)"
+                                class="flex-1 min-w-0 text-xs text-gray-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+                            <button type="button" onclick="editorArtSearch()"
+                                class="px-2 py-1 rounded text-xs font-medium bg-dark-600 text-gray-300 hover:bg-dark-500 shrink-0">Find cover…</button>
+                        </div>
+                        <p class="text-[11px] text-gray-600 mt-1">Upload a file, or find a cover from MusicBrainz.</p>
                     </div>
                 </div>
             </div>

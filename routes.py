@@ -4052,6 +4052,70 @@ def setup(app, context):
         dest.write_bytes(content)
         return {"art_path": str(dest)}
 
+    # ── Cover Art Archive — album-art picker from a MusicBrainz release ─────
+    # Cover art lives in the Cover Art Archive (CAA), keyed by RELEASE MBID —
+    # which the create modal's MusicBrainz "Match" already carries (a candidate's
+    # `release_id`). Fetched server-side (dodges browser CORS + gives us the
+    # bytes to bake into the pack) and cached under STORAGE_DIR.
+    _CAA_ID_RE = re.compile(r"^[0-9a-fA-F-]{1,64}$")
+    _CAA_MAX_BYTES = 10 * 1024 * 1024
+    _CAA_UA = "feedBack-editor/1.0 ( https://github.com/got-feedback/feedBack )"
+
+    def _caa_fetch_front(release_id: str, size: int = 500):
+        """Front cover (size px) for a release MBID from coverartarchive.org, or
+        None when the release has no art / on any error. `release_id` is
+        regex-validated by callers before it reaches this URL."""
+        import urllib.request
+        url = f"https://coverartarchive.org/release/{release_id}/front-{size}"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": _CAA_UA})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if getattr(resp, "status", 200) != 200:
+                    return None
+                data = resp.read(_CAA_MAX_BYTES + 1)
+        except Exception:
+            return None
+        if not data or len(data) > _CAA_MAX_BYTES or len(data) < 100:
+            return None
+        return data
+
+    async def _caa_cached(release_id: str):
+        """Cached cover file for the release (fetch + cache on first use), or
+        None when there's no art."""
+        dest = STORAGE_DIR / f"caa_{release_id}.jpg"
+        if dest.exists() and dest.stat().st_size > 100:
+            return dest
+        data = await asyncio.get_event_loop().run_in_executor(
+            None, _caa_fetch_front, release_id)
+        if data is None:
+            return None
+        dest.write_bytes(data)
+        return dest
+
+    @app.get("/api/plugins/editor/caa-cover/{release_id}")
+    async def caa_cover(release_id: str):
+        """Serve the CAA front cover for a release MBID (cached). 404 when the
+        release has no art — the picker hides those tiles. Same-origin, so the
+        grid's <img> loads under the app's CSP without an external host."""
+        if not _CAA_ID_RE.match(release_id or ""):
+            return JSONResponse({"error": "invalid release_id"}, 400)
+        dest = await _caa_cached(release_id)
+        if dest is None:
+            return JSONResponse({"error": "no cover art"}, 404)
+        return FileResponse(dest, media_type="image/jpeg")
+
+    @app.post("/api/plugins/editor/use-caa-cover")
+    async def use_caa_cover(data: dict):
+        """Pick a CAA cover as the pack's album art: fetch/cache it and return an
+        art_path under STORAGE_DIR that create_sloppak bakes in like an upload."""
+        release_id = str((data or {}).get("release_id") or "")
+        if not _CAA_ID_RE.match(release_id):
+            return JSONResponse({"error": "invalid release_id"}, 400)
+        dest = await _caa_cached(release_id)
+        if dest is None:
+            return JSONResponse({"error": "no cover art"}, 404)
+        return {"art_path": str(dest)}
+
     # ── Upload hover-preview clip ──────────────────────────────────────
     @app.post("/api/plugins/editor/upload-preview")
     async def upload_preview(file: UploadFile = File(...)):
