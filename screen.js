@@ -1078,6 +1078,7 @@ function reconstructChords() {
 function draw() {
     if (!canvas) return;
     updateBPMDisplay();
+    updateTempoSigDisplay();
     const w = canvas.width / DPR;
     const h = canvas.height / DPR;
     ctx.save();
@@ -4976,6 +4977,17 @@ function updateBPMDisplay() {
     el.value = getTabBPM().toFixed(1);
 }
 
+function updateTempoSigDisplay() {
+    const el = document.getElementById('editor-tempo-sig');
+    if (!el || document.activeElement === el) return;
+    const d = _tempoResolvedMeasureIdx();
+    if (d < 0) {
+        el.value = '';
+        return;
+    }
+    el.value = String(_tempoMeasureBeatCount(d));
+}
+
 // Defer a `resizeCanvas` until layout has settled — used when a
 // sibling panel (inspector) just toggled visibility. Without the
 // rAF the panel's `display:none → flex` transition hasn't applied
@@ -5082,6 +5094,21 @@ window.editorSetBPM = (val) => {
     updateBPMDisplay();
     draw();
     setStatus(`Tempo changed: ${oldBPM.toFixed(1)} → ${newBPM.toFixed(1)} BPM`);
+};
+window.editorSetTempoSignature = (val) => {
+    if (!S.tempoMapMode || S.beats.length < 2) return;
+    const d = _tempoResolvedMeasureIdx();
+    if (d < 0) return;
+    const n = parseInt(val, 10);
+    if (!Number.isFinite(n)) { updateTempoSigDisplay(); return; }
+    const m = _tempoMeasures().find(mm => mm.i === d) || null;
+    const prev = _tempoMeasureBeatCount(d);
+    _tempoSetBeatsPerMeasure(d, n);
+    updateTempoSigDisplay();
+    const next = _tempoMeasureBeatCount(d);
+    if (m && prev !== next) {
+        setStatus(`Measure ${m.measure} time signature changed: ${prev}/4 → ${next}/4`);
+    }
 };
 // Rigidly shift all of ONE arrangement's time-bearing fields by `delta` seconds:
 // notes, chords (+ their notes), source + authored anchors, handshape spans, and
@@ -9105,6 +9132,23 @@ function _tempoMapDraw(w, h) {
         LABEL_W + 6, hudY);
 }
 
+function _ensureTempoSignatureControl() {
+    let wrap = document.getElementById('editor-tempo-sig-wrap');
+    if (wrap) return wrap;
+    const bpm = document.getElementById('editor-bpm');
+    if (!bpm || !bpm.parentNode) return null;
+    wrap = document.createElement('span');
+    wrap.id = 'editor-tempo-sig-wrap';
+    wrap.className = 'hidden items-center gap-1';
+    wrap.innerHTML = '<span class="text-xs text-gray-500">Sig:</span>'
+        + '<input type="number" id="editor-tempo-sig" min="1" max="16" step="1" '
+        + 'class="w-11 bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none text-center" '
+        + 'title="Edit selected measure beats per bar" onchange="editorSetTempoSignature(this.value)">'
+        + '<span class="text-xs text-gray-500">/4</span>';
+    const bpmNext = bpm.nextSibling;
+    bpm.parentNode.insertBefore(wrap, bpmNext);
+    return wrap;
+}
 // ── Tempo Map toolbar toggle ────────────────────────────────────────
 
 function _ensureTempoMapButton() {
@@ -9148,6 +9192,7 @@ let _tempoMapBtnState = '';  // memoized signature; updates only on change
 
 function _refreshTempoMapButton() {
     const btn = _ensureTempoMapButton();
+    const sigWrap = _ensureTempoSignatureControl();
     if (!btn) return;
     // The grid is song-wide and round-trips through archive + sloppak, so
     // the button is NOT format-gated — only a beat grid is required.
@@ -9156,6 +9201,10 @@ function _refreshTempoMapButton() {
     if (sig === _tempoMapBtnState) return;
     _tempoMapBtnState = sig;
     btn.classList.toggle('hidden', !S.sessionId || !hasGrid);
+    if (sigWrap) {
+        sigWrap.classList.toggle('hidden', !S.tempoMapMode || !hasGrid);
+        sigWrap.classList.toggle('inline-flex', !!S.tempoMapMode && hasGrid);
+    }
     if (S.tempoMapMode) {
         btn.textContent = '🎸 Back to Notes';
         btn.classList.add('bg-amber-600', 'hover:bg-amber-500');
@@ -9417,26 +9466,37 @@ function _tempoDeleteSyncPoint(beatIdx) {
 // beats. The measure's [downbeat, next-downbeat] time span is fixed,
 // so only the interior grid lines move — note times are untouched.
 
-function _tempoSetBeatsPerMeasure(d, newCount) {
-    newCount = Math.max(1, Math.min(16, Math.round(newCount)));
-    const beats = S.beats || [];
-    if (d < 0 || d >= beats.length || beats[d].measure <= 0) return;
+/* @pure:tempo-map-timesig:start */
+function _tempoSetBeatsPerMeasurePure(beats, d, newCount, duration, round) {
+    const count = Math.max(1, Math.min(16, Math.round(newCount)));
+    if (!Array.isArray(beats) || d < 0 || d >= beats.length || !beats[d] || beats[d].measure <= 0) return null;
     let ndb = -1;
-    for (let i = d + 1; i < beats.length; i++) { if (beats[i].measure > 0) { ndb = i; break; } }
+    for (let i = d + 1; i < beats.length; i++) {
+        if (beats[i].measure > 0) { ndb = i; break; }
+    }
     const startT = beats[d].time;
     let endT, tailIdx;
     if (ndb >= 0) { endT = beats[ndb].time; tailIdx = ndb; }
-    else { endT = S.duration || beats[beats.length - 1].time; tailIdx = beats.length; }
-    if (endT <= startT) return;
+    else { endT = duration || beats[beats.length - 1].time; tailIdx = beats.length; }
+    if (endT <= startT) return null;
+    const r = typeof round === 'function' ? round : (v => v);
     const head = beats.slice(0, d + 1).map(b => ({ ...b }));
     const tail = beats.slice(tailIdx).map(b => ({ ...b }));
     const interior = [];
-    for (let k = 1; k < newCount; k++) {
-        interior.push({ time: _r3(startT + (endT - startT) * k / newCount), measure: -1 });
+    for (let k = 1; k < count; k++) {
+        interior.push({ time: r(startT + (endT - startT) * k / count), measure: -1 });
     }
-    const newBeats = head.concat(interior, tail);
+    return head.concat(interior, tail);
+}
+/* @pure:tempo-map-timesig:end */
+
+function _tempoSetBeatsPerMeasure(d, newCount) {
+    const beats = S.beats || [];
+    const newBeats = _tempoSetBeatsPerMeasurePure(beats, d, newCount, S.duration, _r3);
+    if (!newBeats) return;
     _tempoRenumberMeasures(newBeats);
     S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig'));
+    updateTempoSigDisplay();
     draw();
 }
 
