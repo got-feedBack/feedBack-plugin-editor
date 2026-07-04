@@ -85,14 +85,8 @@
 
         <!-- Snap -->
         <span class="text-xs text-gray-500">Snap:</span>
-        <select id="editor-snap" onchange="editorSetSnap(this.selectedIndex)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none">
-            <option>1/1</option>
-            <option>1/2</option>
-            <option selected>1/4</option>
-            <option>1/8</option>
-            <option>1/16</option>
-            <option>Off</option>
-        </select>
+        <button id="editor-snap-toggle" onclick="editorToggleSnap()" class="px-2 py-0.5 bg-accent hover:bg-accent-light rounded text-xs font-medium" title="Toggle snap on/off">On</button>
+        <select id="editor-snap" onchange="editorSetSnap(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none"></select>
 
         <div class="h-4 w-px bg-gray-700"></div>
 
@@ -164,7 +158,7 @@
         <span id="editor-status" class="text-xs text-gray-500">Ready</span>
         <div class="flex-1"></div>
         <span id="editor-note-count" class="text-xs text-gray-600"></span>
-        <span class="text-xs text-gray-600">Scroll: zoom | Middle-drag: pan | Dbl-click: add note | Del: delete | Select notes or drag the ⇆ bars strip → ▶ Loop in 3D</span>
+        <span class="text-xs text-gray-600">Scroll: pan | Ctrl+scroll: zoom | PgUp/PgDn: beats | Shift+PgUp/PgDn: notes | Ctrl+Shift+PgUp/PgDn: grid | Alt+PgUp/PgDn: anchors</span>
     </div>
 </div>
 

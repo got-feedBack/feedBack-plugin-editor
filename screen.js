@@ -47,7 +47,96 @@ let BEAT_H = 24;
 const LABEL_W = 52;
 const MIN_NOTE_W = 18;
 const NOTE_PAD = 3;
-const SNAP_VALUES = [1, 0.5, 0.25, 0.125, 0.0625, 0]; // 1/1 … 1/16, off
+/* @pure:snap-nav:start */
+const SNAP_OPTIONS = [
+    { label: '1/1', step: 1 },
+    { label: '1/2', step: 0.5 },
+    { label: '1/3T', step: 1 / 3 },
+    { label: '1/4', step: 0.25 },
+    { label: '1/6T', step: 1 / 6 },
+    { label: '1/8', step: 0.125 },
+    { label: '1/12T', step: 1 / 12 },
+    { label: '1/16', step: 1 / 16 },
+    { label: '1/24', step: 1 / 24 },
+    { label: '1/32', step: 1 / 32 },
+    { label: '1/48T', step: 1 / 48 },
+    { label: '1/64', step: 1 / 64 },
+    { label: '1/96T', step: 1 / 96 },
+];
+
+function _nextTimeInList(times, current, dir) {
+    if (!Array.isArray(times) || !times.length) return null;
+    const eps = 1e-6;
+    if (dir > 0) {
+        for (const t of times) if (t > current + eps) return t;
+        return null;
+    }
+    for (let i = times.length - 1; i >= 0; i--) {
+        if (times[i] < current - eps) return times[i];
+    }
+    return null;
+}
+
+function _nextBeatTime(beats, current, dir) {
+    return _nextTimeInList((beats || []).map((b) => b.time), current, dir);
+}
+
+function _snapTimeToGrid(t, beats, snapValue, enabled) {
+    if (!enabled || !snapValue || !Array.isArray(beats) || beats.length < 2) return t;
+    let bi = 0;
+    for (let i = 0; i < beats.length - 1; i++) {
+        if (beats[i].time <= t) bi = i;
+        else break;
+    }
+    const bt = beats[bi].time;
+    const nt = bi < beats.length - 1 ? beats[bi + 1].time : bt + 0.5;
+    const bd = nt - bt;
+    const subs = 1 / snapValue;
+    const sd = bd / subs;
+    const idx = Math.round((t - bt) / sd);
+    return bt + idx * sd;
+}
+
+function _nextGridTime(beats, snapValue, enabled, current, dir) {
+    if (!enabled || !snapValue || !Array.isArray(beats) || beats.length < 2) {
+        return _nextBeatTime(beats, current, dir);
+    }
+    const eps = 1e-6;
+    const _subsFor = (bt, nt) => Math.max(1, Math.round(1 / snapValue));
+    if (dir > 0) {
+        // Walk intervals forward; first grid point strictly past `current` wins.
+        for (let i = 0; i < beats.length - 1; i++) {
+            const bt = beats[i].time;
+            const nt = beats[i + 1].time;
+            const subs = _subsFor(bt, nt);
+            const sd = (nt - bt) / subs;
+            const start = current >= bt - eps ? Math.max(0, Math.floor((current - bt) / sd) + 1) : 0;
+            for (let j = start; j <= subs; j++) {
+                const candidate = bt + j * sd;
+                if (candidate > current + eps && candidate <= nt + eps) return candidate;
+            }
+        }
+        return null;
+    }
+    // Backward: walk intervals in REVERSE so the grid point immediately before
+    // `current` (in the interval CONTAINING it) wins — not the end of the first
+    // interval. Skip intervals that start at/after `current` (all their grid
+    // points are >= current).
+    for (let i = beats.length - 2; i >= 0; i--) {
+        const bt = beats[i].time;
+        if (bt >= current - eps) continue;
+        const nt = beats[i + 1].time;
+        const subs = _subsFor(bt, nt);
+        const sd = (nt - bt) / subs;
+        const start = Math.min(subs, Math.ceil((current - bt) / sd) - 1);
+        for (let j = start; j >= 0; j--) {
+            const candidate = bt + j * sd;
+            if (candidate < current - eps && candidate >= bt - eps) return candidate;
+        }
+    }
+    return null;
+}
+/* @pure:snap-nav:end */
 const DPR = window.devicePixelRatio || 1;
 
 // ── Piano roll constants ────────────────────────────────────────────
@@ -132,7 +221,8 @@ const S = {
     // View
     scrollX: 0,   // seconds
     zoom: 120,     // px per second
-    snapIdx: 2,    // default 1/4
+    snapIdx: 3,    // default 1/4
+    snapEnabled: true,
 
     // Selection
     sel: new Set(),
@@ -556,20 +646,11 @@ function updatePianoRange(expandOnly = false) {
 }
 
 function snapTime(t) {
-    const sv = SNAP_VALUES[S.snapIdx];
-    if (sv === 0 || S.beats.length < 2) return t;
-    // Find surrounding beat
-    let bi = 0;
-    for (let i = 0; i < S.beats.length - 1; i++) {
-        if (S.beats[i].time <= t) bi = i; else break;
-    }
-    const bt = S.beats[bi].time;
-    const nt = bi < S.beats.length - 1 ? S.beats[bi + 1].time : bt + 0.5;
-    const bd = nt - bt;
-    const subs = 1 / sv;
-    const sd = bd / subs;
-    const idx = Math.round((t - bt) / sd);
-    return bt + idx * sd;
+    // Delegates to the pure grid snapper, wired to the live snap model: the
+    // selected division's step plus the split-out enabled flag (snap "off" is
+    // now S.snapEnabled === false, not a zero entry in the options list).
+    const opt = SNAP_OPTIONS[S.snapIdx];
+    return _snapTimeToGrid(t, S.beats, opt ? opt.step : 0, S.snapEnabled);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -3328,9 +3409,12 @@ function _editorSnapStepSeconds() {
     }
     const bt = S.beats[bi].time;
     const nt = bi < S.beats.length - 1 ? S.beats[bi + 1].time : bt + 0.5;
-    const sv = SNAP_VALUES[S.snapIdx];
-    if (!sv) return Math.max(0.001, nt - bt);
-    return Math.max(0.001, (nt - bt) / (1 / sv));
+    // Snap model (PR 46): the step is SNAP_OPTIONS[idx].step, and "off" is the
+    // split-out S.snapEnabled flag rather than a zero entry in the list.
+    const opt = SNAP_OPTIONS[S.snapIdx];
+    const step = opt ? opt.step : 0;
+    if (!S.snapEnabled || !step) return Math.max(0.001, nt - bt);
+    return Math.max(0.001, (nt - bt) / (1 / step));
 }
 
 function _editorSeekToTime(t) {
@@ -3359,7 +3443,12 @@ function _editorJumpNote(dir) {
 }
 
 function _editorJumpGrid(dir) {
-    _editorSeekToTime((S.cursorTime || 0) + dir * _editorSnapStepSeconds());
+    // Use PR 46's interval-aware grid math (the grid point in the beat interval
+    // CONTAINING the cursor, correct across tempo changes) rather than a fixed
+    // step add; seek through _editorSeekToTime so playback follows as elsewhere.
+    const opt = SNAP_OPTIONS[S.snapIdx];
+    const target = _nextGridTime(S.beats, opt ? opt.step : 0.25, S.snapEnabled, S.cursorTime || 0, dir);
+    if (Number.isFinite(target)) _editorSeekToTime(target);
 }
 
 function _editorJumpAnchor(dir) {
@@ -3526,7 +3615,7 @@ function _editorRunEofCommand(cmd) {
     case 'shortenSustain': return _editorAdjustSelectedSustain(-_editorSnapStepSeconds());
     case 'lengthenSustain': return _editorAdjustSelectedSustain(+_editorSnapStepSeconds());
     case 'snapDown': window.editorSetSnap(Math.max(0, S.snapIdx - 1)); document.getElementById('editor-snap').selectedIndex = S.snapIdx; return true;
-    case 'snapUp': window.editorSetSnap(Math.min(SNAP_VALUES.length - 1, S.snapIdx + 1)); document.getElementById('editor-snap').selectedIndex = S.snapIdx; return true;
+    case 'snapUp': window.editorSetSnap(Math.min(SNAP_OPTIONS.length - 1, S.snapIdx + 1)); document.getElementById('editor-snap').selectedIndex = S.snapIdx; return true;
     case 'editFret': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptFret(idxs[0]); else setStatus('Select a note first'); return true; }
     case 'noteMenu': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) showContextMenu(window.innerWidth / 2, window.innerHeight / 2, idxs[0]); else setStatus('Select a note first'); return true; }
     case 'bend': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptBend(idxs[0]); else setStatus('Select a note first'); return true; }
@@ -5795,6 +5884,36 @@ function _tempoResolvedMeasureIdx() {
     return measures[0].i;
 }
 
+function _populateSnapOptions() {
+    const el = document.getElementById('editor-snap');
+    if (!el || el.dataset.wired === '1') return;
+    el.innerHTML = SNAP_OPTIONS.map((opt, idx) => '<option value="' + idx + '">' + opt.label + '</option>').join('');
+    el.dataset.wired = '1';
+}
+
+function _persistSnapPrefs() {
+    try {
+        localStorage.setItem('editor-snap-idx', String(S.snapIdx));
+        localStorage.setItem('editor-snap-enabled', S.snapEnabled ? '1' : '0');
+    } catch (_) { /* localStorage unavailable */ }
+}
+
+function updateSnapUI() {
+    const sel = document.getElementById('editor-snap');
+    if (sel) {
+        sel.value = String(S.snapIdx);
+        sel.disabled = !S.snapEnabled;
+        sel.title = S.snapEnabled ? 'Grid division for snap-aligned edits' : 'Enable snap to use a grid division';
+    }
+    const btn = document.getElementById('editor-snap-toggle');
+    if (btn) {
+        btn.textContent = S.snapEnabled ? 'On' : 'Off';
+        btn.className = S.snapEnabled
+            ? 'px-2 py-0.5 bg-accent hover:bg-accent-light rounded text-xs font-medium'
+            : 'px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium text-gray-300';
+        btn.title = S.snapEnabled ? 'Disable snap and place edits freely' : 'Enable snap-to-grid';
+    }
+}
 function updateBPMDisplay() {
     const el = document.getElementById('editor-bpm');
     if (!el || S.beats.length < 2) return;
@@ -5886,7 +6005,19 @@ window.editorZoom = (dir) => {
     updateZoomDisplay();
     draw();
 };
-window.editorSetSnap = (idx) => { S.snapIdx = idx; };
+window.editorSetSnap = (idx) => {
+    const next = Number(idx);
+    if (!Number.isInteger(next) || next < 0 || next >= SNAP_OPTIONS.length) return;
+    S.snapIdx = next;
+    S.snapEnabled = true;
+    _persistSnapPrefs();
+    updateSnapUI();
+};
+window.editorToggleSnap = () => {
+    S.snapEnabled = !S.snapEnabled;
+    _persistSnapPrefs();
+    updateSnapUI();
+};
 window.editorSetBPM = (val) => {
     const newBPM = parseFloat(val);
     if (!newBPM || newBPM <= 0 || S.beats.length < 2) return;
@@ -7957,11 +8088,18 @@ function init() {
 
     _editorLoadShortcutProfile();
 
-    // Restore the Tempo Map "apply to" scope preference.
+    // Restore toolbar preferences (Tempo Map "apply to" scope + snap grid/enabled).
     try {
         const sc = localStorage.getItem('editor-tempomap-scope');
         if (sc === 'drum' || sc === 'all') S.tempoRideScope = sc;
+        const snapIdx = parseInt(localStorage.getItem('editor-snap-idx') || '', 10);
+        if (Number.isInteger(snapIdx) && snapIdx >= 0 && snapIdx < SNAP_OPTIONS.length) S.snapIdx = snapIdx;
+        const snapEnabled = localStorage.getItem('editor-snap-enabled');
+        if (snapEnabled === '0' || snapEnabled === '1') S.snapEnabled = snapEnabled === '1';
     } catch (_) { /* localStorage unavailable */ }
+
+    _populateSnapOptions();
+    updateSnapUI();
 
     canvas.addEventListener('mousedown', onMouseDown);
     document.addEventListener('mousemove', onMouseMove);
