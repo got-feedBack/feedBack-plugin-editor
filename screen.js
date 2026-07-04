@@ -1194,6 +1194,7 @@ function draw() {
 function drawWaveform(w) {
     ctx.fillStyle = '#08081a';
     ctx.fillRect(0, 0, w, WAVEFORM_H);
+    if (typeof editorWaveformVisible !== 'undefined' && !editorWaveformVisible) return;
     const pk = S.waveformPeaks;
     const dur = S.duration || 0;
     if (!pk || !pk.bins || dur <= 0) return;
@@ -1817,6 +1818,40 @@ class ChangeFretCmd {
     }
     exec() { notes()[this.index].fret = this.newFret; }
     rollback() { notes()[this.index].fret = this.oldFret; }
+}
+
+class ToggleTechniqueCmd {
+    constructor(indices, key, value, fretValue = null) {
+        this.indices = indices.slice();
+        this.key = key;
+        this.value = !!value;
+        this.fretValue = fretValue;
+        const nn = notes();
+        this.old = this.indices.map(i => ({
+            tech: !!(nn[i] && nn[i].techniques && nn[i].techniques[key]),
+            fret: nn[i] ? nn[i].fret : 0,
+        }));
+    }
+    exec() {
+        const nn = notes();
+        for (const i of this.indices) {
+            const n = nn[i];
+            if (!n) continue;
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.value;
+            if (this.fretValue !== null) n.fret = this.fretValue;
+        }
+    }
+    rollback() {
+        const nn = notes();
+        this.indices.forEach((i, k) => {
+            const n = nn[i];
+            if (!n) return;
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.old[k].tech;
+            n.fret = this.old[k].fret;
+        });
+    }
 }
 
 // Set the full bend shape (peak `bend`, intent `bend_intent`, curve
@@ -2882,6 +2917,418 @@ function onWheel(e) {
     draw();
 }
 
+
+const EDITOR_SHORTCUT_PROFILE_KEY = 'editor.shortcutProfile';
+const EDITOR_SHORTCUT_PROFILES = new Set(['feedback', 'eof']);
+let editorShortcutProfile = 'feedback';
+let editorWaveformVisible = true;
+
+/* @pure:shortcut-profile:start */
+function _editorKeySigPure(e) {
+    const mods = [];
+    if (e.ctrlKey || e.metaKey) mods.push('Ctrl');
+    if (e.shiftKey) mods.push('Shift');
+    if (e.altKey) mods.push('Alt');
+    let key = e.key || '';
+    if (key.length === 1) key = key.toUpperCase();
+    return mods.concat(key).join('+');
+}
+
+function _editorEofCommandForKeyPure(e) {
+    const sig = _editorKeySigPure(e);
+    const key = (e.key || '').toLowerCase();
+    const plain = !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
+    const ctrl = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
+    const shift = e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+    const ctrlShift = (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey;
+    const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+
+    if (sig === 'F2') return 'save';
+    if (sig === 'F5') return 'toggleWaveform';
+    if (sig === 'F6') return 'importMidi';
+    if (sig === 'F7') return 'importXml';
+    if (sig === 'F12') return 'importGp';
+    if (sig === 'PageUp') return 'prevBeat';
+    if (sig === 'PageDown') return 'nextBeat';
+    if (sig === 'Shift+PageUp') return 'prevNote';
+    if (sig === 'Shift+PageDown') return 'nextNote';
+    if (sig === 'Ctrl+Shift+PageUp') return 'prevGrid';
+    if (sig === 'Ctrl+Shift+PageDown') return 'nextGrid';
+    if (sig === 'Alt+PageUp') return 'prevAnchor';
+    if (sig === 'Alt+PageDown') return 'nextAnchor';
+    if (plain && key === '[') return 'shortenSustain';
+    if (plain && key === ']') return 'lengthenSustain';
+    if (plain && key === ',') return 'snapDown';
+    if (plain && key === '.') return 'snapUp';
+    if (plain && key === 'f') return 'editFret';
+    if (plain && key === 'h') return 'toggleHammerOn';
+    if (plain && key === 'p') return 'togglePullOff';
+    if (plain && key === 'n') return 'noteMenu';
+    if (plain && key === 't') return 'toggleTap';
+    if (shift && key === 'f') return 'setAnchor';
+    if (shift && key === 'g') return 'toggleGridDisplay';
+    if (shift && key === 'h') return 'togglePinchHarmonic';
+    if (shift && key === 'i') return 'setTimeSignature';
+    if (shift && key === 'n') return 'toggleLinkNext';
+    if (shift && key === 'p') return 'addPhrase';
+    if (shift && key === 'r') return 'resnapSelection';
+    if (shift && key === 's') return 'addSection';
+    if (shift && key === 't') return 'midiTones';
+    if (shift && key === 'v') return 'toggleVibrato';
+    if (shift && key === 'x') return 'toggleMuteRetain';
+    if (ctrl && key === 'b') return 'bend';
+    if (ctrl && key === 'f') return 'editFret';
+    if (ctrl && key === 'h') return 'toggleNaturalHarmonic';
+    if (ctrl && key === 'l') return 'selectLike';
+    if (ctrl && key === 'm') return 'togglePalmMute';
+    if (ctrl && key === 's') return 'save';
+    if (ctrl && key === 't') return 'toggleTap';
+    if (ctrl && key === 'u') return 'unpitchedSlide';
+    if (ctrl && key === 'x') return 'toggleMuteOpen';
+    if (ctrl && (key === '+' || key === '=')) return 'fretUp';
+    if (ctrl && key === '-') return 'fretDown';
+    if (ctrlShift && key === 'a') return 'toggleAccent';
+    if (ctrlShift && key === 'g') return 'customGridSnap';
+    if (ctrlShift && key === 'h') return 'addHandshape';
+    if (ctrlShift && key === 'i') return 'toggleIgnore';
+    if (ctrlShift && key === 'o') return 'toggleTremolo';
+    if (ctrlShift && key === 'p') return 'togglePop';
+    if (ctrlShift && key === 'r') return 'placeMoverPhrase';
+    if (ctrlShift && key === 't') return 'addToneChange';
+    if (ctrlShift && e.key === 'ArrowUp') return 'slideUp';
+    if (ctrlShift && e.key === 'ArrowDown') return 'slideDown';
+    if (shift && e.key === 'ArrowUp') return 'transposeStringUp';
+    if (shift && e.key === 'ArrowDown') return 'transposeStringDown';
+    if (ctrl && e.key === 'ArrowUp') return 'slideUp';
+    if (ctrl && e.key === 'ArrowDown') return 'slideDown';
+    if (alt && (e.key === 'PageUp' || e.key === 'PageDown')) return e.key === 'PageUp' ? 'prevAnchor' : 'nextAnchor';
+    return null;
+}
+/* @pure:shortcut-profile:end */
+
+function _editorIsTypingTarget(e) {
+    return !!(e && e.target && e.target.matches && e.target.matches('input, select, textarea'));
+}
+
+function _editorLoadShortcutProfile() {
+    try {
+        const saved = localStorage.getItem(EDITOR_SHORTCUT_PROFILE_KEY);
+        if (EDITOR_SHORTCUT_PROFILES.has(saved)) editorShortcutProfile = saved;
+    } catch (_) {}
+    const el = document.getElementById('editor-shortcut-profile');
+    if (el) el.value = editorShortcutProfile;
+}
+
+window.editorSetShortcutProfile = (profile) => {
+    editorShortcutProfile = EDITOR_SHORTCUT_PROFILES.has(profile) ? profile : 'feedback';
+    try { localStorage.setItem(EDITOR_SHORTCUT_PROFILE_KEY, editorShortcutProfile); } catch (_) {}
+    const el = document.getElementById('editor-shortcut-profile');
+    if (el) el.value = editorShortcutProfile;
+    setStatus(editorShortcutProfile === 'eof' ? 'Shortcut profile: EOF Legacy' : 'Shortcut profile: FeedBack');
+};
+
+function _editorCurrentNoteIndices() {
+    return (!S.drumEditMode && !S.tempoMapMode && S.sel && S.sel.size) ? [...S.sel] : [];
+}
+
+function _editorToggleTechnique(key, { openFret = false } = {}) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const nn = notes();
+    const next = !idxs.every(i => !!(nn[i] && nn[i].techniques && nn[i].techniques[key]));
+    S.history.exec(new ToggleTechniqueCmd(idxs, key, next, openFret ? 0 : null));
+    draw();
+    updateStatus();
+    return true;
+}
+
+function _editorAdjustSelectedFret(delta) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const nn = notes();
+    for (const i of idxs) {
+        if (!nn[i]) continue;
+        const next = Math.max(0, Math.min(24, (parseInt(nn[i].fret) || 0) + delta));
+        S.history.exec(new ChangeFretCmd(i, next));
+    }
+    draw();
+    updateStatus();
+    return true;
+}
+
+function _editorAdjustSelectedSustain(delta) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const nn = notes();
+    const orig = idxs.map(i => nn[i] ? (nn[i].sustain || 0) : 0);
+    const next = idxs.map((i, k) => {
+        const vals = _resizeSustainsForDeltaPure(nn, [i], orig[k], delta);
+        return vals[0] || 0;
+    });
+    if (!next.some((v, i) => v !== orig[i])) return true;
+    S.history.exec(new ResizeSustainGroupCmd(idxs, next));
+    draw();
+    updateStatus();
+    return true;
+}
+
+function _editorSnapStepSeconds() {
+    if (!S.beats || S.beats.length < 2) return 0.25;
+    const t = S.cursorTime || 0;
+    let bi = 0;
+    for (let i = 0; i < S.beats.length - 1; i++) {
+        if (S.beats[i].time <= t) bi = i; else break;
+    }
+    const bt = S.beats[bi].time;
+    const nt = bi < S.beats.length - 1 ? S.beats[bi + 1].time : bt + 0.5;
+    const sv = SNAP_VALUES[S.snapIdx];
+    if (!sv) return Math.max(0.001, nt - bt);
+    return Math.max(0.001, (nt - bt) / (1 / sv));
+}
+
+function _editorSeekToTime(t) {
+    S.cursorTime = Math.max(0, Math.min(S.duration || Infinity, t));
+    const margin = 0.15 * (canvas ? canvas.width / S.zoom : 10);
+    if (S.cursorTime < S.scrollX) S.scrollX = Math.max(0, S.cursorTime - margin);
+    const right = S.scrollX + ((canvas ? canvas.width : 800) - LABEL_W) / S.zoom;
+    if (S.cursorTime > right) S.scrollX = Math.max(0, S.cursorTime - margin);
+    if (S.playing) { stopPlayback(); startPlayback(); }
+    draw();
+    updateTimeDisplay();
+}
+
+function _editorJumpBeat(dir) {
+    const beats = (S.beats || []).map(b => b.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
+    const cur = S.cursorTime || 0;
+    const next = dir > 0 ? beats.find(t => t > cur + 0.0001) : [...beats].reverse().find(t => t < cur - 0.0001);
+    if (next !== undefined) _editorSeekToTime(next);
+}
+
+function _editorJumpNote(dir) {
+    const times = notes().map(n => n.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
+    const cur = S.cursorTime || 0;
+    const next = dir > 0 ? times.find(t => t > cur + 0.0001) : [...times].reverse().find(t => t < cur - 0.0001);
+    if (next !== undefined) _editorSeekToTime(next);
+}
+
+function _editorJumpGrid(dir) {
+    _editorSeekToTime((S.cursorTime || 0) + dir * _editorSnapStepSeconds());
+}
+
+function _editorJumpAnchor(dir) {
+    const arr = S.arrangements[S.currentArr] || {};
+    const anchors = _anchorProjection(arr).map(a => a.anchor.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
+    const cur = S.cursorTime || 0;
+    const next = dir > 0 ? anchors.find(t => t > cur + 0.0001) : [...anchors].reverse().find(t => t < cur - 0.0001);
+    if (next !== undefined) _editorSeekToTime(next);
+}
+
+function _editorSelectLike() {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select a note first'); return false; }
+    const n0 = notes()[idxs[0]];
+    if (!n0) return false;
+    S.sel.clear();
+    notes().forEach((n, i) => {
+        if (n.string === n0.string && n.fret === n0.fret) S.sel.add(i);
+    });
+    draw();
+    updateStatus();
+    return true;
+}
+
+function _editorResnapSelection() {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const nn = notes();
+    const oldTimes = idxs.map(i => nn[i].time);
+    const newTimes = oldTimes.map(t => snapTime(t));
+    for (let i = 0; i < idxs.length; i++) nn[idxs[i]].time = oldTimes[i];
+    const dtimes = newTimes.map((t, i) => t - oldTimes[i]);
+    const dstrings = idxs.map(() => 0);
+    S.history.exec(new MoveNoteCmd(idxs, dtimes, dstrings, null));
+    draw();
+    updateStatus();
+    return true;
+}
+
+function _editorSetAnchorAtCursor() {
+    if (!S.arrangements.length || isKeysMode()) { setStatus('Anchors are for guitar/bass arrangements'); return false; }
+    const idxs = _editorCurrentNoteIndices();
+    const nn = notes();
+    const atCursor = idxs.map(i => nn[i]).filter(Boolean);
+    const fret = atCursor.length ? Math.max(1, Math.min(...atCursor.map(n => n.fret || 1))) : 1;
+    const anchor = { time: snapTime(S.cursorTime || 0), fret, width: 4 };
+    S.history.exec(new AddAnchorCmd(S.currentArr, anchor));
+    S.anchorSel = anchor;
+    draw();
+    return true;
+}
+
+function _editorAddSectionAtCursor() {
+    const name = 'section';
+    const num = S.sections.filter(s => s.name === name).length + 1;
+    S.sections.push({ name, number: num, start_time: snapTime(S.cursorTime || 0) });
+    S.sections.sort((a, b) => a.start_time - b.start_time);
+    draw();
+    setStatus('Section added');
+    return true;
+}
+
+function _editorAddPhraseAtCursor() {
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return false;
+    if (!Array.isArray(arr.phrases)) arr.phrases = [];
+    const name = 'phrase';
+    const num = arr.phrases.filter(p => p.name === name).length + 1;
+    arr.phrases.push({ name, number: num, start_time: snapTime(S.cursorTime || 0), levels: [] });
+    arr.phrases.sort((a, b) => (a.start_time || 0) - (b.start_time || 0));
+    draw();
+    setStatus('Phrase added');
+    return true;
+}
+
+function _editorAddToneAtCursor() {
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return false;
+    const tones = _ensureTones(arr);
+    const slots = (tones.slots || []).slice();
+    const name = slots[1] || slots[0] || 'Tone A';
+    const change = { t: snapTime(S.cursorTime || 0), name };
+    S.history.exec(new AddToneChangeCmd(S.currentArr, change));
+    S.toneSel = change;
+    draw();
+    setStatus('Tone change added');
+    return true;
+}
+
+function _editorAddHandshapeFromSelection() {
+    const ctx = _selectedChordContext();
+    if (!ctx) { setStatus('Select one chord group first'); return false; }
+    const sustains = ctx.notes.map(n => n.sustain || 0);
+    const start = ctx.time;
+    const end = start + Math.max(0.25, ...sustains);
+    const hs = { start_time: start, end_time: end, arp: false };
+    S.history.exec(new AddHandshapeCmd(S.currentArr, hs, lanes()));
+    S.handshapeSel = hs;
+    draw();
+    setStatus('Handshape added');
+    return true;
+}
+
+function _editorOpenImportXml() {
+    window.editorShowCreateModal();
+    setStatus('Choose EOF XML files in the New dialog.');
+    setTimeout(() => document.getElementById('editor-create-eof')?.click(), 0);
+}
+
+function _editorOpenImportGp() {
+    if (S.arrangements.length) window.editorShowImportGuitarModal();
+    else window.editorShowCreateModal();
+    setTimeout(() => {
+        const input = document.getElementById(S.arrangements.length ? 'editor-import-guitar-file' : 'editor-create-gp');
+        input?.click();
+    }, 0);
+}
+
+function _editorOpenImportMidi() {
+    if (S.arrangements.length) window.editorShowAddKeysModal();
+    else window.editorShowCreateModal();
+    setTimeout(() => {
+        const input = document.getElementById(S.arrangements.length ? 'editor-add-keys-file' : 'editor-create-gp');
+        input?.click();
+    }, 0);
+}
+
+async function _editorPromptTempoSignatureAtCursor() {
+    const val = await _editorPromptText({
+        title: 'Set Time Signature', label: 'Beats per measure', value: '4', placeholder: '4',
+    });
+    if (val == null) return;
+    const beats = Math.max(1, Math.min(16, parseInt(val, 10) || 4));
+    const d = _tempoResolvedMeasureIdx();
+    if (d >= 0) _tempoSetBeatsPerMeasure(d, beats);
+}
+
+function _editorToggleWaveform() {
+    editorWaveformVisible = !editorWaveformVisible;
+    draw();
+    setStatus(editorWaveformVisible ? 'Waveform shown' : 'Waveform hidden');
+}
+
+function _editorUnsupportedEofCommand(label) {
+    setStatus(`${label} is not available in this editor mode yet.`);
+    return true;
+}
+
+function _editorRunEofCommand(cmd) {
+    switch (cmd) {
+    case 'save': editorSave(); return true;
+    case 'toggleWaveform': return _editorToggleWaveform();
+    case 'importMidi': _editorOpenImportMidi(); return true;
+    case 'importXml': _editorOpenImportXml(); return true;
+    case 'importGp': _editorOpenImportGp(); return true;
+    case 'prevBeat': _editorJumpBeat(-1); return true;
+    case 'nextBeat': _editorJumpBeat(+1); return true;
+    case 'prevNote': _editorJumpNote(-1); return true;
+    case 'nextNote': _editorJumpNote(+1); return true;
+    case 'prevGrid': _editorJumpGrid(-1); return true;
+    case 'nextGrid': _editorJumpGrid(+1); return true;
+    case 'prevAnchor': _editorJumpAnchor(-1); return true;
+    case 'nextAnchor': _editorJumpAnchor(+1); return true;
+    case 'shortenSustain': return _editorAdjustSelectedSustain(-_editorSnapStepSeconds());
+    case 'lengthenSustain': return _editorAdjustSelectedSustain(+_editorSnapStepSeconds());
+    case 'snapDown': window.editorSetSnap(Math.max(0, S.snapIdx - 1)); document.getElementById('editor-snap').selectedIndex = S.snapIdx; return true;
+    case 'snapUp': window.editorSetSnap(Math.min(SNAP_VALUES.length - 1, S.snapIdx + 1)); document.getElementById('editor-snap').selectedIndex = S.snapIdx; return true;
+    case 'editFret': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptFret(idxs[0]); else setStatus('Select a note first'); return true; }
+    case 'noteMenu': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) showContextMenu(window.innerWidth / 2, window.innerHeight / 2, idxs[0]); else setStatus('Select a note first'); return true; }
+    case 'bend': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptBend(idxs[0]); else setStatus('Select a note first'); return true; }
+    case 'unpitchedSlide': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptSlideUnpitch(idxs[0]); else setStatus('Select a note first'); return true; }
+    case 'slideUp': return _editorUnsupportedEofCommand('Pitched slide shortcut');
+    case 'slideDown': return _editorUnsupportedEofCommand('Pitched slide shortcut');
+    case 'transposeStringUp': _execMoveString(+1); return true;
+    case 'transposeStringDown': _execMoveString(-1); return true;
+    case 'toggleHammerOn': return _editorToggleTechnique('hammer_on');
+    case 'togglePullOff': return _editorToggleTechnique('pull_off');
+    case 'toggleTap': return _editorToggleTechnique('tap');
+    case 'togglePinchHarmonic': return _editorToggleTechnique('harmonic_pinch');
+    case 'toggleNaturalHarmonic': return _editorToggleTechnique('harmonic');
+    case 'togglePalmMute': return _editorToggleTechnique('palm_mute');
+    case 'toggleFretHandMute': return _editorToggleTechnique('fret_hand_mute');
+    case 'toggleMuteOpen': return _editorToggleTechnique('mute', { openFret: true });
+    case 'toggleMuteRetain': return _editorToggleTechnique('mute');
+    case 'toggleVibrato': return _editorToggleTechnique('vibrato');
+    case 'toggleLinkNext': return _editorToggleTechnique('link_next');
+    case 'toggleAccent': return _editorToggleTechnique('accent');
+    case 'toggleIgnore': return _editorToggleTechnique('ignore');
+    case 'toggleTremolo': return _editorToggleTechnique('tremolo');
+    case 'togglePop': return _editorToggleTechnique('pluck');
+    case 'fretUp': return _editorAdjustSelectedFret(+1);
+    case 'fretDown': return _editorAdjustSelectedFret(-1);
+    case 'setAnchor': return _editorSetAnchorAtCursor();
+    case 'selectLike': return _editorSelectLike();
+    case 'resnapSelection': return _editorResnapSelection();
+    case 'addSection': return _editorAddSectionAtCursor();
+    case 'addPhrase': return _editorAddPhraseAtCursor();
+    case 'addToneChange': return _editorAddToneAtCursor();
+    case 'addHandshape': return _editorAddHandshapeFromSelection();
+    case 'setTimeSignature': _editorPromptTempoSignatureAtCursor(); return true;
+    case 'toggleGridDisplay': return _editorUnsupportedEofCommand('Grid display toggle');
+    case 'customGridSnap': return _editorUnsupportedEofCommand('Custom grid snap');
+    case 'midiTones': return _editorUnsupportedEofCommand('MIDI tones');
+    case 'placeMoverPhrase': return _editorUnsupportedEofCommand('Mover phrase');
+    default: return false;
+    }
+}
+
+function _editorDispatchEofShortcut(e) {
+    if (editorShortcutProfile !== 'eof' || _editorIsTypingTarget(e)) return false;
+    const cmd = _editorEofCommandForKeyPure(e);
+    if (!cmd) return false;
+    e.preventDefault();
+    return _editorRunEofCommand(cmd);
+}
+
 function onContextMenu(e) {
     if (S.drumEditMode) { e.preventDefault(); return; }  // drum-edit mode handles interaction
     if (S.tempoMapMode) { e.preventDefault(); _tempoMapOnContextMenu(e); return; }
@@ -2995,6 +3442,8 @@ function onKeyDown(e) {
     // because it routes to editorTogglePlay → editorStopRecordMidi,
     // which cleanly finalizes the take.
     if (_recState === 'recording') return;
+
+    if (_editorDispatchEofShortcut(e)) return;
 
     // Tempo-map mode: Insert key adds a sync point at the cursor.
     if (S.tempoMapMode && e.key === 'Insert'
@@ -7203,6 +7652,8 @@ function init() {
     ctx = canvas.getContext('2d');
     _applyV3Layout();
     S.history = new EditHistory();
+
+    _editorLoadShortcutProfile();
 
     // Restore the Tempo Map "apply to" scope preference.
     try {
