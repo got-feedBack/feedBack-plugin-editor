@@ -16,7 +16,7 @@ if (!m) {
 }
 
 const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _editorKeySigPure, _editorEofCommandForKeyPure, _editorShortcutRowsPure };'
+    '"use strict";' + m[0] + '\nreturn { _editorKeySigPure, _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure, _editorShortcutRowsPure };'
 )();
 
 let pass = 0;
@@ -82,11 +82,29 @@ t('exposes ready and planned shortcut command rows', () => {
     assert.strictEqual(customSnap.key, 'Ctrl+Shift+G');
 });
 
-t('does not overstate unfinished FeedBack-native key coverage', () => {
+t('exposes wired FeedBack Native key labels', () => {
     const rows = api._editorShortcutRowsPure('feedback');
     assert.strictEqual(rows.find(r => r.id === 'save').key, 'Ctrl+S');
-    assert.strictEqual(rows.find(r => r.id === 'prevNote').key, '');
-    assert.strictEqual(rows.find(r => r.id === 'toggleWaveform').key, '');
+    assert.strictEqual(rows.find(r => r.id === 'prevNote').key, 'Alt+Left');
+    assert.strictEqual(rows.find(r => r.id === 'toggleWaveform').key, 'W');
+    assert.strictEqual(rows.find(r => r.id === 'importGp').key, '');
+});
+
+t('maps FeedBack Native timeline and grid shortcuts', () => {
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('w')), 'toggleWaveform');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('PageUp')), 'prevBeat');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('ArrowRight', { alt: true })), 'nextNote');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('PageDown', { ctrl: true })), 'nextGrid');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('ArrowLeft', { ctrl: true, alt: true })), 'prevAnchor');
+});
+
+t('maps FeedBack Native note and technique shortcuts', () => {
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('f')), 'editFret');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('b')), 'bend');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('h')), 'toggleHammerOn');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('n')), 'toggleNaturalHarmonic');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('n', { shift: true })), 'togglePinchHarmonic');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('h', { ctrl: true })), 'addHandshape');
 });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
