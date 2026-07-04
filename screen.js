@@ -47,7 +47,32 @@ let BEAT_H = 24;
 const LABEL_W = 52;
 const MIN_NOTE_W = 18;
 const NOTE_PAD = 3;
-const SNAP_VALUES = [1, 0.5, 0.25, 0.125, 0.0625, 0]; // 1/1 … 1/16, off
+/* @pure:snap-options:start */
+const SNAP_OPTIONS = Object.freeze([
+    { label: '1/1', value: 1, subdivisions: 1 },
+    { label: '1/2', value: 1 / 2, subdivisions: 2 },
+    { label: '1/4', value: 1 / 4, subdivisions: 4 },
+    { label: '1/8', value: 1 / 8, subdivisions: 8 },
+    { label: '1/12', value: 1 / 12, subdivisions: 12 },
+    { label: '1/16', value: 1 / 16, subdivisions: 16 },
+    { label: '1/24', value: 1 / 24, subdivisions: 24 },
+    { label: '1/32', value: 1 / 32, subdivisions: 32 },
+    { label: '1/48', value: 1 / 48, subdivisions: 48 },
+    { label: '1/64', value: 1 / 64, subdivisions: 64 },
+    { label: '1/96', value: 1 / 96, subdivisions: 96 },
+    { label: 'Off', value: 0, subdivisions: 0 },
+]);
+const SNAP_VALUES = SNAP_OPTIONS.map(opt => opt.value);
+
+function _editorSnapOptionLabelsPure() {
+    return SNAP_OPTIONS.map(opt => opt.label);
+}
+
+function _editorSnapSubdivisionsPure(snapValue) {
+    if (!snapValue) return 0;
+    return Math.max(1, Math.round(1 / snapValue));
+}
+/* @pure:snap-options:end */
 const DPR = window.devicePixelRatio || 1;
 
 // ── Piano roll constants ────────────────────────────────────────────
@@ -557,7 +582,7 @@ function updatePianoRange(expandOnly = false) {
 
 function snapTime(t) {
     const sv = SNAP_VALUES[S.snapIdx];
-    if (sv === 0 || S.beats.length < 2) return t;
+    if (!sv || S.beats.length < 2) return t;
     // Find surrounding beat
     let bi = 0;
     for (let i = 0; i < S.beats.length - 1; i++) {
@@ -566,7 +591,7 @@ function snapTime(t) {
     const bt = S.beats[bi].time;
     const nt = bi < S.beats.length - 1 ? S.beats[bi + 1].time : bt + 0.5;
     const bd = nt - bt;
-    const subs = 1 / sv;
+    const subs = _editorSnapSubdivisionsPure(sv);
     const sd = bd / subs;
     const idx = Math.round((t - bt) / sd);
     return bt + idx * sd;
@@ -3329,8 +3354,9 @@ function _editorSnapStepSeconds() {
     const bt = S.beats[bi].time;
     const nt = bi < S.beats.length - 1 ? S.beats[bi + 1].time : bt + 0.5;
     const sv = SNAP_VALUES[S.snapIdx];
-    if (!sv) return Math.max(0.001, nt - bt);
-    return Math.max(0.001, (nt - bt) / (1 / sv));
+    const subs = _editorSnapSubdivisionsPure(sv);
+    if (!subs) return Math.max(0.001, nt - bt);
+    return Math.max(0.001, (nt - bt) / subs);
 }
 
 function _editorSeekToTime(t) {
