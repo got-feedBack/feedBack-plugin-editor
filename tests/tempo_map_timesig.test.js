@@ -16,7 +16,7 @@ if (!m) {
 }
 
 const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _tempoSetBeatsPerMeasurePure };'
+    '"use strict";' + m[0] + '\nreturn { _tempoSetBeatsPerMeasurePure, _tempoNormalizeDenominatorPure, _tempoSetDenominatorOnBeatsPure };'
 )();
 
 let pass = 0;
@@ -49,6 +49,24 @@ t('clamps beat count to the supported 1 to 16 range', () => {
 t('can resubdivide the final measure using duration as the closing boundary', () => {
     const out = api._tempoSetBeatsPerMeasurePure(beats, 4, 3, 8, v => Math.round(v * 1000) / 1000);
     assert.deepStrictEqual(out.map(b => b.time), [0, 1, 2, 3, 4, 5.333, 6.667]);
+});
+
+t('normalizes supported beat-unit denominators', () => {
+    assert.strictEqual(api._tempoNormalizeDenominatorPure(2), 2);
+    assert.strictEqual(api._tempoNormalizeDenominatorPure('8'), 8);
+    assert.strictEqual(api._tempoNormalizeDenominatorPure(3), 4);
+    assert.strictEqual(api._tempoNormalizeDenominatorPure('bad'), 4);
+});
+
+t('sets denominator on a selected downbeat without moving beat times', () => {
+    const out = api._tempoSetDenominatorOnBeatsPure(beats, 0, 8);
+    assert.deepStrictEqual(out.map(b => b.time), beats.map(b => b.time));
+    assert.strictEqual(out[0].den, 8);
+    assert.strictEqual(beats[0].den, undefined);
+});
+
+t('rejects denominator changes on non-downbeats', () => {
+    assert.strictEqual(api._tempoSetDenominatorOnBeatsPure(beats, 1, 8), null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

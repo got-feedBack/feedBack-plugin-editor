@@ -5989,14 +5989,17 @@ function updateBPMDisplay() {
 }
 
 function updateTempoSigDisplay() {
-    const el = document.getElementById('editor-tempo-sig');
-    if (!el || document.activeElement === el) return;
+    const numEl = document.getElementById('editor-tempo-sig');
+    const denEl = document.getElementById('editor-tempo-sig-den');
+    if ((!numEl && !denEl) || document.activeElement === numEl || document.activeElement === denEl) return;
     const d = _tempoResolvedMeasureIdx();
     if (d < 0) {
-        el.value = '';
+        if (numEl) numEl.value = '';
+        if (denEl) denEl.value = '4';
         return;
     }
-    el.value = String(_tempoMeasureBeatCount(d));
+    if (numEl) numEl.value = String(_tempoMeasureBeatCount(d));
+    if (denEl) denEl.value = String(_tempoMeasureDenominator(d));
 }
 
 // Defer a `resizeCanvas` until layout has settled — used when a
@@ -6128,12 +6131,30 @@ window.editorSetTempoSignature = (val) => {
     const n = parseInt(val, 10);
     if (!Number.isFinite(n)) { updateTempoSigDisplay(); return; }
     const m = _tempoMeasures().find(mm => mm.i === d) || null;
-    const prev = _tempoMeasureBeatCount(d);
+    const prevNum = _tempoMeasureBeatCount(d);
+    const prevDen = _tempoMeasureDenominator(d);
     _tempoSetBeatsPerMeasure(d, n);
     updateTempoSigDisplay();
-    const next = _tempoMeasureBeatCount(d);
-    if (m && prev !== next) {
-        setStatus(`Measure ${m.measure} time signature changed: ${prev}/4 → ${next}/4`);
+    const nextNum = _tempoMeasureBeatCount(d);
+    if (m && prevNum !== nextNum) {
+        setStatus(`Measure ${m.measure} time signature changed: ${prevNum}/${prevDen} → ${nextNum}/${prevDen}`);
+    }
+};
+window.editorSetTempoSignatureDenominator = (val) => {
+    if (!S.tempoMapMode || S.beats.length < 2) return;
+    const d = _tempoResolvedMeasureIdx();
+    if (d < 0) return;
+    const m = _tempoMeasures().find(mm => mm.i === d) || null;
+    const prevNum = _tempoMeasureBeatCount(d);
+    const prevDen = _tempoMeasureDenominator(d);
+    const newBeats = _tempoSetDenominatorOnBeatsPure(S.beats, d, val);
+    if (!newBeats) { updateTempoSigDisplay(); return; }
+    S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), newBeats, 'timesig-den'));
+    updateTempoSigDisplay();
+    draw();
+    const nextDen = _tempoMeasureDenominator(d);
+    if (m && prevDen !== nextDen) {
+        setStatus(`Measure ${m.measure} time signature changed: ${prevNum}/${prevDen} → ${prevNum}/${nextDen}`);
     }
 };
 // Rigidly shift all of ONE arrangement's time-bearing fields by `delta` seconds:
@@ -10249,7 +10270,7 @@ function _tempoMapDraw(w, h) {
                 ctx.fillText(`${m.bpm.toFixed(2)} BPM`, xMid, WAVEFORM_H + 17);
                 ctx.fillStyle = '#64748b';
                 ctx.font = '9px monospace';
-                ctx.fillText(`${m.beats}/4`, xMid, WAVEFORM_H + 30);
+                ctx.fillText(`${m.beats}/${_tempoMeasureDenominator(m.i)}`, xMid, WAVEFORM_H + 30);
             }
         }
 
@@ -10318,7 +10339,11 @@ function _ensureTempoSignatureControl() {
         + '<input type="number" id="editor-tempo-sig" min="1" max="16" step="1" '
         + 'class="w-11 bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none text-center" '
         + 'title="Edit selected measure beats per bar" onchange="editorSetTempoSignature(this.value)">'
-        + '<span class="text-xs text-gray-500">/4</span>';
+        + '<span class="text-xs text-gray-500">/</span>'
+        + '<select id="editor-tempo-sig-den" '
+        + 'class="w-12 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs text-gray-300 outline-none" '
+        + 'title="Edit selected measure beat unit" onchange="editorSetTempoSignatureDenominator(this.value)">'
+        + '<option value="2">2</option><option value="4">4</option><option value="8">8</option><option value="16">16</option></select>';
     const bpmNext = bpm.nextSibling;
     bpm.parentNode.insertBefore(wrap, bpmNext);
     return wrap;
@@ -10641,6 +10666,21 @@ function _tempoDeleteSyncPoint(beatIdx) {
 // so only the interior grid lines move — note times are untouched.
 
 /* @pure:tempo-map-timesig:start */
+const TEMPO_SIGNATURE_DENOMINATORS = Object.freeze([2, 4, 8, 16]);
+
+function _tempoNormalizeDenominatorPure(value) {
+    const n = parseInt(value, 10);
+    return TEMPO_SIGNATURE_DENOMINATORS.includes(n) ? n : 4;
+}
+
+function _tempoSetDenominatorOnBeatsPure(beats, d, denominator) {
+    if (!Array.isArray(beats) || d < 0 || d >= beats.length || !beats[d] || beats[d].measure <= 0) return null;
+    const den = _tempoNormalizeDenominatorPure(denominator);
+    const out = beats.map(b => ({ ...b }));
+    out[d].den = den;
+    return out;
+}
+
 function _tempoSetBeatsPerMeasurePure(beats, d, newCount, duration, round) {
     const count = Math.max(1, Math.min(16, Math.round(newCount)));
     if (!Array.isArray(beats) || d < 0 || d >= beats.length || !beats[d] || beats[d].measure <= 0) return null;
@@ -10682,7 +10722,11 @@ function _tempoMeasureBeatCount(d) {
     }
     return beats.length - d;  // last measure
 }
-
+function _tempoMeasureDenominator(d) {
+    const beats = S.beats || [];
+    const b = beats[d] || null;
+    return _tempoNormalizeDenominatorPure(b && b.den);
+}
 // Undo command for insert/delete/time-signature edits — these only
 // change `measure` fields / sub-beat layout, never beat times, so no
 // note re-timing is involved; it just swaps the beats array.
