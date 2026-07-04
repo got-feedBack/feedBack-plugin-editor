@@ -62,9 +62,43 @@ _NOTE_TECH_FIELDS = (
 # (load) and `_arr_dict_to_wire` (save) instead.
 
 
+# Techniques the save path (`_arr_dict_to_wire`) coerces with `_safe_bool`.
+# Their "absent attr" fallback MUST be False, never the -1 int sentinel:
+# `_safe_bool(-1)` is True, so a blanket `getattr(n, f, -1)` would silently
+# switch on every missing boolean technique on an import → save round trip.
+_NOTE_TECH_BOOL_FIELDS = frozenset({
+    "hammer_on", "pull_off", "harmonic", "harmonic_pinch", "palm_mute",
+    "mute", "vibrato", "tremolo", "accent", "tap", "link_next",
+    "fret_hand_mute", "pluck", "slap", "ignore",
+})
+
+
+def _note_tech_default(field):
+    """The value a technique field takes when a parser/core object omits it.
+
+    Field-appropriate, not a blanket -1, so an older/partial note round-trips
+    cleanly through the save path: booleans → False (`_safe_bool(-1)` is True),
+    `bend` → None (else `_safe_float` yields a spurious -1.0 bend), `bend_intent`
+    → 0 (else the truthy -1 emits a schema-invalid `bt`); the remaining ints
+    (`slide_to`, `right_hand`, teaching marks, …) keep the -1 "none" sentinel.
+    """
+    if field in _NOTE_TECH_BOOL_FIELDS:
+        return False
+    if field == "bend":
+        return None
+    if field == "bend_intent":
+        return 0
+    return -1
+
+
 def _note_tech_dict(n) -> dict:
-    """Return the editor technique dict for a parsed note-like object."""
-    d = {f: getattr(n, f, -1) for f in _NOTE_TECH_FIELDS}
+    """Return the editor technique dict for a parsed note-like object.
+
+    Missing optional attrs fall back via `_note_tech_default` (field-typed),
+    not a blanket -1 — see that helper for why -1 corrupts booleans/bend on the
+    save round trip.
+    """
+    d = {f: getattr(n, f, _note_tech_default(f)) for f in _NOTE_TECH_FIELDS}
     d["bend_values"] = getattr(n, "bend_values", None)
     return d
 
@@ -5949,16 +5983,11 @@ def setup(app, context):
             "arrangements": [],
         }
 
-        def _tech_dict(n):
-            # Mirror the Note dataclass surface — every authorable technique
-            # round-trips so the editor can render and re-emit them. Field
-            # set lives in `_NOTE_TECH_FIELDS` so the content signature
-            # stays in sync (attr name == wire key for each).
-            d = {f: getattr(n, f, -1) for f in _NOTE_TECH_FIELDS}
-            # `bend_values` (§6.2.1 curve) is a list, kept out of the signature
-            # tuple — carry it explicitly so an authored/imported curve loads.
-            d["bend_values"] = getattr(n, "bend_values", None)
-            return d
+        # Mirror the Note dataclass surface — every authorable technique
+        # round-trips so the editor can render and re-emit them. Shared with the
+        # import path via the module-level helper (field set + per-field absent
+        # defaults live there) so load and import stay byte-identical.
+        _tech_dict = _note_tech_dict
 
         for arr in song.arrangements:
             arr_data = {

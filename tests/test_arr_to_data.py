@@ -6,7 +6,7 @@ lightweight fakes rather than a full parser fixture.
 """
 from types import SimpleNamespace
 
-from routes import _NOTE_TECH_FIELDS, _arr_to_data
+from routes import _NOTE_TECH_BOOL_FIELDS, _NOTE_TECH_FIELDS, _arr_to_data
 
 
 def _tech_defaults(**kw):
@@ -111,6 +111,25 @@ def test_notes_rounded_and_all_techniques_carried():
     assert n["techniques"]["bend_values"] == [{"t": 0, "v": 1.0}]
     for key in _NOTE_TECH_FIELDS:
         assert key in n["techniques"]
+
+
+def test_missing_optional_techniques_use_safe_defaults():
+    """A parser/core note that omits optional technique attrs must fall back to
+    field-typed defaults, NOT a blanket -1. The save path coerces booleans with
+    `_safe_bool`, and `_safe_bool(-1)` is True, so a -1 default would silently
+    switch on every absent boolean technique on an import -> save round trip;
+    `bend` -1 becomes a spurious -1.0 bend and `bend_intent` -1 a schema-invalid
+    `bt`."""
+    bare = SimpleNamespace(time=1.0, string=0, fret=5, sustain=0.5)
+    tech = _arr_to_data(_make_arr(notes=[bare]), "Lead")["notes"][0]["techniques"]
+    for key in _NOTE_TECH_BOOL_FIELDS:
+        assert tech[key] is False, f"{key} must default False, got {tech[key]!r}"
+    assert tech["bend"] is None
+    assert tech["bend_intent"] == 0
+    assert tech["bend_values"] is None
+    for key in ("slide_to", "slide_unpitch_to", "right_hand", "pick_direction",
+                "fret_finger", "strum_group", "scale_degree"):
+        assert tech[key] == -1
 
 
 def test_chords_and_templates_preserve_authoring_metadata():
