@@ -579,6 +579,52 @@ function snapTime(t) {
 function notes() { return S.arrangements.length ? S.arrangements[S.currentArr].notes : []; }
 function chords() { return S.arrangements.length ? S.arrangements[S.currentArr].chords : []; }
 
+/* @pure:chord-resize:start */
+function _resizeTargetIndicesPure(noteList, index, expandChord) {
+    if (!Array.isArray(noteList) || index < 0 || index >= noteList.length) return [];
+    if (!expandChord) return [index];
+    const n = noteList[index];
+    if (!n || typeof n.time !== 'number') return [index];
+    const key = n.time.toFixed(4);
+    const out = [];
+    for (let i = 0; i < noteList.length; i++) {
+        const other = noteList[i];
+        if (other && typeof other.time === 'number' && other.time.toFixed(4) === key) {
+            out.push(i);
+        }
+    }
+    return out.length ? out : [index];
+}
+
+function _maxSustainBeforeCollisionPure(noteList, targetIndices) {
+    if (!Array.isArray(noteList) || !Array.isArray(targetIndices) || !targetIndices.length) {
+        return Infinity;
+    }
+    const targetSet = new Set(targetIndices);
+    let limit = Infinity;
+    for (const idx of targetIndices) {
+        const n = noteList[idx];
+        if (!n || typeof n.time !== 'number') continue;
+        for (let i = 0; i < noteList.length; i++) {
+            if (targetSet.has(i)) continue;
+            const other = noteList[i];
+            if (!other || other.string !== n.string || typeof other.time !== 'number') continue;
+            if (other.time > n.time + 0.0001) {
+                limit = Math.min(limit, other.time - n.time);
+            }
+        }
+    }
+    return limit;
+}
+
+function _resizeSustainsForDeltaPure(noteList, targetIndices, anchorOrigSustain, delta) {
+    const desired = Math.max(0, (Number(anchorOrigSustain) || 0) + (Number(delta) || 0));
+    const limit = _maxSustainBeforeCollisionPure(noteList, targetIndices);
+    const sustain = Math.max(0, Math.min(desired, limit));
+    return targetIndices.map(() => sustain);
+}
+/* @pure:chord-resize:end */
+
 // Flatten chord notes into the main notes array on load, tagging with _fromChord.
 // On save, reconstruct chords from notes sharing the same time+_fromChord group.
 function flattenChords() {
@@ -1742,6 +1788,27 @@ class ResizeSustainCmd {
     rollback() { notes()[this.index].sustain = this.oldSustain; }
 }
 
+class ResizeSustainGroupCmd {
+    constructor(indices, newSustains) {
+        this.indices = indices.slice();
+        this.newSustains = newSustains.slice();
+        const nn = notes();
+        this.oldSustains = this.indices.map(i => nn[i] ? (nn[i].sustain || 0) : 0);
+    }
+    exec() {
+        const nn = notes();
+        for (let i = 0; i < this.indices.length; i++) {
+            if (nn[this.indices[i]]) nn[this.indices[i]].sustain = this.newSustains[i];
+        }
+    }
+    rollback() {
+        const nn = notes();
+        for (let i = 0; i < this.indices.length; i++) {
+            if (nn[this.indices[i]]) nn[this.indices[i]].sustain = this.oldSustains[i];
+        }
+    }
+}
+
 class ChangeFretCmd {
     constructor(index, newFret) {
         this.index = index;
@@ -2428,13 +2495,21 @@ function onMouseDown(e) {
     // Check for sustain edge grab first
     const edgeIdx = hitNoteEdge(x, y);
     if (edgeIdx >= 0) {
-        if (!S.sel.has(edgeIdx)) { S.sel.clear(); S.sel.add(edgeIdx); }
-        const n = notes()[edgeIdx];
+        const nn = notes();
+        const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, !isKeysMode() && !e.altKey);
+        const allResizeSelected = resizeIndices.every(i => S.sel.has(i));
+        if (!allResizeSelected) {
+            S.sel.clear();
+            for (const i of resizeIndices) S.sel.add(i);
+        }
+        const n = nn[edgeIdx];
         S.drag = {
             type: 'resize',
             noteIdx: edgeIdx,
+            indices: resizeIndices,
             startX: x,
             origSustain: n.sustain || 0,
+            origSustains: resizeIndices.map(i => nn[i].sustain || 0),
         };
         draw();
         return;
@@ -2611,7 +2686,11 @@ function _onMouseMoveBody(e, x, y, L) {
     if (S.drag.type === 'resize') {
         const dt = (x - S.drag.startX) / S.zoom;
         const nn = notes();
-        nn[S.drag.noteIdx].sustain = Math.max(0, S.drag.origSustain + dt);
+        const nextSustains = _resizeSustainsForDeltaPure(
+            nn, S.drag.indices, S.drag.origSustain, dt);
+        for (let i = 0; i < S.drag.indices.length; i++) {
+            nn[S.drag.indices[i]].sustain = nextSustains[i];
+        }
         draw();
         return;
     }
@@ -2702,11 +2781,14 @@ function onMouseUp(e) {
 
     if (S.drag.type === 'resize') {
         const nn = notes();
-        const finalSustain = nn[S.drag.noteIdx].sustain;
-        // Revert so the command can apply it
-        nn[S.drag.noteIdx].sustain = S.drag.origSustain;
-        if (finalSustain !== S.drag.origSustain) {
-            S.history.exec(new ResizeSustainCmd(S.drag.noteIdx, finalSustain));
+        const finalSustains = S.drag.indices.map(i => nn[i].sustain || 0);
+        // Revert so the command can apply the grouped edit as one undo step.
+        for (let i = 0; i < S.drag.indices.length; i++) {
+            nn[S.drag.indices[i]].sustain = S.drag.origSustains[i];
+        }
+        const changed = finalSustains.some((v, i) => v !== S.drag.origSustains[i]);
+        if (changed) {
+            S.history.exec(new ResizeSustainGroupCmd(S.drag.indices, finalSustains));
         }
     }
 
