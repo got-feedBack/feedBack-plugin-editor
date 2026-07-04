@@ -170,6 +170,7 @@ const S = {
     // beat bar (measure strip) to set { startTime, endTime } in seconds,
     // snapped to downbeat boundaries. `null` = no bar range selected.
     barSel: null,
+    loopEnabled: false,
     // True when this editor session was opened from the 3D highway's
     // "Edit region" action. Used to make the preview button read as a
     // return trip instead of a fresh action.
@@ -426,6 +427,32 @@ function _adjustBarSelEdgePure(region, edge, rawTime, downbeats, duration) {
     }
     return region;
 }
+
+function _normalizeLoopRegionPure(region, duration) {
+    if (!region) return null;
+    let start = Number(region.startTime);
+    let end = Number(region.endTime);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    if (end < start) [start, end] = [end, start];
+    const maxT = Number(duration);
+    if (Number.isFinite(maxT) && maxT > 0) {
+        start = Math.max(0, Math.min(start, maxT));
+        end = Math.max(0, Math.min(end, maxT));
+    } else {
+        start = Math.max(0, start);
+        end = Math.max(0, end);
+    }
+    return end > start + 0.001 ? { startTime: start, endTime: end } : null;
+}
+
+function _loopPlaybackRestartTimePure(cursorTime, region, enabled, duration) {
+    if (!enabled) return null;
+    const r = _normalizeLoopRegionPure(region, duration);
+    if (!r) return null;
+    const t = Number(cursorTime);
+    if (!Number.isFinite(t)) return null;
+    return t >= r.endTime - 0.001 ? r.startTime : null;
+}
 /* @pure:loop-region:end */
 
 // Downbeat times in ascending order, from the song-wide beat grid.
@@ -500,8 +527,10 @@ function _renderLoopStrip() {
         sel.classList.add('hidden');
         clear.classList.add('hidden');
         empty.classList.remove('hidden');
+        _updateLoopRegionControls();
         return;
     }
+    _updateLoopRegionControls();
     empty.classList.add('hidden');
     sel.classList.remove('hidden');
     clear.classList.remove('hidden');
@@ -513,14 +542,54 @@ function _renderLoopStrip() {
     sel.style.left = clampedLeft + '%';
     sel.style.width = Math.max(0, clampedRight - clampedLeft) + '%';
     label.textContent = _regionMeasureLabel(S.barSel) + '  ' + _fmtLoopTime(S.barSel.startTime) + '–' + _fmtLoopTime(S.barSel.endTime);
+    sel.classList.toggle('ring-2', !!S.loopEnabled);
+    sel.classList.toggle('ring-accent-light', !!S.loopEnabled);
+    _updateLoopRegionControls();
 }
 
 function _clearBarSelection() {
     S.barSel = null;
+    S.loopEnabled = false;
+    _updateLoopRegionControls();
     _updateLoopIn3DBtn();
     draw();
 }
 
+function _selectedLoopRegion() {
+    return _normalizeLoopRegionPure(S.barSel, S.duration);
+}
+
+function _updateLoopRegionControls() {
+    const region = _selectedLoopRegion();
+    if (!region && S.loopEnabled) S.loopEnabled = false;
+    const loopBtn = document.getElementById('editor-loop-region-btn');
+    if (loopBtn) {
+        loopBtn.disabled = !region;
+        loopBtn.textContent = S.loopEnabled ? 'Loop On' : 'Loop';
+        loopBtn.title = region
+            ? (S.loopEnabled ? 'Disable editor loop playback for the selected region' : 'Loop editor playback inside the selected region')
+            : 'Set a loop region first';
+        loopBtn.classList.toggle('bg-accent', !!S.loopEnabled);
+        loopBtn.classList.toggle('hover:bg-accent-light', !!S.loopEnabled);
+        loopBtn.classList.toggle('bg-dark-600', !S.loopEnabled);
+        loopBtn.classList.toggle('hover:bg-dark-500', !S.loopEnabled);
+    }
+    const clearBtn = document.getElementById('editor-loop-strip-clear');
+    if (clearBtn) clearBtn.title = S.loopEnabled ? 'Clear loop region and disable looping' : 'Clear loop region';
+}
+
+function _setLoopRegionEnabled(enabled) {
+    const region = _selectedLoopRegion();
+    S.loopEnabled = !!(enabled && region);
+    if (S.loopEnabled && (S.cursorTime < region.startTime || S.cursorTime >= region.endTime)) {
+        _editorSeekToTime(region.startTime);
+    }
+    _updateLoopRegionControls();
+    draw();
+    setStatus(S.loopEnabled ? 'Loop region enabled' : 'Loop region disabled');
+}
+
+window.editorToggleLoopRegion = () => _setLoopRegionEnabled(!S.loopEnabled);
 function _loopStripOnMouseDown(e) {
     if (!canvas || !S.beats.length) return;
     const track = document.getElementById('editor-loop-strip-track');
@@ -4522,20 +4591,36 @@ function computeWaveform() {
     S.waveformPeaks = _buildWaveformPeaks(data, binSamples);
 }
 
-function startPlayback() {
-    if (!S.audioBuffer || !S.audioCtx) return;
-    if (S.audioCtx.state === 'suspended') S.audioCtx.resume();
+function _startAudioSourceAtCursor() {
     S.audioSource = S.audioCtx.createBufferSource();
     S.audioSource.buffer = S.audioBuffer;
     S.audioSource.connect(S.audioCtx.destination);
     S.audioSource.start(0, S.cursorTime);
     S.playStartWall = S.audioCtx.currentTime;
     S.playStartTime = S.cursorTime;
+}
+
+function _restartPlaybackAt(t) {
+    if (S.audioSource) {
+        try { S.audioSource.stop(); } catch (_) {}
+        S.audioSource = null;
+    }
+    S.cursorTime = Math.max(0, Math.min(S.duration || Infinity, t));
+    _startAudioSourceAtCursor();
+}
+
+function startPlayback() {
+    if (!S.audioBuffer || !S.audioCtx) return;
+    if (S.audioCtx.state === 'suspended') S.audioCtx.resume();
+    const region = _selectedLoopRegion();
+    if (S.loopEnabled && region && (S.cursorTime < region.startTime || S.cursorTime >= region.endTime)) {
+        S.cursorTime = region.startTime;
+    }
+    _startAudioSourceAtCursor();
     S.playing = true;
     updatePlayIcon();
     playbackTick();
 }
-
 function stopPlayback() {
     if (S.audioSource) {
         try { S.audioSource.stop(); } catch (_) {}
@@ -4549,6 +4634,16 @@ function stopPlayback() {
 function playbackTick() {
     if (!S.playing) return;
     S.cursorTime = S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
+    const loopRestart = _recState === 'recording'
+        ? null
+        : _loopPlaybackRestartTimePure(S.cursorTime, S.barSel, S.loopEnabled, S.duration);
+    if (loopRestart !== null) {
+        _restartPlaybackAt(loopRestart);
+        updateTimeDisplay();
+        draw();
+        rafId = requestAnimationFrame(playbackTick);
+        return;
+    }
     if (S.cursorTime >= S.duration) {
         // If a live MIDI recording is active, finalize it at the song end
         // before resetting the cursor — otherwise chartTimeNow() keeps
@@ -7631,6 +7726,7 @@ window.editorApplyCreateResult = async (data) => {
     S.scrollX = 0;
     S.cursorTime = 0;
     S.barSel = null;
+    S.loopEnabled = false;
     S.returnToHighway = false;
     S.history = new EditHistory();
     S.createMode = true;
