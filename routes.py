@@ -3515,57 +3515,60 @@ def setup(app, context):
             )
         if not arr_name:
             arr_name = "Lead"
-        if arr_name not in ("Lead", "Rhythm", "Bass"):
+        # Fretted roles carry a tuning/string-count; Keys (piano-roll) and
+        # Drums (drum_tab) do not. The editor selects its mode from the
+        # arrangement NAME (KEYS_PATTERN / ^drums), so the name is load-bearing.
+        _FRETTED = ("Lead", "Rhythm", "Bass")
+        if arr_name not in _FRETTED + ("Keys", "Drums"):
             return JSONResponse(
-                {"error": "initial_arrangement must be Lead, Rhythm, or Bass"},
+                {"error": "initial_arrangement must be Lead, Rhythm, Bass, Keys, or Drums"},
                 400,
             )
-
-        # String count is derived from the tuning array. feedpak-spec §5.2
-        # models tuning length 4–8 and explicitly says Readers MUST NOT
-        # hard-code 6, so range-check instead of pinning 4|6 — this lets
-        # extended-range guitars (7/8-string) and 5/6-string basses be created
-        # at the source, not only through the save-as path. Absent tuning ->
-        # a sensible default per role (Bass = 4, guitar roles = 6).
-        _MIN_STRINGS, _MAX_STRINGS = 4, 8
-        default_strings = 4 if arr_name == "Bass" else 6
-        tuning_in = meta_in.get("tuning")
+        is_fretted = arr_name in _FRETTED
 
         def _is_int(v) -> bool:
             # bool is a subclass of int in Python; treat True/False as
             # invalid here so a `True → 1` doesn't slip past.
             return isinstance(v, int) and not isinstance(v, bool)
 
-        if tuning_in is None:
-            tuning = [0] * default_strings
-        elif (isinstance(tuning_in, list)
-                and _MIN_STRINGS <= len(tuning_in) <= _MAX_STRINGS):
-            if not all(_is_int(t) for t in tuning_in):
+        if is_fretted:
+            # String count is derived from the tuning array. feedpak-spec §5.2
+            # models tuning length 4–8 and explicitly says Readers MUST NOT
+            # hard-code 6, so range-check instead of pinning 4|6 — this lets
+            # extended-range guitars (7/8-string) and 5/6-string basses be
+            # created at the source. Absent -> a sensible per-role default.
+            _MIN_STRINGS, _MAX_STRINGS = 4, 8
+            default_strings = 4 if arr_name == "Bass" else 6
+            tuning_in = meta_in.get("tuning")
+            if tuning_in is None:
+                tuning = [0] * default_strings
+            elif (isinstance(tuning_in, list)
+                    and _MIN_STRINGS <= len(tuning_in) <= _MAX_STRINGS):
+                if not all(_is_int(t) for t in tuning_in):
+                    return JSONResponse(
+                        {"error": "tuning entries must be integers (no floats or booleans)"},
+                        400,
+                    )
+                tuning = list(tuning_in)
+            else:
                 return JSONResponse(
-                    {"error": "tuning entries must be integers (no floats or booleans)"},
+                    {"error": (
+                        f"tuning must be a list of {_MIN_STRINGS}-{_MAX_STRINGS} ints "
+                        f"(feedpak-spec §5.2), or omitted for a default "
+                        f"{default_strings}-string '{arr_name}'"
+                    )},
                     400,
                 )
-            tuning = list(tuning_in)
+            capo_raw = meta_in.get("capo", 0)
+            if not _is_int(capo_raw):
+                return JSONResponse({"error": "capo must be an integer"}, 400)
+            if capo_raw < 0:
+                return JSONResponse({"error": "capo must be non-negative"}, 400)
+            capo = capo_raw
         else:
-            return JSONResponse(
-                {"error": (
-                    f"tuning must be a list of {_MIN_STRINGS}-{_MAX_STRINGS} ints "
-                    f"(feedpak-spec §5.2), or omitted for a default "
-                    f"{default_strings}-string '{arr_name}'"
-                )},
-                400,
-            )
-
-        capo_raw = meta_in.get("capo", 0)
-        if not _is_int(capo_raw):
-            return JSONResponse(
-                {"error": "capo must be an integer"}, 400,
-            )
-        if capo_raw < 0:
-            return JSONResponse(
-                {"error": "capo must be non-negative"}, 400,
-            )
-        capo = capo_raw
+            # Keys / Drums have no strings — no tuning, no capo.
+            tuning = []
+            capo = 0
 
         # Strict bool check — client JSON-derived; the string "false"
         # would otherwise become truthy and silently enable drum_tab.
@@ -3575,6 +3578,9 @@ def setup(app, context):
                 {"error": "init_drum_tab must be a boolean"}, 400,
             )
         init_drums = init_drums_raw
+        # A Drums pack IS its drum tab — always seed it, regardless of the flag.
+        if arr_name == "Drums":
+            init_drums = True
 
         dlc_dir = get_dlc_dir()
         if not dlc_dir:
@@ -3726,14 +3732,19 @@ def setup(app, context):
                     )
 
             # Build the minimal in-memory shapes _write_sloppak_pak expects.
-            arrangements_data = [{
+            # Keys carry the spec `type: piano`; fretted/drums don't. All three
+            # open in the right editor mode by NAME (KEYS_PATTERN / ^drums).
+            arr_entry = {
                 "name": arr_name,
                 "tuning": tuning,
                 "capo": capo,
                 "notes": [],
                 "chords": [],
                 "chord_templates": [],
-            }]
+            }
+            if arr_name == "Keys":
+                arr_entry["type"] = "piano"
+            arrangements_data = [arr_entry]
             # Seed a minimal one-measure 4/4 @ 120 BPM grid (downbeat +
             # three sub-beats + next downbeat = 5 beats). The Tempo Map
             # editor bails when beats.length < 2 ("No beat grid…"), so

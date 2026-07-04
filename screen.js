@@ -6051,44 +6051,73 @@ function updateCreateButton() {
 // the arrangements the create_sloppak backend accepts today; Keys/Drums-as-arr
 // + extended tunings need backend work (tracked separately). The drum-tab
 // checkbox beside it covers a drum chart.
+// Fretted roles carry a string count + tuning; Keys (piano-roll) and Drums
+// (drum tab) don't. The editor opens each in the right mode by the arrangement
+// NAME (KEYS_PATTERN / ^drums), which the create route sets from initialArr.
+const _FRETTED_ROLES = ['Lead', 'Rhythm', 'Bass'];
+function _isFrettedRole(role) { return _FRETTED_ROLES.includes(role); }
+
 // String-count options per role — feedpak-spec §5.2 allows tuning length 4-8.
-// Guitar roles offer 6/7/8; Bass offers 4/5/6. The create route derives the
-// arrangement's string count from the length of the tuning array we send.
+// Guitar roles offer 6/7/8; Bass offers 4/5/6.
 function _createRoleStringOptions(role) {
     return role === 'Bass' ? [4, 5, 6] : [6, 7, 8];
+}
+function _createRoleDefaultStrings(role) {
+    return role === 'Bass' ? 4 : 6;
 }
 
 function _populateCreateArrButtons() {
     const wrap = document.getElementById('editor-create-arr-buttons');
     if (!wrap) return;
     wrap.replaceChildren();
-    const choices = ['Lead', 'Rhythm', 'Bass'];
-    if (!choices.includes(createState.initialArr)) createState.initialArr = 'Lead';
-    for (const name of choices) {
+    // Functional roster + Vocals shown-but-disabled: the editor has no vocals
+    // edit mode yet, so offering it would create a pack you can't edit — an
+    // honest "coming" rung rather than a false one.
+    const roster = [
+        { name: 'Lead' }, { name: 'Rhythm' }, { name: 'Bass' },
+        { name: 'Keys' }, { name: 'Drums' },
+        { name: 'Vocals', disabled: true,
+          title: 'Vocals editing is coming — the editor has no vocals mode yet.' },
+    ];
+    const enabled = roster.filter(r => !r.disabled).map(r => r.name);
+    if (!enabled.includes(createState.initialArr)) createState.initialArr = 'Lead';
+    for (const r of roster) {
         const b = document.createElement('button');
         b.type = 'button';
-        b.dataset.arr = name;
-        b.textContent = name;
-        b.className = 'px-2 py-1 rounded text-xs font-medium '
-            + (name === createState.initialArr
-                ? 'bg-accent text-white'
-                : 'bg-dark-600 text-gray-300 hover:bg-dark-500');
-        b.onclick = () => {
-            createState.initialArr = name;
-            // Re-scope string count to the new role's options.
-            const opts = _createRoleStringOptions(name);
-            if (!opts.includes(createState.stringCount)) createState.stringCount = opts[0];
-            _populateCreateArrButtons();
-            _populateStringCountButtons();
-        };
+        b.dataset.arr = r.name;
+        b.textContent = r.name;
+        if (r.title) b.title = r.title;
+        if (r.disabled) {
+            b.disabled = true;
+            b.className = 'px-2 py-1 rounded text-xs font-medium bg-dark-700 text-gray-600 cursor-not-allowed';
+        } else {
+            b.className = 'px-2 py-1 rounded text-xs font-medium '
+                + (r.name === createState.initialArr
+                    ? 'bg-accent text-white'
+                    : 'bg-dark-600 text-gray-300 hover:bg-dark-500');
+            b.onclick = () => {
+                createState.initialArr = r.name;
+                // Reset to the role's DEFAULT string count for a fresh fretted
+                // pick (Bass 4, guitar 6); Keys/Drums have none.
+                if (_isFrettedRole(r.name)) {
+                    createState.stringCount = _createRoleDefaultStrings(r.name);
+                }
+                _populateCreateArrButtons();
+                _populateStringCountButtons();
+            };
+        }
         wrap.appendChild(b);
     }
 }
 
 function _populateStringCountButtons() {
+    const row = document.getElementById('editor-create-strings-row');
     const wrap = document.getElementById('editor-create-strings-buttons');
+    // Hide the whole Strings row for Keys/Drums (no strings).
+    if (row) row.classList.toggle('hidden', !_isFrettedRole(createState.initialArr));
     if (!wrap) return;
     wrap.replaceChildren();
+    if (!_isFrettedRole(createState.initialArr)) return;
     const opts = _createRoleStringOptions(createState.initialArr);
     if (!opts.includes(createState.stringCount)) createState.stringCount = opts[0];
     for (const n of opts) {
