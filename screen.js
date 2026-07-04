@@ -294,6 +294,64 @@ function timeToX(t)  { return LABEL_W + (t - S.scrollX) * S.zoom; }
 function xToTime(x)  { return (x - LABEL_W) / S.zoom + S.scrollX; }
 
 // ── Bar selection (Loop-in-3D handoff) ──────────────────────────────
+/* @pure:loop-region:start */
+function _barSpanForTimesPure(downbeats, duration, t0, t1) {
+    if (!Array.isArray(downbeats) || !downbeats.length) return null;
+    const lo = Math.min(t0, t1);
+    const hi = Math.max(t0, t1);
+    let start = downbeats[0];
+    for (const t of downbeats) {
+        if (t <= lo + 1e-6) start = t;
+        else break;
+    }
+    let end = null;
+    for (const t of downbeats) {
+        if (t > hi + 1e-6) {
+            end = t;
+            break;
+        }
+    }
+    if (end === null) end = Math.max(duration || hi, hi);
+    return end > start ? { startTime: start, endTime: end } : null;
+}
+
+function _adjustBarSelEdgePure(region, edge, rawTime, downbeats, duration) {
+    if (!region || !Array.isArray(downbeats) || !downbeats.length) return region;
+    if (edge === 'start') {
+        let start = downbeats[0];
+        for (const t of downbeats) {
+            if (t <= rawTime + 1e-6) start = t;
+            else break;
+        }
+        start = Math.min(start, region.endTime);
+        if (start >= region.endTime - 1e-6) {
+            const idx = downbeats.findIndex(t => Math.abs(t - region.endTime) <= 1e-6);
+            if (idx > 0) start = downbeats[idx - 1];
+            else start = Math.min(start, region.startTime);
+        }
+        return region.endTime > start ? { startTime: start, endTime: region.endTime } : region;
+    }
+    if (edge === 'end') {
+        let end = null;
+        for (const t of downbeats) {
+            if (t > rawTime + 1e-6) {
+                end = t;
+                break;
+            }
+        }
+        if (end === null) end = Math.max(duration || rawTime, rawTime);
+        end = Math.max(end, region.startTime);
+        if (end <= region.startTime + 1e-6) {
+            const idx = downbeats.findIndex(t => Math.abs(t - region.startTime) <= 1e-6);
+            if (idx >= 0 && idx < downbeats.length - 1) end = downbeats[idx + 1];
+            else end = Math.max(duration || rawTime, rawTime);
+        }
+        return end > region.startTime ? { startTime: region.startTime, endTime: end } : region;
+    }
+    return region;
+}
+/* @pure:loop-region:end */
+
 // Downbeat times in ascending order, from the song-wide beat grid.
 function _downbeatTimes() {
     return S.beats.filter(b => b.measure > 0).map(b => b.time).sort((a, b) => a - b);
@@ -303,15 +361,7 @@ function _downbeatTimes() {
 // (falling back to the song end). Returns null when the chart has no
 // downbeats (so the beat bar can't define bars).
 function _barSpanForTimes(t0, t1) {
-    const dbs = _downbeatTimes();
-    if (!dbs.length) return null;
-    const lo = Math.min(t0, t1), hi = Math.max(t0, t1);
-    let start = dbs[0];
-    for (const t of dbs) { if (t <= lo + 1e-6) start = t; else break; }
-    let end = null;
-    for (const t of dbs) { if (t > hi + 1e-6) { end = t; break; } }
-    if (end === null) end = Math.max(S.duration || hi, hi);
-    return (end > start) ? { startTime: start, endTime: end } : null;
+    return _barSpanForTimesPure(_downbeatTimes(), S.duration || Math.max(t0, t1), t0, t1);
 }
 function laneToY(l)  { return WAVEFORM_H + l * LANE_H; }
 function yToLane(y)  { return Math.floor((y - WAVEFORM_H) / LANE_H); }
@@ -325,6 +375,125 @@ function canvasH()   {
 
 // ── Piano roll mode helpers ─────────────────────────────────────────
 
+function _loopStripTrackBounds() {
+    const track = document.getElementById('editor-loop-strip-track');
+    if (!track) return null;
+    const r = track.getBoundingClientRect();
+    return { left: r.left, width: Math.max(1, r.width) };
+}
+
+function _loopStripTimeFromClientX(clientX) {
+    const b = _loopStripTrackBounds();
+    if (!b || !canvas) return 0;
+    const ratio = Math.max(0, Math.min(1, (clientX - b.left) / b.width));
+    const viewDur = Math.max(0, ((canvas.width / DPR) - LABEL_W) / S.zoom);
+    return S.scrollX + ratio * viewDur;
+}
+
+function _fmtLoopTime(t) {
+    const total = Math.max(0, t || 0);
+    const m = Math.floor(total / 60);
+    const s = Math.floor(total % 60);
+    const ms = Math.floor((total - Math.floor(total)) * 10);
+    return m + ':' + String(s).padStart(2, '0') + '.' + ms;
+}
+
+function _regionMeasureLabel(region) {
+    const starts = _downbeatTimes();
+    if (!region || !starts.length) return _fmtLoopTime(region && region.startTime || 0);
+    let startMeasure = 1;
+    let endMeasure = startMeasure;
+    for (let i = 0; i < starts.length; i++) {
+        if (starts[i] <= region.startTime + 1e-6) startMeasure = i + 1;
+        if (starts[i] < region.endTime - 1e-6) endMeasure = i + 1;
+    }
+    return 'Bars ' + startMeasure + '–' + endMeasure;
+}
+
+function _renderLoopStrip() {
+    const root = document.getElementById('editor-loop-strip');
+    const empty = document.getElementById('editor-loop-strip-empty');
+    const sel = document.getElementById('editor-loop-strip-selection');
+    const clear = document.getElementById('editor-loop-strip-clear');
+    const label = document.getElementById('editor-loop-strip-label');
+    if (!root || !empty || !sel || !clear || !label || !canvas) return;
+    const beatsReady = _downbeatTimes().length > 0;
+    root.classList.toggle('opacity-60', !beatsReady);
+    empty.textContent = beatsReady ? 'Drag to set loop region' : 'No bar grid available';
+    if (!S.barSel || !beatsReady) {
+        sel.classList.add('hidden');
+        clear.classList.add('hidden');
+        empty.classList.remove('hidden');
+        return;
+    }
+    empty.classList.add('hidden');
+    sel.classList.remove('hidden');
+    clear.classList.remove('hidden');
+    const viewDur = Math.max(0, ((canvas.width / DPR) - LABEL_W) / S.zoom);
+    const left = ((S.barSel.startTime - S.scrollX) / Math.max(0.0001, viewDur)) * 100;
+    const right = ((S.barSel.endTime - S.scrollX) / Math.max(0.0001, viewDur)) * 100;
+    const clampedLeft = Math.max(0, Math.min(100, left));
+    const clampedRight = Math.max(0, Math.min(100, right));
+    sel.style.left = clampedLeft + '%';
+    sel.style.width = Math.max(0, clampedRight - clampedLeft) + '%';
+    label.textContent = _regionMeasureLabel(S.barSel) + '  ' + _fmtLoopTime(S.barSel.startTime) + '–' + _fmtLoopTime(S.barSel.endTime);
+}
+
+function _clearBarSelection() {
+    S.barSel = null;
+    _updateLoopIn3DBtn();
+    draw();
+}
+
+function _loopStripOnMouseDown(e) {
+    if (!canvas || !S.beats.length) return;
+    const track = document.getElementById('editor-loop-strip-track');
+    if (!track || !track.contains(e.target)) return;
+    if (e.target && e.target.id === 'editor-loop-strip-clear') return;
+    const region = S.barSel;
+    const rawTime = _loopStripTimeFromClientX(e.clientX);
+    if (region) {
+        if (e.target && e.target.id === 'editor-loop-strip-start') {
+            S.drag = { type: 'loopstrip', mode: 'start' };
+            e.preventDefault();
+            return;
+        }
+        if (e.target && e.target.id === 'editor-loop-strip-end') {
+            S.drag = { type: 'loopstrip', mode: 'end' };
+            e.preventDefault();
+            return;
+        }
+    }
+    S.drag = { type: 'loopstrip', mode: 'create', startTime: rawTime };
+    S.barSel = _barSpanForTimes(rawTime, rawTime);
+    _updateLoopIn3DBtn();
+    draw();
+    e.preventDefault();
+}
+
+function _loopStripOnMouseMove(e) {
+    if (!S.drag || S.drag.type !== 'loopstrip') return false;
+    const rawTime = _loopStripTimeFromClientX(e.clientX);
+    const downbeats = _downbeatTimes();
+    if (S.drag.mode === 'create') {
+        S.barSel = _barSpanForTimes(S.drag.startTime, rawTime);
+    } else if (S.drag.mode === 'start' && S.barSel) {
+        S.barSel = _adjustBarSelEdgePure(S.barSel, 'start', rawTime, downbeats, S.duration || rawTime);
+    } else if (S.drag.mode === 'end' && S.barSel) {
+        S.barSel = _adjustBarSelEdgePure(S.barSel, 'end', rawTime, downbeats, S.duration || rawTime);
+    }
+    _updateLoopIn3DBtn();
+    draw();
+    return true;
+}
+
+function _loopStripOnMouseUp() {
+    if (!S.drag || S.drag.type !== 'loopstrip') return false;
+    S.drag = null;
+    _updateLoopIn3DBtn();
+    draw();
+    return true;
+}
 function isKeysMode() {
     if (!S.arrangements.length) return false;
     const arr = S.arrangements[S.currentArr];
@@ -968,6 +1137,7 @@ function draw() {
     }
 
     ctx.restore();
+    _renderLoopStrip();
 }
 
 function drawWaveform(w) {
@@ -2339,6 +2509,8 @@ function onMouseMove(e) {
 
 function _onMouseMoveBody(e, x, y, L) {
 
+    if (_loopStripOnMouseMove(e)) return;
+
     // Bar-range drag on the beat bar — re-snap the span to the cursor.
     if (S.drag && S.drag.type === 'barsel') {
         S.barSel = _barSpanForTimes(S.drag.startTime, xToTime(x));
@@ -2479,6 +2651,7 @@ function _onMouseMoveBody(e, x, y, L) {
 
 function onMouseUp(e) {
     if (!S.drag) return;
+    if (_loopStripOnMouseUp()) return;
     const { x, y } = getMousePos(e);
 
     // Bar-range select finalise — refresh the Loop-in-3D button state.
@@ -6720,6 +6893,8 @@ function init() {
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('contextmenu', onContextMenu);
     document.addEventListener('keydown', onKeyDown);
+    document.getElementById('editor-loop-strip-track')?.addEventListener('mousedown', _loopStripOnMouseDown);
+    document.getElementById('editor-loop-strip-clear')?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _clearBarSelection(); });
 
     // Prevent middle-click paste
     canvas.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
