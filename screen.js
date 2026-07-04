@@ -141,7 +141,10 @@ const S = {
     // beat bar (measure strip) to set { startTime, endTime } in seconds,
     // snapped to downbeat boundaries. `null` = no bar range selected.
     barSel: null,
-
+    // True when this editor session was opened from the 3D highway's
+    // "Edit region" action. Used to make the preview button read as a
+    // return trip instead of a fresh action.
+    returnToHighway: false,
     // Drag state
     drag: null, // { type, startX, startY, startTime, startString, noteIdx, origTimes, origStrings }
 
@@ -3758,6 +3761,7 @@ async function loadCDLC(filename) {
         // Drop any bar-range selection from the previously-loaded song; a
         // pending view (highway handoff / return trip) re-sets it below.
         S.barSel = null;
+        S.returnToHighway = false;
         S.history = new EditHistory();
 
         // Reset offset UI so _effectiveAudioOffset() doesn't carry over a
@@ -5168,6 +5172,28 @@ function _effectiveLoopRegion() {
     return null;
 }
 
+/* @pure:pending-view:start */
+function _resolvePendingViewStatePure(pv, fallbackZoom, viewWidthPx, labelW) {
+    const nextZoom = (typeof pv.zoom === 'number' && pv.zoom > 0) ? pv.zoom : fallbackZoom;
+    const out = {
+        returnToHighway: !!pv.returnToHighway,
+        barSel: pv.barSel ? { startTime: pv.barSel.startTime, endTime: pv.barSel.endTime } : null,
+        zoom: nextZoom,
+        cursorTime: typeof pv.cursorTime === 'number'
+            ? pv.cursorTime
+            : (pv.barSel ? pv.barSel.startTime : null),
+        scrollX: null,
+    };
+    if (typeof pv.scrollX === 'number') {
+        out.scrollX = Math.max(0, pv.scrollX);
+    } else if (pv.barSel) {
+        const margin = (Math.max(0, viewWidthPx - labelW) * 0.25) / Math.max(0.0001, nextZoom);
+        out.scrollX = Math.max(0, pv.barSel.startTime - margin);
+    }
+    return out;
+}
+/* @pure:pending-view:end */
+
 // Enable the toolbar button when there's a region to preview (a bar drag OR a
 // note selection) on a loaded, playable song. Create-mode sessions have
 // nothing on disk for the highway to stream, so they stay disabled.
@@ -5177,11 +5203,14 @@ function _updateLoopIn3DBtn() {
     const region = _effectiveLoopRegion();
     const ok = !!(region && S.filename && !S.createMode);
     btn.disabled = !ok;
+    btn.textContent = S.returnToHighway ? '↩ Back to 3D' : '▶ Loop in 3D';
     btn.title = S.createMode
         ? 'Build the song first to preview it on the 3D highway'
         : (region
-            ? 'Loop this region on the 3D highway'
-            : 'Select some notes, or drag across the bottom beat bar, to pick a region');
+            ? (S.returnToHighway
+                ? 'Save and preview this region back on the 3D highway'
+                : 'Loop this region on the 3D highway')
+            : 'Select some notes or set a loop region to pick what the 3D highway should preview');
 }
 window._editorUpdateLoopIn3DBtn = _updateLoopIn3DBtn;
 
@@ -5235,19 +5264,15 @@ function _applyEditorPendingView(filename) {
         // Reuse the arrangement switch (re-flattens chords, redraws).
         window.editorSelectArrangement(pv.arrangement);
     }
-    if (pv.barSel) S.barSel = { startTime: pv.barSel.startTime, endTime: pv.barSel.endTime };
-    if (typeof pv.zoom === 'number' && pv.zoom > 0) { S.zoom = pv.zoom; updateZoomDisplay(); }
-    if (typeof pv.cursorTime === 'number') S.cursorTime = pv.cursorTime;
-    if (typeof pv.scrollX === 'number') {
-        S.scrollX = Math.max(0, pv.scrollX);
-    } else if (pv.barSel) {
-        // No explicit scroll captured (came straight from the highway) —
-        // center the region with a little lead-in margin.
-        const w = canvas ? canvas.width / DPR : 800;
-        const margin = (w - LABEL_W) * 0.25 / S.zoom;
-        S.scrollX = Math.max(0, pv.barSel.startTime - margin);
-    }
+    const viewW = canvas ? (canvas.width / DPR) : 800;
+    const next = _resolvePendingViewStatePure(pv, S.zoom, viewW, LABEL_W);
+    S.returnToHighway = next.returnToHighway;
+    if (next.barSel) S.barSel = next.barSel;
+    if (typeof next.zoom === 'number' && next.zoom > 0) { S.zoom = next.zoom; updateZoomDisplay(); }
+    if (typeof next.cursorTime === 'number') S.cursorTime = next.cursorTime;
+    if (typeof next.scrollX === 'number') S.scrollX = next.scrollX;
     updateStatus();
+    _updateLoopIn3DBtn();
     draw();
 }
 
@@ -6459,6 +6484,8 @@ window.editorApplyCreateResult = async (data) => {
     S.handshapeSel = null;
     S.scrollX = 0;
     S.cursorTime = 0;
+    S.barSel = null;
+    S.returnToHighway = false;
     S.history = new EditHistory();
     S.createMode = true;
 
