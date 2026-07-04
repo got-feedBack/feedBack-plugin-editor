@@ -16,7 +16,7 @@ if (!m) {
 }
 
 const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _editorKeySigPure, _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure, _editorShortcutRowsPure };'
+    '"use strict";' + m[0] + '\nreturn { _editorKeySigPure, _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure, _editorShortcutRowsPure, _editorDefaultRightClickBehaviorPure, _editorEffectiveRightClickBehaviorPure };'
 )();
 
 let pass = 0;
@@ -105,6 +105,18 @@ t('maps FeedBack Native note and technique shortcuts', () => {
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('n')), 'toggleNaturalHarmonic');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('n', { shift: true })), 'togglePinchHarmonic');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('h', { ctrl: true })), 'addHandshape');
+});
+
+t('defaults right-click behavior by shortcut profile', () => {
+    assert.strictEqual(api._editorDefaultRightClickBehaviorPure('feedback'), 'context');
+    assert.strictEqual(api._editorDefaultRightClickBehaviorPure('eof'), 'eofEdit');
+});
+
+t('lets saved right-click behavior override profile defaults', () => {
+    assert.strictEqual(api._editorEffectiveRightClickBehaviorPure('eof', null), 'eofEdit');
+    assert.strictEqual(api._editorEffectiveRightClickBehaviorPure('eof', 'context'), 'context');
+    assert.strictEqual(api._editorEffectiveRightClickBehaviorPure('feedback', 'eofEdit'), 'eofEdit');
+    assert.strictEqual(api._editorEffectiveRightClickBehaviorPure('feedback', 'bogus'), 'context');
 });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
