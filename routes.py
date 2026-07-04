@@ -4061,12 +4061,16 @@ def setup(app, context):
     _CAA_MAX_BYTES = 10 * 1024 * 1024
     _CAA_UA = "feedBack-editor/1.0 ( https://github.com/got-feedback/feedBack )"
 
-    def _caa_fetch_front(release_id: str, size: int = 500):
-        """Front cover (size px) for a release MBID from coverartarchive.org, or
-        None when the release has no art / on any error. `release_id` is
-        regex-validated by callers before it reaches this URL."""
+    _CAA_SECONDARY_SKIP = {"live", "compilation", "remix", "dj-mix",
+                           "mixtape/street", "demo", "interview", "audiobook",
+                           "spokenword"}
+
+    def _caa_fetch_front(cover_id: str, size: int = 500, kind: str = "release"):
+        """Front cover (size px) for a MusicBrainz `kind` ('release' or
+        'release-group') from coverartarchive.org, or None when there's no art /
+        on any error. `cover_id` is regex-validated by callers before the URL."""
         import urllib.request
-        url = f"https://coverartarchive.org/release/{release_id}/front-{size}"
+        url = f"https://coverartarchive.org/{kind}/{cover_id}/front-{size}"
         try:
             req = urllib.request.Request(url, headers={"User-Agent": _CAA_UA})
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -4079,27 +4083,27 @@ def setup(app, context):
             return None
         return data
 
-    async def _caa_cached(release_id: str):
-        """Cached cover file for the release (fetch + cache on first use), or
-        None when there's no art."""
-        dest = STORAGE_DIR / f"caa_{release_id}.jpg"
+    async def _caa_cached(cover_id: str, kind: str = "release"):
+        """Cached cover file (fetch + cache on first use), or None when no art."""
+        tag = "rg_" if kind == "release-group" else ""
+        dest = STORAGE_DIR / f"caa_{tag}{cover_id}.jpg"
         if dest.exists() and dest.stat().st_size > 100:
             return dest
         data = await asyncio.get_event_loop().run_in_executor(
-            None, _caa_fetch_front, release_id)
+            None, _caa_fetch_front, cover_id, 500, kind)
         if data is None:
             return None
         dest.write_bytes(data)
         return dest
 
-    @app.get("/api/plugins/editor/caa-cover/{release_id}")
-    async def caa_cover(release_id: str):
-        """Serve the CAA front cover for a release MBID (cached). 404 when the
-        release has no art — the picker hides those tiles. Same-origin, so the
-        grid's <img> loads under the app's CSP without an external host."""
-        if not _CAA_ID_RE.match(release_id or ""):
-            return JSONResponse({"error": "invalid release_id"}, 400)
-        dest = await _caa_cached(release_id)
+    @app.get("/api/plugins/editor/caa-cover/{cover_id}")
+    async def caa_cover(cover_id: str, group: int = 0):
+        """Serve the CAA front cover for a release (or release-group when
+        ?group=1), cached. 404 when there's no art — the picker hides the tile.
+        Same-origin so it loads under the app's CSP without an external host."""
+        if not _CAA_ID_RE.match(cover_id or ""):
+            return JSONResponse({"error": "invalid id"}, 400)
+        dest = await _caa_cached(cover_id, "release-group" if group else "release")
         if dest is None:
             return JSONResponse({"error": "no cover art"}, 404)
         return FileResponse(dest, media_type="image/jpeg")
@@ -4108,13 +4112,69 @@ def setup(app, context):
     async def use_caa_cover(data: dict):
         """Pick a CAA cover as the pack's album art: fetch/cache it and return an
         art_path under STORAGE_DIR that create_sloppak bakes in like an upload."""
-        release_id = str((data or {}).get("release_id") or "")
-        if not _CAA_ID_RE.match(release_id):
-            return JSONResponse({"error": "invalid release_id"}, 400)
-        dest = await _caa_cached(release_id)
+        cover_id = str((data or {}).get("release_id") or "")
+        kind = "release-group" if (data or {}).get("group") else "release"
+        if not _CAA_ID_RE.match(cover_id):
+            return JSONResponse({"error": "invalid id"}, 400)
+        dest = await _caa_cached(cover_id, kind)
         if dest is None:
             return JSONResponse({"error": "no cover art"}, 404)
         return {"art_path": str(dest)}
+
+    # Album-centric cover search. MusicBrainz RELEASE-GROUPS carry reliable Album
+    # vs Live/Compilation typing (unlike recording releases), so searching them by
+    # artist + album/title and preferring the studio album surfaces the CANONICAL
+    # cover first — the fix for "art search shows random comp covers". Works
+    # art-first for title-tracks; for other songs, fill the Album (or run Match).
+    def _mb_release_group_covers(artist: str, query: str) -> list:
+        """Release-group search → [{id, title, year, studio}] studio-albums first."""
+        import urllib.request
+        import urllib.parse
+
+        def _phrase(s):
+            return s.replace("\\", "\\\\").replace('"', '\\"')
+
+        parts = []
+        if query:
+            parts.append('releasegroup:"%s"' % _phrase(query))
+        if artist:
+            parts.append('artist:"%s"' % _phrase(artist))
+        if not parts:
+            return []
+        url = ("https://musicbrainz.org/ws/2/release-group?"
+               + urllib.parse.urlencode(
+                   {"query": " AND ".join(parts), "fmt": "json", "limit": 15}))
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": _CAA_UA})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = json.loads(resp.read().decode("utf-8", "replace"))
+        except Exception:
+            return []
+        out = []
+        for rg in (body.get("release-groups") or []):
+            if not isinstance(rg, dict) or not rg.get("id"):
+                continue
+            secs = {str(s).lower() for s in (rg.get("secondary-types") or [])}
+            studio = (str(rg.get("primary-type", "")).lower() == "album"
+                      and not (secs & _CAA_SECONDARY_SKIP))
+            out.append({
+                "id": str(rg["id"]),
+                "title": str(rg.get("title", "") or ""),
+                "year": str(rg.get("first-release-date", "") or "")[:4],
+                "studio": studio,
+            })
+        out.sort(key=lambda g: (0 if g["studio"] else 1, g["year"] or "9999"))
+        return out
+
+    @app.get("/api/plugins/editor/cover-search")
+    async def cover_search(artist: str = "", query: str = ""):
+        """Album-centric cover candidates (release-groups) for the art picker.
+        `query` is the ALBUM (best) or the song title. Studio album first."""
+        if not (artist.strip() or query.strip()):
+            return {"covers": []}
+        covers = await asyncio.get_event_loop().run_in_executor(
+            None, _mb_release_group_covers, artist.strip(), query.strip())
+        return {"covers": covers}
 
     # ── Upload hover-preview clip ──────────────────────────────────────
     @app.post("/api/plugins/editor/upload-preview")

@@ -6746,10 +6746,15 @@ window.editorCreateArtSelected = async (input) => {
 // so it loads under the app's CSP). Pick one → baked as the pack's art.
 // ════════════════════════════════════════════════════════════════════
 window.editorArtSearch = () => {
-    _editorArtOpenPopup(_cval('editor-create-artist'), _cval('editor-create-title'));
+    // Art is an ALBUM property, so search by the album when we know it (filled by
+    // a MusicBrainz Match, or typed) — falling back to the title. This is why
+    // Match-first works: it fills the album, which pins the canonical cover.
+    const album = _cval('editor-create-album');
+    const title = _cval('editor-create-title');
+    _editorArtOpenPopup(_cval('editor-create-artist'), album || title);
 };
 
-function _editorArtOpenPopup(artist, title) {
+function _editorArtOpenPopup(artist, query) {
     document.getElementById('editor-art-popup')?.remove();
     const modal = document.createElement('div');
     modal.id = 'editor-art-popup';
@@ -6772,7 +6777,7 @@ function _editorArtOpenPopup(artist, title) {
         return i;
     };
     const aIn = mk('Artist', artist);
-    const tIn = mk('Title', title);
+    const tIn = mk('Album (or song)', query);
     const go = document.createElement('button');
     go.type = 'button'; go.className = 'px-2 py-1 rounded text-xs font-medium bg-dark-600 text-gray-300 hover:bg-dark-500 shrink-0';
     go.textContent = 'Search';
@@ -6800,43 +6805,59 @@ function _editorArtMsg(grid, text) {
     grid.appendChild(d);
 }
 
-async function _editorArtRunSearch(artist, title, grid) {
+async function _editorArtRunSearch(artist, query, grid) {
     grid.replaceChildren();
-    if (!artist && !title) { _editorArtMsg(grid, 'Enter an artist or title.'); return; }
+    if (!artist && !query) { _editorArtMsg(grid, 'Enter an artist and album (or song).'); return; }
     _editorArtMsg(grid, 'Searching for covers…');
-    const params = new URLSearchParams();
-    if (artist) params.set('artist', artist);
-    if (title) params.set('title', title);
-    params.set('limit', '20');
-    let data = null;
+    // ALBUM-centric: MusicBrainz release-groups reliably tell studio Album from
+    // Live/Compilation, so the canonical album cover comes first.
+    let tiles = [];
     try {
-        const resp = await fetch('/api/enrichment/search?' + params.toString());
-        data = await resp.json().catch(() => null);
-    } catch (_) { data = null; }
-    grid.replaceChildren();
-    const cands = (data && data.candidates) || [];
-    // One tile per unique release (a release MBID = one CAA cover).
-    const seen = new Set(); const rels = [];
-    for (const c of cands) {
-        const rid = c && c.release_id;
-        if (rid && !seen.has(rid)) { seen.add(rid); rels.push({ id: rid, label: c.album || c.title || '' }); }
+        const p = new URLSearchParams();
+        if (artist) p.set('artist', artist);
+        if (query) p.set('query', query);
+        const r = await fetch('/api/plugins/editor/cover-search?' + p.toString());
+        const d = await r.json().catch(() => null);
+        tiles = ((d && d.covers) || []).map(c => ({
+            id: c.id, group: true, studio: c.studio,
+            label: c.year ? (c.title + ' (' + c.year + ')') : c.title,
+        }));
+    } catch (_) { /* fall through to the recording-based fallback */ }
+    // Fallback (e.g. a non-title-track searched art-first with no album): the
+    // recording search's per-release covers — less canonical, but something.
+    if (!tiles.length) {
+        try {
+            const p2 = new URLSearchParams();
+            if (artist) p2.set('artist', artist);
+            if (query) p2.set('title', query);
+            p2.set('limit', '15');
+            const r2 = await fetch('/api/enrichment/search?' + p2.toString());
+            const d2 = await r2.json().catch(() => null);
+            const seen = new Set();
+            for (const c of ((d2 && d2.candidates) || [])) {
+                const rid = c && c.release_id;
+                if (rid && !seen.has(rid)) { seen.add(rid); tiles.push({ id: rid, group: false, label: c.album || c.title || '' }); }
+            }
+        } catch (_) { /* nothing else to try */ }
     }
-    if (!rels.length) { _editorArtMsg(grid, 'No covers found — refine the artist/title.'); return; }
+    grid.replaceChildren();
+    if (!tiles.length) { _editorArtMsg(grid, 'No covers found — add the album name, or run Match first.'); return; }
     const hint = document.createElement('div');
     hint.className = 'text-[11px] text-gray-600 pb-1'; hint.style.gridColumn = '1 / -1';
-    hint.textContent = 'Covers with no art are hidden. Click one to use it.';
+    hint.textContent = 'Studio album first · covers with no art are hidden · click to use.';
     grid.appendChild(hint);
-    for (const r of rels) grid.appendChild(_editorArtTile(r));
+    for (const t of tiles) grid.appendChild(_editorArtTile(t));
 }
 
-function _editorArtTile(r) {
+function _editorArtTile(t) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'rounded overflow-hidden border border-gray-700 hover:border-accent bg-dark-900 text-left';
     btn.style.cssText = 'display:flex;flex-direction:column;';
+    const q = t.group ? '?group=1' : '';
     const img = document.createElement('img');
-    img.src = '/api/plugins/editor/caa-cover/' + encodeURIComponent(r.id);
-    img.alt = r.label;
+    img.src = '/api/plugins/editor/caa-cover/' + encodeURIComponent(t.id) + q;
+    img.alt = t.label;
     img.loading = 'lazy';
     img.style.cssText = 'width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:#15161c;';
     // 404 (no art for this release) → hide the whole tile.
@@ -6844,24 +6865,25 @@ function _editorArtTile(r) {
     const cap = document.createElement('span');
     cap.className = 'text-[10px] text-gray-400 px-1 py-0.5';
     cap.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-    cap.textContent = r.label;
+    cap.textContent = t.label;
     btn.appendChild(img); btn.appendChild(cap);
-    btn.onclick = () => _editorPickCaaCover(r.id);
+    btn.onclick = () => _editorPickCaaCover(t.id, t.group);
     return btn;
 }
 
-async function _editorPickCaaCover(release_id) {
+async function _editorPickCaaCover(id, group) {
+    const q = group ? '?group=1' : '';
     try {
         const resp = await fetch('/api/plugins/editor/use-caa-cover', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ release_id }),
+            body: JSON.stringify({ release_id: id, group: !!group }),
         });
         const data = await resp.json().catch(() => null);
         if (!resp.ok || !data || !data.art_path) return;
         createState.artPath = data.art_path;
         const prev = document.getElementById('editor-create-art-preview');
         if (prev) {
-            prev.style.backgroundImage = 'url("/api/plugins/editor/caa-cover/' + encodeURIComponent(release_id) + '")';
+            prev.style.backgroundImage = 'url("/api/plugins/editor/caa-cover/' + encodeURIComponent(id) + q + '")';
             prev.textContent = '';
         }
     } catch (_) { /* leave art unset on failure */ }
