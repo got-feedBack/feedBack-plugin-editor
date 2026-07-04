@@ -62,6 +62,12 @@ _NOTE_TECH_FIELDS = (
 # (load) and `_arr_dict_to_wire` (save) instead.
 
 
+def _note_tech_dict(n) -> dict:
+    """Return the editor technique dict for a parsed note-like object."""
+    d = {f: getattr(n, f, -1) for f in _NOTE_TECH_FIELDS}
+    d["bend_values"] = getattr(n, "bend_values", None)
+    return d
+
 # ── JSONC support (feedpak-spec §8) ──────────────────────────────────────────
 # A .jsonc file is JSON with C-style // line and /* */ block comments. The spec
 # requires a Reader to strip comments before parsing and a Writer to preserve
@@ -2061,7 +2067,27 @@ def _arr_to_data(arr, name):
         "notes": [],
         "chords": [],
         "chord_templates": [],
+        "handshapes": [],
     }
+
+    anchors_payload = [
+        {
+            "time": round(a.time, 3),
+            "fret": a.fret,
+            "width": a.width,
+        }
+        for a in (getattr(arr, "anchors", None) or [])
+    ]
+    arr_data["anchors"] = list(anchors_payload)
+    arr_data["anchors_user"] = list(anchors_payload)
+
+    for h in (getattr(arr, "hand_shapes", None) or []):
+        arr_data["handshapes"].append({
+            "chord_id": h.chord_id,
+            "start_time": round(h.start_time, 3),
+            "end_time": round(h.end_time, 3),
+            "arp": bool(getattr(h, "arpeggio", False)),
+        })
 
     for n in arr.notes:
         arr_data["notes"].append({
@@ -2069,21 +2095,7 @@ def _arr_to_data(arr, name):
             "string": n.string,
             "fret": n.fret,
             "sustain": round(n.sustain, 3),
-            "techniques": {
-                "bend": n.bend,
-                "slide_to": n.slide_to,
-                "slide_unpitch_to": n.slide_unpitch_to,
-                "hammer_on": n.hammer_on,
-                "pull_off": n.pull_off,
-                "harmonic": n.harmonic,
-                "harmonic_pinch": n.harmonic_pinch,
-                "palm_mute": n.palm_mute,
-                "mute": n.mute,
-                "tremolo": n.tremolo,
-                "accent": n.accent,
-                "tap": n.tap,
-                "link_next": n.link_next,
-            },
+            "techniques": _note_tech_dict(n),
         })
 
     for ch in arr.chords:
@@ -2091,6 +2103,7 @@ def _arr_to_data(arr, name):
             "time": round(ch.time, 3),
             "chord_id": ch.chord_id,
             "high_density": ch.high_density,
+            "fn": getattr(ch, "fn", None),
             "notes": [],
         }
         for cn in ch.notes:
@@ -2099,21 +2112,7 @@ def _arr_to_data(arr, name):
                 "string": cn.string,
                 "fret": cn.fret,
                 "sustain": round(cn.sustain, 3),
-                "techniques": {
-                    "bend": cn.bend,
-                    "slide_to": cn.slide_to,
-                    "slide_unpitch_to": cn.slide_unpitch_to,
-                    "hammer_on": cn.hammer_on,
-                    "pull_off": cn.pull_off,
-                    "harmonic": cn.harmonic,
-                    "harmonic_pinch": cn.harmonic_pinch,
-                    "palm_mute": cn.palm_mute,
-                    "mute": cn.mute,
-                    "tremolo": cn.tremolo,
-                    "accent": cn.accent,
-                    "tap": cn.tap,
-                    "link_next": cn.link_next,
-                },
+                "techniques": _note_tech_dict(cn),
             })
         arr_data["chords"].append(chord_data)
 
@@ -2124,6 +2123,9 @@ def _arr_to_data(arr, name):
             "arp": bool(getattr(ct, "arpeggio", False)),
             "frets": ct.frets,
             "fingers": ct.fingers,
+            "voicing": getattr(ct, "voicing", "") or "",
+            "caged": _caged_wire(getattr(ct, "caged", "")),
+            "guideTones": _guide_tones_wire(getattr(ct, "guide_tones", [])),
         })
 
     return arr_data
