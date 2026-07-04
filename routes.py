@@ -3604,8 +3604,17 @@ def setup(app, context):
 
         roster_in = meta_in.get("arrangements")
         if roster_in is None:
+            # Legacy shape: `initial_arrangement` (single role) + `init_drum_tab`
+            # (bool, default True). Translate both into the roster so an older
+            # client still gets its requested drum tab — in the new model a
+            # "Drums" role IS the drum tab (see init_drums below).
             single = _str_field("initial_arrangement", "Lead") or "Lead"
             roster_in = [single]
+            legacy_drums = meta_in.get("init_drum_tab", True)
+            if not isinstance(legacy_drums, bool):
+                return JSONResponse({"error": "init_drum_tab must be a boolean"}, 400)
+            if legacy_drums:
+                roster_in.append("Drums")
         if not isinstance(roster_in, list) or not roster_in:
             return JSONResponse(
                 {"error": "arrangements must be a non-empty list of roles"}, 400,
