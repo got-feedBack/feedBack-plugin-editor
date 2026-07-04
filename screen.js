@@ -5547,7 +5547,7 @@ window.editorShowCreateModal = () => {
     // gp8AudioMode / autoSyncAudioUrl / lastSync can't leak into this one
     // (which would apply the previous song's audio/offset to a new import).
     createState = {
-        mode: 'blank', initialArr: 'Lead',
+        mode: 'blank', initialArr: 'Lead', stringCount: 6,
         gpPath: null, tracks: null, audioUrl: null, audioMode: 'file', artPath: null,
         previewPath: null, eofFiles: null,
         gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null,
@@ -5577,6 +5577,7 @@ window.editorShowCreateModal = () => {
     if (_refineStatus) _refineStatus.textContent = '';
     editorSetAudioMode('file');
     _populateCreateArrButtons();
+    _populateStringCountButtons();
     editorSetCreateMode('blank');
 };
 
@@ -6050,6 +6051,13 @@ function updateCreateButton() {
 // the arrangements the create_sloppak backend accepts today; Keys/Drums-as-arr
 // + extended tunings need backend work (tracked separately). The drum-tab
 // checkbox beside it covers a drum chart.
+// String-count options per role — feedpak-spec §5.2 allows tuning length 4-8.
+// Guitar roles offer 6/7/8; Bass offers 4/5/6. The create route derives the
+// arrangement's string count from the length of the tuning array we send.
+function _createRoleStringOptions(role) {
+    return role === 'Bass' ? [4, 5, 6] : [6, 7, 8];
+}
+
 function _populateCreateArrButtons() {
     const wrap = document.getElementById('editor-create-arr-buttons');
     if (!wrap) return;
@@ -6065,7 +6073,33 @@ function _populateCreateArrButtons() {
             + (name === createState.initialArr
                 ? 'bg-accent text-white'
                 : 'bg-dark-600 text-gray-300 hover:bg-dark-500');
-        b.onclick = () => { createState.initialArr = name; _populateCreateArrButtons(); };
+        b.onclick = () => {
+            createState.initialArr = name;
+            // Re-scope string count to the new role's options.
+            const opts = _createRoleStringOptions(name);
+            if (!opts.includes(createState.stringCount)) createState.stringCount = opts[0];
+            _populateCreateArrButtons();
+            _populateStringCountButtons();
+        };
+        wrap.appendChild(b);
+    }
+}
+
+function _populateStringCountButtons() {
+    const wrap = document.getElementById('editor-create-strings-buttons');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    const opts = _createRoleStringOptions(createState.initialArr);
+    if (!opts.includes(createState.stringCount)) createState.stringCount = opts[0];
+    for (const n of opts) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = n + '-string';
+        b.className = 'px-2 py-1 rounded text-xs font-medium '
+            + (n === createState.stringCount
+                ? 'bg-accent text-white'
+                : 'bg-dark-600 text-gray-300 hover:bg-dark-500');
+        b.onclick = () => { createState.stringCount = n; _populateStringCountButtons(); };
         wrap.appendChild(b);
     }
 }
@@ -6220,6 +6254,15 @@ async function _editorDoBlankCreate() {
         album: ((document.getElementById('editor-create-album')?.value) || '').trim(),
         year: ((document.getElementById('editor-create-year')?.value) || '').trim(),
         initial_arrangement: createState.initialArr || 'Lead',
+        // The tuning array's LENGTH sets the arrangement's string count
+        // (feedpak-spec §5.2). All-zero offsets = standard tuning for that
+        // count; alt/drop tunings are a fine-tune step in the editor.
+        tuning: new Array(
+            (Number.isInteger(createState.stringCount)
+                && createState.stringCount >= 4 && createState.stringCount <= 8)
+                ? createState.stringCount
+                : (createState.initialArr === 'Bass' ? 4 : 6),
+        ).fill(0),
         init_drum_tab: !!document.getElementById('editor-create-drum-tab')?.checked,
         audio_url: createState.audioUrl,
     };

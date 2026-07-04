@@ -3521,12 +3521,14 @@ def setup(app, context):
                 400,
             )
 
-        # Strict length per chosen arrangement. Bass = 4 strings, the
-        # rest = 6. Reject anything else (1, 7, 20, …) so a malformed
-        # client can't accidentally request an extended-range or
-        # truncated arrangement through this entry point. (Extended-
-        # range support exists via the save-as-sloppak path, not here.)
-        expected_strings = 4 if arr_name == "Bass" else 6
+        # String count is derived from the tuning array. feedpak-spec §5.2
+        # models tuning length 4–8 and explicitly says Readers MUST NOT
+        # hard-code 6, so range-check instead of pinning 4|6 — this lets
+        # extended-range guitars (7/8-string) and 5/6-string basses be created
+        # at the source, not only through the save-as path. Absent tuning ->
+        # a sensible default per role (Bass = 4, guitar roles = 6).
+        _MIN_STRINGS, _MAX_STRINGS = 4, 8
+        default_strings = 4 if arr_name == "Bass" else 6
         tuning_in = meta_in.get("tuning")
 
         def _is_int(v) -> bool:
@@ -3535,8 +3537,9 @@ def setup(app, context):
             return isinstance(v, int) and not isinstance(v, bool)
 
         if tuning_in is None:
-            tuning = [0] * expected_strings
-        elif isinstance(tuning_in, list) and len(tuning_in) == expected_strings:
+            tuning = [0] * default_strings
+        elif (isinstance(tuning_in, list)
+                and _MIN_STRINGS <= len(tuning_in) <= _MAX_STRINGS):
             if not all(_is_int(t) for t in tuning_in):
                 return JSONResponse(
                     {"error": "tuning entries must be integers (no floats or booleans)"},
@@ -3546,8 +3549,9 @@ def setup(app, context):
         else:
             return JSONResponse(
                 {"error": (
-                    f"tuning must be a list of {expected_strings} ints "
-                    f"for an initial '{arr_name}' arrangement"
+                    f"tuning must be a list of {_MIN_STRINGS}-{_MAX_STRINGS} ints "
+                    f"(feedpak-spec §5.2), or omitted for a default "
+                    f"{default_strings}-string '{arr_name}'"
                 )},
                 400,
             )
