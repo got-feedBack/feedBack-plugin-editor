@@ -2937,9 +2937,9 @@ function _editorKeySigPure(e) {
 const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'save', label: 'Save project', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+S', eof: 'F2 / Ctrl+S' } },
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
-    { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+I', eof: 'F6' } },
-    { id: 'importXml', label: 'Import XML source', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+I', eof: 'F7' } },
-    { id: 'importGp', label: 'Import Guitar Pro source', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+I', eof: 'F12' } },
+    { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
+    { id: 'importXml', label: 'Import XML source', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F7' } },
+    { id: 'importGp', label: 'Import Guitar Pro source', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F12' } },
     { id: 'prevBeat', label: 'Jump to previous beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Up', eof: 'Page Up' } },
     { id: 'nextBeat', label: 'Jump to next beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Down', eof: 'Page Down' } },
     { id: 'prevNote', label: 'Jump to previous note', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+Left', eof: 'Shift+Page Up' } },
@@ -2948,12 +2948,12 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'nextGrid', label: 'Jump to next grid line', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Page Down', eof: 'Ctrl+Shift+Page Down' } },
     { id: 'prevAnchor', label: 'Jump to previous anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Left', eof: 'Alt+Page Up' } },
     { id: 'nextAnchor', label: 'Jump to next anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Right', eof: 'Alt+Page Down' } },
-    { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+Q', eof: '[' } },
-    { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+Q', eof: ']' } },
+    { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: '[' } },
+    { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: ']' } },
     { id: 'snapDown', label: 'Decrease snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: ',', eof: ',' } },
     { id: 'snapUp', label: 'Increase snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: '.', eof: '.' } },
     { id: 'editFret', label: 'Edit fret / fingering', group: 'Notes', status: 'ready', keys: { feedback: 'F', eof: 'F / Ctrl+F' } },
-    { id: 'noteMenu', label: 'Open note edit menu', group: 'Notes', status: 'ready', keys: { feedback: 'Double-click note', eof: 'N' } },
+    { id: 'noteMenu', label: 'Open note edit menu', group: 'Notes', status: 'ready', keys: { feedback: '', eof: 'N' } },
     { id: 'bend', label: 'Edit bend', group: 'Notes', status: 'ready', keys: { feedback: 'B', eof: 'Ctrl+B' } },
     { id: 'unpitchedSlide', label: 'Edit unpitched slide', group: 'Notes', status: 'ready', keys: { feedback: 'U', eof: 'Ctrl+U' } },
     { id: 'transposeStringUp', label: 'Move selection up one string', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Up', eof: 'Shift+Up' } },
@@ -2969,7 +2969,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleMuteOpen', label: 'Mute and set fret open', group: 'Techniques', status: 'ready', keys: { feedback: 'X', eof: 'Ctrl+X' } },
     { id: 'toggleMuteRetain', label: 'Mute and retain fret', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+X', eof: 'Shift+X' } },
     { id: 'toggleVibrato', label: 'Toggle vibrato', group: 'Techniques', status: 'ready', keys: { feedback: 'V', eof: 'Shift+V' } },
-    { id: 'toggleLinkNext', label: 'Toggle link-next', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+N', eof: 'Shift+N' } },
+    { id: 'toggleLinkNext', label: 'Toggle link-next', group: 'Techniques', status: 'ready', keys: { feedback: '', eof: 'Shift+N' } },
     { id: 'toggleAccent', label: 'Toggle accent', group: 'Techniques', status: 'ready', keys: { feedback: 'A', eof: 'Ctrl+Shift+A' } },
     { id: 'toggleIgnore', label: 'Toggle ignore', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+I', eof: 'Ctrl+Shift+I' } },
     { id: 'toggleTremolo', label: 'Toggle tremolo', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+O', eof: 'Ctrl+Shift+O' } },
@@ -2986,7 +2986,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+I' } },
     { id: 'toggleGridDisplay', label: 'Toggle grid display density', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Shift+G', eof: 'Shift+G' } },
     { id: 'customGridSnap', label: 'Open custom snap settings', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Alt+G', eof: 'Ctrl+Shift+G' } },
-    { id: 'midiTones', label: 'MIDI tone spot-check', group: 'Preview', status: 'planned', keys: { feedback: 'Shift+T', eof: 'Shift+T' } },
+    { id: 'midiTones', label: 'MIDI tone spot-check', group: 'Preview', status: 'planned', keys: { feedback: '', eof: 'Shift+T' } },
     { id: 'placeMoverPhrase', label: 'Place mover phrase', group: 'Structure', status: 'planned', keys: { feedback: 'Ctrl+Shift+R', eof: 'Ctrl+Shift+R' } },
 ]);
 
@@ -2997,7 +2997,7 @@ function _editorShortcutRowsPure(profile) {
         label: cmd.label,
         group: cmd.group,
         status: cmd.status,
-        key: p === 'eof' ? ((cmd.keys && cmd.keys.eof) || '') : (cmd.id === 'save' ? 'Ctrl+S' : ''),
+        key: (cmd.keys && cmd.keys[p]) || '',
     }));
 }
 function _editorEofCommandForKeyPure(e) {
@@ -3051,7 +3051,7 @@ function _editorEofCommandForKeyPure(e) {
     if (ctrl && key === 't') return 'toggleTap';
     if (ctrl && key === 'u') return 'unpitchedSlide';
     if (ctrl && key === 'x') return 'toggleMuteOpen';
-    if (ctrl && (key === '+' || key === '=')) return 'fretUp';
+     if (ctrl && (key === '+' || key === '=')) return 'fretUp';
     if (ctrl && key === '-') return 'fretDown';
     if (ctrlShift && key === 'a') return 'toggleAccent';
     if (ctrlShift && key === 'g') return 'customGridSnap';
@@ -3068,6 +3068,61 @@ function _editorEofCommandForKeyPure(e) {
     if (ctrl && e.key === 'ArrowUp') return 'slideUp';
     if (ctrl && e.key === 'ArrowDown') return 'slideDown';
     if (alt && (e.key === 'PageUp' || e.key === 'PageDown')) return e.key === 'PageUp' ? 'prevAnchor' : 'nextAnchor';
+    return null;
+}
+
+function _editorFeedbackCommandForKeyPure(e) {
+    const sig = _editorKeySigPure(e);
+    const key = (e.key || '').toLowerCase();
+    const plain = !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
+    const ctrl = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
+    const shift = e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+    const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+    const ctrlAlt = (e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey;
+    const ctrlShift = (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey;
+
+    if (ctrl && key === 's') return 'save';
+    if (plain && key === 'w') return 'toggleWaveform';
+    if (sig === 'PageUp') return 'prevBeat';
+    if (sig === 'PageDown') return 'nextBeat';
+    if (alt && e.key === 'ArrowLeft') return 'prevNote';
+    if (alt && e.key === 'ArrowRight') return 'nextNote';
+    if (sig === 'Ctrl+PageUp') return 'prevGrid';
+    if (sig === 'Ctrl+PageDown') return 'nextGrid';
+    if (ctrlAlt && e.key === 'ArrowLeft') return 'prevAnchor';
+    if (ctrlAlt && e.key === 'ArrowRight') return 'nextAnchor';
+    if (plain && key === ',') return 'snapDown';
+    if (plain && key === '.') return 'snapUp';
+    if (plain && key === 'f') return 'editFret';
+    if (plain && key === 'b') return 'bend';
+    if (plain && key === 'u') return 'unpitchedSlide';
+    if (shift && e.key === 'ArrowUp') return 'transposeStringUp';
+    if (shift && e.key === 'ArrowDown') return 'transposeStringDown';
+    if (plain && key === 'h') return 'toggleHammerOn';
+    if (plain && key === 'p') return 'togglePullOff';
+    if (plain && key === 'y') return 'toggleTap';
+    if (plain && key === 'v') return 'toggleVibrato';
+    if (plain && key === 'm') return 'togglePalmMute';
+    if (plain && key === 'x') return 'toggleMuteOpen';
+    if (shift && key === 'x') return 'toggleMuteRetain';
+    if (plain && key === 'n') return 'toggleNaturalHarmonic';
+    if (shift && key === 'n') return 'togglePinchHarmonic';
+    if (plain && key === 'o') return 'togglePop';
+    if (plain && key === 'a') return 'toggleAccent';
+    if (shift && key === 't') return 'setTimeSignature';
+    if (ctrl && key === 'h') return 'addHandshape';
+    if (ctrlShift && key === 'i') return 'toggleIgnore';
+    if (ctrlShift && key === 'o') return 'toggleTremolo';
+    if (ctrlShift && key === 't') return 'addToneChange';
+    if (ctrl && (key === '+' || key === '=')) return 'fretUp';
+    if (ctrl && key === '-') return 'fretDown';
+    if (shift && key === 'f') return 'setAnchor';
+    if (ctrl && key === 'l') return 'selectLike';
+    if (shift && key === 'r') return 'resnapSelection';
+    if (shift && key === 'm') return 'addSection';
+    if (shift && key === 'p') return 'addPhrase';
+    if (ctrl && e.key === 'ArrowUp') return 'slideUp';
+    if (ctrl && e.key === 'ArrowDown') return 'slideDown';
     return null;
 }
 /* @pure:shortcut-profile:end */
@@ -3467,6 +3522,15 @@ function _editorRunEofCommand(cmd) {
     }
 }
 
+function _editorDispatchFeedbackShortcut(e) {
+    if (editorShortcutProfile !== 'feedback' || _editorIsTypingTarget(e)) return false;
+    const cmd = _editorFeedbackCommandForKeyPure(e);
+    if (!cmd) return false;
+    const def = _editorCommandById(cmd);
+    if (def && def.status !== 'ready') return false;
+    e.preventDefault();
+    return _editorRunEofCommand(cmd);
+}
 function _editorDispatchEofShortcut(e) {
     if (editorShortcutProfile !== 'eof' || _editorIsTypingTarget(e)) return false;
     const cmd = _editorEofCommandForKeyPure(e);
@@ -3589,6 +3653,7 @@ function onKeyDown(e) {
     // which cleanly finalizes the take.
     if (_recState === 'recording') return;
 
+    if (_editorDispatchFeedbackShortcut(e)) return;
     if (_editorDispatchEofShortcut(e)) return;
 
     // Tempo-map mode: Insert key adds a sync point at the cursor.
