@@ -3657,6 +3657,22 @@ function onKeyDown(e) {
     // which cleanly finalizes the take.
     if (_recState === 'recording') return;
 
+    // Drum-edit articulation toggles take priority over the shortcut-profile
+    // dispatch: a plain 'f' in drum-edit mode must toggle flam, not resolve to
+    // the FeedBack/EOF `editFret` command (which claims plain 'f'). Only fires
+    // with a drum selection; otherwise falls through to the dispatch below.
+    if (S.drumEditMode && S.drumSel.size && S.drumTab
+        && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
+        && !e.target.matches('input, select, textarea')) {
+        const dk = e.key.toLowerCase();
+        if (dk === 'g' || dk === 'f' || dk === 'k') {
+            e.preventDefault();
+            _drumEditorToggleArticulation(dk);
+            draw();
+            return;
+        }
+    }
+
     if (_editorDispatchFeedbackShortcut(e)) return;
     if (_editorDispatchEofShortcut(e)) return;
 
@@ -3762,22 +3778,6 @@ function onKeyDown(e) {
             return;
         }
     }
-    // Drum-edit articulation toggles — only when one or more hits are
-    // selected. G = ghost, F = flam, K = choke (cymbal pieces only, ignored
-    // on drums). Plain key (no Shift/Ctrl/Meta/Alt modifiers) so they don't
-    // fight Ctrl+G, Shift+G, etc.
-    if (S.drumEditMode && S.drumSel.size && S.drumTab
-        && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
-        && !e.target.matches('input, select, textarea')) {
-        const k = e.key.toLowerCase();
-        if (k === 'g' || k === 'f' || k === 'k') {
-            e.preventDefault();
-            _drumEditorToggleArticulation(k);
-            draw();
-            return;
-        }
-    }
-
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
         e.preventDefault();
         editorUndo();
