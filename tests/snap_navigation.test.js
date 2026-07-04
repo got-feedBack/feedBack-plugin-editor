@@ -33,6 +33,14 @@ const beats = [
     { time: 3.0 },
 ];
 
+t('no dangling SNAP_VALUES references (fully replaced by SNAP_OPTIONS)', () => {
+    // snapTime() and any other snap consumer must read SNAP_OPTIONS[idx].step,
+    // not the removed SNAP_VALUES array — a leftover reference is a runtime
+    // ReferenceError the moment a snap-aligned edit runs (node --check won't
+    // catch it, and it lives outside the @pure block the other tests exercise).
+    assert.ok(!/\bSNAP_VALUES\b/.test(src), 'leftover SNAP_VALUES reference in screen.js');
+});
+
 t('snap includes extended straight and triplet options', () => {
     const labels = api.SNAP_OPTIONS.map((o) => o.label);
     for (const label of ['1/24', '1/32', '1/48T', '1/64', '1/96T']) {

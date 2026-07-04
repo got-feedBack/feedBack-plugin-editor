@@ -506,20 +506,11 @@ function updatePianoRange(expandOnly = false) {
 }
 
 function snapTime(t) {
-    const sv = SNAP_VALUES[S.snapIdx];
-    if (sv === 0 || S.beats.length < 2) return t;
-    // Find surrounding beat
-    let bi = 0;
-    for (let i = 0; i < S.beats.length - 1; i++) {
-        if (S.beats[i].time <= t) bi = i; else break;
-    }
-    const bt = S.beats[bi].time;
-    const nt = bi < S.beats.length - 1 ? S.beats[bi + 1].time : bt + 0.5;
-    const bd = nt - bt;
-    const subs = 1 / sv;
-    const sd = bd / subs;
-    const idx = Math.round((t - bt) / sd);
-    return bt + idx * sd;
+    // Delegates to the pure grid snapper, wired to the live snap model: the
+    // selected division's step plus the split-out enabled flag (snap "off" is
+    // now S.snapEnabled === false, not a zero entry in the options list).
+    const opt = SNAP_OPTIONS[S.snapIdx];
+    return _snapTimeToGrid(t, S.beats, opt ? opt.step : 0, S.snapEnabled);
 }
 
 // ════════════════════════════════════════════════════════════════════
