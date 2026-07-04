@@ -47,7 +47,84 @@ let BEAT_H = 24;
 const LABEL_W = 52;
 const MIN_NOTE_W = 18;
 const NOTE_PAD = 3;
-const SNAP_VALUES = [1, 0.5, 0.25, 0.125, 0.0625, 0]; // 1/1 … 1/16, off
+/* @pure:snap-nav:start */
+const SNAP_OPTIONS = [
+    { label: '1/1', step: 1 },
+    { label: '1/2', step: 0.5 },
+    { label: '1/3T', step: 1 / 3 },
+    { label: '1/4', step: 0.25 },
+    { label: '1/6T', step: 1 / 6 },
+    { label: '1/8', step: 0.125 },
+    { label: '1/12T', step: 1 / 12 },
+    { label: '1/16', step: 1 / 16 },
+    { label: '1/24', step: 1 / 24 },
+    { label: '1/32', step: 1 / 32 },
+    { label: '1/48T', step: 1 / 48 },
+    { label: '1/64', step: 1 / 64 },
+    { label: '1/96T', step: 1 / 96 },
+];
+
+function _nextTimeInList(times, current, dir) {
+    if (!Array.isArray(times) || !times.length) return null;
+    const eps = 1e-6;
+    if (dir > 0) {
+        for (const t of times) if (t > current + eps) return t;
+        return null;
+    }
+    for (let i = times.length - 1; i >= 0; i--) {
+        if (times[i] < current - eps) return times[i];
+    }
+    return null;
+}
+
+function _nextBeatTime(beats, current, dir) {
+    return _nextTimeInList((beats || []).map((b) => b.time), current, dir);
+}
+
+function _snapTimeToGrid(t, beats, snapValue, enabled) {
+    if (!enabled || !snapValue || !Array.isArray(beats) || beats.length < 2) return t;
+    let bi = 0;
+    for (let i = 0; i < beats.length - 1; i++) {
+        if (beats[i].time <= t) bi = i;
+        else break;
+    }
+    const bt = beats[bi].time;
+    const nt = bi < beats.length - 1 ? beats[bi + 1].time : bt + 0.5;
+    const bd = nt - bt;
+    const subs = 1 / snapValue;
+    const sd = bd / subs;
+    const idx = Math.round((t - bt) / sd);
+    return bt + idx * sd;
+}
+
+function _nextGridTime(beats, snapValue, enabled, current, dir) {
+    if (!enabled || !snapValue || !Array.isArray(beats) || beats.length < 2) {
+        return _nextBeatTime(beats, current, dir);
+    }
+    const eps = 1e-6;
+    for (let i = 0; i < beats.length - 1; i++) {
+        const bt = beats[i].time;
+        const nt = beats[i + 1].time;
+        const bd = nt - bt;
+        const subs = Math.max(1, Math.round(1 / snapValue));
+        const sd = bd / subs;
+        if (dir > 0) {
+            const start = current >= bt - eps ? Math.max(0, Math.floor((current - bt) / sd) + 1) : 0;
+            for (let j = start; j <= subs; j++) {
+                const candidate = bt + j * sd;
+                if (candidate > current + eps && candidate <= nt + eps) return candidate;
+            }
+        } else if (current > bt + eps) {
+            const start = Math.min(subs, Math.ceil((current - bt) / sd) - 1);
+            for (let j = start; j >= 0; j--) {
+                const candidate = bt + j * sd;
+                if (candidate < current - eps && candidate >= bt - eps) return candidate;
+            }
+        }
+    }
+    return null;
+}
+/* @pure:snap-nav:end */
 const DPR = window.devicePixelRatio || 1;
 
 // ── Piano roll constants ────────────────────────────────────────────
@@ -132,7 +209,8 @@ const S = {
     // View
     scrollX: 0,   // seconds
     zoom: 120,     // px per second
-    snapIdx: 2,    // default 1/4
+    snapIdx: 3,    // default 1/4
+    snapEnabled: true,
 
     // Selection
     sel: new Set(),
@@ -319,6 +397,50 @@ function strToLane(s) { return (lanes() - 1) - s; }
 function laneToStr(l) { return (lanes() - 1) - l; }
 function strToY(s)   { return laneToY(strToLane(s)); }
 function yToStr(y)   { const l = Math.max(0, Math.min(lanes() - 1, yToLane(y))); return laneToStr(l); }
+function _maxScrollX() {
+    if (!canvas) return Math.max(0, S.duration || 0);
+    const viewDur = Math.max(0, ((canvas.width / DPR) - LABEL_W) / S.zoom);
+    return Math.max(0, (S.duration || 0) - Math.max(0, viewDur * 0.7));
+}
+function _jumpCursorTo(t) {
+    if (!Number.isFinite(t)) return false;
+    S.cursorTime = Math.max(0, Math.min(S.duration || t, t));
+    if (canvas) {
+        const viewDur = Math.max(0, ((canvas.width / DPR) - LABEL_W) / S.zoom);
+        const left = S.scrollX + viewDur * 0.15;
+        const right = S.scrollX + viewDur * 0.85;
+        if (S.cursorTime < left || S.cursorTime > right) {
+            S.scrollX = Math.max(0, Math.min(_maxScrollX(), S.cursorTime - viewDur * 0.3));
+        }
+    }
+    updateTimeDisplay();
+    updateStatus();
+    draw();
+    return true;
+}
+function _currentAnchorTimes() {
+    if (!S.arrangements.length || S.drumEditMode || S.tempoMapMode) return [];
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return [];
+    return _readAnchorSnapshot(arr).list.map((a) => a.time).sort((a, b) => a - b);
+}
+function _currentNoteTimes() {
+    return notes().map((n) => n.time).sort((a, b) => a - b);
+}
+function _navigateTimeline(dir, mode) {
+    let target = null;
+    if (mode === 'grid') {
+        const opt = SNAP_OPTIONS[S.snapIdx];
+        target = _nextGridTime(S.beats, opt ? opt.step : 0.25, S.snapEnabled, S.cursorTime, dir);
+    } else if (mode === 'note') {
+        target = _nextTimeInList(_currentNoteTimes(), S.cursorTime, dir);
+    } else if (mode === 'anchor') {
+        target = _nextTimeInList(_currentAnchorTimes(), S.cursorTime, dir);
+    } else {
+        target = _nextBeatTime(S.beats, S.cursorTime, dir);
+    }
+    return _jumpCursorTo(target);
+}
 function canvasH()   {
     return _beatBarTopY() + BEAT_H;
 }
@@ -2756,6 +2878,18 @@ function onKeyDown(e) {
         return;
     }
 
+    if (!e.target.matches('input, select, textarea')
+            && ['PageUp', 'PageDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        const dir = (e.key === 'PageDown' || e.key === 'ArrowRight') ? 1 : -1;
+        const mode = (e.altKey && !e.ctrlKey && !e.metaKey) ? 'anchor'
+            : ((e.ctrlKey || e.metaKey) && e.shiftKey) ? 'grid'
+                : e.shiftKey ? 'note'
+                    : 'beat';
+        if (_navigateTimeline(dir, mode)) {
+            e.preventDefault();
+            return;
+        }
+    }
     if (e.key === 'Delete' || e.key === 'Backspace') {
         // Tempo-map mode: delete the selected sync point.
         if (S.tempoMapMode && S.tempoSel >= 0 &&
@@ -4771,6 +4905,36 @@ function updateZoomDisplay() {
     if (el) el.textContent = Math.round(S.zoom);
 }
 
+function _populateSnapOptions() {
+    const el = document.getElementById('editor-snap');
+    if (!el || el.dataset.wired === '1') return;
+    el.innerHTML = SNAP_OPTIONS.map((opt, idx) => '<option value="' + idx + '">' + opt.label + '</option>').join('');
+    el.dataset.wired = '1';
+}
+
+function _persistSnapPrefs() {
+    try {
+        localStorage.setItem('editor-snap-idx', String(S.snapIdx));
+        localStorage.setItem('editor-snap-enabled', S.snapEnabled ? '1' : '0');
+    } catch (_) { /* localStorage unavailable */ }
+}
+
+function updateSnapUI() {
+    const sel = document.getElementById('editor-snap');
+    if (sel) {
+        sel.value = String(S.snapIdx);
+        sel.disabled = !S.snapEnabled;
+        sel.title = S.snapEnabled ? 'Grid division for snap-aligned edits' : 'Enable snap to use a grid division';
+    }
+    const btn = document.getElementById('editor-snap-toggle');
+    if (btn) {
+        btn.textContent = S.snapEnabled ? 'On' : 'Off';
+        btn.className = S.snapEnabled
+            ? 'px-2 py-0.5 bg-accent hover:bg-accent-light rounded text-xs font-medium'
+            : 'px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium text-gray-300';
+        btn.title = S.snapEnabled ? 'Disable snap and place edits freely' : 'Enable snap-to-grid';
+    }
+}
 function updateBPMDisplay() {
     const el = document.getElementById('editor-bpm');
     if (el && S.beats.length >= 2) el.value = getTabBPM().toFixed(1);
@@ -4841,7 +5005,19 @@ window.editorZoom = (dir) => {
     updateZoomDisplay();
     draw();
 };
-window.editorSetSnap = (idx) => { S.snapIdx = idx; };
+window.editorSetSnap = (idx) => {
+    const next = Number(idx);
+    if (!Number.isInteger(next) || next < 0 || next >= SNAP_OPTIONS.length) return;
+    S.snapIdx = next;
+    S.snapEnabled = true;
+    _persistSnapPrefs();
+    updateSnapUI();
+};
+window.editorToggleSnap = () => {
+    S.snapEnabled = !S.snapEnabled;
+    _persistSnapPrefs();
+    updateSnapUI();
+};
 window.editorSetBPM = (val) => {
     const newBPM = parseFloat(val);
     if (!newBPM || newBPM <= 0 || S.beats.length < 2) return;
@@ -6707,11 +6883,18 @@ function init() {
     _applyV3Layout();
     S.history = new EditHistory();
 
-    // Restore the Tempo Map "apply to" scope preference.
+    // Restore toolbar preferences.
     try {
         const sc = localStorage.getItem('editor-tempomap-scope');
         if (sc === 'drum' || sc === 'all') S.tempoRideScope = sc;
+        const snapIdx = parseInt(localStorage.getItem('editor-snap-idx') || '', 10);
+        if (Number.isInteger(snapIdx) && snapIdx >= 0 && snapIdx < SNAP_OPTIONS.length) S.snapIdx = snapIdx;
+        const snapEnabled = localStorage.getItem('editor-snap-enabled');
+        if (snapEnabled === '0' || snapEnabled === '1') S.snapEnabled = snapEnabled === '1';
     } catch (_) { /* localStorage unavailable */ }
+
+    _populateSnapOptions();
+    updateSnapUI();
 
     canvas.addEventListener('mousedown', onMouseDown);
     document.addEventListener('mousemove', onMouseMove);
