@@ -93,6 +93,15 @@
             <option>1/16</option>
             <option>Off</option>
         </select>
+
+        <div class="h-4 w-px bg-gray-700"></div>
+
+        <!-- Shortcuts -->
+        <span class="text-xs text-gray-500">Keys:</span>
+        <select id="editor-shortcut-profile" onchange="editorSetShortcutProfile(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Keyboard shortcut profile">
+            <option value="feedback">FeedBack</option>
+            <option value="eof">EOF Legacy</option>
+        </select>
     </div>
 
     <!-- Canvas area + inspector panel -->
