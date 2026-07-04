@@ -1,10 +1,11 @@
 'use strict';
 /*
- * Create-modal gate — the Create/Import button enable logic per mode
- * (Blank / Guitar Pro / EOF XML). Blank is audio-only and must enable on
- * audio + title + artist (the create_sloppak backend's requirements); GP and
- * EOF enable once a source file is picked. Brace-extracts the real pure gate
- * from screen.js (a single browser IIFE) so there's no drift.
+ * Create-modal gate — the Create button enable logic. The modal is now ONE menu
+ * with no Blank/Guitar Pro/EOF mode toggle: the gate is INPUT-DRIVEN. A picked
+ * Guitar Pro file enables it, then EOF XML arrangement(s); otherwise it's a
+ * from-scratch DRAFT create, which needs only a title (audio + artist optional —
+ * draft-now, audio-later). Brace-extracts the real pure gate from screen.js (a
+ * single browser IIFE) so there's no drift.
  *
  * Run: node tests/create_gate.test.js
  */
@@ -34,32 +35,29 @@ function t(name, fn) {
 }
 const inp = (o = {}) => ({ hasTitle: false, hasArtist: false, hasAudio: false, ...o });
 
-t('blank: enabled only with audio + title + artist', () => {
-    assert.strictEqual(_createGateOpen({ mode: 'blank' }, inp({ hasAudio: true, hasTitle: true, hasArtist: true })), true);
-    assert.strictEqual(_createGateOpen({ mode: 'blank' }, inp({ hasTitle: true, hasArtist: true })), false);   // no audio
-    assert.strictEqual(_createGateOpen({ mode: 'blank' }, inp({ hasAudio: true, hasArtist: true })), false);   // no title
-    assert.strictEqual(_createGateOpen({ mode: 'blank' }, inp({ hasAudio: true, hasTitle: true })), false);    // no artist
+t('from-scratch: needs a title AND at least one instrument in the roster', () => {
+    assert.strictEqual(_createGateOpen({ roster: ['Lead'] }, inp({ hasTitle: true })), true);
+    assert.strictEqual(_createGateOpen({ roster: ['Lead'] }, inp()), false);                        // no title
+    assert.strictEqual(_createGateOpen({ roster: [] }, inp({ hasTitle: true })), false);            // no instrument
+    assert.strictEqual(_createGateOpen({ roster: ['Vocals'] }, inp({ hasTitle: true })), false);    // Vocals alone
+    assert.strictEqual(_createGateOpen({ roster: ['Vocals', 'Keys'] }, inp({ hasTitle: true })), true);
+    assert.strictEqual(_createGateOpen({ roster: ['Drums'] }, inp({ hasTitle: true })), true);
 });
 
-t('blank: does not depend on a GP/EOF file', () => {
-    assert.strictEqual(_createGateOpen({ mode: 'blank', gpPath: '/x.gp', eofFiles: [{}] }, inp()), false);
-    assert.strictEqual(_createGateOpen({ mode: 'blank', gpPath: '/x.gp' }, inp({ hasAudio: true, hasTitle: true, hasArtist: true })), true);
+t('gp file wins regardless of roster/title', () => {
+    assert.strictEqual(_createGateOpen({ gpPath: '/song.gp', roster: [] }, inp()), true);
+    assert.strictEqual(_createGateOpen({ gpPath: null, roster: [] }, inp({ hasTitle: true })), false);
 });
 
-t('gp: enabled once a GP file is chosen', () => {
-    assert.strictEqual(_createGateOpen({ mode: 'gp', gpPath: '/song.gp' }, inp()), true);
-    assert.strictEqual(_createGateOpen({ mode: 'gp', gpPath: null }, inp({ hasAudio: true, hasTitle: true, hasArtist: true })), false);
+t('eof file(s) win regardless of roster/title', () => {
+    assert.strictEqual(_createGateOpen({ eofFiles: [{}], roster: [] }, inp()), true);
+    assert.strictEqual(_createGateOpen({ eofFiles: [], roster: ['Lead'] }, inp({ hasTitle: true })), true); // empty list -> roster+title
+    assert.strictEqual(_createGateOpen({ eofFiles: null, roster: [] }, inp()), false);
 });
 
-t('eof: enabled once XML file(s) chosen', () => {
-    assert.strictEqual(_createGateOpen({ mode: 'eof', eofFiles: [{}] }, inp()), true);
-    assert.strictEqual(_createGateOpen({ mode: 'eof', eofFiles: [] }, inp({ hasAudio: true, hasTitle: true, hasArtist: true })), false);
-    assert.strictEqual(_createGateOpen({ mode: 'eof', eofFiles: null }, inp()), false);
-});
-
-t('defensive: null state / unknown mode -> disabled', () => {
-    assert.strictEqual(_createGateOpen(null, inp({ hasAudio: true, hasTitle: true, hasArtist: true })), false);
-    assert.strictEqual(_createGateOpen({ mode: 'wat' }, inp({ hasAudio: true, hasTitle: true, hasArtist: true })), false);
+t('defensive: null state / null flags -> disabled', () => {
+    assert.strictEqual(_createGateOpen(null, inp({ hasTitle: true })), false);
+    assert.strictEqual(_createGateOpen({ roster: ['Lead'] }, null), false);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

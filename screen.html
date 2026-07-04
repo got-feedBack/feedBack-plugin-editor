@@ -125,17 +125,21 @@
 
 <!-- Load modal -->
 <div id="editor-load-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
-    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-md max-h-[70vh] flex flex-col">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-lg max-h-[75vh] flex flex-col">
         <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-            <span class="text-sm font-medium">Load custom song</span>
+            <span class="text-sm font-medium">Load a feedpak</span>
             <button onclick="editorHideLoadModal()" class="text-gray-500 hover:text-white">&times;</button>
         </div>
+        <div class="px-4 pt-3 pb-1">
+            <div class="text-[11px] text-gray-500 mb-1">Song library folder</div>
+            <div id="editor-load-path" title="" class="text-xs text-gray-400 bg-dark-800 border border-gray-700 rounded px-2 py-1 truncate">—</div>
+        </div>
         <div class="px-4 py-2">
-            <input id="editor-load-search" type="text" placeholder="Search by song, artist, or filename..." oninput="editorFilterSongs(this.value)"
+            <input id="editor-load-search" type="text" placeholder="Search all folders by song, artist, or filename…" oninput="editorFilterSongs(this.value)"
                 class="w-full bg-dark-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-accent/50">
         </div>
         <div id="editor-load-list" class="flex-1 overflow-y-auto px-2 pb-2">
-            <div class="text-xs text-gray-500 p-2">Loading...</div>
+            <div class="text-xs text-gray-500 p-2">Loading…</div>
         </div>
     </div>
 </div>
@@ -158,62 +162,66 @@
 
 <!-- Create custom song modal -->
 <div id="editor-create-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
-    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-lg max-h-[85vh] flex flex-col overflow-y-auto">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-4xl max-h-[85vh] flex flex-col overflow-y-auto">
         <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700 shrink-0">
-            <span class="text-sm font-medium">Create New custom song</span>
+            <span class="text-sm font-medium">Create New Arrangement</span>
             <button onclick="editorHideCreateModal()" class="text-gray-500 hover:text-white">&times;</button>
         </div>
-        <div class="p-4 space-y-4">
+        <div class="p-4">
 
-            <!-- How to start: Blank is first-class (audio only); GP / EOF import a chart. -->
-            <div>
-                <div class="aud-seg-wrap" role="tablist" aria-label="How to start the new song">
-                    <button type="button" onclick="editorSetCreateMode('blank')" id="editor-create-mode-blank-btn" class="aud-seg is-active">Blank</button>
-                    <button type="button" onclick="editorSetCreateMode('gp')" id="editor-create-mode-gp-btn" class="aud-seg">Guitar Pro</button>
-                    <button type="button" onclick="editorSetCreateMode('eof')" id="editor-create-mode-eof-btn" class="aud-seg">EOF XML</button>
+            <!-- One menu: pick a roster ("What are you arranging?"), optionally
+                 import a chart/audio, fill in details. editorDoCreate() routes on
+                 what you give it. Only a title + one instrument are required. -->
+            <p class="text-[11px] text-gray-500">
+                Pick what you're arranging and give it a <span class="text-gray-300">title</span> — everything else is optional.
+                Import a chart or audio to start from, or build from scratch and add content later.
+            </p>
+
+            <!-- Two columns so the modal is wide, not tall: LEFT = where the chart
+                 comes from, RIGHT = audio + song details. Full-width Create below. -->
+            <div class="grid grid-cols-2 gap-4 mt-4 items-start">
+
+              <!-- ===== LEFT: chart source ===== -->
+              <div class="space-y-4">
+
+            <!-- What are you arranging? — click to add a role, drag chips to
+                 reorder. No string counts here (set in the editor: 6-string
+                 covers up to 9-string guitar, 4-string bass up to 6). -->
+            <div class="space-y-2 rounded-lg border border-gray-800 p-3">
+                <div class="text-xs font-semibold text-gray-300">What are you arranging?</div>
+                <p class="text-[11px] text-gray-600">Click to add. Drag the chips below to reorder.</p>
+                <div id="editor-create-roster-palette" class="flex flex-wrap gap-1"></div>
+                <div class="text-[11px] text-gray-500 pt-1">Your arrangements <span class="text-gray-600">(drag to reorder)</span>:</div>
+                <div id="editor-create-roster-selected" style="min-height:40px" class="flex flex-wrap gap-1 bg-dark-800 rounded p-2"></div>
+                <p id="editor-create-roster-hint" class="text-[11px] text-gray-600"></p>
+            </div>
+
+            <!-- Content Import — one browse for every format feedBack reads. -->
+            <div class="space-y-2 rounded-lg border border-gray-800 p-3">
+                <div class="text-xs font-semibold text-gray-300">Content Import <span class="text-gray-600 font-normal">— optional</span></div>
+                <p class="text-[11px] text-gray-600">Add a master audio track and/or a chart to start from — you can add both. feedBack accepts <span class="text-gray-400">audio</span> (MP3/WAV/FLAC/OGG/M4A), <span class="text-gray-400">Guitar Pro</span> (.gp3–.gp8), <span class="text-gray-400">MIDI</span> (.mid), and <span class="text-gray-400">EOF/RS arrangement XML</span>. PowerTab &amp; MusicXML are coming.</p>
+                <!-- Staged files (rendered by renderStaged): the honesty surface -->
+                <div id="editor-create-staged" class="space-y-1"></div>
+                <!-- Hidden multi-file input, driven by the styled "+ Add file" label -->
+                <label for="editor-create-import"
+                    class="inline-block cursor-pointer px-2 py-1 rounded text-xs font-medium bg-dark-600 text-gray-300 hover:bg-dark-500">+ Add file(s)</label>
+                <input type="file" id="editor-create-import" multiple class="hidden"
+                    accept=".mp3,.wav,.flac,.ogg,.m4a,.opus,.aac,.wem,.gp3,.gp4,.gp5,.gpx,.gp,.mid,.midi,.xml"
+                    onchange="editorContentImportSelected(this)">
+                <div class="flex items-center gap-2">
+                    <span class="text-[11px] text-gray-600 shrink-0">or paste a YouTube URL</span>
+                    <input type="text" id="editor-create-yt-url" placeholder="https://youtube.com/watch?v=..."
+                        oninput="editorYtUrlInput()"
+                        class="flex-1 bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none focus:border-accent/50">
                 </div>
-                <p id="editor-create-mode-hint" class="text-[11px] text-gray-600 mt-1"></p>
+                <div id="editor-create-import-status" class="text-[11px] text-gray-500"></div>
             </div>
 
-            <!-- Guitar Pro file (GP mode) -->
-            <div id="editor-create-mode-gp" class="create-mode-sec hidden">
-                <label class="text-xs font-medium text-gray-400 mb-1 block">Guitar Pro File <span id="editor-create-gp-opt" class="text-gray-600">(.gp3/.gp4/.gp5/.gpx/.gp)</span></label>
-                <input type="file" id="editor-create-gp" accept=".gp3,.gp4,.gp5,.gpx,.gp"
-                    onchange="editorGPFileSelected(this)"
-                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
-            </div>
-
-            <!-- EOF (Editor on Fire) arrangement XML (EOF mode) -->
-            <div id="editor-create-mode-eof" class="create-mode-sec hidden">
-                <label class="text-xs font-medium text-gray-400 mb-1 block">EOF Arrangement XML <span class="text-gray-600">(.xml — one or more)</span></label>
-                <input type="file" id="editor-create-eof" accept=".xml" multiple
-                    onchange="editorEofFilesSelected(this)"
-                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
-                <p class="text-[11px] text-gray-600 mt-1">Select the EOF arrangement file(s), then set the audio, art, preview and details below and click Import.</p>
-            </div>
-
-            <!-- Track selection (shown after GP upload) -->
+            <!-- Track selection (shown after a Guitar Pro import) -->
             <div id="editor-create-tracks" class="hidden">
                 <label class="text-xs font-medium text-gray-400 mb-1 block">Select Tracks</label>
                 <div id="editor-create-track-list" class="space-y-1 max-h-32 overflow-y-auto bg-dark-800 rounded p-2">
                 </div>
-            </div>
-
-            <!-- Blank-chart options (audio-only feedpak; Blank mode) -->
-            <div id="editor-create-blank-opts" class="create-mode-sec hidden space-y-2">
-                <div>
-                    <label class="text-xs font-medium text-gray-400 mb-1 block">Initial Arrangement</label>
-                    <div id="editor-create-arr-buttons" class="flex flex-wrap gap-1"></div>
-                </div>
-                <div id="editor-create-strings-row">
-                    <label class="text-xs font-medium text-gray-400 mb-1 block">Strings</label>
-                    <div id="editor-create-strings-buttons" class="flex flex-wrap gap-1"></div>
-                    <p class="text-[11px] text-gray-600 mt-1">Standard tuning for the chosen string count — fine-tune later from the editor toolbar.</p>
-                </div>
-                <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" id="editor-create-drum-tab" checked class="cursor-pointer">
-                    <span class="text-sm">Also start an empty drum tab</span>
-                </label>
             </div>
 
             <!-- GP8 embedded audio banner (shown only when GP8 file has embedded audio) -->
@@ -255,73 +263,120 @@
                 </div>
             </div>
 
-            <!-- Step 2: Audio source -->
-            <div>
-                <label class="text-xs font-medium text-gray-400 mb-1 block">Audio Source</label>
-                <div class="aud-seg-wrap" role="tablist" aria-label="Audio source">
-                    <button onclick="editorSetAudioMode('file')" id="editor-audio-mode-file"
-                        class="aud-seg is-active">Upload File</button>
-                    <button onclick="editorSetAudioMode('youtube')" id="editor-audio-mode-yt"
-                        class="aud-seg">YouTube URL</button>
-                </div>
-                <!-- File upload -->
-                <div id="editor-audio-file-input">
-                    <input type="file" id="editor-create-audio" accept=".wem,.ogg,.flac,.mp3,.wav,.m4a,.opus"
-                        class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
-                </div>
-                <!-- YouTube URL -->
-                <div id="editor-audio-yt-input" class="hidden">
-                    <input type="text" id="editor-create-yt-url" placeholder="https://youtube.com/watch?v=..."
-                        class="w-full bg-dark-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-gray-300 outline-none focus:border-accent/50">
-                </div>
-                <div id="editor-audio-status" class="text-xs text-gray-500 mt-1"></div>
-            </div>
+              </div><!-- /LEFT column -->
 
-            <!-- Step 3: Metadata -->
-            <div class="grid grid-cols-2 gap-3">
-                <div>
-                    <label class="text-xs text-gray-500">Title</label>
-                    <input type="text" id="editor-create-title" placeholder="Song Title"
-                        class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
-                </div>
-                <div>
-                    <label class="text-xs text-gray-500">Artist</label>
-                    <input type="text" id="editor-create-artist" placeholder="Artist Name"
-                        class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
-                </div>
-                <div>
-                    <label class="text-xs text-gray-500">Album</label>
-                    <input type="text" id="editor-create-album" placeholder="Album"
-                        class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
-                </div>
-                <div>
-                    <label class="text-xs text-gray-500">Year</label>
-                    <input type="text" id="editor-create-year" placeholder="2024"
-                        class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+              <!-- ===== RIGHT: album art + song details ===== -->
+              <div class="space-y-4">
+
+            <!-- Album Art — promoted to a proper preview + browse on the wide side. -->
+            <div class="rounded-lg border border-gray-800 p-3">
+                <div class="text-xs font-semibold text-gray-300 mb-2">Album Art <span class="text-gray-600 font-normal">— optional</span></div>
+                <div class="flex items-center gap-3">
+                    <div id="editor-create-art-preview" style="width:5.5rem;height:5.5rem;background-size:cover;background-position:center"
+                        class="rounded bg-dark-800 border border-gray-700 flex items-center justify-center text-gray-600 text-[10px] text-center shrink-0 overflow-hidden">No art yet</div>
+                    <div class="flex-1">
+                        <input type="file" id="editor-create-art" accept=".png,.jpg,.jpeg,.dds"
+                            onchange="editorCreateArtSelected(this)"
+                            class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+                        <p class="text-[11px] text-gray-600 mt-1">PNG or JPG. Shown in the library and player.</p>
+                    </div>
                 </div>
             </div>
 
-            <!-- Album art -->
-            <div>
-                <label class="text-xs text-gray-500">Album Art (optional)</label>
-                <input type="file" id="editor-create-art" accept=".png,.jpg,.jpeg,.dds"
-                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+            <!-- Song details — the manifest metadata the feedpak spec models (§5.1). -->
+            <div class="rounded-lg border border-gray-800 p-3 space-y-2">
+                <div class="text-xs font-semibold text-gray-300">Song details</div>
+                <div id="editor-create-autofill-note" class="text-[11px] text-accent"></div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="text-xs text-gray-500">Title <span class="text-gray-600">(required)</span></label>
+                        <input type="text" id="editor-create-title" placeholder="Song title"
+                            class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">Artist</label>
+                        <input type="text" id="editor-create-artist" placeholder="Performing artist"
+                            class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">Album</label>
+                        <input type="text" id="editor-create-album" placeholder="Album"
+                            class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">Album artist</label>
+                        <input type="text" id="editor-create-album-artist" placeholder="For compilations"
+                            class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">Year</label>
+                        <input type="text" id="editor-create-year" placeholder="2024" inputmode="numeric"
+                            class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="text-xs text-gray-500">Track #</label>
+                            <input type="text" id="editor-create-track" placeholder="1" inputmode="numeric"
+                                class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                        </div>
+                        <div>
+                            <label class="text-xs text-gray-500">Disc #</label>
+                            <input type="text" id="editor-create-disc" placeholder="1" inputmode="numeric"
+                                class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">Genre(s)</label>
+                        <input type="text" id="editor-create-genre" placeholder="Rock, Metal"
+                            class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">Language</label>
+                        <input type="text" id="editor-create-language" placeholder="en"
+                            class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">ISRC</label>
+                        <input type="text" id="editor-create-isrc" placeholder="USABC2400001"
+                            class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-xs text-gray-500">MusicBrainz ID</label>
+                        <input type="text" id="editor-create-mbid" placeholder="recording MBID"
+                            class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500">Chart author(s)</label>
+                    <input type="text" id="editor-create-authors" placeholder="Who charted this — separate names with commas"
+                        class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
+                    <p class="text-[11px] text-gray-600 mt-1">Credited in the feedpak (spec <span class="text-gray-500">authors</span>) — distinct from the performing artist.</p>
+                </div>
             </div>
 
-            <!-- Preview clip -->
-            <div>
-                <label class="text-xs text-gray-500">Preview Clip (optional)</label>
-                <input type="file" id="editor-create-preview" accept=".wem,.ogg,.flac,.mp3,.wav,.m4a,.opus"
-                    class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
-                <p class="text-[11px] text-gray-600 mt-1">Baked into the .sloppak when you Build. Plays on hover in the library only if the Song Preview plugin is installed.</p>
+            <!-- MusicBrainz match — scan-first: uses the Title/Artist already on
+                 the form; the popup lets you refine the query + pick a record. -->
+            <div class="rounded-lg border border-gray-800 p-3">
+                <div class="flex items-center justify-between gap-2">
+                    <div>
+                        <div class="text-xs font-semibold text-gray-300">Match metadata</div>
+                        <p class="text-[11px] text-gray-600">Look this song up on MusicBrainz and fill the details.</p>
+                    </div>
+                    <button type="button" id="editor-create-mb-btn" onclick="editorMbMatch()"
+                        class="px-2 py-1 rounded text-xs font-medium bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed shrink-0">Match…</button>
+                </div>
+                <div id="editor-create-mb-hint" class="text-[11px] text-gray-600 mt-1"></div>
             </div>
 
-            <!-- Import button -->
+            <!-- Create button — works for import (GP/EOF) and from-scratch alike -->
+              </div><!-- /RIGHT column -->
+            </div><!-- /two-column grid -->
+
             <button onclick="editorDoCreate()" id="editor-create-go"
-                class="w-full px-4 py-2 bg-green-700 hover:bg-green-600 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                Import & Open in Editor
+                class="w-full px-4 py-2 bg-green-700 hover:bg-green-600 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed mt-4" disabled>
+                Create &amp; Open in Editor
             </button>
-            <div id="editor-create-status" class="text-xs text-gray-500"></div>
+            <div id="editor-create-status" class="text-xs text-gray-500 mt-2"></div>
         </div>
     </div>
 </div>

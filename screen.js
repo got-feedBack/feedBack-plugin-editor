@@ -3735,8 +3735,12 @@ function updateArrangementSelector() {
 async function showLoadModal() {
     const modal = document.getElementById('editor-load-modal');
     modal.classList.remove('hidden');
-    document.getElementById('editor-load-search').value = '';
+    const search = document.getElementById('editor-load-search');
+    if (search) search.value = '';
 
+    // Preload the flat list ONCE for recursive search (best-effort). The default
+    // view is the folder browser below; typing in the search box searches across
+    // every folder using this list.
     if (!S.songsList) {
         try {
             S.songsList = await fetch('/api/plugins/editor/songs').then(r => r.json());
@@ -3744,14 +3748,81 @@ async function showLoadModal() {
             S.songsList = [];
         }
     }
-    // Don't dump the whole library on open — it can be thousands of rows.
-    // Show a prompt and populate results as the user types (see filterSongs).
-    // If the library is empty / the fetch failed, fall through to the
-    // existing "No custom song files found" empty state instead of telling the user
-    // to search for something that isn't there.
-    if (S.songsList && S.songsList.length) renderSongPrompt();
-    else renderSongList(S.songsList || []);
-    document.getElementById('editor-load-search').focus();
+    // Open as a file browser rooted at the DLC / song-library folder.
+    await _editorBrowse('');
+    if (search) search.focus();
+}
+
+// Fetch + render one directory level of the library. `path` is a DLC-relative
+// POSIX subpath ("" = the library root).
+async function _editorBrowse(path) {
+    S.loadCwd = path || '';
+    const list = document.getElementById('editor-load-list');
+    let data;
+    try {
+        data = await fetch('/api/plugins/editor/browse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: S.loadCwd }),
+        }).then(r => r.json());
+    } catch {
+        data = { error: 'Could not read the library folder' };
+    }
+    if (!data || data.error) {
+        if (list) list.innerHTML = '<div class="text-xs text-gray-500 p-2">'
+            + _editorEscHtml((data && data.error) || 'Error') + '</div>';
+        return;
+    }
+    S.loadCwd = data.cwd || '';
+    S.loadParent = data.parent;
+    _editorSetLoadPath(data.root, data.cwd);
+    renderBrowse(data);
+}
+
+// Show the absolute folder path (root + current subpath), using whichever
+// separator the OS root hints at so it reads like a real path on Windows/*nix.
+function _editorSetLoadPath(root, cwd) {
+    const el = document.getElementById('editor-load-path');
+    if (!el) return;
+    const sep = String(root).includes('\\') ? '\\' : '/';
+    const full = cwd
+        ? String(root).replace(/[\\/]+$/, '') + sep + String(cwd).replace(/\//g, sep)
+        : String(root);
+    el.textContent = full;
+    el.title = full;
+}
+
+// Render an up-row (when not at root) + subfolders + loadable feedpaks.
+function renderBrowse(data) {
+    const list = document.getElementById('editor-load-list');
+    if (!list) return;
+    list.replaceChildren();
+    const row = (icon, text, onClick, badge) => {
+        const b = document.createElement('button');
+        b.className = 'w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-dark-500 rounded flex items-center gap-2';
+        const ic = document.createElement('span'); ic.className = 'shrink-0'; ic.textContent = icon;
+        const lb = document.createElement('span'); lb.className = 'flex-1 truncate'; lb.textContent = text;
+        b.appendChild(ic); b.appendChild(lb);
+        if (badge) {
+            const bd = document.createElement('span');
+            bd.className = 'px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide bg-green-900/40 text-green-300';
+            bd.textContent = badge;
+            b.appendChild(bd);
+        }
+        b.addEventListener('click', onClick);
+        list.appendChild(b);
+    };
+    if (data.cwd) row('⬆', '.. (up one folder)', () => _editorBrowse(data.parent || ''));
+    for (const d of (data.dirs || [])) row('📁', d.name, () => _editorBrowse(d.path));
+    for (const f of (data.files || [])) row('🎵', f.name, () => editorLoadFile(f.filename), f.format);
+    if (!(data.dirs || []).length && !(data.files || []).length) {
+        const empty = document.createElement('div');
+        empty.className = 'text-xs text-gray-500 p-2';
+        empty.textContent = data.cwd
+            ? 'This folder is empty.'
+            : 'No feedpaks in your library folder yet — use New… to create one.';
+        list.appendChild(empty);
+    }
 }
 
 // Empty/initial state for the load list: prompt to search rather than
@@ -3859,11 +3930,10 @@ function renderSongList(files) {
 }
 
 function filterSongs(q) {
-    if (!S.songsList) return;
     const query = (q || '').trim().toLowerCase();
-    // Empty query → show the prompt (or the empty state if there's nothing
-    // to search) instead of the entire library.
-    if (!query) { if (S.songsList.length) renderSongPrompt(); else renderSongList([]); return; }
+    // Empty query → back to the folder browser (rooted where the user last was).
+    if (!query) { _editorBrowse(S.loadCwd || ''); return; }
+    if (!S.songsList) return;
     const list = _normalizeSongList(S.songsList);
     // Match song name, artist, OR raw filename so users can search either way.
     const filtered = list.filter(f =>
@@ -5542,43 +5612,108 @@ window.editorShowNewFormatPicker = () => {
     inner.querySelector('button')?.focus();
 };
 
-window.editorShowCreateModal = () => {
-    // Include the GP-audio-sync fields so a prior import session's
-    // gp8AudioMode / autoSyncAudioUrl / lastSync can't leak into this one
-    // (which would apply the previous song's audio/offset to a new import).
-    createState = {
-        mode: 'blank', initialArr: 'Lead', stringCount: 6,
-        gpPath: null, tracks: null, audioUrl: null, audioMode: 'file', artPath: null,
-        previewPath: null, eofFiles: null,
-        gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null,
+// ════════════════════════════════════════════════════════════════════
+// Entry landing — shown when you open the Song Editor with nothing loaded:
+// Load an existing feedpak, or Create New. (The toolbar Load / New… buttons
+// remain for use once you're already inside.)
+// ════════════════════════════════════════════════════════════════════
+window.editorShowStartLanding = () => {
+    document.getElementById('editor-start-landing')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'editor-start-landing';
+    modal.className = 'fixed inset-0 bg-black/70 z-50 flex items-center justify-center';
+    const inner = document.createElement('div');
+    inner.className = 'bg-dark-800 border border-gray-700 rounded-xl p-6 max-w-md w-full mx-4';
+    const h = document.createElement('h3');
+    h.className = 'text-lg font-semibold mb-1';
+    h.textContent = 'Song Editor';
+    const sub = document.createElement('p');
+    sub.className = 'text-xs text-gray-400 mb-4';
+    sub.textContent = 'Open an existing feedpak to edit, or start a new arrangement.';
+    inner.appendChild(h); inner.appendChild(sub);
+    const mk = (label, blurb, onClick) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'w-full text-left p-3 mb-2 bg-dark-700 hover:bg-dark-600 rounded border border-gray-700';
+        const t = document.createElement('div'); t.className = 'font-medium text-sm'; t.textContent = label;
+        const p = document.createElement('div'); p.className = 'text-xs text-gray-400 mt-1'; p.textContent = blurb;
+        b.appendChild(t); b.appendChild(p);
+        b.onclick = () => { modal.remove(); onClick(); };
+        return b;
     };
-    document.getElementById('editor-create-modal').classList.remove('hidden');
-    document.getElementById('editor-create-tracks').classList.add('hidden');
-    document.getElementById('editor-create-go').disabled = true;
-    document.getElementById('editor-create-status').textContent = '';
-    document.getElementById('editor-audio-status').textContent = '';
-    document.getElementById('editor-create-gp').value = '';
-    document.getElementById('editor-create-audio').value = '';
-    document.getElementById('editor-create-yt-url').value = '';
-    const _eofIn = document.getElementById('editor-create-eof'); if (_eofIn) _eofIn.value = '';
-    const _pvIn = document.getElementById('editor-create-preview'); if (_pvIn) _pvIn.value = '';
-    document.getElementById('editor-create-title').value = '';
-    document.getElementById('editor-create-artist').value = '';
-    document.getElementById('editor-create-album').value = '';
-    document.getElementById('editor-create-year').value = '';
-    // Reset the GP8/auto-sync UI so stale banner/section/refine state from a
-    // previous session isn't shown before a file is chosen.
-    document.getElementById('editor-gp8-audio-banner')?.classList.add('hidden');
-    document.getElementById('editor-autosync-section')?.classList.add('hidden');
-    document.getElementById('editor-refine-row')?.classList.add('hidden');
-    const _gas = document.getElementById('editor-autosync-status');
-    if (_gas) _gas.textContent = '';
-    const _refineStatus = document.getElementById('editor-refine-status');
-    if (_refineStatus) _refineStatus.textContent = '';
-    editorSetAudioMode('file');
-    _populateCreateArrButtons();
-    _populateStringCountButtons();
-    editorSetCreateMode('blank');
+    inner.appendChild(mk('📂  Load…',
+        'Browse your song library and open a feedpak to edit.',
+        () => window.editorShowLoadModal()));
+    inner.appendChild(mk('✨  Create New',
+        'Pick what you’re arranging, import a chart or audio, add details.',
+        () => window.editorShowCreateModal()));
+    const cancel = document.createElement('div'); cancel.className = 'flex justify-end mt-2';
+    const cb = document.createElement('button');
+    cb.type = 'button';
+    cb.className = 'px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-xs text-gray-400';
+    cb.textContent = 'Not now';
+    cb.onclick = () => modal.remove();
+    cancel.appendChild(cb); inner.appendChild(cancel);
+    modal.appendChild(inner);
+    if (typeof _installModalKeyboard === 'function') {
+        _installModalKeyboard(modal, inner, () => modal.remove());
+    }
+    document.body.appendChild(modal);
+    inner.querySelector('button')?.focus();
+};
+
+// Show the landing only on a genuinely empty editor — nothing loaded, no
+// create session, and no create/load modal already open.
+function _editorMaybeShowStartLanding() {
+    const loaded = !!(typeof S !== 'undefined' && S && (S.filename || S.sessionId
+        || (Array.isArray(S.arrangements) && S.arrangements.length)));
+    if (loaded) return;
+    if (document.getElementById('editor-start-landing')) return;
+    const createHidden = document.getElementById('editor-create-modal')?.classList.contains('hidden');
+    const loadHidden = document.getElementById('editor-load-modal')?.classList.contains('hidden');
+    if (createHidden === false || loadHidden === false) return;   // a modal is open
+    window.editorShowStartLanding();
+}
+
+window.editorShowCreateModal = () => {
+    // Fresh state each open so a prior session (roster / audio / gp8AudioMode /
+    // autoSyncAudioUrl / lastSync) can't leak in. Default roster: one Lead
+    // Guitar arrangement, so the modal is immediately creatable with a title.
+    createState = {
+        mode: 'blank',
+        roster: ['Lead'],
+        gpPath: null, tracks: null, gpName: null, gpHasEmbedded: false, gpSyncCount: 0,
+        eofFiles: null, eofName: null,
+        audioUrl: null, audioName: null, audioDuration: null, midiInfo: null,
+        artPath: null, previewPath: null,
+        gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null, autoSyncCoupled: false,
+    };
+    const setVal = (id) => { const el = document.getElementById(id); if (el) el.value = ''; };
+    const setTxt = (id) => { const el = document.getElementById(id); if (el) el.textContent = ''; };
+    const hide = (id) => document.getElementById(id)?.classList.add('hidden');
+    document.getElementById('editor-create-modal')?.classList.remove('hidden');
+    hide('editor-create-tracks');
+    const go = document.getElementById('editor-create-go'); if (go) go.disabled = true;
+    setTxt('editor-create-status');
+    setTxt('editor-create-import-status');
+    setTxt('editor-create-roster-hint');
+    [
+        'editor-create-import', 'editor-create-yt-url', 'editor-create-art',
+        'editor-create-title', 'editor-create-artist', 'editor-create-album', 'editor-create-album-artist',
+        'editor-create-year', 'editor-create-track', 'editor-create-disc', 'editor-create-genre',
+        'editor-create-language', 'editor-create-isrc', 'editor-create-mbid', 'editor-create-authors',
+    ].forEach(setVal);
+    const artPrev = document.getElementById('editor-create-art-preview');
+    if (artPrev) { artPrev.style.backgroundImage = ''; artPrev.textContent = 'No art yet'; }
+    // Reset the GP8/auto-sync UI so stale banner/section/refine state isn't shown.
+    hide('editor-gp8-audio-banner'); hide('editor-autosync-section'); hide('editor-refine-row');
+    setTxt('editor-autosync-status'); setTxt('editor-refine-status');
+    setTxt('editor-create-autofill-note');
+    _populateRosterPalette();
+    _renderRosterSelected();
+    renderStaged();
+    _syncYtFieldState();
+    updateCreateButton();
 };
 
 window.editorHideCreateModal = () => {
@@ -5871,92 +6006,130 @@ window.editorShowCreateSloppakModal = () => {
     titleInput.focus();
 };
 
-window.editorSetAudioMode = (mode) => {
-    createState.audioMode = mode;
-    document.getElementById('editor-audio-file-input').classList.toggle('hidden', mode !== 'file');
-    document.getElementById('editor-audio-yt-input').classList.toggle('hidden', mode !== 'youtube');
-    document.getElementById('editor-audio-mode-file').classList.toggle('is-active', mode === 'file');
-    document.getElementById('editor-audio-mode-yt').classList.toggle('is-active', mode === 'youtube');
-};
+// Retired: the Upload File / YouTube toggle was removed — audio now arrives via
+// the single Content Import browse (or the YouTube field beside it). Kept as a
+// harmless no-op so any stray caller can't throw.
+window.editorSetAudioMode = () => {};
 
-window.editorGPFileSelected = async (input) => {
-    if (!input.files.length) return;
-    const file = input.files[0];
-    const status = document.getElementById('editor-create-status');
-    status.textContent = 'Uploading Guitar Pro file...';
-
+// Upload + stage ONE Guitar Pro file into the single chart slot. Does NOT touch
+// the master-audio slot — the two are independent now (fixes the "audio falls
+// off" bug). Autofills Title/Artist/Album from the chart's own metadata.
+async function _stageGpFile(file) {
+    const iStatus = document.getElementById('editor-create-import-status');
+    if (iStatus) iStatus.textContent = 'Reading Guitar Pro file…';
     const form = new FormData();
     form.append('file', file);
-
     try {
         const resp = await fetch('/api/plugins/editor/import-gp', { method: 'POST', body: form });
         const data = await resp.json();
-        if (data.error) { status.textContent = 'Error: ' + data.error; return; }
-
+        if (data.error) { if (iStatus) iStatus.textContent = 'Error: ' + data.error; return; }
         createState.gpPath = data.gp_path;
         createState.tracks = data.tracks;
+        createState.gpName = file.name;
+        createState.gpHasEmbedded = !!data.has_embedded_audio;
+        createState.gpSyncCount = data.sync_point_count || 0;
+        createState.mode = 'gp';
+        // Chart slot is exclusive — a GP replaces any EOF pick. Audio untouched.
+        createState.eofFiles = null;
 
-        // Show track list
         const listEl = document.getElementById('editor-create-track-list');
-        listEl.innerHTML = data.tracks.map(t => {
+        if (listEl) listEl.innerHTML = data.tracks.map(t => {
             const isDrums = !!(t.is_drums || t.is_percussion);
-            const badge = isDrums ? ' (drums)'
-                : t.is_piano ? ' (keys)'
-                : '';
+            // Role tag (not a warning): drums used to render red, which read as
+            // an error. Each row now self-labels with a coloured role pill —
+            // amber Drums / indigo Keys / sky Bass / muted Guitar — so no legend
+            // is needed. Inline styles: core Tailwind lacks the /opacity variants.
+            const role = isDrums ? { t: 'Drums', s: 'background:rgba(245,158,11,0.16);color:#fcd34d' }
+                : t.is_piano ? { t: 'Keys', s: 'background:rgba(129,140,248,0.18);color:#c7d2fe' }
+                : t.is_bass ? { t: 'Bass', s: 'background:rgba(56,189,248,0.16);color:#7dd3fc' }
+                : { t: 'Guitar', s: 'background:#2c3040;color:#9aa0ad' };
             const disabled = t.notes === 0;
             const safeName = _editorEscHtml(t.name);
-            return `<label class="flex items-center gap-2 text-xs text-gray-300 py-0.5">
+            return `<label class="flex items-center gap-2 text-xs py-0.5">
                 <input type="checkbox" value="${t.index}" checked
                     class="accent-accent" ${disabled ? 'disabled' : ''}>
-                <span class="${isDrums ? 'text-red-300' : t.is_piano ? 'text-indigo-300' : ''}">${safeName}</span>
-                <span class="text-gray-600">${Number(t.strings) || 0}str, ${Number(t.notes) || 0} notes${badge}</span>
+                <span class="text-gray-300 flex-1" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${safeName}</span>
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium" style="${role.s}">${role.t}</span>
+                <span class="text-gray-600 shrink-0">${Number(t.strings) || 0}str · ${Number(t.notes) || 0} notes</span>
             </label>`;
         }).join('');
-        document.getElementById('editor-create-tracks').classList.remove('hidden');
+        document.getElementById('editor-create-tracks')?.classList.remove('hidden');
 
-        // Auto-fill title from filename
-        const stem = file.name.replace(/\.(gp[345x]?|gpx)$/i, '');
-        if (!document.getElementById('editor-create-title').value) {
-            document.getElementById('editor-create-title').value = stem;
-        }
-
-        // Show/hide GP8 embedded audio banner and auto-sync section
-        const _banner = document.getElementById('editor-gp8-audio-banner');
-        const _syncSec = document.getElementById('editor-autosync-section');
-        createState.gp8AudioMode = 'none';
-        createState.autoSyncAudioUrl = null;
-        // Clear any sync result from a previously-selected GP file in this same
-        // modal, so editorDoCreate() doesn't seed a stale audio_offset (from the
-        // old file) into the conversion of this new one. Also hide the refine
-        // row, which only applies to a live sync result.
+        // Reset any prior sync result, then derive the GP audio UI + autofill.
         createState.lastSync = null;
-        const _refineRow = document.getElementById('editor-refine-row');
-        if (_refineRow) _refineRow.classList.add('hidden');
-        // Also reset the auto-sync UI: clear the status text (so it doesn't
-        // still read "ready" against empty state) and the file input value (so
-        // re-selecting the same audio file fires a fresh change event).
+        document.getElementById('editor-refine-row')?.classList.add('hidden');
         const _asStatus = document.getElementById('editor-autosync-status');
         if (_asStatus) _asStatus.textContent = '';
         const _asInput = document.getElementById('editor-autosync-audio');
         if (_asInput) _asInput.value = '';
-        if (data.has_embedded_audio) {
-            document.getElementById('editor-gp8-sync-count').textContent = data.sync_point_count || 0;
-            if (_banner) _banner.classList.remove('hidden');
-            if (_syncSec) _syncSec.classList.add('hidden');
-            editorSetGP8AudioMode('embedded');
-        } else {
-            if (_banner) _banner.classList.add('hidden');
-            // Show auto-sync section for ALL GP formats — gp_autosync works on GP3-GP8
-            if (_syncSec) _syncSec.classList.remove('hidden');
-            createState.gp8AudioMode = 'none';
-        }
-
-        status.textContent = `Parsed: ${data.tracks.length} tracks found`;
+        const _syncCount = document.getElementById('editor-gp8-sync-count');
+        if (_syncCount) _syncCount.textContent = createState.gpSyncCount;
+        _refreshGpAudioUI();
+        _applyGpAutofill(data.song);
+        if (iStatus) iStatus.textContent = `Guitar Pro chart added — ${data.tracks.length} tracks.`;
         updateCreateButton();
     } catch (e) {
-        status.textContent = 'Upload failed: ' + e.message;
+        if (iStatus) iStatus.textContent = 'Upload failed: ' + e.message;
     }
+}
+
+// Back-compat wrapper (accepts the input element).
+window.editorGPFileSelected = async (input) => {
+    const f = input && input.files && input.files[0];
+    if (f) await _stageGpFile(f);
 };
+
+// Derive the GP audio UI from (chart present, master audio present, embedded).
+// FORK A: a staged master audio, when present, IS the auto-sync source — so we
+// hide the redundant embedded banner + manual autosync section and align the
+// chart to that audio at Create.
+function _refreshGpAudioUI() {
+    const banner = document.getElementById('editor-gp8-audio-banner');
+    const syncSec = document.getElementById('editor-autosync-section');
+    if (!createState.gpPath) {
+        banner?.classList.add('hidden'); syncSec?.classList.add('hidden');
+        return;
+    }
+    if (createState.audioUrl) {
+        // Coupled: the staged master audio is the alignment source (Fork A) — one
+        // click at Create runs the sync + convert with no separate audio step.
+        createState.gp8AudioMode = 'autosync';
+        createState.autoSyncAudioUrl = createState.audioUrl;
+        createState.autoSyncCoupled = true;
+        createState.lastSync = null;
+        banner?.classList.add('hidden'); syncSec?.classList.add('hidden');
+    } else if (createState.gpHasEmbedded) {
+        createState.autoSyncCoupled = false;
+        if (banner) banner.classList.remove('hidden');
+        editorSetGP8AudioMode('embedded');   // sets mode + button styles + hides syncSec
+        createState.autoSyncAudioUrl = null;
+    } else {
+        createState.autoSyncCoupled = false;
+        createState.gp8AudioMode = 'none';
+        createState.autoSyncAudioUrl = null;
+        banner?.classList.add('hidden');
+        syncSec?.classList.remove('hidden');
+    }
+}
+
+// Non-destructive autofill of Title/Artist/Album from an imported chart's own
+// metadata — fills only EMPTY fields, with a one-time note. Editing any of them
+// dismisses the note (see the input listener).
+function _applyGpAutofill(song) {
+    if (!song) return;
+    const filled = [];
+    const fill = (id, val, label) => {
+        const el = document.getElementById(id);
+        if (val && el && !el.value.trim()) { el.value = val; filled.push(label); }
+    };
+    fill('editor-create-title', song.title, 'Title');
+    fill('editor-create-artist', song.artist, 'Artist');
+    fill('editor-create-album', song.album, 'Album');
+    const note = document.getElementById('editor-create-autofill-note');
+    if (note) note.textContent = filled.length
+        ? 'Filled ' + filled.join(', ') + ' from the imported chart — edit anything.' : '';
+    updateCreateButton();
+}
 
 // Shared upload helper for the Create modal and the Replace Audio modal.
 // Returns the new audio URL on success or null on missing input / failure.
@@ -6002,39 +6175,42 @@ async function _uploadAudioForMode({ mode, ytInputId, fileInputId, statusEl }) {
 }
 
 async function uploadCreateAudio() {
+    // Audio FILES upload on selection (Content Import → createState.audioUrl).
+    // Here we only resolve a pasted YouTube URL when no file audio is set yet.
+    if (createState.audioUrl) return true;
+    const yt = ((document.getElementById('editor-create-yt-url')?.value) || '').trim();
+    if (!yt) return false;
     const url = await _uploadAudioForMode({
-        mode: createState.audioMode,
+        mode: 'youtube',
         ytInputId: 'editor-create-yt-url',
-        fileInputId: 'editor-create-audio',
-        statusEl: document.getElementById('editor-audio-status'),
+        fileInputId: 'editor-create-import',
+        statusEl: document.getElementById('editor-create-import-status')
+            || document.getElementById('editor-create-status'),
     });
     if (!url) return false;
     createState.audioUrl = url;
     return true;
 }
 
-// Pure gate — given the create-modal state + which inputs are filled, decide
-// whether the Create/Import button should be enabled. DOM-free so it can be
-// unit-tested (tests/create_gate.test.js).
-//   blank: audio-only feedpak -> backend needs audio + title + artist.
-//   gp/eof: enabled once a source file is chosen (title/artist come from it or
-//   the details fields), preserving the pre-mode-picker behaviour.
+// Pure gate — INPUT-DRIVEN so it can be unit-tested (tests/create_gate.test.js).
+// A picked Guitar Pro file wins, then EOF XML arrangement(s). Otherwise it's a
+// from-scratch create, which needs a title AND at least one instrument in the
+// roster (Vocals alone can't stand — the spec requires a non-empty arrangements
+// list). Audio + artist stay optional (draft-now, audio-later).
 function _createGateOpen(state, flags) {
     if (!state || !flags) return false;
-    switch (state.mode) {
-        case 'blank': return !!(flags.hasAudio && flags.hasTitle && flags.hasArtist);
-        case 'gp':    return !!state.gpPath;
-        case 'eof':   return !!(state.eofFiles && state.eofFiles.length);
-        default:      return false;
-    }
+    if (state.gpPath) return true;
+    if (state.eofFiles && state.eofFiles.length) return true;
+    var instruments = ['Lead', 'Rhythm', 'Keys', 'Bass', 'Drums'];
+    var hasInstrument = !!(state.roster && state.roster.some(function (r) {
+        return instruments.indexOf(r) >= 0;
+    }));
+    return !!(flags.hasTitle && hasInstrument);
 }
 
 function _createHasAudioInput() {
-    if (createState.audioMode === 'youtube') {
-        return !!((document.getElementById('editor-create-yt-url')?.value) || '').trim();
-    }
-    return !!(document.getElementById('editor-create-audio')?.files || []).length
-        || !!createState.audioUrl;
+    if (createState.audioUrl) return true;
+    return !!((document.getElementById('editor-create-yt-url')?.value) || '').trim();
 }
 
 function updateCreateButton() {
@@ -6045,6 +6221,7 @@ function updateCreateButton() {
     });
     const btn = document.getElementById('editor-create-go');
     if (btn) btn.disabled = !open;
+    if (typeof _updateMbButton === 'function') _updateMbButton();
 }
 
 // Populate the Blank-mode "Initial Arrangement" toggle. Lead / Rhythm / Bass are
@@ -6065,6 +6242,502 @@ function _createRoleStringOptions(role) {
 function _createRoleDefaultStrings(role) {
     return role === 'Bass' ? 4 : 6;
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Roster — "What are you arranging?" Click a palette chip to add a role;
+// drag the selected chips to reorder. Backend canonical names: Vocals,
+// Lead, Rhythm, Keys, Bass, Drums (create_sloppak maps display labels too).
+// ════════════════════════════════════════════════════════════════════
+const _CREATE_ROSTER = [
+    { id: 'Vocals', label: 'Vocals' },
+    { id: 'Lead', label: 'Lead Guitar' },
+    { id: 'Rhythm', label: 'Rhythm Guitar' },
+    { id: 'Keys', label: 'Keys' },
+    { id: 'Bass', label: 'Bass Guitar' },
+    { id: 'Drums', label: 'Drums' },
+];
+const _CREATE_INSTRUMENTS = ['Lead', 'Rhythm', 'Keys', 'Bass', 'Drums'];
+function _rosterLabel(id) {
+    const r = _CREATE_ROSTER.find((x) => x.id === id);
+    return r ? r.label : id;
+}
+
+function _populateRosterPalette() {
+    const wrap = document.getElementById('editor-create-roster-palette');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    for (const r of _CREATE_ROSTER) {
+        const inSel = createState.roster.includes(r.id);
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = (inSel ? '✓ ' : '+ ') + r.label;
+        b.className = 'px-2 py-1 rounded text-xs font-medium '
+            + (inSel ? 'bg-accent text-white' : 'bg-dark-600 text-gray-300 hover:bg-dark-500');
+        b.onclick = () => _toggleRosterRole(r.id);
+        wrap.appendChild(b);
+    }
+}
+
+function _toggleRosterRole(id) {
+    const i = createState.roster.indexOf(id);
+    if (i >= 0) createState.roster.splice(i, 1);
+    else createState.roster.push(id);
+    _populateRosterPalette();
+    _renderRosterSelected();
+    updateCreateButton();
+}
+
+let _rosterDragFrom = null;
+function _renderRosterSelected() {
+    const wrap = document.getElementById('editor-create-roster-selected');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    if (!createState.roster.length) {
+        const p = document.createElement('span');
+        p.className = 'text-[11px] text-gray-600';
+        p.textContent = 'Nothing yet — click an instrument above.';
+        wrap.appendChild(p);
+    }
+    createState.roster.forEach((id, idx) => {
+        const chip = document.createElement('span');
+        chip.draggable = true;
+        chip.className = 'inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-dark-600 text-gray-200 cursor-move';
+        const name = document.createElement('span');
+        name.textContent = _rosterLabel(id);
+        chip.appendChild(name);
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.textContent = '✕';
+        x.className = 'text-gray-500 hover:text-white';
+        x.onclick = (e) => { e.stopPropagation(); _toggleRosterRole(id); };
+        chip.appendChild(x);
+        chip.addEventListener('dragstart', () => { _rosterDragFrom = idx; });
+        chip.addEventListener('dragover', (e) => e.preventDefault());
+        chip.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (_rosterDragFrom === null || _rosterDragFrom === idx) return;
+            const arr = createState.roster;
+            const [moved] = arr.splice(_rosterDragFrom, 1);
+            arr.splice(idx, 0, moved);
+            _rosterDragFrom = null;
+            _renderRosterSelected();
+        });
+        wrap.appendChild(chip);
+    });
+    const hint = document.getElementById('editor-create-roster-hint');
+    if (hint) {
+        const hasInstrument = createState.roster.some((r) => _CREATE_INSTRUMENTS.includes(r));
+        const hasVocals = createState.roster.includes('Vocals');
+        hint.textContent = (hasVocals && !hasInstrument)
+            ? 'Vocals adds a lyrics track — add at least one instrument to chart against.'
+            : (hasVocals ? 'Vocals seeds an empty lyrics track (a full vocals editor is coming).' : '');
+    }
+}
+
+// Single "Content Import" browse — route by extension to the right importer.
+// Single "Content Import" browse — now MULTI-file and role-routed. Each file is
+// staged into its role slot (1 master audio, 1 chart, MIDI as an info row)
+// WITHOUT clearing the other role. That's the whole fix for "the audio falls off
+// when I then add a Guitar Pro file."
+const _IMPORT_AUDIO = ['.mp3', '.wav', '.flac', '.ogg', '.m4a', '.opus', '.aac', '.wem'];
+const _IMPORT_GP = ['.gp3', '.gp4', '.gp5', '.gpx', '.gp'];
+const _extOf = (f) => (f.name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+
+window.editorContentImportSelected = async (input) => {
+    const files = [...(input.files || [])];
+    if (!files.length) return;
+    const status = document.getElementById('editor-create-import-status');
+    const audioFiles = files.filter((f) => _IMPORT_AUDIO.includes(_extOf(f)));
+    const gpFiles = files.filter((f) => _IMPORT_GP.includes(_extOf(f)));
+    const xmlFiles = files.filter((f) => _extOf(f) === '.xml');
+    const midiFiles = files.filter((f) => ['.mid', '.midi'].includes(_extOf(f)));
+    const unknown = files.filter((f) => ![..._IMPORT_AUDIO, ..._IMPORT_GP, '.xml', '.mid', '.midi'].includes(_extOf(f)));
+
+    // Chart slot (exclusive): a Guitar Pro file wins over RS/EOF XML if both are
+    // added together. Stage the chart BEFORE the audio so the coupling sees it.
+    if (gpFiles.length) {
+        await _stageGpFile(gpFiles[0]);
+        if (xmlFiles.length && status) status.textContent += ' (RS XML ignored — one chart source per song.)';
+    } else if (xmlFiles.length) {
+        _stageEofFiles(xmlFiles);
+    }
+    // Master-audio slot (one master track for now; stems later).
+    if (audioFiles.length) {
+        await _stageAudio(audioFiles[0]);
+        if (audioFiles.length > 1 && status) {
+            status.textContent = 'One master track for now — used "' + audioFiles[0].name
+                + '". (Multiple stems are coming.)';
+        }
+    }
+    if (midiFiles.length) _stageMidi(midiFiles);
+    if (unknown.length && status) {
+        status.textContent = 'Skipped unsupported: ' + unknown.map((f) => f.name).join(', ')
+            + ' (PowerTab & MusicXML are coming).';
+    }
+    // The staged list is now the source of truth — clear the input so re-adding
+    // the same file fires a fresh change and the input never "shows" one file.
+    input.value = '';
+    renderStaged();
+    updateCreateButton();
+};
+
+// Upload + stage the master audio track. Never touches the chart slot; couples
+// into GP auto-sync (via _refreshGpAudioUI) when a chart is present.
+async function _stageAudio(file) {
+    const iStatus = document.getElementById('editor-create-import-status');
+    if (iStatus) iStatus.textContent = 'Uploading audio…';
+    createState.audioUrl = null;
+    createState.audioName = null;
+    createState.audioDuration = null;
+    const form = new FormData();
+    form.append('file', file);
+    let url = null, dur = null;
+    try {
+        const resp = await fetch('/api/plugins/editor/upload-audio', { method: 'POST', body: form });
+        const data = await resp.json();
+        if (data && data.audio_url) { url = data.audio_url; dur = data.duration; }
+        else if (data && data.error && iStatus) iStatus.textContent = 'Error: ' + data.error;
+    } catch (e) {
+        if (iStatus) iStatus.textContent = 'Upload failed: ' + e.message;
+    }
+    if (url) {
+        createState.audioUrl = url;
+        createState.audioName = file.name;
+        createState.audioDuration = (Number(dur) > 0) ? Number(dur) : null;
+        const titleEl = document.getElementById('editor-create-title');
+        if (titleEl && !titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^.]+$/, '');
+        if (iStatus) iStatus.textContent = 'Master audio added.';
+    }
+    _refreshGpAudioUI();       // couple into GP auto-sync if a chart is present
+    _syncYtFieldState();
+}
+
+function _stageEofFiles(xmls) {
+    createState.eofFiles = xmls.length ? xmls : null;
+    createState.eofName = xmls.length === 1 ? xmls[0].name : (xmls.length + ' XML files');
+    createState.mode = 'eof';
+    // Chart slot is exclusive — EOF replaces GP. Audio untouched.
+    createState.gpPath = null; createState.tracks = null; createState.gpName = null;
+    document.getElementById('editor-create-tracks')?.classList.add('hidden');
+    _refreshGpAudioUI();       // no gpPath → hides GP audio UI
+    const iStatus = document.getElementById('editor-create-import-status');
+    if (iStatus) iStatus.textContent = createState.eofName + ' added as the chart.';
+}
+
+function _stageMidi(files) {
+    createState.midiInfo = files.length === 1 ? files[0].name : (files.length + ' MIDI files');
+    const iStatus = document.getElementById('editor-create-import-status');
+    if (iStatus) iStatus.textContent = 'MIDI added — after Create, add Keys / Drums from it in the editor (+Keys / +Drums).';
+}
+
+// Grey the YouTube field while a master-audio FILE is staged (file wins).
+function _syncYtFieldState() {
+    const yt = document.getElementById('editor-create-yt-url');
+    if (!yt) return;
+    const hasFileAudio = !!(createState.audioUrl && createState.audioName);
+    yt.disabled = hasFileAudio;
+    yt.style.opacity = hasFileAudio ? '0.5' : '';
+    yt.title = hasFileAudio ? 'Using the audio file you added — remove it to use a URL instead' : '';
+}
+
+// Render the staged file rows (audio master / chart / MIDI info), each with a
+// role chip + remove ✕. This is the honesty surface.
+function renderStaged() {
+    const wrap = document.getElementById('editor-create-staged');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    const ytVal = ((document.getElementById('editor-create-yt-url')?.value) || '').trim();
+    const rows = [];
+    if (createState.audioUrl && createState.audioName) {
+        rows.push({ role: 'audio', chip: 'Master audio', chipStyle: 'background:rgba(64,128,224,0.18);color:#8fbaff',
+            name: createState.audioName, detail: createState.gpPath ? 'aligns the chart' : '' });
+    } else if (ytVal) {
+        rows.push({ role: 'yt', chip: 'Master audio · YouTube', chipStyle: 'background:rgba(64,128,224,0.18);color:#8fbaff',
+            name: ytVal, detail: createState.gpPath ? 'aligns the chart' : '' });
+    }
+    if (createState.gpPath) {
+        rows.push({ role: 'chart', chip: 'Chart · Guitar Pro', chipStyle: 'background:rgba(129,140,248,0.20);color:#c7d2fe',
+            name: createState.gpName || 'Guitar Pro file', detail: createState.tracks ? (createState.tracks.length + ' tracks') : '' });
+    } else if (createState.eofFiles && createState.eofFiles.length) {
+        rows.push({ role: 'chart', chip: 'Chart · RS XML', chipStyle: 'background:rgba(129,140,248,0.20);color:#c7d2fe',
+            name: createState.eofName || 'RS/EOF XML', detail: '' });
+    }
+    if (createState.midiInfo) {
+        rows.push({ role: 'midi', chip: 'MIDI · adds after create', chipCls: 'bg-dark-600 text-gray-400',
+            name: createState.midiInfo, detail: '' });
+    }
+    if (!rows.length) {
+        const hint = document.createElement('div');
+        hint.className = 'text-[11px] text-gray-600';
+        hint.textContent = 'Nothing added yet — audio and/or a chart are optional.';
+        wrap.appendChild(hint);
+        return;
+    }
+    for (const r of rows) {
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-2 bg-dark-800 rounded px-2 py-1 text-xs';
+        const chip = document.createElement('span');
+        chip.className = 'px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ' + (r.chipCls || '');
+        if (r.chipStyle) chip.style.cssText = r.chipStyle;
+        chip.textContent = r.chip;
+        row.appendChild(chip);
+        const name = document.createElement('span');
+        name.className = 'text-gray-300 flex-1';
+        name.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        name.textContent = r.name;
+        row.appendChild(name);
+        if (r.detail) {
+            const d = document.createElement('span');
+            d.className = 'text-gray-600 shrink-0';
+            d.textContent = r.detail;
+            row.appendChild(d);
+        }
+        const x = document.createElement('button');
+        x.type = 'button';
+        x.className = 'text-gray-500 hover:text-white shrink-0';
+        x.textContent = '✕';
+        x.title = 'Remove';
+        x.onclick = () => editorStagedRemove(r.role);
+        row.appendChild(x);
+        wrap.appendChild(row);
+    }
+    // Honest one-liner: the preview clip is auto-made from the master audio (no
+    // upload). Shown only when there IS a master audio to make it from.
+    const hasMaster = !!(createState.audioUrl && createState.audioName)
+        || !!((document.getElementById('editor-create-yt-url')?.value) || '').trim();
+    if (hasMaster) {
+        const pv = document.createElement('div');
+        pv.className = 'text-[11px] text-gray-600';
+        pv.textContent = 'Preview clip: auto-made from your master audio.';
+        wrap.appendChild(pv);
+    }
+}
+
+window.editorStagedRemove = (role) => {
+    if (role === 'audio') {
+        createState.audioUrl = null; createState.audioName = null; createState.audioDuration = null;
+        _refreshGpAudioUI();        // un-couple: restore embedded/manual GP audio UI
+        _syncYtFieldState();
+    } else if (role === 'yt') {
+        const yt = document.getElementById('editor-create-yt-url'); if (yt) yt.value = '';
+        _syncYtFieldState();
+    } else if (role === 'chart') {
+        createState.gpPath = null; createState.tracks = null; createState.eofFiles = null;
+        createState.gpName = null; createState.eofName = null; createState.gpHasEmbedded = false;
+        createState.lastSync = null; createState.autoSyncAudioUrl = null;
+        document.getElementById('editor-create-tracks')?.classList.add('hidden');
+        _refreshGpAudioUI();        // no gpPath → hides GP audio UI
+    } else if (role === 'midi') {
+        createState.midiInfo = null;
+    }
+    const iStatus = document.getElementById('editor-create-import-status');
+    if (iStatus) iStatus.textContent = '';
+    renderStaged();
+    updateCreateButton();
+};
+
+window.editorYtUrlInput = () => {
+    // A YouTube URL is an alternative audio source (resolved at Create). It
+    // doesn't gate the button (audio is optional) but should show in the list.
+    _syncYtFieldState();
+    renderStaged();
+    updateCreateButton();
+};
+
+// ════════════════════════════════════════════════════════════════════
+// MusicBrainz "Match…" — scan-first: uses the Title/Artist already on the form,
+// opens a popup with an editable query + candidate list, and fills the details
+// on pick. Reuses core's same-origin, rate-limited GET /api/enrichment/search.
+// ════════════════════════════════════════════════════════════════════
+function _cval(id) { return ((document.getElementById(id)?.value) || '').trim(); }
+
+function _updateMbButton() {
+    const btn = document.getElementById('editor-create-mb-btn');
+    const hint = document.getElementById('editor-create-mb-hint');
+    if (!btn) return;
+    const has = !!(_cval('editor-create-title') || _cval('editor-create-artist'));
+    btn.disabled = !has;
+    if (hint) hint.textContent = has ? '' : 'Add a title or artist to match.';
+}
+
+window.editorMbMatch = () => {
+    _editorMbOpenPopup(_cval('editor-create-title'), _cval('editor-create-artist'));
+};
+
+function _editorMbOpenPopup(title, artist) {
+    document.getElementById('editor-mb-popup')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'editor-mb-popup';
+    modal.className = 'fixed inset-0 bg-black/70 z-50 flex items-center justify-center';
+    const inner = document.createElement('div');
+    inner.className = 'bg-dark-800 border border-gray-700 rounded-xl w-full max-w-md mx-4 flex flex-col';
+    inner.style.maxHeight = '75vh';
+    const head = document.createElement('div');
+    head.className = 'flex items-center justify-between px-4 py-3 border-b border-gray-700';
+    const h = document.createElement('span'); h.className = 'text-sm font-medium'; h.textContent = 'Match on MusicBrainz';
+    const close = document.createElement('button'); close.type = 'button'; close.className = 'text-gray-500 hover:text-white'; close.textContent = '×';
+    close.onclick = () => modal.remove();
+    head.appendChild(h); head.appendChild(close); inner.appendChild(head);
+    // STRUCTURED Artist + Title fields — MusicBrainz's recording search is built
+    // for these; cramming both into one fuzzy field returns junk (or nothing).
+    const qrow = document.createElement('div');
+    qrow.className = 'flex items-center gap-2 px-4 py-2 border-b border-gray-700';
+    const mk = (ph, val) => {
+        const i = document.createElement('input');
+        i.type = 'text'; i.placeholder = ph; i.value = val || '';
+        i.className = 'flex-1 min-w-0 bg-dark-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none focus:border-accent/50';
+        return i;
+    };
+    const aIn = mk('Artist', artist);
+    const tIn = mk('Title', title);
+    const go = document.createElement('button');
+    go.type = 'button'; go.className = 'px-2 py-1 rounded text-xs font-medium bg-dark-600 text-gray-300 hover:bg-dark-500 shrink-0';
+    go.textContent = 'Search';
+    qrow.appendChild(aIn); qrow.appendChild(tIn); qrow.appendChild(go); inner.appendChild(qrow);
+    const results = document.createElement('div');
+    results.id = 'editor-mb-results';
+    results.className = 'flex-1 overflow-y-auto p-2 space-y-1';
+    inner.appendChild(results);
+    modal.appendChild(inner);
+    if (typeof _installModalKeyboard === 'function') _installModalKeyboard(modal, inner, () => modal.remove());
+    document.body.appendChild(modal);
+    const run = () => _editorMbRunSearch(aIn.value.trim(), tIn.value.trim(), results);
+    go.onclick = run;
+    const onEnter = (e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } };
+    aIn.addEventListener('keydown', onEnter); tIn.addEventListener('keydown', onEnter);
+    run();
+}
+
+// Blend our match score with a duration-to-staged-audio bonus. The master audio
+// IS the version the user wants to chart, so a length match is a strong signal
+// that separates the studio take from live/extended cuts.
+function _mbRankKey(c, dur) {
+    let k = Number(c.score) || 0;
+    if (dur > 0 && Number(c.duration)) {
+        const diff = Math.abs(Number(c.duration) - dur);
+        if (diff <= 4) k += 0.5;
+        else if (diff <= 12) k += 0.2;
+        else k -= Math.min(diff, 120) / 400;
+    }
+    return k;
+}
+
+async function _editorMbRunSearch(artist, title, resultsEl) {
+    if (!resultsEl) return;
+    resultsEl.replaceChildren();
+    if (!artist && !title) { _mbMsg(resultsEl, 'Enter an artist or title to search.'); return; }
+    _mbMsg(resultsEl, 'Searching MusicBrainz…');
+    const params = new URLSearchParams();
+    if (artist) params.set('artist', artist);
+    if (title) params.set('title', title);
+    params.set('limit', '15');
+    let data = null, status = 0;
+    try {
+        const resp = await fetch('/api/enrichment/search?' + params.toString());
+        status = resp.status;
+        data = await resp.json().catch(() => null);
+    } catch (_) { data = null; }
+    resultsEl.replaceChildren();
+    if (status === 429) { _mbMsg(resultsEl, 'MusicBrainz is busy — try again in a moment.'); return; }
+    if (status === 503 || (data && data.error)) { _mbMsg(resultsEl, "Couldn't reach MusicBrainz. Enter details manually."); return; }
+    let cands = (data && data.candidates) || [];
+    if (!cands.length) { _mbMsg(resultsEl, 'No matches — refine the artist/title and try again.'); return; }
+    // #2 — re-rank by closeness of each candidate's length to the staged audio.
+    const dur = Number(createState.audioDuration) || 0;
+    let bestIdx = -1;
+    if (dur > 0) {
+        cands = cands.slice().sort((a, b) => _mbRankKey(b, dur) - _mbRankKey(a, dur));
+        let bestDiff = Infinity;
+        cands.forEach((c, i) => {
+            const d = Math.abs((Number(c.duration) || 1e9) - dur);
+            if (d <= 4 && d < bestDiff) { bestDiff = d; bestIdx = i; }
+        });
+    }
+    cands.forEach((c, i) => resultsEl.appendChild(_editorMbRow(c, i === 0, i === bestIdx)));
+}
+
+function _mbMsg(el, text) {
+    const d = document.createElement('div'); d.className = 'text-xs text-gray-500 p-2'; d.textContent = text; el.appendChild(d);
+}
+
+function _mbDur(sec) {
+    const s = Number(sec); if (!s || s <= 0) return '';
+    const m = Math.floor(s / 60), r = Math.round(s % 60);
+    return m + ':' + String(r).padStart(2, '0');
+}
+
+function _editorMbRow(c, focus, matchesAudio) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'w-full text-left px-2 py-1.5 rounded hover:bg-dark-600 flex items-center gap-2';
+    const col = document.createElement('span'); col.className = 'flex-1'; col.style.minWidth = '0';
+    const t = document.createElement('span'); t.className = 'text-xs text-gray-200 block';
+    t.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap'; t.textContent = c.title || '(untitled)';
+    const sub = document.createElement('span'); sub.className = 'text-[11px] text-gray-500 block';
+    sub.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+    sub.textContent = [c.artist, c.album, c.year, _mbDur(c.duration)].filter(Boolean).join(' · ');
+    col.appendChild(t); col.appendChild(sub); b.appendChild(col);
+    // "≈ your audio" tag — this candidate's length matches the staged master.
+    if (matchesAudio) {
+        const m = document.createElement('span');
+        m.className = 'px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0';
+        m.style.cssText = 'background:rgba(64,128,224,0.18);color:#8fbaff';
+        m.textContent = '≈ your audio';
+        b.appendChild(m);
+    }
+    // Confidence pill — green only when earned.
+    let score = Number(c.mb_score) || 0; if (score <= 1) score = Math.round(score * 100);
+    const pill = document.createElement('span');
+    pill.className = 'px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0';
+    if (score >= 90) { pill.textContent = 'High'; pill.style.cssText = 'background:rgba(22,163,74,0.22);color:#86efac'; }
+    else if (score >= 60) { pill.textContent = 'Good'; pill.style.cssText = 'background:rgba(245,158,11,0.16);color:#fcd34d'; }
+    else { pill.textContent = 'Low'; pill.style.cssText = 'background:#2c3040;color:#9aa0ad'; }
+    b.appendChild(pill);
+    b.onclick = () => _editorMbApply(c);
+    if (focus) setTimeout(() => { try { b.focus(); } catch (_) {} }, 0);
+    return b;
+}
+
+function _editorMbApply(c) {
+    // Explicit pick = overwrite (deferring to a stale filename-title would be
+    // wrong). Only set fields MB actually has; leave the rest untouched.
+    const set = (id, v) => { const el = document.getElementById(id); if (el && v != null && String(v).trim() !== '') el.value = String(v).trim(); };
+    set('editor-create-title', c.title);
+    set('editor-create-artist', c.artist);
+    set('editor-create-album', c.album);
+    set('editor-create-year', c.year);
+    set('editor-create-isrc', c.isrc);
+    set('editor-create-mbid', c.recording_id);
+    if (Array.isArray(c.genres) && c.genres.length) set('editor-create-genre', c.genres.join(', '));
+    const note = document.getElementById('editor-create-autofill-note');
+    if (note) note.textContent = 'Filled from MusicBrainz — edit anything.';
+    document.getElementById('editor-mb-popup')?.remove();
+    _updateMbButton();
+    updateCreateButton();
+}
+
+// Album art: preview locally + upload to get an art_path baked into create.
+window.editorCreateArtSelected = async (input) => {
+    const file = input.files && input.files[0];
+    const prev = document.getElementById('editor-create-art-preview');
+    if (!file) {
+        createState.artPath = null;
+        if (prev) { prev.style.backgroundImage = ''; prev.textContent = 'No art yet'; }
+        return;
+    }
+    try {
+        const rd = new FileReader();
+        rd.onload = () => { if (prev) { prev.style.backgroundImage = 'url("' + rd.result + '")'; prev.textContent = ''; } };
+        rd.readAsDataURL(file);
+    } catch (_) { /* preview is best-effort */ }
+    const form = new FormData();
+    form.append('file', file);
+    try {
+        const resp = await fetch('/api/plugins/editor/upload-art', { method: 'POST', body: form });
+        const data = await resp.json();
+        if (data && data.art_path) createState.artPath = data.art_path;
+    } catch (_) { /* art just won't be baked if the upload fails */ }
+};
 
 function _populateCreateArrButtons() {
     const wrap = document.getElementById('editor-create-arr-buttons');
@@ -6133,35 +6806,15 @@ function _populateStringCountButtons() {
     }
 }
 
-// Switch the create modal between Blank (audio-only) / Guitar Pro / EOF XML:
-// show only that mode's section, clear the other modes' picked files (so a
-// leftover can't route editorDoCreate the wrong way), and re-label the action.
+// The Blank/Guitar Pro/EOF segmented toggle was removed — the create modal is
+// now one menu with every option visible, and editorDoCreate() routes on what
+// the user provided. `createState.mode` is still tracked (derived from file
+// selection in editorGPFileSelected / editorEofFilesSelected) for any callers
+// that pass an explicit mode; this setter just records it and re-gates. It no
+// longer hides sections or re-labels the button.
 window.editorSetCreateMode = (mode) => {
     if (!['blank', 'gp', 'eof'].includes(mode)) mode = 'blank';
     createState.mode = mode;
-    if (mode !== 'gp') { createState.gpPath = null; createState.tracks = null; }
-    if (mode !== 'eof') { createState.eofFiles = null; }
-    document.getElementById('editor-create-tracks')?.classList.add('hidden');
-    document.querySelectorAll('#editor-create-modal .create-mode-sec').forEach((el) => {
-        const secMode = el.id === 'editor-create-mode-gp' ? 'gp'
-            : el.id === 'editor-create-mode-eof' ? 'eof'
-            : 'blank'; // editor-create-blank-opts
-        el.classList.toggle('hidden', secMode !== mode);
-    });
-    for (const m of ['blank', 'gp', 'eof']) {
-        document.getElementById(`editor-create-mode-${m}-btn`)
-            ?.classList.toggle('is-active', m === mode);
-    }
-    const hint = document.getElementById('editor-create-mode-hint');
-    if (hint) {
-        hint.textContent = mode === 'blank'
-            ? 'Start from audio — pick an instrument below and chart it in the editor. No Guitar Pro / XML needed.'
-            : mode === 'gp'
-                ? 'Import a chart from a Guitar Pro file (.gp3–.gp8).'
-                : 'Import one or more EOF (Editor on Fire) arrangement XML files.';
-    }
-    const go = document.getElementById('editor-create-go');
-    if (go) go.textContent = mode === 'blank' ? 'Create from Audio' : 'Import & Open in Editor';
     updateCreateButton();
 };
 
@@ -6169,20 +6822,15 @@ window.editorSetCreateMode = (mode) => {
 // Step 2 audio inputs also invalidates a cached upload URL — otherwise
 // editorDoCreate() skips re-upload (it only uploads when audioUrl is unset)
 // and reuses the previously-selected file/URL.
-document.addEventListener('change', (e) => {
-    if (e.target.id === 'editor-create-audio') {
-        createState.audioUrl = null;
-        updateCreateButton();
-    }
-});
 document.addEventListener('input', (e) => {
-    if (e.target.id === 'editor-create-yt-url') {
-        createState.audioUrl = null;
-        updateCreateButton();
-    }
-    // Blank mode also gates on title/artist — re-check as the user types.
-    if (e.target.id === 'editor-create-title' || e.target.id === 'editor-create-artist') {
-        updateCreateButton();
+    const id = e.target && e.target.id;
+    // The from-scratch gate depends on the title; the Match button on title OR
+    // artist. updateCreateButton re-checks both (it calls _updateMbButton).
+    if (id === 'editor-create-title' || id === 'editor-create-artist') updateCreateButton();
+    // Editing an autofilled field dismisses the one-time autofill note.
+    if (id === 'editor-create-title' || id === 'editor-create-artist' || id === 'editor-create-album') {
+        const note = document.getElementById('editor-create-autofill-note');
+        if (note) note.textContent = '';
     }
 });
 
@@ -6266,35 +6914,46 @@ window.editorRefineSync = async () => {
 async function _editorDoBlankCreate() {
     const status = document.getElementById('editor-create-status');
     const btn = document.getElementById('editor-create-go');
-    const title = ((document.getElementById('editor-create-title')?.value) || '').trim();
-    const artist = ((document.getElementById('editor-create-artist')?.value) || '').trim();
-    if (!title || !artist) {
-        if (status) status.textContent = 'Title and artist are required.';
+    const val = (id) => ((document.getElementById(id)?.value) || '').trim();
+    const title = val('editor-create-title');
+    if (!title) {
+        if (status) status.textContent = 'A title is required.';
+        if (btn) btn.disabled = false;
+        return;
+    }
+    const roster = (createState.roster || []).slice();
+    if (!roster.some((r) => _CREATE_INSTRUMENTS.includes(r))) {
+        if (status) status.textContent = 'Add at least one instrument to arrange (Lead, Rhythm, Bass, Keys, or Drums).';
         return;
     }
     if (btn) btn.disabled = true;
-    if (!createState.audioUrl) {
+    // Audio is optional (draft-now, audio-later): only resolve a pasted YouTube
+    // URL here — file audio uploaded already on selection. With none, we create
+    // an audio-less draft and the author adds audio later via Replace Audio.
+    if (!createState.audioUrl && _createHasAudioInput()) {
         if (status) status.textContent = 'Uploading audio…';
         const ok = await uploadCreateAudio();
         if (!ok) { if (btn) btn.disabled = false; return; }
     }
     const meta = {
-        title, artist,
-        album: ((document.getElementById('editor-create-album')?.value) || '').trim(),
-        year: ((document.getElementById('editor-create-year')?.value) || '').trim(),
-        initial_arrangement: createState.initialArr || 'Lead',
-        // The tuning array's LENGTH sets the arrangement's string count
-        // (feedpak-spec §5.2). All-zero offsets = standard tuning for that
-        // count; alt/drop tunings are a fine-tune step in the editor.
-        tuning: new Array(
-            (Number.isInteger(createState.stringCount)
-                && createState.stringCount >= 4 && createState.stringCount <= 8)
-                ? createState.stringCount
-                : (createState.initialArr === 'Bass' ? 4 : 6),
-        ).fill(0),
-        init_drum_tab: !!document.getElementById('editor-create-drum-tab')?.checked,
+        title,
+        artist: val('editor-create-artist'),
+        album: val('editor-create-album'),
+        album_artist: val('editor-create-album-artist'),
+        year: val('editor-create-year'),
+        track: val('editor-create-track'),
+        disc: val('editor-create-disc'),
+        genres: val('editor-create-genre'),
+        language: val('editor-create-language'),
+        isrc: val('editor-create-isrc'),
+        mbid: val('editor-create-mbid'),
+        // Open-format author credit -> manifest authors[]. Blank is fine.
+        authors: val('editor-create-authors'),
+        // Roster of arrangements the user dragged in ("What are you arranging?").
+        arrangements: roster,
         audio_url: createState.audioUrl,
     };
+    if (createState.artPath) meta.art_path = createState.artPath;
     const fd = new FormData();
     fd.append('metadata', JSON.stringify(meta));
     if (status) status.textContent = 'Building feedpak…';
@@ -6316,17 +6975,17 @@ async function _editorDoBlankCreate() {
 }
 
 window.editorDoCreate = async () => {
-    // Blank mode: audio + metadata -> create_sloppak (no GP/EOF chart import).
-    if (createState.mode === 'blank') {
-        await _editorDoBlankCreate();
+    // One menu, no mode toggle — route on what was provided: a Guitar Pro file
+    // wins, then EOF XML arrangement(s), else a from-scratch (draft) create
+    // (only a title is required; audio + artist are optional).
+    if (!createState.gpPath) {
+        if (createState.eofFiles && createState.eofFiles.length) {
+            await _editorDoEofCreate();
+        } else {
+            await _editorDoBlankCreate();
+        }
         return;
     }
-    // EOF arrangement-XML import takes priority when XML files are selected.
-    if (createState.eofFiles && createState.eofFiles.length) {
-        await _editorDoEofCreate();
-        return;
-    }
-    if (!createState.gpPath) return;
     const status = document.getElementById('editor-create-status');
     const btn = document.getElementById('editor-create-go');
     btn.disabled = true;
@@ -6344,11 +7003,9 @@ window.editorDoCreate = async () => {
     // stale/invalid Step-2 value must not block (or be downloaded for) the
     // import.
     if (_gpAudioMode !== 'embedded' && _gpAudioMode !== 'autosync') {
-        const hasAudioInput = createState.audioMode === 'youtube'
-            ? !!document.getElementById('editor-create-yt-url').value.trim()
-            : !!(document.getElementById('editor-create-audio').files || []).length;
-
-        if (hasAudioInput && !createState.audioUrl) {
+        // Audio (a Content Import file already uploaded, or a pasted YouTube URL)
+        // is optional for a GP import; attach it when present.
+        if (_createHasAudioInput() && !createState.audioUrl) {
             const ok = await uploadCreateAudio();
             if (!ok) { btn.disabled = false; return; }
         }
@@ -6389,22 +7046,25 @@ window.editorDoCreate = async () => {
             if (syncData.ok) {
                 _autoSyncOffset = syncData.audio_offset;
                 createState.lastSync = syncData;
-                // Show refine row and pause — let user optionally refine
-                // before clicking Import again to proceed to conversion.
-                const _refineRow = document.getElementById('editor-refine-row');
-                if (_refineRow) _refineRow.classList.remove('hidden');
-                const _goBtn = document.getElementById('editor-create-go');
-                if (_goBtn) _goBtn.textContent = 'Import & Open in Editor';
-                status.textContent = `✓ Synced: ${syncData.sync_point_count} points, offset ${(_autoSyncOffset ?? 0).toFixed(3)}s — optionally refine below, then click Import.`;
-                // Re-enable Import button so user can click again to convert
-                if (_goBtn) {
-                    _goBtn.disabled = false;
-                    _goBtn.removeAttribute('aria-disabled');
-                    _goBtn.focus();
-                }
-                // Store offset and return — user clicks Import again to convert
                 createState.lastSync.audio_offset = _autoSyncOffset;
-                return;
+                if (!createState.autoSyncCoupled) {
+                    // MANUAL autosync: show refine row and pause for a second
+                    // click. The COUPLED master-audio flow (Fork A) skips this
+                    // and falls straight through to convert — one click.
+                    const _refineRow = document.getElementById('editor-refine-row');
+                    if (_refineRow) _refineRow.classList.remove('hidden');
+                    const _goBtn = document.getElementById('editor-create-go');
+                    if (_goBtn) _goBtn.textContent = 'Import & Open in Editor';
+                    status.textContent = `✓ Synced: ${syncData.sync_point_count} points, offset ${(_autoSyncOffset ?? 0).toFixed(3)}s — optionally refine below, then click Import.`;
+                    if (_goBtn) {
+                        _goBtn.disabled = false;
+                        _goBtn.removeAttribute('aria-disabled');
+                        _goBtn.focus();
+                    }
+                    return;
+                }
+                status.textContent = `✓ Aligned to your audio (offset ${(_autoSyncOffset ?? 0).toFixed(3)}s) — building…`;
+                // fall through to convert
             } else {
                 // Explicit auto-sync was requested but failed — don't silently
                 // import a misaligned chart at offset 0. Stop and let the user
@@ -6549,10 +7209,21 @@ window.editorApplyCreateResult = async (data) => {
 window.editorEofFilesSelected = (input) => {
     const xmls = [...(input.files || [])].filter(f => /\.xml$/i.test(f.name));
     createState.eofFiles = xmls.length ? xmls : null;
+    if (xmls.length) {
+        createState.mode = 'eof';
+        // One import source at a time: picking EOF XML clears any GP pick.
+        createState.gpPath = null;
+        createState.tracks = null;
+        const _gpInput = document.getElementById('editor-create-gp');
+        if (_gpInput) _gpInput.value = '';
+        document.getElementById('editor-create-tracks')?.classList.add('hidden');
+    } else if (!createState.gpPath) {
+        createState.mode = 'blank';
+    }
     updateCreateButton();
     const st = document.getElementById('editor-create-status');
     if (st) st.textContent = xmls.length
-        ? `${xmls.length} EOF arrangement file(s) selected — set audio/art/preview, then Import.`
+        ? `${xmls.length} EOF arrangement file(s) selected — set audio/details, then Create.`
         : '';
 };
 
@@ -6566,10 +7237,7 @@ async function _editorDoEofCreate() {
     try {
         // Audio is optional for EOF (the chart opens regardless), but upload it
         // when supplied so the editor can play in sync.
-        const hasAudioFile = !!(document.getElementById('editor-create-audio').files || []).length;
-        const hasYt = createState.audioMode === 'youtube'
-            && !!document.getElementById('editor-create-yt-url').value.trim();
-        if (!createState.audioUrl && (hasAudioFile || hasYt)) {
+        if (!createState.audioUrl && _createHasAudioInput()) {
             status.textContent = 'Uploading audio…';
             await uploadCreateAudio();   // sets createState.audioUrl on success
         }
@@ -6685,17 +7353,8 @@ window.editorBuild = async () => {
         } catch (_) {}
     }
 
-    // Upload preview clip if selected (baked into the .sloppak as preview.<ext>)
-    const previewInput = document.getElementById('editor-create-preview');
-    if (previewInput && previewInput.files && previewInput.files.length && !createState.previewPath) {
-        const form = new FormData();
-        form.append('file', previewInput.files[0]);
-        try {
-            const r = await fetch('/api/plugins/editor/upload-preview', { method: 'POST', body: form });
-            const d = await r.json();
-            if (d.preview_path) createState.previewPath = d.preview_path;
-        } catch (_) {}
-    }
+    // Preview clips are now auto-generated server-side from the master audio —
+    // no manual upload. (See _make_preview_clip in routes.py.)
 
     try {
         const resp = await fetch('/api/plugins/editor/build', {
@@ -6942,15 +7601,21 @@ function init() {
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
-    // Observe screen visibility for resize
+    // Observe screen visibility for resize + the entry landing.
     const obs = new MutationObserver(() => {
         const screen = document.getElementById('plugin-editor');
         if (screen && screen.classList.contains('active')) {
             setTimeout(resizeCanvas, 50);
+            // Entering the Song Editor with nothing loaded → offer Load / Create.
+            setTimeout(_editorMaybeShowStartLanding, 80);
         }
     });
     const screen = document.getElementById('plugin-editor');
     if (screen) obs.observe(screen, { attributes: true, attributeFilter: ['class'] });
+    // Also cover the case where the editor screen is already active at init().
+    if (screen && screen.classList.contains('active')) {
+        setTimeout(_editorMaybeShowStartLanding, 120);
+    }
 
     draw();
 }
@@ -7097,9 +7762,10 @@ window.editorDrumsFileSelected = async (input) => {
             const safeName = _editorEscHtml(t.name);
             const checked = i === 0 ? 'checked' : '';
             return `<label class="flex items-center gap-2 text-xs text-gray-300 py-0.5">
-                <input type="radio" name="drums-track" value="${Number.isFinite(Number(t.index)) ? Number(t.index) : 0}" ${checked} class="accent-red-500">
-                <span class="text-red-300">${safeName}</span>
-                <span class="text-gray-600">${Number(t.notes) || 0} notes</span>
+                <input type="radio" name="drums-track" value="${Number.isFinite(Number(t.index)) ? Number(t.index) : 0}" ${checked} class="accent-accent">
+                <span class="text-gray-300 flex-1">${safeName}</span>
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0" style="background:rgba(245,158,11,0.16);color:#fcd34d">Drums</span>
+                <span class="text-gray-600 shrink-0">${Number(t.notes) || 0} notes</span>
             </label>`;
         }).join('');
         document.getElementById('editor-add-drums-tracks').classList.remove('hidden');

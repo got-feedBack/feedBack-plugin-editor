@@ -2536,6 +2536,54 @@ def setup(app, context):
         files.sort(key=lambda x: x["filename"])
         return files
 
+    @app.post("/api/plugins/editor/browse")
+    async def browse_dlc(data: dict):
+        """List ONE directory level inside the DLC/song-library folder so the
+        Load dialog can act as a file browser rooted at the library. `path` is a
+        DLC-relative POSIX subpath ("" = the library root). Returns the absolute
+        root (for display), the current relative path + its parent, the
+        subfolders, and the loadable feedpak/sloppak files at this level."""
+        dlc_dir = get_dlc_dir()
+        if not dlc_dir or not dlc_dir.exists():
+            return JSONResponse({"error": "DLC folder not configured"}, 400)
+        root = dlc_dir.resolve()
+        rel = str((data or {}).get("path") or "").strip().replace("\\", "/").strip("/")
+        target = (root / rel).resolve() if rel else root
+        # Containment — never list outside the library.
+        try:
+            target.relative_to(root)
+        except ValueError:
+            return JSONResponse({"error": "forbidden"}, 403)
+        if not target.is_dir():
+            target, rel = root, ""
+        _FORMATS = {".feedpak": "sloppak", ".sloppak": "sloppak"}
+        dirs: list = []
+        files: list = []
+        try:
+            entries = sorted(target.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            entries = []
+        for entry in entries:
+            ext = entry.suffix.lower()
+            try:
+                erel = entry.relative_to(root).as_posix()
+            except ValueError:
+                continue
+            if entry.is_dir():
+                if ext in (".feedpak", ".sloppak"):
+                    # Authoring-form package dir — a loadable "file", not a folder.
+                    files.append({"filename": erel, "name": entry.name, "format": "sloppak"})
+                else:
+                    dirs.append({"name": entry.name, "path": erel})
+            elif entry.is_file() and ext in _FORMATS:
+                files.append({"filename": erel, "name": entry.name, "format": _FORMATS[ext]})
+        parent = None
+        if rel:
+            p = Path(rel).parent.as_posix()
+            parent = "" if p == "." else p
+        return {"root": str(root), "cwd": rel, "parent": parent,
+                "dirs": dirs, "files": files}
+
     # ── Load a custom song for editing ──────────────────────────────────────────
 
     @app.post("/api/plugins/editor/load")
@@ -3465,8 +3513,10 @@ def setup(app, context):
         if audio_url is not None and not isinstance(audio_url, str):
             return JSONResponse({"error": "audio_url must be a string"}, 400)
         audio_url = (audio_url or "").strip()
-        if audio is None and not audio_url:
-            return JSONResponse({"error": "audio file or audio_url required"}, 400)
+        # Draft-now, audio-later: audio is OPTIONAL. With neither an upload nor a
+        # pre-uploaded audio_url we still create a work-in-progress pack (empty
+        # `stems: []`); the author supplies real audio later via Replace Audio.
+        has_audio = audio is not None or bool(audio_url)
 
         # Optional album art, passed as a storage path returned by
         # /upload-art. Validate containment under STORAGE_DIR before
@@ -3505,82 +3555,90 @@ def setup(app, context):
             return JSONResponse({"error": "artist must be a string"}, 400)
         if not title:
             return JSONResponse({"error": "title required"}, 400)
-        if not artist:
-            return JSONResponse({"error": "artist required"}, 400)
+        # Artist is OPTIONAL for a draft — only the title is required to create a
+        # work-in-progress pack. `artist` may be "" here (written through as-is).
 
-        arr_name = _str_field("initial_arrangement", "Lead")
-        if arr_name is None:
+        # Optional "Authored by" credit(s) -> manifest `authors:` (feedpak is an
+        # open format; credit whoever makes the file, don't gate on it). Accept a
+        # single string (the modal's one text field; users comma/newline-separate
+        # names) OR a list. Normalize to a de-duped list of trimmed strings.
+        authors_in = meta_in.get("authors")
+        if isinstance(authors_in, str):
+            authors_in = re.split(r"[,\n]", authors_in)
+        authors: list[str] = []
+        if isinstance(authors_in, list):
+            _seen_auth: set[str] = set()
+            for _a in authors_in:
+                if isinstance(_a, str) and _a.strip() and _a.strip() not in _seen_auth:
+                    _seen_auth.add(_a.strip())
+                    authors.append(_a.strip())
+        elif authors_in is not None:
             return JSONResponse(
-                {"error": "initial_arrangement must be a string"}, 400,
+                {"error": "authors must be a string or a list of strings"}, 400,
             )
-        if not arr_name:
-            arr_name = "Lead"
-        # Fretted roles carry a tuning/string-count; Keys (piano-roll) and
-        # Drums (drum_tab) do not. The editor selects its mode from the
-        # arrangement NAME (KEYS_PATTERN / ^drums), so the name is load-bearing.
-        _FRETTED = ("Lead", "Rhythm", "Bass")
-        if arr_name not in _FRETTED + ("Keys", "Drums"):
-            return JSONResponse(
-                {"error": "initial_arrangement must be Lead, Rhythm, Bass, Keys, or Drums"},
-                400,
-            )
-        is_fretted = arr_name in _FRETTED
 
         def _is_int(v) -> bool:
-            # bool is a subclass of int in Python; treat True/False as
-            # invalid here so a `True → 1` doesn't slip past.
+            # bool is a subclass of int in Python; treat True/False as invalid
+            # so a `True → 1` doesn't slip past int fields (track/disc).
             return isinstance(v, int) and not isinstance(v, bool)
 
-        if is_fretted:
-            # String count is derived from the tuning array. feedpak-spec §5.2
-            # models tuning length 4–8 and explicitly says Readers MUST NOT
-            # hard-code 6, so range-check instead of pinning 4|6 — this lets
-            # extended-range guitars (7/8-string) and 5/6-string basses be
-            # created at the source. Absent -> a sensible per-role default.
-            _MIN_STRINGS, _MAX_STRINGS = 4, 8
-            default_strings = 4 if arr_name == "Bass" else 6
-            tuning_in = meta_in.get("tuning")
-            if tuning_in is None:
-                tuning = [0] * default_strings
-            elif (isinstance(tuning_in, list)
-                    and _MIN_STRINGS <= len(tuning_in) <= _MAX_STRINGS):
-                if not all(_is_int(t) for t in tuning_in):
-                    return JSONResponse(
-                        {"error": "tuning entries must be integers (no floats or booleans)"},
-                        400,
-                    )
-                tuning = list(tuning_in)
-            else:
+        # Roster of arrangements to seed ("What are you arranging?"). The modal
+        # sends `arrangements`: the list of canonical role names the user dragged
+        # in. Back-compat: a single `initial_arrangement` string is still
+        # accepted. Roles map to editor modes by NAME — Lead/Rhythm/Bass →
+        # fretted, Keys → piano-roll (type:piano), Drums → drum_tab. Vocals is
+        # NOT an arrangement (feedpak models it as side-files); it seeds an empty
+        # lyrics track and needs at least one instrument alongside it, since the
+        # spec requires a non-empty arrangements list. String counts are NOT
+        # chosen here — fretted roles get a default standard tuning (Bass 4,
+        # guitar 6) and the editor extends the range (up to 9-string guitar /
+        # 6-string bass) after creation.
+        _FRETTED = ("Lead", "Rhythm", "Bass")
+        _INSTRUMENTS = _FRETTED + ("Keys", "Drums")
+        _ALL_ROLES = _INSTRUMENTS + ("Vocals",)
+        _ROLE_ALIASES = {
+            "Lead Guitar": "Lead", "Rhythm Guitar": "Rhythm",
+            "Bass Guitar": "Bass", "Piano": "Keys", "Keyboard": "Keys",
+            "Vocal": "Vocals", "Voice": "Vocals",
+        }
+
+        roster_in = meta_in.get("arrangements")
+        if roster_in is None:
+            single = _str_field("initial_arrangement", "Lead") or "Lead"
+            roster_in = [single]
+        if not isinstance(roster_in, list) or not roster_in:
+            return JSONResponse(
+                {"error": "arrangements must be a non-empty list of roles"}, 400,
+            )
+        roster: list[str] = []
+        for _r in roster_in:
+            if not isinstance(_r, str):
+                return JSONResponse(
+                    {"error": "each arrangement role must be a string"}, 400,
+                )
+            _r = _ROLE_ALIASES.get(_r.strip(), _r.strip())
+            if _r not in _ALL_ROLES:
                 return JSONResponse(
                     {"error": (
-                        f"tuning must be a list of {_MIN_STRINGS}-{_MAX_STRINGS} ints "
-                        f"(feedpak-spec §5.2), or omitted for a default "
-                        f"{default_strings}-string '{arr_name}'"
+                        f"unknown arrangement role '{_r}' — expected one of "
+                        f"{', '.join(_ALL_ROLES)}"
                     )},
                     400,
                 )
-            capo_raw = meta_in.get("capo", 0)
-            if not _is_int(capo_raw):
-                return JSONResponse({"error": "capo must be an integer"}, 400)
-            if capo_raw < 0:
-                return JSONResponse({"error": "capo must be non-negative"}, 400)
-            capo = capo_raw
-        else:
-            # Keys / Drums have no strings — no tuning, no capo.
-            tuning = []
-            capo = 0
-
-        # Strict bool check — client JSON-derived; the string "false"
-        # would otherwise become truthy and silently enable drum_tab.
-        init_drums_raw = meta_in.get("init_drum_tab", True)
-        if not isinstance(init_drums_raw, bool):
+            if _r not in roster:
+                roster.append(_r)
+        want_vocals = "Vocals" in roster
+        instrument_roster = [r for r in roster if r in _INSTRUMENTS]
+        if not instrument_roster:
             return JSONResponse(
-                {"error": "init_drum_tab must be a boolean"}, 400,
+                {"error": (
+                    "select at least one instrument to chart "
+                    "(Lead, Rhythm, Bass, Keys, or Drums)"
+                )},
+                400,
             )
-        init_drums = init_drums_raw
-        # A Drums pack IS its drum tab — always seed it, regardless of the flag.
-        if arr_name == "Drums":
-            init_drums = True
+        # A Drums arrangement IS its drum tab — seed one iff Drums is selected.
+        init_drums = "Drums" in instrument_roster
 
         dlc_dir = get_dlc_dir()
         if not dlc_dir:
@@ -3602,12 +3660,14 @@ def setup(app, context):
         safe_a = _truncate_utf8(
             re.sub(r'[<>:"/\\|?*]', "_", artist), _MAX_FILENAME_PART_BYTES,
         ).rstrip(". ")
-        if not safe_t or not safe_a:
+        if not safe_t:
             return JSONResponse(
-                {"error": "title and artist must contain non-blank characters"},
+                {"error": "title must contain non-blank characters"},
                 400,
             )
-        new_filename = f"{safe_t}_{safe_a}.feedpak"
+        # Artist may be blank on a draft (or sanitise to empty) — fall back to a
+        # title-only filename rather than an ugly trailing-underscore name.
+        new_filename = f"{safe_t}_{safe_a}.feedpak" if safe_a else f"{safe_t}.feedpak"
         output_path = (dlc_dir / new_filename).resolve()
         # Containment check — the sanitiser above strips path separators,
         # but defend against a `.. .. ..` -style title that somehow
@@ -3656,6 +3716,9 @@ def setup(app, context):
                 ".mp3", ".wav", ".flac", ".m4a", ".ogg", ".opus",
                 ".aac", ".aiff", ".wma",
             }
+            # Stays None when no audio is supplied (draft-now): the encode block
+            # below is guarded on it and `ogg_path` stays None.
+            in_ext = None
             if audio is not None:
                 _raw_ext = Path(audio.filename or "audio").suffix.lower()
                 in_ext = _raw_ext if _raw_ext in _KNOWN_AUDIO_EXTS else ".bin"
@@ -3670,7 +3733,7 @@ def setup(app, context):
                         if not chunk:
                             break
                         dst.write(chunk)
-            else:
+            elif audio_url:
                 # Pre-uploaded audio: resolve the storage URL to a local
                 # file (validates containment) and copy it into the temp
                 # dir so the re-encode path below is identical to the
@@ -3685,66 +3748,78 @@ def setup(app, context):
                 in_path = upload_dir / f"upload{in_ext}"
                 shutil.copy2(resolved_audio, in_path)
 
-            ogg_path = upload_dir / "audio.ogg"
-            if in_ext == ".ogg":
-                # Rename instead of copy — both paths live in the same
-                # upload_dir (deleted at the end), so duplicating the
-                # bytes just doubles peak temp disk for nothing.
-                in_path.rename(ogg_path)
-                # Same min-size sanity check the re-encode branch
-                # enforces — a 0-byte / truncated .ogg would otherwise
-                # produce a sloppak that fails on first open.
-                if (not ogg_path.exists()
-                        or ogg_path.stat().st_size < 100):
-                    return JSONResponse(
-                        {"error": "uploaded .ogg is empty or too small to play"},
-                        400,
-                    )
-            else:
-                from lib.audio import _ffmpeg_cmd, _ffmpeg_wav_to_ogg
-                ffmpeg = _ffmpeg_cmd()
-                if not ffmpeg:
-                    return JSONResponse(
-                        {"error": "ffmpeg not available — can't re-encode audio"},
-                        500,
-                    )
-                try:
-                    r = await asyncio.get_event_loop().run_in_executor(
-                        None, _ffmpeg_wav_to_ogg, ffmpeg, in_path, ogg_path,
-                    )
-                except Exception:
-                    # str(e) on subprocess / OSError commonly embeds the
-                    # ffmpeg cmd line and absolute paths — log it
-                    # server-side and return a generic message.
-                    import logging as _log
-                    _log.getLogger("slopsmith.plugin.editor").exception(
-                        "create_sloppak: ffmpeg re-encode raised",
-                    )
-                    return JSONResponse(
-                        {"error": "audio re-encode failed — see server logs"},
-                        400,
-                    )
-                if (r.returncode != 0 or not ogg_path.exists()
-                        or ogg_path.stat().st_size < 100):
-                    return JSONResponse(
-                        {"error": "ffmpeg failed to decode the uploaded audio"},
-                        400,
-                    )
+            # None → no audio supplied: skip encode, leave ogg_path None so the
+            # write emits an empty `stems: []` draft.
+            ogg_path = None
+            if in_ext is not None:
+                ogg_path = upload_dir / "audio.ogg"
+                if in_ext == ".ogg":
+                    # Rename instead of copy — both paths live in the same
+                    # upload_dir (deleted at the end), so duplicating the
+                    # bytes just doubles peak temp disk for nothing.
+                    in_path.rename(ogg_path)
+                    # Same min-size sanity check the re-encode branch
+                    # enforces — a 0-byte / truncated .ogg would otherwise
+                    # produce a sloppak that fails on first open.
+                    if (not ogg_path.exists()
+                            or ogg_path.stat().st_size < 100):
+                        return JSONResponse(
+                            {"error": "uploaded .ogg is empty or too small to play"},
+                            400,
+                        )
+                else:
+                    from lib.audio import _ffmpeg_cmd, _ffmpeg_wav_to_ogg
+                    ffmpeg = _ffmpeg_cmd()
+                    if not ffmpeg:
+                        return JSONResponse(
+                            {"error": "ffmpeg not available — can't re-encode audio"},
+                            500,
+                        )
+                    try:
+                        r = await asyncio.get_event_loop().run_in_executor(
+                            None, _ffmpeg_wav_to_ogg, ffmpeg, in_path, ogg_path,
+                        )
+                    except Exception:
+                        # str(e) on subprocess / OSError commonly embeds the
+                        # ffmpeg cmd line and absolute paths — log it
+                        # server-side and return a generic message.
+                        import logging as _log
+                        _log.getLogger("slopsmith.plugin.editor").exception(
+                            "create_sloppak: ffmpeg re-encode raised",
+                        )
+                        return JSONResponse(
+                            {"error": "audio re-encode failed — see server logs"},
+                            400,
+                        )
+                    if (r.returncode != 0 or not ogg_path.exists()
+                            or ogg_path.stat().st_size < 100):
+                        return JSONResponse(
+                            {"error": "ffmpeg failed to decode the uploaded audio"},
+                            400,
+                        )
 
-            # Build the minimal in-memory shapes _write_sloppak_pak expects.
-            # Keys carry the spec `type: piano`; fretted/drums don't. All three
-            # open in the right editor mode by NAME (KEYS_PATTERN / ^drums).
-            arr_entry = {
-                "name": arr_name,
-                "tuning": tuning,
-                "capo": capo,
-                "notes": [],
-                "chords": [],
-                "chord_templates": [],
-            }
-            if arr_name == "Keys":
-                arr_entry["type"] = "piano"
-            arrangements_data = [arr_entry]
+            # Build one in-memory arrangement per instrument role in the roster.
+            # Fretted roles carry a default standard tuning (Bass 4 strings,
+            # guitar 6 — the editor extends the count after creation); Keys
+            # carries the spec `type: piano`; Drums opens the drum lane by name.
+            # Each opens in the right editor mode by NAME (KEYS_PATTERN / ^drums).
+            def _default_tuning(role: str) -> list:
+                if role in _FRETTED:
+                    return [0] * (4 if role == "Bass" else 6)
+                return []
+            arrangements_data = []
+            for _role in instrument_roster:
+                _arr = {
+                    "name": _role,
+                    "tuning": _default_tuning(_role),
+                    "capo": 0,
+                    "notes": [],
+                    "chords": [],
+                    "chord_templates": [],
+                }
+                if _role == "Keys":
+                    _arr["type"] = "piano"
+                arrangements_data.append(_arr)
             # Seed a minimal one-measure 4/4 @ 120 BPM grid (downbeat +
             # three sub-beats + next downbeat = 5 beats). The Tempo Map
             # editor bails when beats.length < 2 ("No beat grid…"), so
@@ -3783,12 +3858,78 @@ def setup(app, context):
                 return JSONResponse(
                     {"error": "year must be a number or string"}, 400,
                 )
+            # ── Spec-complete manifest metadata (feedpak §5.1) ──
+            # Every field is OPTIONAL and written through only when present.
+            def _opt_str(name):
+                v = meta_in.get(name)
+                if v is None:
+                    return ""
+                if not isinstance(v, str):
+                    raise ValueError(f"{name} must be a string")
+                return v.strip()
+
+            def _opt_int(name):
+                v = meta_in.get(name)
+                if v in (None, ""):
+                    return None
+                if isinstance(v, str) and v.strip().lstrip("-").isdigit():
+                    return int(v.strip())
+                if _is_int(v):
+                    return v
+                raise ValueError(f"{name} must be an integer")
+
+            try:
+                album_artist = _opt_str("album_artist")
+                language = _opt_str("language")
+                mbid = _opt_str("mbid").lower()
+                # ISRC: the bare 12-char code — strip the display hyphens/spaces
+                # and upper-case (feedpak §5.1). Not hard-rejected on length so a
+                # partial draft entry is tolerated.
+                isrc = re.sub(r"[\s-]", "", _opt_str("isrc")).upper()
+                track_no = _opt_int("track")
+                disc_no = _opt_int("disc")
+            except ValueError as _e:
+                return JSONResponse({"error": str(_e)}, 400)
+
+            # genres: accept a list OR a comma/newline string; normalise to a
+            # de-duped list of trimmed strings (most-specific first).
+            genres_in = meta_in.get("genres")
+            if isinstance(genres_in, str):
+                genres_in = re.split(r"[,\n]", genres_in)
+            genres: list[str] = []
+            if isinstance(genres_in, list):
+                _seen_g: set[str] = set()
+                for _g in genres_in:
+                    if isinstance(_g, str) and _g.strip() and _g.strip() not in _seen_g:
+                        _seen_g.add(_g.strip())
+                        genres.append(_g.strip())
+            elif genres_in is not None:
+                return JSONResponse(
+                    {"error": "genres must be a string or a list of strings"}, 400,
+                )
+
             meta_out = {
                 "title": title,
                 "artist": artist,
                 "album": album_raw,
                 "year": year_raw,
             }
+            if authors:
+                meta_out["authors"] = authors
+            if album_artist:
+                meta_out["album_artist"] = album_artist
+            if track_no is not None:
+                meta_out["track"] = track_no
+            if disc_no is not None:
+                meta_out["disc"] = disc_no
+            if genres:
+                meta_out["genres"] = genres
+            if mbid:
+                meta_out["mbid"] = mbid
+            if isrc:
+                meta_out["isrc"] = isrc
+            if language:
+                meta_out["language"] = language
 
             drum_tab: dict | None = None
             if init_drums:
@@ -3799,6 +3940,11 @@ def setup(app, context):
                     "kit": [],
                     "hits": [],
                 }
+
+            # Vocals in the roster seeds an EMPTY lyrics track (feedpak models
+            # vocals as side-files, not an arrangement). An empty list is a valid
+            # lyrics.json — the author fills syllables in later.
+            lyrics_seed: list | None = [] if want_vocals else None
 
             # Probe the actual audio duration so the sloppak's
             # manifest.duration reflects the song, not the 2-second
@@ -3811,7 +3957,7 @@ def setup(app, context):
                 ffprobe = _bundled_or_path("ffprobe") or shutil.which("ffprobe")
             except Exception:
                 ffprobe = shutil.which("ffprobe")
-            if ffprobe:
+            if ffprobe and ogg_path is not None:
                 try:
                     pr = await asyncio.get_event_loop().run_in_executor(
                         None,
@@ -3831,8 +3977,15 @@ def setup(app, context):
                     audio_duration = None
 
             def _do_write():
+                # Auto-generate the hover-to-listen preview from the master audio
+                # (no manual upload) — best-effort; absent for audio-less drafts.
+                preview_clip = ""
+                if ogg_path is not None:
+                    _pv = _make_preview_clip(Path(ogg_path), upload_dir)
+                    if _pv:
+                        preview_clip = str(_pv)
                 return _write_sloppak_pak(
-                    audio_file=str(ogg_path),
+                    audio_file=(str(ogg_path) if ogg_path is not None else ""),
                     art_path=art_path,
                     arrangements_data=arrangements_data,
                     beats=beats,
@@ -3840,6 +3993,8 @@ def setup(app, context):
                     meta=meta_out,
                     output_path=output_path,
                     drum_tab=drum_tab,
+                    lyrics=lyrics_seed,
+                    preview_path=preview_clip,
                     fail_if_exists=True,
                     duration_override=audio_duration,
                 )
@@ -3936,11 +4091,17 @@ def setup(app, context):
             dest = STORAGE_DIR / f"editor_audio_{audio_id}{out_path.suffix.lower()}"
             shutil.copy2(out_path, dest)
             shutil.rmtree(out_path.parent, ignore_errors=True)
-            return {"audio_url": f"{STORAGE_URL}/{dest.name}"}
+            _dur = await asyncio.get_event_loop().run_in_executor(
+                None, _probe_audio_duration, dest)
+            return {"audio_url": f"{STORAGE_URL}/{dest.name}", "duration": _dur}
 
         dest = STORAGE_DIR / f"editor_audio_{audio_id}{ext}"
         dest.write_bytes(content)
-        return {"audio_url": f"{STORAGE_URL}/editor_audio_{audio_id}{ext}"}
+        # Duration lets the create modal's MusicBrainz "Match" rank candidates by
+        # how close their length is to this master audio (the studio-vs-live tell).
+        _dur = await asyncio.get_event_loop().run_in_executor(
+            None, _probe_audio_duration, dest)
+        return {"audio_url": f"{STORAGE_URL}/editor_audio_{audio_id}{ext}", "duration": _dur}
 
     # ── Download audio from YouTube ──────────────────────────────────
 
@@ -4067,6 +4228,11 @@ def setup(app, context):
                 manifest = dict(session["sloppak_state"].get("manifest") or {})
                 rel = f"stems/{dest.name}"
                 manifest["stems"] = [{"id": "full", "file": rel}]
+                # Regenerate the auto preview from the new master audio so a draft
+                # that had no audio at create (and thus no preview) gets one now.
+                _pv = _make_preview_clip(dest, source_dir)
+                if _pv and _pv.exists():
+                    manifest["preview"] = _pv.name
                 (source_dir / "manifest.yaml").write_text(
                     yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
                     encoding="utf-8",
@@ -4142,9 +4308,30 @@ def setup(app, context):
             None, _detect_embedded
         )
 
+        # Song metadata for non-destructive autofill of the create modal's
+        # Title / Artist / Album fields (convert-gp reads those same fields, so
+        # this just saves retyping). Best-effort — a parse failure returns blanks
+        # and the modal simply falls back to the filename-derived title.
+        def _gp_song_meta():
+            try:
+                import guitarpro
+                song = guitarpro.parse(gp_path)
+                return {
+                    "title": (getattr(song, "title", "") or "").strip(),
+                    "artist": (getattr(song, "artist", "") or "").strip(),
+                    "album": (getattr(song, "album", "") or "").strip(),
+                }
+            except Exception:
+                return {"title": "", "artist": "", "album": ""}
+
+        song_meta = await asyncio.get_event_loop().run_in_executor(
+            None, _gp_song_meta
+        )
+
         return {"gp_path": gp_path, "tracks": tracks,
                 "has_embedded_audio": has_audio,
-                "sync_point_count": sync_count}
+                "sync_point_count": sync_count,
+                "song": song_meta}
 
 
 
@@ -5679,10 +5866,77 @@ def setup(app, context):
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
+    def _probe_audio_duration(path) -> "float | None":
+        """Best-effort audio duration in seconds via ffprobe (None on failure)."""
+        try:
+            from lib.audio import _bundled_or_path
+            ffprobe = _bundled_or_path("ffprobe") or shutil.which("ffprobe")
+        except Exception:
+            ffprobe = shutil.which("ffprobe")
+        if not ffprobe:
+            return None
+        try:
+            pr = subprocess.run(
+                [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                 "-of", "csv=p=0", str(path)],
+                capture_output=True, timeout=15,
+            )
+            if pr.returncode == 0:
+                return round(float(pr.stdout.strip()), 3)
+        except Exception:
+            pass
+        return None
+
+    def _make_preview_clip(src: "Path", out_dir: "Path",
+                           clip_seconds: float = 28.0) -> "Path | None":
+        """Auto-generate a short hover-to-listen preview from the master audio —
+        an OGG snippet starting ~20% into the song (past most intros). Best-effort:
+        returns None if ffmpeg is unavailable or the source is missing/too short.
+        Replaces the old manual "Preview Clip" upload."""
+        try:
+            from lib.audio import _ffmpeg_cmd
+            ffmpeg = _ffmpeg_cmd()
+        except Exception:
+            ffmpeg = None
+        if not ffmpeg or not src or not Path(src).exists():
+            return None
+        start, dur = 0.0, None
+        try:
+            from lib.audio import _bundled_or_path
+            ffprobe = _bundled_or_path("ffprobe") or shutil.which("ffprobe")
+        except Exception:
+            ffprobe = shutil.which("ffprobe")
+        if ffprobe:
+            try:
+                pr = subprocess.run(
+                    [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                     "-of", "csv=p=0", str(src)],
+                    capture_output=True, timeout=15,
+                )
+                if pr.returncode == 0:
+                    dur = float(pr.stdout.strip())
+            except Exception:
+                dur = None
+        if dur and dur > clip_seconds + 2:
+            start = max(0.0, min(dur * 0.2, dur - clip_seconds))
+        out = out_dir / "preview.ogg"
+        try:
+            subprocess.run(
+                [ffmpeg, "-y", "-ss", str(round(start, 3)), "-t", str(clip_seconds),
+                 "-i", str(src), "-vn", "-c:a", "libvorbis", "-q:a", "4", str(out)],
+                capture_output=True, timeout=60,
+            )
+        except Exception:
+            return None
+        if out.exists() and out.stat().st_size > 100:
+            return out
+        return None
+
     def _write_sloppak_pak(*, audio_file: str, art_path: str,
                           arrangements_data: list, beats: list, sections: list,
                           meta: dict, output_path: Path,
                           drum_tab: dict | None = None,
+                          lyrics: list | None = None,
                           preview_path: str = "",
                           fail_if_exists: bool = False,
                           duration_override: float | None = None) -> str:
@@ -5700,7 +5954,11 @@ def setup(app, context):
         path writes drum_tab via its own staging logic, not through
         this helper.
         """
-        if not audio_file or not Path(audio_file).exists():
+        # Draft-now packs carry no audio (audio_file == ""): emit an empty
+        # `stems: []` the author fills in later via Replace Audio. A NON-empty
+        # audio_file that doesn't resolve is still a real error.
+        _has_audio = bool(audio_file)
+        if _has_audio and not Path(audio_file).exists():
             raise RuntimeError("No audio file available for sloppak write")
         # Sloppak supports a packed-zip form (foo.sloppak file) and an
         # authoring directory form (foo.sloppak/ tree). Replacing a
@@ -5734,35 +5992,38 @@ def setup(app, context):
             # it `audio.ogg` here meant those consumers couldn't find the mix.
             # Transcode to OGG when the source isn't already OGG so playback
             # works regardless of the uploaded audio format.
-            audio_ext = Path(audio_file).suffix.lower()
-            if audio_ext == ".ogg":
-                stem_filename = "full.ogg"
-                shutil.copy2(audio_file, stems_dir / stem_filename)
-            else:
-                # Try to transcode to the conventional `full.ogg` so on-create
-                # stem separation can find the source mix.
-                try:
-                    from lib.audio import _ffmpeg_cmd, _ffmpeg_wav_to_ogg
-                    _ff = _ffmpeg_cmd()
-                except Exception:
-                    _ff = None
-                _ogg_dest = stems_dir / "full.ogg"
-                _ok = False
-                if _ff:
-                    _r = _ffmpeg_wav_to_ogg(_ff, Path(audio_file), _ogg_dest)
-                    _ok = (_r.returncode == 0 and _ogg_dest.exists()
-                           and _ogg_dest.stat().st_size >= 100)
-                if _ok:
+            # No audio (draft): stem_filename stays None -> manifest `stems: []`.
+            stem_filename = None
+            if _has_audio:
+                audio_ext = Path(audio_file).suffix.lower()
+                if audio_ext == ".ogg":
                     stem_filename = "full.ogg"
-                else:
-                    # ffmpeg unavailable or transcode failed — keep the source
-                    # under its REAL extension (and point the manifest at it)
-                    # rather than writing mislabeled bytes to a `.ogg` name,
-                    # which would break decode/playback. Stem-split (which keys
-                    # on full.ogg) is best-effort and simply won't run here.
-                    _ogg_dest.unlink(missing_ok=True)
-                    stem_filename = f"full{audio_ext}"
                     shutil.copy2(audio_file, stems_dir / stem_filename)
+                else:
+                    # Try to transcode to the conventional `full.ogg` so on-create
+                    # stem separation can find the source mix.
+                    try:
+                        from lib.audio import _ffmpeg_cmd, _ffmpeg_wav_to_ogg
+                        _ff = _ffmpeg_cmd()
+                    except Exception:
+                        _ff = None
+                    _ogg_dest = stems_dir / "full.ogg"
+                    _ok = False
+                    if _ff:
+                        _r = _ffmpeg_wav_to_ogg(_ff, Path(audio_file), _ogg_dest)
+                        _ok = (_r.returncode == 0 and _ogg_dest.exists()
+                               and _ogg_dest.stat().st_size >= 100)
+                    if _ok:
+                        stem_filename = "full.ogg"
+                    else:
+                        # ffmpeg unavailable or transcode failed — keep the source
+                        # under its REAL extension (and point the manifest at it)
+                        # rather than writing mislabeled bytes to a `.ogg` name,
+                        # which would break decode/playback. Stem-split (which keys
+                        # on full.ogg) is best-effort and simply won't run here.
+                        _ogg_dest.unlink(missing_ok=True)
+                        stem_filename = f"full{audio_ext}"
+                        shutil.copy2(audio_file, stems_dir / stem_filename)
 
             used_ids: set[str] = set()
             manifest_arrangements = []
@@ -5865,13 +6126,41 @@ def setup(app, context):
                 # `id: "full"` matches the convention the editor's load
                 # path and replace-audio path already use; sloppak
                 # readers prefer that id when picking the default stem.
-                "stems": [
-                    {"id": "full", "file": f"stems/{stem_filename}"},
-                ],
+                # Draft packs (no audio yet) carry an empty stems list — the
+                # loader tolerates it (audio_url resolves to null) and Replace
+                # Audio fills it in later.
+                "stems": (
+                    [{"id": "full", "file": f"stems/{stem_filename}"}]
+                    if stem_filename else []
+                ),
                 "arrangements": manifest_arrangements,
             }
             if year:
                 manifest["year"] = year
+            # Optional author credits (feedpak `authors:` array). Written only
+            # when non-empty so packs without credits stay byte-identical.
+            _authors = meta.get("authors")
+            if isinstance(_authors, list):
+                _authors = [str(a).strip() for a in _authors if str(a).strip()]
+                if _authors:
+                    manifest["authors"] = _authors
+
+            # Spec-complete optional metadata (feedpak §5.1) — written only when
+            # present so packs without them stay minimal. String scalars,
+            # int scalars (track/disc), and the genres list.
+            for _mk in ("album_artist", "mbid", "isrc", "language"):
+                _mv = meta.get(_mk)
+                if isinstance(_mv, str) and _mv.strip():
+                    manifest[_mk] = _mv.strip()
+            for _mk in ("track", "disc"):
+                _mv = meta.get(_mk)
+                if isinstance(_mv, int) and not isinstance(_mv, bool):
+                    manifest[_mk] = _mv
+            _genres = meta.get("genres")
+            if isinstance(_genres, list):
+                _genres = [str(g).strip() for g in _genres if str(g).strip()]
+                if _genres:
+                    manifest["genres"] = _genres
 
             if art_path and Path(art_path).exists():
                 cover_ext = Path(art_path).suffix.lower() or ".jpg"
@@ -5907,6 +6196,17 @@ def setup(app, context):
                     encoding="utf-8",
                 )
                 manifest["drum_tab"] = "drum_tab.json"
+
+            # Vocals seed: an empty (or authored) lyrics track. feedpak §7.1
+            # lyrics.json is a flat array of syllables — an empty array is a
+            # valid, empty track the author fills in later.
+            if isinstance(lyrics, list):
+                (staging / "lyrics.json").write_text(
+                    json.dumps(lyrics, separators=(",", ":")),
+                    encoding="utf-8",
+                )
+                manifest["lyrics"] = "lyrics.json"
+                manifest["lyrics_source"] = "authored"
 
             (staging / "manifest.yaml").write_text(
                 yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
