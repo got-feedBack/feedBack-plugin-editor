@@ -2884,11 +2884,16 @@ function onKeyDown(e) {
     if (!e.target.matches('input, select, textarea')
             && ['PageUp', 'PageDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
         const dir = (e.key === 'PageDown' || e.key === 'ArrowRight') ? 1 : -1;
-        const mode = (e.altKey && !e.ctrlKey && !e.metaKey) ? 'anchor'
-            : ((e.ctrlKey || e.metaKey) && e.shiftKey) ? 'grid'
-                : e.shiftKey ? 'note'
-                    : 'beat';
-        if (_navigateTimeline(dir, mode)) {
+        // Match ONLY the four documented modifier combos exactly — anything else
+        // (Cmd+←/→ = browser Back/Forward, Ctrl+PageUp/Down = tab switch, …) must
+        // fall through to the browser rather than be swallowed by preventDefault.
+        const ctrlOrMeta = e.ctrlKey || e.metaKey;
+        let mode = null;
+        if (!e.shiftKey && !e.altKey && !ctrlOrMeta) mode = 'beat';
+        else if (e.shiftKey && !e.altKey && !ctrlOrMeta) mode = 'note';
+        else if (e.shiftKey && ctrlOrMeta && !e.altKey) mode = 'grid';
+        else if (e.altKey && !e.shiftKey && !ctrlOrMeta) mode = 'anchor';
+        if (mode && _navigateTimeline(dir, mode)) {
             e.preventDefault();
             return;
         }
