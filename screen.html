@@ -23,7 +23,7 @@
         <button id="editor-create-btn" onclick="editorShowCreateModal()" class="px-3 py-1 bg-green-800 hover:bg-green-700 rounded text-xs font-medium" title="Start a new song">New…</button>
         <button id="editor-save-btn" onclick="editorSave()" class="px-3 py-1 bg-accent hover:bg-accent-light rounded text-xs font-medium" disabled>Save</button>
         <button id="editor-replace-audio-btn" onclick="editorShowReplaceAudioModal()" class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden" title="Replace the audio track">Replace Audio</button>
-        <button id="editor-build-btn" onclick="editorBuild()" class="px-3 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs font-medium hidden">Build Song</button>
+        <button id="editor-build-btn" onclick="editorBuild()" class="px-3 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs font-medium hidden" title="Assemble the finished .feedpak package">Build feedpak</button>
         <button id="editor-add-drums-btn" onclick="editorShowAddDrumsModal()" class="px-3 py-1 bg-red-900 hover:bg-red-800 rounded text-xs font-medium hidden">+ Drums</button>
         <button id="editor-add-keys-btn" onclick="editorShowAddKeysModal()" class="px-3 py-1 bg-indigo-900 hover:bg-indigo-800 rounded text-xs font-medium hidden">+ Keys</button>
         <button id="editor-import-guitar-btn" onclick="editorShowImportGuitarModal()" class="px-3 py-1 bg-blue-900 hover:bg-blue-800 rounded text-xs font-medium hidden" title="Import a guitar or bass track from a Guitar Pro file — add it or replace an existing arrangement">+ Guitar/Bass</button>
@@ -165,17 +165,27 @@
         </div>
         <div class="p-4 space-y-4">
 
-            <!-- Step 1: Guitar Pro file -->
+            <!-- How to start: Blank is first-class (audio only); GP / EOF import a chart. -->
             <div>
-                <label class="text-xs font-medium text-gray-400 mb-1 block">Guitar Pro File <span id="editor-create-gp-opt" class="text-gray-600">(.gp3/.gp4/.gp5/.gpx/.gp — optional)</span></label>
+                <div class="aud-seg-wrap" role="tablist" aria-label="How to start the new song">
+                    <button type="button" onclick="editorSetCreateMode('blank')" id="editor-create-mode-blank-btn" class="aud-seg is-active">Blank</button>
+                    <button type="button" onclick="editorSetCreateMode('gp')" id="editor-create-mode-gp-btn" class="aud-seg">Guitar Pro</button>
+                    <button type="button" onclick="editorSetCreateMode('eof')" id="editor-create-mode-eof-btn" class="aud-seg">EOF XML</button>
+                </div>
+                <p id="editor-create-mode-hint" class="text-[11px] text-gray-600 mt-1"></p>
+            </div>
+
+            <!-- Guitar Pro file (GP mode) -->
+            <div id="editor-create-mode-gp" class="create-mode-sec hidden">
+                <label class="text-xs font-medium text-gray-400 mb-1 block">Guitar Pro File <span id="editor-create-gp-opt" class="text-gray-600">(.gp3/.gp4/.gp5/.gpx/.gp)</span></label>
                 <input type="file" id="editor-create-gp" accept=".gp3,.gp4,.gp5,.gpx,.gp"
                     onchange="editorGPFileSelected(this)"
                     class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
             </div>
 
-            <!-- Step 1 (alt): import EOF (Editor on Fire) arrangement XML -->
-            <div>
-                <label class="text-xs font-medium text-gray-400 mb-1 block">EOF Arrangement XML <span class="text-gray-600">(.xml — one or more; optional)</span></label>
+            <!-- EOF (Editor on Fire) arrangement XML (EOF mode) -->
+            <div id="editor-create-mode-eof" class="create-mode-sec hidden">
+                <label class="text-xs font-medium text-gray-400 mb-1 block">EOF Arrangement XML <span class="text-gray-600">(.xml — one or more)</span></label>
                 <input type="file" id="editor-create-eof" accept=".xml" multiple
                     onchange="editorEofFilesSelected(this)"
                     class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
@@ -189,8 +199,8 @@
                 </div>
             </div>
 
-            <!-- Blank-chart options (Sloppak with no Guitar Pro file) -->
-            <div id="editor-create-blank-opts" class="hidden space-y-2">
+            <!-- Blank-chart options (audio-only feedpak; Blank mode) -->
+            <div id="editor-create-blank-opts" class="create-mode-sec hidden space-y-2">
                 <div>
                     <label class="text-xs font-medium text-gray-400 mb-1 block">Initial Arrangement</label>
                     <div id="editor-create-arr-buttons" class="flex gap-1"></div>

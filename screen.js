@@ -5508,16 +5508,16 @@ window.editorShowNewFormatPicker = () => {
         return b;
     };
     inner.appendChild(mkBtn(
-        '🎵  Sloppak',
-        'Audio + chart with drum tab and stems available from the start. '
-        + 'Best for new songs.',
-        () => window.editorShowCreateSloppakModal(),
+        '🎵  Blank — start from audio',
+        'Audio + an empty arrangement (drum tab optional). Chart it yourself '
+        + 'in the editor. No Guitar Pro / XML needed.',
+        () => { window.editorShowCreateModal(); window.editorSetCreateMode('blank'); },
     ));
     inner.appendChild(mkBtn(
         '🎸  Import from Guitar Pro',
-        'Build a chart from a Guitar Pro file (.gp3–.gp8). Audio and '
-        + 'arrangements are imported and saved as a native .sloppak.',
-        () => window.editorShowCreateModal(),
+        'Build a chart from a Guitar Pro file (.gp3–.gp8), saved as a native '
+        + '.feedpak.',
+        () => { window.editorShowCreateModal(); window.editorSetCreateMode('gp'); },
     ));
 
     const cancel = document.createElement('div');
@@ -5547,6 +5547,7 @@ window.editorShowCreateModal = () => {
     // gp8AudioMode / autoSyncAudioUrl / lastSync can't leak into this one
     // (which would apply the previous song's audio/offset to a new import).
     createState = {
+        mode: 'blank', initialArr: 'Lead',
         gpPath: null, tracks: null, audioUrl: null, audioMode: 'file', artPath: null,
         previewPath: null, eofFiles: null,
         gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null,
@@ -5575,6 +5576,8 @@ window.editorShowCreateModal = () => {
     const _refineStatus = document.getElementById('editor-refine-status');
     if (_refineStatus) _refineStatus.textContent = '';
     editorSetAudioMode('file');
+    _populateCreateArrButtons();
+    editorSetCreateMode('blank');
 };
 
 window.editorHideCreateModal = () => {
@@ -6009,11 +6012,95 @@ async function uploadCreateAudio() {
     return true;
 }
 
-function updateCreateButton() {
-    const hasGP = !!createState.gpPath;
-    const hasEof = !!(createState.eofFiles && createState.eofFiles.length);
-    document.getElementById('editor-create-go').disabled = !(hasGP || hasEof);
+// Pure gate — given the create-modal state + which inputs are filled, decide
+// whether the Create/Import button should be enabled. DOM-free so it can be
+// unit-tested (tests/create_gate.test.js).
+//   blank: audio-only feedpak -> backend needs audio + title + artist.
+//   gp/eof: enabled once a source file is chosen (title/artist come from it or
+//   the details fields), preserving the pre-mode-picker behaviour.
+function _createGateOpen(state, flags) {
+    if (!state || !flags) return false;
+    switch (state.mode) {
+        case 'blank': return !!(flags.hasAudio && flags.hasTitle && flags.hasArtist);
+        case 'gp':    return !!state.gpPath;
+        case 'eof':   return !!(state.eofFiles && state.eofFiles.length);
+        default:      return false;
+    }
 }
+
+function _createHasAudioInput() {
+    if (createState.audioMode === 'youtube') {
+        return !!((document.getElementById('editor-create-yt-url')?.value) || '').trim();
+    }
+    return !!(document.getElementById('editor-create-audio')?.files || []).length
+        || !!createState.audioUrl;
+}
+
+function updateCreateButton() {
+    const open = _createGateOpen(createState, {
+        hasTitle: !!((document.getElementById('editor-create-title')?.value) || '').trim(),
+        hasArtist: !!((document.getElementById('editor-create-artist')?.value) || '').trim(),
+        hasAudio: _createHasAudioInput(),
+    });
+    const btn = document.getElementById('editor-create-go');
+    if (btn) btn.disabled = !open;
+}
+
+// Populate the Blank-mode "Initial Arrangement" toggle. Lead / Rhythm / Bass are
+// the arrangements the create_sloppak backend accepts today; Keys/Drums-as-arr
+// + extended tunings need backend work (tracked separately). The drum-tab
+// checkbox beside it covers a drum chart.
+function _populateCreateArrButtons() {
+    const wrap = document.getElementById('editor-create-arr-buttons');
+    if (!wrap) return;
+    wrap.replaceChildren();
+    const choices = ['Lead', 'Rhythm', 'Bass'];
+    if (!choices.includes(createState.initialArr)) createState.initialArr = 'Lead';
+    for (const name of choices) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.dataset.arr = name;
+        b.textContent = name;
+        b.className = 'px-2 py-1 rounded text-xs font-medium '
+            + (name === createState.initialArr
+                ? 'bg-accent text-white'
+                : 'bg-dark-600 text-gray-300 hover:bg-dark-500');
+        b.onclick = () => { createState.initialArr = name; _populateCreateArrButtons(); };
+        wrap.appendChild(b);
+    }
+}
+
+// Switch the create modal between Blank (audio-only) / Guitar Pro / EOF XML:
+// show only that mode's section, clear the other modes' picked files (so a
+// leftover can't route editorDoCreate the wrong way), and re-label the action.
+window.editorSetCreateMode = (mode) => {
+    if (!['blank', 'gp', 'eof'].includes(mode)) mode = 'blank';
+    createState.mode = mode;
+    if (mode !== 'gp') { createState.gpPath = null; createState.tracks = null; }
+    if (mode !== 'eof') { createState.eofFiles = null; }
+    document.getElementById('editor-create-tracks')?.classList.add('hidden');
+    document.querySelectorAll('#editor-create-modal .create-mode-sec').forEach((el) => {
+        const secMode = el.id === 'editor-create-mode-gp' ? 'gp'
+            : el.id === 'editor-create-mode-eof' ? 'eof'
+            : 'blank'; // editor-create-blank-opts
+        el.classList.toggle('hidden', secMode !== mode);
+    });
+    for (const m of ['blank', 'gp', 'eof']) {
+        document.getElementById(`editor-create-mode-${m}-btn`)
+            ?.classList.toggle('is-active', m === mode);
+    }
+    const hint = document.getElementById('editor-create-mode-hint');
+    if (hint) {
+        hint.textContent = mode === 'blank'
+            ? 'Start from audio — pick an instrument below and chart it in the editor. No Guitar Pro / XML needed.'
+            : mode === 'gp'
+                ? 'Import a chart from a Guitar Pro file (.gp3–.gp8).'
+                : 'Import one or more EOF (Editor on Fire) arrangement XML files.';
+    }
+    const go = document.getElementById('editor-create-go');
+    if (go) go.textContent = mode === 'blank' ? 'Create from Audio' : 'Import & Open in Editor';
+    updateCreateButton();
+};
 
 // Wire up input change events for enabling the create button. Changing the
 // Step 2 audio inputs also invalidates a cached upload URL — otherwise
@@ -6028,6 +6115,10 @@ document.addEventListener('change', (e) => {
 document.addEventListener('input', (e) => {
     if (e.target.id === 'editor-create-yt-url') {
         createState.audioUrl = null;
+        updateCreateButton();
+    }
+    // Blank mode also gates on title/artist — re-check as the user types.
+    if (e.target.id === 'editor-create-title' || e.target.id === 'editor-create-artist') {
         updateCreateButton();
     }
 });
@@ -6105,7 +6196,59 @@ window.editorRefineSync = async () => {
     }
 };
 
+// Blank-mode create: no Guitar Pro / EOF chart — just audio + metadata + an
+// empty initial arrangement (Lead/Rhythm/Bass) and an optional drum tab. POSTs
+// to create_sloppak (which already accepts an audio_url + blank arrangement)
+// and opens the freshly-written feedpak via the normal load path.
+async function _editorDoBlankCreate() {
+    const status = document.getElementById('editor-create-status');
+    const btn = document.getElementById('editor-create-go');
+    const title = ((document.getElementById('editor-create-title')?.value) || '').trim();
+    const artist = ((document.getElementById('editor-create-artist')?.value) || '').trim();
+    if (!title || !artist) {
+        if (status) status.textContent = 'Title and artist are required.';
+        return;
+    }
+    if (btn) btn.disabled = true;
+    if (!createState.audioUrl) {
+        if (status) status.textContent = 'Uploading audio…';
+        const ok = await uploadCreateAudio();
+        if (!ok) { if (btn) btn.disabled = false; return; }
+    }
+    const meta = {
+        title, artist,
+        album: ((document.getElementById('editor-create-album')?.value) || '').trim(),
+        year: ((document.getElementById('editor-create-year')?.value) || '').trim(),
+        initial_arrangement: createState.initialArr || 'Lead',
+        init_drum_tab: !!document.getElementById('editor-create-drum-tab')?.checked,
+        audio_url: createState.audioUrl,
+    };
+    const fd = new FormData();
+    fd.append('metadata', JSON.stringify(meta));
+    if (status) status.textContent = 'Building feedpak…';
+    try {
+        const resp = await fetch('/api/plugins/editor/create_sloppak', { method: 'POST', body: fd });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            if (status) status.textContent = 'Error: ' + (data.error || resp.statusText);
+            if (btn) btn.disabled = false;
+            return;
+        }
+        editorHideCreateModal();
+        if (typeof _kickLibraryRescan === 'function') _kickLibraryRescan();
+        await loadCDLC(data.filename);
+    } catch (e) {
+        if (status) status.textContent = 'Failed: ' + e.message;
+        if (btn) btn.disabled = false;
+    }
+}
+
 window.editorDoCreate = async () => {
+    // Blank mode: audio + metadata -> create_sloppak (no GP/EOF chart import).
+    if (createState.mode === 'blank') {
+        await _editorDoBlankCreate();
+        return;
+    }
     // EOF arrangement-XML import takes priority when XML files are selected.
     if (createState.eofFiles && createState.eofFiles.length) {
         await _editorDoEofCreate();
@@ -6326,7 +6469,7 @@ window.editorApplyCreateResult = async (data) => {
 
     if (data.audio_url) await loadAudio(data.audio_url);
     draw();
-    setStatus('Imported — edit notes then click Build Song');
+    setStatus('Imported — edit notes then click Build feedpak');
 };
 
 // EOF arrangement XML(s) selected — just record them. The shared "Import & Open"
@@ -6621,7 +6764,7 @@ window.editorApplyReplaceAudio = async () => {
         const HINTS = {
             none:    'Audio replaced',
             save:    'Audio replaced (Save to persist to .sloppak)',
-            build:   'Audio replaced (will persist on next Build Song)',
+            build:   'Audio replaced (will persist on next Build feedpak)',
             rebuild: "Audio replaced (playback only — archive won't be repacked)",
         };
         editorHideReplaceAudioModal();
