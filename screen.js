@@ -3588,6 +3588,10 @@ function _editorDispatchEofShortcut(e) {
 function _editorRightClickNoteEdit(e, x, y) {
     const behavior = _editorEffectiveRightClickBehaviorPure(editorShortcutProfile, editorRightClickBehavior);
     if (behavior !== 'eofEdit' || !S.arrangements.length) return false;
+    // Block mid-take edits like every other note-editing input — a MIDI take
+    // reassigns arr.notes = _recNotes on Stop, so an add/remove here would be
+    // silently overwritten and muddle undo history.
+    if (_recState === 'recording') return false;
     const keysMode = isKeysMode();
     const laneBottom = keysMode
         ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
