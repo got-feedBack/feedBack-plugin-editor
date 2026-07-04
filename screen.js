@@ -1077,6 +1077,7 @@ function reconstructChords() {
 
 function draw() {
     if (!canvas) return;
+    updateBPMDisplay();
     const w = canvas.width / DPR;
     const h = canvas.height / DPR;
     ctx.save();
@@ -4948,9 +4949,31 @@ function updateZoomDisplay() {
     if (el) el.textContent = Math.round(S.zoom);
 }
 
+function _tempoResolvedMeasureIdx() {
+    if (!S.tempoMapMode) return -1;
+    if (S.tempoSel >= 0) return S.tempoSel;
+    const measures = _tempoMeasures();
+    if (!measures.length) return -1;
+    const t = Math.max(0, S.cursorTime || 0);
+    for (let k = measures.length - 1; k >= 0; k--) {
+        if (measures[k].time <= t + 1e-6) return measures[k].i;
+    }
+    return measures[0].i;
+}
+
 function updateBPMDisplay() {
     const el = document.getElementById('editor-bpm');
-    if (el && S.beats.length >= 2) el.value = getTabBPM().toFixed(1);
+    if (!el || S.beats.length < 2) return;
+    if (document.activeElement === el) return;
+    if (S.tempoMapMode) {
+        const d = _tempoResolvedMeasureIdx();
+        const m = _tempoMeasures().find(mm => mm.i === d) || null;
+        if (m && !m.isLast && m.bpm > 0) {
+            el.value = m.bpm.toFixed(2);
+            return;
+        }
+    }
+    el.value = getTabBPM().toFixed(1);
 }
 
 // Defer a `resizeCanvas` until layout has settled — used when a
@@ -5022,6 +5045,27 @@ window.editorSetSnap = (idx) => { S.snapIdx = idx; };
 window.editorSetBPM = (val) => {
     const newBPM = parseFloat(val);
     if (!newBPM || newBPM <= 0 || S.beats.length < 2) return;
+    if (S.tempoMapMode) {
+        const d = _tempoResolvedMeasureIdx();
+        if (d < 0) return;
+        const measures = _tempoMeasures();
+        const m = measures.find(mm => mm.i === d) || null;
+        if (!m || m.isLast || !(m.bpm > 0)) {
+            setStatus('Select a non-final measure to edit its BPM.');
+            updateBPMDisplay();
+            return;
+        }
+        const newBeats = _tempoSetMeasureBpmPure(S.beats, d, newBPM, MIN_MEASURE, _r3);
+        if (!newBeats) {
+            updateBPMDisplay();
+            return;
+        }
+        S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })), newBeats, 'bpm'));
+        updateBPMDisplay();
+        draw();
+        setStatus(`Measure ${m.measure} tempo changed: ${m.bpm.toFixed(2)} → ${newBPM.toFixed(2)} BPM`);
+        return;
+    }
     const oldBPM = getTabBPM();
     const factor = oldBPM / newBPM;
     if (Math.abs(factor - 1) < 0.001) return;
@@ -5035,6 +5079,7 @@ window.editorSetBPM = (val) => {
     for (const b of S.beats) b.time *= factor;
     for (const s of S.sections) s.start_time *= factor;
 
+    updateBPMDisplay();
     draw();
     setStatus(`Tempo changed: ${oldBPM.toFixed(1)} → ${newBPM.toFixed(1)} BPM`);
 };
@@ -9120,24 +9165,30 @@ function _refreshTempoMapButton() {
         btn.classList.remove('bg-amber-600', 'hover:bg-amber-500');
         btn.classList.add('bg-dark-600', 'hover:bg-dark-500');
     }
-    // The toolbar BPM input / Sync button show a single song-wide tempo;
-    // in tempo-map mode the song can have many per-measure BPMs, so the
-    // input would be misleading — disable it while the mode is active.
-    for (const id of ['editor-bpm', 'editor-sync-btn']) {
-        const el = document.getElementById(id);
-        if (!el) continue;
-        el.disabled = !!S.tempoMapMode;
-        el.style.opacity = S.tempoMapMode ? '0.4' : '';
+    // Sync works on the song-wide BPM only, so keep that disabled in
+    // tempo-map mode. The BPM input itself stays active there and edits the
+    // selected measure (or the one under the playhead if nothing is selected).
+    const bpmEl = document.getElementById('editor-bpm');
+    if (bpmEl) {
+        bpmEl.disabled = false;
+        bpmEl.style.opacity = '';
+        if (bpmEl.dataset.origTitle === undefined) bpmEl.dataset.origTitle = bpmEl.title || '';
+        bpmEl.title = S.tempoMapMode
+            ? 'Edit the selected measure BPM in Tempo Map mode'
+            : bpmEl.dataset.origTitle;
+    }
+    const syncEl = document.getElementById('editor-sync-btn');
+    if (syncEl) {
+        syncEl.disabled = !!S.tempoMapMode;
+        syncEl.style.opacity = S.tempoMapMode ? '0.4' : '';
         if (S.tempoMapMode) {
-            // Stash the element's own tooltip once so we can put it back
-            // on exit instead of permanently blanking it.
-            if (el.dataset.origTitle === undefined) {
-                el.dataset.origTitle = el.title || '';
+            if (syncEl.dataset.origTitle === undefined) {
+                syncEl.dataset.origTitle = syncEl.title || '';
             }
-            el.title = 'Disabled in Tempo Map mode — edit per-measure tempo on the grid';
-        } else if (el.dataset.origTitle !== undefined) {
-            el.title = el.dataset.origTitle;
-            delete el.dataset.origTitle;
+            syncEl.title = 'Disabled in Tempo Map mode — edit per-measure tempo on the grid';
+        } else if (syncEl.dataset.origTitle !== undefined) {
+            syncEl.title = syncEl.dataset.origTitle;
+            delete syncEl.dataset.origTitle;
         }
     }
 }
@@ -9414,6 +9465,36 @@ class TempoGridCmd {
 // ── Drag: move a sync point, re-spacing the two adjacent measures ────
 
 const MIN_MEASURE = 0.05;  // s — minimum gap a dragged downbeat keeps
+
+/* @pure:tempo-map-bpm:start */
+function _tempoSetMeasureBpmPure(beats, d, newBpm, minMeasure, round) {
+    if (!Array.isArray(beats) || beats.length < 2 || !Number.isFinite(newBpm) || newBpm <= 0) return null;
+    if (d < 0 || d >= beats.length || !beats[d] || beats[d].measure <= 0) return null;
+    let ndb = -1;
+    for (let i = d + 1; i < beats.length; i++) {
+        if (beats[i].measure > 0) { ndb = i; break; }
+    }
+    if (ndb < 0) return null;
+    const beatCount = ndb - d;
+    if (beatCount <= 0) return null;
+    const r = typeof round === 'function' ? round : (v => v);
+    const gapMin = Number.isFinite(minMeasure) && minMeasure > 0 ? minMeasure : 0.05;
+    const startT = beats[d].time;
+    const oldEnd = beats[ndb].time;
+    const span = Math.max(gapMin, (beatCount * 60) / newBpm);
+    const newEnd = r(startT + span);
+    const dt = newEnd - oldEnd;
+    const out = beats.map(b => ({ ...b }));
+    for (let k = 1; k < beatCount; k++) {
+        out[d + k].time = r(startT + (newEnd - startT) * k / beatCount);
+    }
+    out[ndb].time = newEnd;
+    for (let i = ndb + 1; i < out.length; i++) {
+        out[i].time = r(out[i].time + dt);
+    }
+    return out;
+}
+/* @pure:tempo-map-bpm:end */
 
 // Move the downbeat at index `d` in `beats` to `newT`, re-spacing the
 // interior sub-beats of the two adjacent measures. Downbeats other than
