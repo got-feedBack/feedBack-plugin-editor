@@ -1074,6 +1074,11 @@ function reconstructChords() {
 
 function draw() {
     if (!canvas) return;
+    // Keep the loop strip (DOM, independent of the canvas render) in sync for
+    // EVERY mode — drum-edit and tempo-map both return early below, so rendering
+    // it here rather than at the tail stops a clear/drag from leaving a stale
+    // selection while one of those modes is active.
+    _renderLoopStrip();
     const w = canvas.width / DPR;
     const h = canvas.height / DPR;
     ctx.save();
@@ -1137,7 +1142,6 @@ function draw() {
     }
 
     ctx.restore();
-    _renderLoopStrip();
 }
 
 function drawWaveform(w) {
