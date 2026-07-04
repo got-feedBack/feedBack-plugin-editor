@@ -3593,6 +3593,10 @@ function _editorRightClickNoteEdit(e, x, y) {
         ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
         : WAVEFORM_H + lanes() * LANE_H;
     if (y < WAVEFORM_H || y > laneBottom) return false;
+    // Only inside the timeline grid — a right-click on the left string/piano
+    // label margin (x < LABEL_W) is not a note edit; without this it would
+    // clamp xToTime()<0 to 0 and add a note at the song start.
+    if (x < LABEL_W) return false;
 
     const idx = hitNote(x, y);
     if (idx >= 0) {
