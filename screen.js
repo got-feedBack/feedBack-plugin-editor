@@ -341,7 +341,12 @@ function _editorMaxScrollXPure(durationSeconds, viewportDurationSeconds, tailSec
     const view = Number(viewportDurationSeconds);
     const tail = Number(tailSeconds);
     if (!Number.isFinite(duration) || duration <= 0) return 0;
-    return Math.max(0, duration + Math.max(0, Number.isFinite(tail) ? tail : 0) - Math.max(0, Number.isFinite(view) ? view : 0));
+    const v = Math.max(0, Number.isFinite(view) ? view : 0);
+    // The song already fits on screen → pin to the start (no scroll, no tail).
+    // The tail only extends the range once the content itself runs past the
+    // viewport, so a short/zoomed-out song can't hide its beginning.
+    if (duration <= v) return 0;
+    return Math.max(0, duration + Math.max(0, Number.isFinite(tail) ? tail : 0) - v);
 }
 
 function _editorClampScrollXPure(scrollX, durationSeconds, viewportDurationSeconds, tailSeconds) {

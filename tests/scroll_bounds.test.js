@@ -35,6 +35,10 @@ t('keeps short songs pinned at the start when the full song fits', () => {
     const view = api._editorViewportDurationPure(1000, 52, 120);
     assert.strictEqual(api._editorMaxScrollXPure(4, view, 2), 0);
     assert.strictEqual(api._editorClampScrollXPure(30, 4, view, 2), 0);
+    // Song fits the viewport but duration+tail exceeds it — the tail must NOT
+    // create scroll room that would hide the beginning (6s song, 7s view, 2s).
+    assert.strictEqual(api._editorMaxScrollXPure(6, 7, 2), 0);
+    assert.strictEqual(api._editorClampScrollXPure(3, 6, 7, 2), 0);
 });
 
 t('allows a small tail past the end of longer songs', () => {
