@@ -6630,7 +6630,16 @@ async function _editorMbRunSearch(artist, title, resultsEl) {
     const params = new URLSearchParams();
     if (artist) params.set('artist', artist);
     if (title) params.set('title', title);
-    params.set('limit', '15');
+    // Fetch the max (25): a non-title-track studio recording can sit well down
+    // MusicBrainz's flat list (dozens of comp/reissue takes score identically),
+    // so a small limit drops it entirely and the duration re-rank has nothing to
+    // promote. Verified: Judas Priest "Living After Midnight" — the 1980 British
+    // Steel take is absent at 15 but present (and #1 after duration) at 25.
+    params.set('limit', '25');
+    // Pass the staged master audio's length so the server can corroborate too
+    // (harmless if the core doesn't consume it; the client re-rank below is the
+    // load-bearing path today).
+    if (Number(createState.audioDuration) > 0) params.set('duration', String(Math.round(createState.audioDuration)));
     let data = null, status = 0;
     try {
         const resp = await fetch('/api/enrichment/search?' + params.toString());
