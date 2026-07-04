@@ -7292,7 +7292,7 @@ window.editorDoCreate = async () => {
     // manual-audio path — the auto-sync uploader provides createState
     // .autoSyncAudioUrl for both. Normalise so the offset/audio_url/skip logic
     // below doesn't treat a not-yet-flipped 'upload' as a no-audio import.
-    const _gpAudioMode = (createState.gp8AudioMode === 'upload')
+    let _gpAudioMode = (createState.gp8AudioMode === 'upload')
         ? 'autosync' : (createState.gp8AudioMode || 'none');
 
     // Upload/download the Step-2 audio first — but only in modes where it's the
@@ -7306,6 +7306,15 @@ window.editorDoCreate = async () => {
         if (_createHasAudioInput() && !createState.audioUrl) {
             const ok = await uploadCreateAudio();
             if (!ok) { btn.disabled = false; return; }
+            // A pasted YouTube URL is master audio just like a staged file — but
+            // file audio couples into autosync on selection (via
+            // _refreshGpAudioUI), while a URL only resolves here at Create. Now
+            // that it's resolved, re-derive the GP audio UI so the chart
+            // auto-syncs to it, and recompute the mode so the autosync path
+            // below runs — otherwise the audio is attached UNALIGNED.
+            _refreshGpAudioUI();
+            _gpAudioMode = (createState.gp8AudioMode === 'upload')
+                ? 'autosync' : (createState.gp8AudioMode || 'none');
         }
     }
 
