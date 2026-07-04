@@ -60,7 +60,6 @@ const SNAP_OPTIONS = Object.freeze([
     { label: '1/48', value: 1 / 48, subdivisions: 48 },
     { label: '1/64', value: 1 / 64, subdivisions: 64 },
     { label: '1/96', value: 1 / 96, subdivisions: 96 },
-    { label: 'Off', value: 0, subdivisions: 0 },
 ]);
 const SNAP_VALUES = SNAP_OPTIONS.map(opt => opt.value);
 
@@ -71,6 +70,10 @@ function _editorSnapOptionLabelsPure() {
 function _editorSnapSubdivisionsPure(snapValue) {
     if (!snapValue) return 0;
     return Math.max(1, Math.round(1 / snapValue));
+}
+
+function _editorEffectiveSnapValuePure(snapEnabled, snapValue) {
+    return snapEnabled ? snapValue : 0;
 }
 /* @pure:snap-options:end */
 const DPR = window.devicePixelRatio || 1;
@@ -158,6 +161,7 @@ const S = {
     scrollX: 0,   // seconds
     zoom: 120,     // px per second
     snapIdx: 2,    // default 1/4
+    snapEnabled: true,
 
     // Selection
     sel: new Set(),
@@ -581,7 +585,7 @@ function updatePianoRange(expandOnly = false) {
 }
 
 function snapTime(t) {
-    const sv = SNAP_VALUES[S.snapIdx];
+    const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
     if (!sv || S.beats.length < 2) return t;
     // Find surrounding beat
     let bi = 0;
@@ -2982,6 +2986,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'nextAnchor', label: 'Jump to next anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Right', eof: 'Alt+Page Down' } },
     { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: '[' } },
     { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: ']' } },
+    { id: 'toggleSnap', label: 'Toggle snap on/off', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'G', eof: '' } },
     { id: 'snapDown', label: 'Decrease snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: ',', eof: ',' } },
     { id: 'snapUp', label: 'Increase snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: '.', eof: '.' } },
     { id: 'editFret', label: 'Edit fret / fingering', group: 'Notes', status: 'ready', keys: { feedback: 'F', eof: 'F / Ctrl+F' } },
@@ -3134,6 +3139,7 @@ function _editorFeedbackCommandForKeyPure(e) {
     if (sig === 'Ctrl+PageDown') return 'nextGrid';
     if (ctrlAlt && e.key === 'ArrowLeft') return 'prevAnchor';
     if (ctrlAlt && e.key === 'ArrowRight') return 'nextAnchor';
+    if (plain && key === 'g') return 'toggleSnap';
     if (plain && key === ',') return 'snapDown';
     if (plain && key === '.') return 'snapUp';
     if (plain && key === 'f') return 'editFret';
@@ -3344,6 +3350,11 @@ function _editorAdjustSelectedSustain(delta) {
     return true;
 }
 
+function _editorToggleSnapEnabled() {
+    window.editorSetSnapEnabled(!S.snapEnabled);
+    return true;
+}
+
 function _editorSnapStepSeconds() {
     if (!S.beats || S.beats.length < 2) return 0.25;
     const t = S.cursorTime || 0;
@@ -3353,7 +3364,7 @@ function _editorSnapStepSeconds() {
     }
     const bt = S.beats[bi].time;
     const nt = bi < S.beats.length - 1 ? S.beats[bi + 1].time : bt + 0.5;
-    const sv = SNAP_VALUES[S.snapIdx];
+    const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
     const subs = _editorSnapSubdivisionsPure(sv);
     if (!subs) return Math.max(0.001, nt - bt);
     return Math.max(0.001, (nt - bt) / subs);
@@ -3549,10 +3560,11 @@ function _editorRunEofCommand(cmd) {
     case 'nextGrid': _editorJumpGrid(+1); return true;
     case 'prevAnchor': _editorJumpAnchor(-1); return true;
     case 'nextAnchor': _editorJumpAnchor(+1); return true;
+    case 'toggleSnap': return _editorToggleSnapEnabled();
     case 'shortenSustain': return _editorAdjustSelectedSustain(-_editorSnapStepSeconds());
     case 'lengthenSustain': return _editorAdjustSelectedSustain(+_editorSnapStepSeconds());
-    case 'snapDown': window.editorSetSnap(Math.max(0, S.snapIdx - 1)); document.getElementById('editor-snap').selectedIndex = S.snapIdx; return true;
-    case 'snapUp': window.editorSetSnap(Math.min(SNAP_VALUES.length - 1, S.snapIdx + 1)); document.getElementById('editor-snap').selectedIndex = S.snapIdx; return true;
+    case 'snapDown': window.editorSetSnap(Math.max(0, S.snapIdx - 1)); return true;
+    case 'snapUp': window.editorSetSnap(Math.min(SNAP_VALUES.length - 1, S.snapIdx + 1)); return true;
     case 'editFret': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptFret(idxs[0]); else setStatus('Select a note first'); return true; }
     case 'noteMenu': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) showContextMenu(window.innerWidth / 2, window.innerHeight / 2, idxs[0]); else setStatus('Select a note first'); return true; }
     case 'bend': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptBend(idxs[0]); else setStatus('Select a note first'); return true; }
@@ -5912,7 +5924,18 @@ window.editorZoom = (dir) => {
     updateZoomDisplay();
     draw();
 };
-window.editorSetSnap = (idx) => { S.snapIdx = idx; };
+window.editorSetSnap = (idx) => {
+    const n = parseInt(idx, 10);
+    S.snapIdx = Math.max(0, Math.min(SNAP_VALUES.length - 1, Number.isFinite(n) ? n : S.snapIdx));
+    const el = document.getElementById('editor-snap');
+    if (el) el.selectedIndex = S.snapIdx;
+};
+window.editorSetSnapEnabled = (enabled) => {
+    S.snapEnabled = !!enabled;
+    const el = document.getElementById('editor-snap-enabled');
+    if (el) el.checked = S.snapEnabled;
+    setStatus(S.snapEnabled ? 'Snap enabled' : 'Snap disabled');
+};
 window.editorSetBPM = (val) => {
     const newBPM = parseFloat(val);
     if (!newBPM || newBPM <= 0 || S.beats.length < 2) return;
