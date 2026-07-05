@@ -3529,7 +3529,7 @@ function _editorJumpGrid(dir) {
 
 function _editorJumpAnchor(dir) {
     const arr = S.arrangements[S.currentArr] || {};
-    const anchors = _anchorProjection(arr).map(a => a.anchor.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
+    const anchors = _readAnchorSnapshot(arr).list.map(a => a.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
     const cur = S.cursorTime || 0;
     const next = dir > 0 ? anchors.find(t => t > cur + 0.0001) : [...anchors].reverse().find(t => t < cur - 0.0001);
     if (next !== undefined) _editorSeekToTime(next);
