@@ -10603,6 +10603,7 @@ function _tempoMapOnContextMenu(e) {
     if (onPole >= 0) {
         const cur = _tempoMeasureBeatCount(onPole);
         html += `<div class="px-3 py-1 text-xs text-gray-500">Measure: ${cur} beats</div>`;
+        html += mkBtn('tsedit', 'Set time signature…');
         if (cur < 16) html += mkBtn('tsplus', 'Add a beat (time signature +)');
         if (cur > 1) html += mkBtn('tsminus', 'Remove a beat (time signature −)');
         html += '<div class="border-t border-gray-700 my-1"></div>';
@@ -10617,6 +10618,7 @@ function _tempoMapOnContextMenu(e) {
             const a = btn.dataset.action;
             if (a === 'delete') _tempoDeleteSyncPoint(onPole);
             else if (a === 'insert') _tempoInsertSyncPoint(xToTime(x));
+            else if (a === 'tsedit') _tempoPromptTimeSignature(onPole);
             else if (a === 'tsplus') _tempoSetBeatsPerMeasure(onPole, _tempoMeasureBeatCount(onPole) + 1);
             else if (a === 'tsminus') _tempoSetBeatsPerMeasure(onPole, _tempoMeasureBeatCount(onPole) - 1);
         };
@@ -10711,6 +10713,16 @@ function _tempoNormalizeDenominatorPure(value) {
     return TEMPO_SIGNATURE_DENOMINATORS.includes(n) ? n : 4;
 }
 
+function _tempoParseSignatureInputPure(value) {
+    const raw = String(value || '').trim();
+    const m = raw.match(/^(\d{1,2})\s*\/\s*(\d{1,2})$/);
+    if (!m) return null;
+    const numerator = Math.max(1, Math.min(16, parseInt(m[1], 10)));
+    const denominator = parseInt(m[2], 10);
+    if (!TEMPO_SIGNATURE_DENOMINATORS.includes(denominator)) return null;
+    return { numerator, denominator };
+}
+
 function _tempoSetDenominatorOnBeatsPure(beats, d, denominator) {
     if (!Array.isArray(beats) || d < 0 || d >= beats.length || !beats[d] || beats[d].measure <= 0) return null;
     const den = _tempoNormalizeDenominatorPure(denominator);
@@ -10750,6 +10762,34 @@ function _tempoSetBeatsPerMeasure(d, newCount) {
     S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig'));
     updateTempoSigDisplay();
     draw();
+}
+
+function _tempoSetTimeSignature(d, numerator, denominator) {
+    const beats = S.beats || [];
+    let newBeats = _tempoSetBeatsPerMeasurePure(beats, d, numerator, S.duration, _r3);
+    if (!newBeats) return false;
+    newBeats = _tempoSetDenominatorOnBeatsPure(newBeats, d, denominator);
+    if (!newBeats) return false;
+    _tempoRenumberMeasures(newBeats);
+    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig'));
+    updateTempoSigDisplay();
+    draw();
+    return true;
+}
+
+function _tempoPromptTimeSignature(d) {
+    if (d < 0 || !S.beats[d] || S.beats[d].measure <= 0) return;
+    const current = `${_tempoMeasureBeatCount(d)}/${_tempoMeasureDenominator(d)}`;
+    const raw = window.prompt('Set time signature for selected measure', current);
+    if (raw === null) return;
+    const parsed = _tempoParseSignatureInputPure(raw);
+    if (!parsed) {
+        setStatus('Enter a time signature like 7/8, 4/4, or 5/16.');
+        return;
+    }
+    if (_tempoSetTimeSignature(d, parsed.numerator, parsed.denominator)) {
+        setStatus(`Measure ${S.beats[d].measure} time signature set to ${parsed.numerator}/${parsed.denominator}`);
+    }
 }
 
 // Beats currently in the measure starting at downbeat index `d`.
