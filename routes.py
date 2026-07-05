@@ -139,6 +139,231 @@ def _load_arrangement_json(path) -> dict:
     return json.loads(raw)
 
 
+def _timeline_round_time(value) -> float:
+    try:
+        return round(float(value), 3)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _timeline_denominator(value) -> int:
+    try:
+        den = int(value)
+    except (TypeError, ValueError):
+        return 4
+    return den if den in {1, 2, 4, 8, 16, 32, 64} else 4
+
+
+def _timeline_downbeat_indices(beats: list) -> list[int]:
+    return [
+        i for i, b in enumerate(beats or [])
+        if isinstance(b, dict) and int(b.get("measure", -1) or -1) > 0
+    ]
+
+
+def _timeline_measure_beat_count(beats: list, downbeats: list[int], pos: int) -> int:
+    idx = downbeats[pos]
+    if pos + 1 < len(downbeats):
+        return max(1, downbeats[pos + 1] - idx)
+    return max(1, len(beats or []) - idx)
+
+
+def _build_song_timeline(beats: list, sections: list) -> dict | None:
+    """Build the feedpak song_timeline.json payload from editor beat state."""
+    clean_beats = []
+    for b in beats or []:
+        if not isinstance(b, dict):
+            continue
+        clean_beats.append({
+            "time": _timeline_round_time(b.get("time", 0)),
+            "measure": int(b.get("measure", -1) or -1),
+        })
+
+    clean_sections = []
+    for s in sections or []:
+        if not isinstance(s, dict):
+            continue
+        clean_sections.append({
+            "name": str(s.get("name", "")),
+            "number": int(s.get("number", 0) or 0),
+            "time": _timeline_round_time(s.get("time", s.get("start_time", 0))),
+        })
+
+    payload = {"version": 1}
+    if clean_beats:
+        payload["beats"] = clean_beats
+    if clean_sections:
+        payload["sections"] = clean_sections
+
+    downbeats = _timeline_downbeat_indices(beats or [])
+    time_signatures = []
+    tempos = []
+    last_ts = None
+    last_bpm = None
+    for pos, idx in enumerate(downbeats):
+        b = beats[idx]
+        t = _timeline_round_time(b.get("time", 0))
+        numerator = _timeline_measure_beat_count(beats, downbeats, pos)
+        den = _timeline_denominator(b.get("den", 4))
+        ts = [numerator, den]
+        if numerator > 1 and ts != last_ts:
+            time_signatures.append({"time": t, "ts": ts})
+            last_ts = ts
+        if pos + 1 < len(downbeats):
+            n = beats[downbeats[pos + 1]]
+            span = _timeline_round_time(n.get("time", 0)) - t
+            if span > 0:
+                bpm = round((numerator * 60.0) / span, 3)
+                if last_bpm is None or abs(bpm - last_bpm) > 0.001:
+                    tempos.append({"time": t, "bpm": bpm})
+                    last_bpm = bpm
+    if time_signatures:
+        payload["time_signatures"] = time_signatures
+    if tempos:
+        payload["tempos"] = tempos
+
+    return payload if len(payload) > 1 else None
+
+
+def _apply_timeline_signatures_to_beats(beats: list, time_signatures: list) -> list:
+    """Attach denominator hints from song_timeline events to downbeat rows."""
+    if not beats or not isinstance(time_signatures, list):
+        return beats
+    out = [dict(b) if isinstance(b, dict) else b for b in beats]
+    downbeats = [
+        (i, _timeline_round_time(b.get("time", 0)))
+        for i, b in enumerate(out)
+        if isinstance(b, dict) and int(b.get("measure", -1) or -1) > 0
+    ]
+    for ev in time_signatures:
+        if not isinstance(ev, dict):
+            continue
+        ts = ev.get("ts")
+        if not isinstance(ts, list) or len(ts) < 2:
+            continue
+        den = _timeline_denominator(ts[1])
+        t = _timeline_round_time(ev.get("time", 0))
+        match = min(downbeats, key=lambda pair: abs(pair[1] - t), default=None)
+        if match and abs(match[1] - t) <= 0.001:
+            out[match[0]]["den"] = den
+    return out
+
+
+def _load_song_timeline(source_dir: Path, manifest: dict) -> dict | None:
+    rel = (manifest or {}).get("song_timeline")
+    if not rel or not isinstance(rel, str):
+        return None
+    source_resolved = source_dir.resolve()
+    timeline_path = (source_resolved / rel).resolve()
+    try:
+        timeline_path.relative_to(source_resolved)
+    except ValueError:
+        return None
+    if not timeline_path.exists() or not timeline_path.is_file():
+        return None
+    try:
+        raw = json.loads(timeline_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    beats = raw.get("beats")
+    sections = raw.get("sections")
+    signatures = raw.get("time_signatures")
+    result = {}
+    if isinstance(beats, list):
+        result["beats"] = _apply_timeline_signatures_to_beats([
+            {
+                "time": _timeline_round_time(b.get("time", 0)),
+                "measure": int(b.get("measure", -1) or -1),
+            }
+            for b in beats if isinstance(b, dict)
+        ], signatures if isinstance(signatures, list) else [])
+    if isinstance(sections, list):
+        result["sections"] = [
+            {
+                "name": str(s.get("name", "")),
+                "number": int(s.get("number", 0) or 0),
+                "start_time": _timeline_round_time(s.get("time", s.get("start_time", 0))),
+            }
+            for s in sections if isinstance(s, dict)
+        ]
+    return result or None
+
+
+def _read_existing_song_timeline_payload(source_dir: Path, manifest: dict) -> dict:
+    rel = (manifest or {}).get("song_timeline") or "song_timeline.json"
+    if not isinstance(rel, str):
+        rel = "song_timeline.json"
+    source_resolved = source_dir.resolve()
+    timeline_path = (source_resolved / rel).resolve()
+    try:
+        timeline_path.relative_to(source_resolved)
+    except ValueError:
+        return {}
+    if not timeline_path.exists() or not timeline_path.is_file():
+        return {}
+    try:
+        existing = json.loads(timeline_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return existing if isinstance(existing, dict) else {}
+
+
+# Keys the editor authoritatively owns in song_timeline.json — everything else
+# (metric modulations, author annotations, future keys) is preserved verbatim.
+_OWNED_TIMELINE_KEYS = ("version", "tempos", "time_signatures", "beats", "sections")
+
+
+def _merge_song_timeline_payload(existing: dict, generated: dict) -> dict:
+    merged = dict(existing or {})
+    for key in _OWNED_TIMELINE_KEYS:
+        if key in generated:
+            merged[key] = generated[key]
+        else:
+            merged.pop(key, None)
+    return merged
+
+
+def _write_song_timeline_sidecar(source_dir: Path, manifest: dict,
+                                 beats: list, sections: list) -> None:
+    payload = _build_song_timeline(beats, sections)
+    timeline_path = (source_dir / "song_timeline.json").resolve()
+    try:
+        timeline_path.relative_to(source_dir.resolve())
+    except ValueError:
+        raise RuntimeError("song_timeline path escapes sandbox")
+    if payload is None:
+        # Empty grid: the editor owns no timeline. Preserve any hand-authored
+        # unknown keys (the whole point of this feature) rather than unlinking
+        # them — only drop the sidecar when nothing survives the owned-key strip.
+        existing = _read_existing_song_timeline_payload(source_dir, manifest)
+        leftover = {k: v for k, v in existing.items()
+                    if k not in _OWNED_TIMELINE_KEYS}
+        if leftover:
+            timeline_path.write_text(
+                json.dumps(leftover, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            manifest["song_timeline"] = "song_timeline.json"
+            return
+        try:
+            timeline_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        manifest.pop("song_timeline", None)
+        return
+    payload = _merge_song_timeline_payload(
+        _read_existing_song_timeline_payload(source_dir, manifest),
+        payload,
+    )
+    timeline_path.write_text(
+        json.dumps(payload, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    manifest["song_timeline"] = "song_timeline.json"
+
+
 # ── JSONC comment-preservation scanners ──────────────────────────────────────
 #
 # The editor re-saves arrangements by replacing note content, so preserving
@@ -2786,6 +3011,12 @@ def setup(app, context):
 
             result = _song_to_dict(song, audio_url)
             result["format"] = "sloppak"
+            timeline = _load_song_timeline(loaded.source_dir, loaded.manifest)
+            if timeline:
+                if "beats" in timeline:
+                    result["beats"] = timeline["beats"]
+                if "sections" in timeline:
+                    result["sections"] = timeline["sections"]
             if len(_stem_urls) >= 2:
                 result["stems"] = _stem_urls
             # `lib/sloppak.load_song()` doesn't restore song.offset (the
@@ -3355,6 +3586,8 @@ def setup(app, context):
                         manifest["year"] = int(metadata["year"])
                     except (TypeError, ValueError):
                         pass
+
+            _write_song_timeline_sidecar(source_dir, manifest, beats, sections)
 
             # Write manifest.yaml back into the source dir
             (source_dir / "manifest.yaml").write_text(
@@ -6407,6 +6640,8 @@ def setup(app, context):
                 )
                 manifest["lyrics"] = "lyrics.json"
                 manifest["lyrics_source"] = "authored"
+
+            _write_song_timeline_sidecar(staging, manifest, beats, sections)
 
             (staging / "manifest.yaml").write_text(
                 yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),

@@ -47,7 +47,35 @@ let BEAT_H = 24;
 const LABEL_W = 52;
 const MIN_NOTE_W = 18;
 const NOTE_PAD = 3;
-const SNAP_VALUES = [1, 0.5, 0.25, 0.125, 0.0625, 0]; // 1/1 … 1/16, off
+/* @pure:snap-options:start */
+const SNAP_OPTIONS = Object.freeze([
+    { label: '1/1', value: 1, subdivisions: 1 },
+    { label: '1/2', value: 1 / 2, subdivisions: 2 },
+    { label: '1/4', value: 1 / 4, subdivisions: 4 },
+    { label: '1/8', value: 1 / 8, subdivisions: 8 },
+    { label: '1/12', value: 1 / 12, subdivisions: 12 },
+    { label: '1/16', value: 1 / 16, subdivisions: 16 },
+    { label: '1/24', value: 1 / 24, subdivisions: 24 },
+    { label: '1/32', value: 1 / 32, subdivisions: 32 },
+    { label: '1/48', value: 1 / 48, subdivisions: 48 },
+    { label: '1/64', value: 1 / 64, subdivisions: 64 },
+    { label: '1/96', value: 1 / 96, subdivisions: 96 },
+]);
+const SNAP_VALUES = SNAP_OPTIONS.map(opt => opt.value);
+
+function _editorSnapOptionLabelsPure() {
+    return SNAP_OPTIONS.map(opt => opt.label);
+}
+
+function _editorSnapSubdivisionsPure(snapValue) {
+    if (!snapValue) return 0;
+    return Math.max(1, Math.round(1 / snapValue));
+}
+
+function _editorEffectiveSnapValuePure(snapEnabled, snapValue) {
+    return snapEnabled ? snapValue : 0;
+}
+/* @pure:snap-options:end */
 const DPR = window.devicePixelRatio || 1;
 
 // ── Piano roll constants ────────────────────────────────────────────
@@ -133,6 +161,7 @@ const S = {
     scrollX: 0,   // seconds
     zoom: 120,     // px per second
     snapIdx: 2,    // default 1/4
+    snapEnabled: true,
 
     // Selection
     sel: new Set(),
@@ -141,7 +170,11 @@ const S = {
     // beat bar (measure strip) to set { startTime, endTime } in seconds,
     // snapped to downbeat boundaries. `null` = no bar range selected.
     barSel: null,
-
+    loopEnabled: false,
+    // True when this editor session was opened from the 3D highway's
+    // "Edit region" action. Used to make the preview button read as a
+    // return trip instead of a fresh action.
+    returnToHighway: false,
     // Drag state
     drag: null, // { type, startX, startY, startTime, startString, noteIdx, origTimes, origStrings }
 
@@ -293,7 +326,135 @@ function laneLabels() {
 function timeToX(t)  { return LABEL_W + (t - S.scrollX) * S.zoom; }
 function xToTime(x)  { return (x - LABEL_W) / S.zoom + S.scrollX; }
 
+const EDITOR_SCROLL_TAIL_SECONDS = 2;
+
+/* @pure:scroll-bounds:start */
+function _editorViewportDurationPure(canvasWidthPx, labelWidthPx, zoomPxPerSecond) {
+    const w = Number(canvasWidthPx);
+    const label = Number(labelWidthPx);
+    const zoom = Number(zoomPxPerSecond);
+    if (!Number.isFinite(w) || !Number.isFinite(label) || !Number.isFinite(zoom) || zoom <= 0) return 0;
+    return Math.max(0, (w - label) / zoom);
+}
+
+function _editorMaxScrollXPure(durationSeconds, viewportDurationSeconds, tailSeconds) {
+    const duration = Number(durationSeconds);
+    const view = Number(viewportDurationSeconds);
+    const tail = Number(tailSeconds);
+    if (!Number.isFinite(duration) || duration <= 0) return 0;
+    const v = Math.max(0, Number.isFinite(view) ? view : 0);
+    // The song already fits on screen → pin to the start (no scroll, no tail).
+    // The tail only extends the range once the content itself runs past the
+    // viewport, so a short/zoomed-out song can't hide its beginning.
+    if (duration <= v) return 0;
+    return Math.max(0, duration + Math.max(0, Number.isFinite(tail) ? tail : 0) - v);
+}
+
+function _editorClampScrollXPure(scrollX, durationSeconds, viewportDurationSeconds, tailSeconds) {
+    const raw = Number(scrollX);
+    const safe = Number.isFinite(raw) ? raw : 0;
+    return Math.max(0, Math.min(safe, _editorMaxScrollXPure(durationSeconds, viewportDurationSeconds, tailSeconds)));
+}
+/* @pure:scroll-bounds:end */
+
+function _editorViewportDuration() {
+    const w = canvas ? canvas.width / DPR : 800;
+    return _editorViewportDurationPure(w, LABEL_W, S.zoom);
+}
+
+function _editorClampScrollX(scrollX) {
+    return _editorClampScrollXPure(scrollX, S.duration, _editorViewportDuration(), EDITOR_SCROLL_TAIL_SECONDS);
+}
+
+function _editorApplyScrollBounds() {
+    S.scrollX = _editorClampScrollX(S.scrollX);
+    return S.scrollX;
+}
 // ── Bar selection (Loop-in-3D handoff) ──────────────────────────────
+/* @pure:loop-region:start */
+function _barSpanForTimesPure(downbeats, duration, t0, t1) {
+    if (!Array.isArray(downbeats) || !downbeats.length) return null;
+    const lo = Math.min(t0, t1);
+    const hi = Math.max(t0, t1);
+    let start = downbeats[0];
+    for (const t of downbeats) {
+        if (t <= lo + 1e-6) start = t;
+        else break;
+    }
+    let end = null;
+    for (const t of downbeats) {
+        if (t > hi + 1e-6) {
+            end = t;
+            break;
+        }
+    }
+    if (end === null) end = Math.max(duration || hi, hi);
+    return end > start ? { startTime: start, endTime: end } : null;
+}
+
+function _adjustBarSelEdgePure(region, edge, rawTime, downbeats, duration) {
+    if (!region || !Array.isArray(downbeats) || !downbeats.length) return region;
+    if (edge === 'start') {
+        let start = downbeats[0];
+        for (const t of downbeats) {
+            if (t <= rawTime + 1e-6) start = t;
+            else break;
+        }
+        start = Math.min(start, region.endTime);
+        if (start >= region.endTime - 1e-6) {
+            const idx = downbeats.findIndex(t => Math.abs(t - region.endTime) <= 1e-6);
+            if (idx > 0) start = downbeats[idx - 1];
+            else start = Math.min(start, region.startTime);
+        }
+        return region.endTime > start ? { startTime: start, endTime: region.endTime } : region;
+    }
+    if (edge === 'end') {
+        let end = null;
+        for (const t of downbeats) {
+            if (t > rawTime + 1e-6) {
+                end = t;
+                break;
+            }
+        }
+        if (end === null) end = Math.max(duration || rawTime, rawTime);
+        end = Math.max(end, region.startTime);
+        if (end <= region.startTime + 1e-6) {
+            const idx = downbeats.findIndex(t => Math.abs(t - region.startTime) <= 1e-6);
+            if (idx >= 0 && idx < downbeats.length - 1) end = downbeats[idx + 1];
+            else end = Math.max(duration || rawTime, rawTime);
+        }
+        return end > region.startTime ? { startTime: region.startTime, endTime: end } : region;
+    }
+    return region;
+}
+
+function _normalizeLoopRegionPure(region, duration) {
+    if (!region) return null;
+    let start = Number(region.startTime);
+    let end = Number(region.endTime);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    if (end < start) [start, end] = [end, start];
+    const maxT = Number(duration);
+    if (Number.isFinite(maxT) && maxT > 0) {
+        start = Math.max(0, Math.min(start, maxT));
+        end = Math.max(0, Math.min(end, maxT));
+    } else {
+        start = Math.max(0, start);
+        end = Math.max(0, end);
+    }
+    return end > start + 0.001 ? { startTime: start, endTime: end } : null;
+}
+
+function _loopPlaybackRestartTimePure(cursorTime, region, enabled, duration) {
+    if (!enabled) return null;
+    const r = _normalizeLoopRegionPure(region, duration);
+    if (!r) return null;
+    const t = Number(cursorTime);
+    if (!Number.isFinite(t)) return null;
+    return t >= r.endTime - 0.001 ? r.startTime : null;
+}
+/* @pure:loop-region:end */
+
 // Downbeat times in ascending order, from the song-wide beat grid.
 function _downbeatTimes() {
     return S.beats.filter(b => b.measure > 0).map(b => b.time).sort((a, b) => a - b);
@@ -303,15 +464,7 @@ function _downbeatTimes() {
 // (falling back to the song end). Returns null when the chart has no
 // downbeats (so the beat bar can't define bars).
 function _barSpanForTimes(t0, t1) {
-    const dbs = _downbeatTimes();
-    if (!dbs.length) return null;
-    const lo = Math.min(t0, t1), hi = Math.max(t0, t1);
-    let start = dbs[0];
-    for (const t of dbs) { if (t <= lo + 1e-6) start = t; else break; }
-    let end = null;
-    for (const t of dbs) { if (t > hi + 1e-6) { end = t; break; } }
-    if (end === null) end = Math.max(S.duration || hi, hi);
-    return (end > start) ? { startTime: start, endTime: end } : null;
+    return _barSpanForTimesPure(_downbeatTimes(), S.duration || Math.max(t0, t1), t0, t1);
 }
 function laneToY(l)  { return WAVEFORM_H + l * LANE_H; }
 function yToLane(y)  { return Math.floor((y - WAVEFORM_H) / LANE_H); }
@@ -325,6 +478,167 @@ function canvasH()   {
 
 // ── Piano roll mode helpers ─────────────────────────────────────────
 
+function _loopStripTrackBounds() {
+    const track = document.getElementById('editor-loop-strip-track');
+    if (!track) return null;
+    const r = track.getBoundingClientRect();
+    return { left: r.left, width: Math.max(1, r.width) };
+}
+
+function _loopStripTimeFromClientX(clientX) {
+    const b = _loopStripTrackBounds();
+    if (!b || !canvas) return 0;
+    const ratio = Math.max(0, Math.min(1, (clientX - b.left) / b.width));
+    const viewDur = Math.max(0, ((canvas.width / DPR) - LABEL_W) / S.zoom);
+    return S.scrollX + ratio * viewDur;
+}
+
+function _fmtLoopTime(t) {
+    const total = Math.max(0, t || 0);
+    const m = Math.floor(total / 60);
+    const s = Math.floor(total % 60);
+    const ms = Math.floor((total - Math.floor(total)) * 10);
+    return m + ':' + String(s).padStart(2, '0') + '.' + ms;
+}
+
+function _regionMeasureLabel(region) {
+    const starts = _downbeatTimes();
+    if (!region || !starts.length) return _fmtLoopTime(region && region.startTime || 0);
+    let startMeasure = 1;
+    let endMeasure = startMeasure;
+    for (let i = 0; i < starts.length; i++) {
+        if (starts[i] <= region.startTime + 1e-6) startMeasure = i + 1;
+        if (starts[i] < region.endTime - 1e-6) endMeasure = i + 1;
+    }
+    return 'Bars ' + startMeasure + '–' + endMeasure;
+}
+
+function _renderLoopStrip() {
+    const root = document.getElementById('editor-loop-strip');
+    const empty = document.getElementById('editor-loop-strip-empty');
+    const sel = document.getElementById('editor-loop-strip-selection');
+    const clear = document.getElementById('editor-loop-strip-clear');
+    const label = document.getElementById('editor-loop-strip-label');
+    if (!root || !empty || !sel || !clear || !label || !canvas) return;
+    const beatsReady = _downbeatTimes().length > 0;
+    root.classList.toggle('opacity-60', !beatsReady);
+    empty.textContent = beatsReady ? 'Drag to set loop region' : 'No bar grid available';
+    if (!S.barSel || !beatsReady) {
+        sel.classList.add('hidden');
+        clear.classList.add('hidden');
+        empty.classList.remove('hidden');
+        _updateLoopRegionControls();
+        return;
+    }
+    _updateLoopRegionControls();
+    empty.classList.add('hidden');
+    sel.classList.remove('hidden');
+    clear.classList.remove('hidden');
+    const viewDur = Math.max(0, ((canvas.width / DPR) - LABEL_W) / S.zoom);
+    const left = ((S.barSel.startTime - S.scrollX) / Math.max(0.0001, viewDur)) * 100;
+    const right = ((S.barSel.endTime - S.scrollX) / Math.max(0.0001, viewDur)) * 100;
+    const clampedLeft = Math.max(0, Math.min(100, left));
+    const clampedRight = Math.max(0, Math.min(100, right));
+    sel.style.left = clampedLeft + '%';
+    sel.style.width = Math.max(0, clampedRight - clampedLeft) + '%';
+    label.textContent = _regionMeasureLabel(S.barSel) + '  ' + _fmtLoopTime(S.barSel.startTime) + '–' + _fmtLoopTime(S.barSel.endTime);
+    sel.classList.toggle('ring-2', !!S.loopEnabled);
+    sel.classList.toggle('ring-accent-light', !!S.loopEnabled);
+    _updateLoopRegionControls();
+}
+
+function _clearBarSelection() {
+    S.barSel = null;
+    S.loopEnabled = false;
+    _updateLoopRegionControls();
+    _updateLoopIn3DBtn();
+    draw();
+}
+
+function _selectedLoopRegion() {
+    return _normalizeLoopRegionPure(S.barSel, S.duration);
+}
+
+function _updateLoopRegionControls() {
+    const region = _selectedLoopRegion();
+    if (!region && S.loopEnabled) S.loopEnabled = false;
+    const loopBtn = document.getElementById('editor-loop-region-btn');
+    if (loopBtn) {
+        loopBtn.disabled = !region;
+        loopBtn.textContent = S.loopEnabled ? 'Loop On' : 'Loop';
+        loopBtn.title = region
+            ? (S.loopEnabled ? 'Disable editor loop playback for the selected region' : 'Loop editor playback inside the selected region')
+            : 'Set a loop region first';
+        loopBtn.classList.toggle('bg-accent', !!S.loopEnabled);
+        loopBtn.classList.toggle('hover:bg-accent-light', !!S.loopEnabled);
+        loopBtn.classList.toggle('bg-dark-600', !S.loopEnabled);
+        loopBtn.classList.toggle('hover:bg-dark-500', !S.loopEnabled);
+    }
+    const clearBtn = document.getElementById('editor-loop-strip-clear');
+    if (clearBtn) clearBtn.title = S.loopEnabled ? 'Clear loop region and disable looping' : 'Clear loop region';
+}
+
+function _setLoopRegionEnabled(enabled) {
+    const region = _selectedLoopRegion();
+    S.loopEnabled = !!(enabled && region);
+    if (S.loopEnabled && (S.cursorTime < region.startTime || S.cursorTime >= region.endTime)) {
+        _editorSeekToTime(region.startTime);
+    }
+    _updateLoopRegionControls();
+    draw();
+    setStatus(S.loopEnabled ? 'Loop region enabled' : 'Loop region disabled');
+}
+
+window.editorToggleLoopRegion = () => _setLoopRegionEnabled(!S.loopEnabled);
+function _loopStripOnMouseDown(e) {
+    if (!canvas || !S.beats.length) return;
+    const track = document.getElementById('editor-loop-strip-track');
+    if (!track || !track.contains(e.target)) return;
+    if (e.target && e.target.id === 'editor-loop-strip-clear') return;
+    const region = S.barSel;
+    const rawTime = _loopStripTimeFromClientX(e.clientX);
+    if (region) {
+        if (e.target && e.target.id === 'editor-loop-strip-start') {
+            S.drag = { type: 'loopstrip', mode: 'start' };
+            e.preventDefault();
+            return;
+        }
+        if (e.target && e.target.id === 'editor-loop-strip-end') {
+            S.drag = { type: 'loopstrip', mode: 'end' };
+            e.preventDefault();
+            return;
+        }
+    }
+    S.drag = { type: 'loopstrip', mode: 'create', startTime: rawTime };
+    S.barSel = _barSpanForTimes(rawTime, rawTime);
+    _updateLoopIn3DBtn();
+    draw();
+    e.preventDefault();
+}
+
+function _loopStripOnMouseMove(e) {
+    if (!S.drag || S.drag.type !== 'loopstrip') return false;
+    const rawTime = _loopStripTimeFromClientX(e.clientX);
+    const downbeats = _downbeatTimes();
+    if (S.drag.mode === 'create') {
+        S.barSel = _barSpanForTimes(S.drag.startTime, rawTime);
+    } else if (S.drag.mode === 'start' && S.barSel) {
+        S.barSel = _adjustBarSelEdgePure(S.barSel, 'start', rawTime, downbeats, S.duration || rawTime);
+    } else if (S.drag.mode === 'end' && S.barSel) {
+        S.barSel = _adjustBarSelEdgePure(S.barSel, 'end', rawTime, downbeats, S.duration || rawTime);
+    }
+    _updateLoopIn3DBtn();
+    draw();
+    return true;
+}
+
+function _loopStripOnMouseUp() {
+    if (!S.drag || S.drag.type !== 'loopstrip') return false;
+    S.drag = null;
+    _updateLoopIn3DBtn();
+    draw();
+    return true;
+}
 function isKeysMode() {
     if (!S.arrangements.length) return false;
     const arr = S.arrangements[S.currentArr];
@@ -384,8 +698,8 @@ function updatePianoRange(expandOnly = false) {
 }
 
 function snapTime(t) {
-    const sv = SNAP_VALUES[S.snapIdx];
-    if (sv === 0 || S.beats.length < 2) return t;
+    const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
+    if (!sv || S.beats.length < 2) return t;
     // Find surrounding beat
     let bi = 0;
     for (let i = 0; i < S.beats.length - 1; i++) {
@@ -394,7 +708,7 @@ function snapTime(t) {
     const bt = S.beats[bi].time;
     const nt = bi < S.beats.length - 1 ? S.beats[bi + 1].time : bt + 0.5;
     const bd = nt - bt;
-    const subs = 1 / sv;
+    const subs = _editorSnapSubdivisionsPure(sv);
     const sd = bd / subs;
     const idx = Math.round((t - bt) / sd);
     return bt + idx * sd;
@@ -406,6 +720,52 @@ function snapTime(t) {
 
 function notes() { return S.arrangements.length ? S.arrangements[S.currentArr].notes : []; }
 function chords() { return S.arrangements.length ? S.arrangements[S.currentArr].chords : []; }
+
+/* @pure:chord-resize:start */
+function _resizeTargetIndicesPure(noteList, index, expandChord) {
+    if (!Array.isArray(noteList) || index < 0 || index >= noteList.length) return [];
+    if (!expandChord) return [index];
+    const n = noteList[index];
+    if (!n || typeof n.time !== 'number') return [index];
+    const key = n.time.toFixed(4);
+    const out = [];
+    for (let i = 0; i < noteList.length; i++) {
+        const other = noteList[i];
+        if (other && typeof other.time === 'number' && other.time.toFixed(4) === key) {
+            out.push(i);
+        }
+    }
+    return out.length ? out : [index];
+}
+
+function _maxSustainBeforeCollisionPure(noteList, targetIndices) {
+    if (!Array.isArray(noteList) || !Array.isArray(targetIndices) || !targetIndices.length) {
+        return Infinity;
+    }
+    const targetSet = new Set(targetIndices);
+    let limit = Infinity;
+    for (const idx of targetIndices) {
+        const n = noteList[idx];
+        if (!n || typeof n.time !== 'number') continue;
+        for (let i = 0; i < noteList.length; i++) {
+            if (targetSet.has(i)) continue;
+            const other = noteList[i];
+            if (!other || other.string !== n.string || typeof other.time !== 'number') continue;
+            if (other.time > n.time + 0.0001) {
+                limit = Math.min(limit, other.time - n.time);
+            }
+        }
+    }
+    return limit;
+}
+
+function _resizeSustainsForDeltaPure(noteList, targetIndices, anchorOrigSustain, delta) {
+    const desired = Math.max(0, (Number(anchorOrigSustain) || 0) + (Number(delta) || 0));
+    const limit = _maxSustainBeforeCollisionPure(noteList, targetIndices);
+    const sustain = Math.max(0, Math.min(desired, limit));
+    return targetIndices.map(() => sustain);
+}
+/* @pure:chord-resize:end */
 
 // Flatten chord notes into the main notes array on load, tagging with _fromChord.
 // On save, reconstruct chords from notes sharing the same time+_fromChord group.
@@ -905,6 +1265,13 @@ function reconstructChords() {
 
 function draw() {
     if (!canvas) return;
+    // Keep the loop strip (DOM, independent of the canvas render) in sync for
+    // EVERY mode — drum-edit and tempo-map both return early below, so rendering
+    // it here rather than at the tail stops a clear/drag from leaving a stale
+    // selection while one of those modes is active.
+    _renderLoopStrip();
+    updateBPMDisplay();
+    updateTempoSigDisplay();
     const w = canvas.width / DPR;
     const h = canvas.height / DPR;
     ctx.save();
@@ -973,6 +1340,7 @@ function draw() {
 function drawWaveform(w) {
     ctx.fillStyle = '#08081a';
     ctx.fillRect(0, 0, w, WAVEFORM_H);
+    if (typeof editorWaveformVisible !== 'undefined' && !editorWaveformVisible) return;
     const pk = S.waveformPeaks;
     const dur = S.duration || 0;
     if (!pk || !pk.bins || dur <= 0) return;
@@ -1567,6 +1935,27 @@ class ResizeSustainCmd {
     rollback() { notes()[this.index].sustain = this.oldSustain; }
 }
 
+class ResizeSustainGroupCmd {
+    constructor(indices, newSustains) {
+        this.indices = indices.slice();
+        this.newSustains = newSustains.slice();
+        const nn = notes();
+        this.oldSustains = this.indices.map(i => nn[i] ? (nn[i].sustain || 0) : 0);
+    }
+    exec() {
+        const nn = notes();
+        for (let i = 0; i < this.indices.length; i++) {
+            if (nn[this.indices[i]]) nn[this.indices[i]].sustain = this.newSustains[i];
+        }
+    }
+    rollback() {
+        const nn = notes();
+        for (let i = 0; i < this.indices.length; i++) {
+            if (nn[this.indices[i]]) nn[this.indices[i]].sustain = this.oldSustains[i];
+        }
+    }
+}
+
 class ChangeFretCmd {
     constructor(index, newFret) {
         this.index = index;
@@ -1575,6 +1964,40 @@ class ChangeFretCmd {
     }
     exec() { notes()[this.index].fret = this.newFret; }
     rollback() { notes()[this.index].fret = this.oldFret; }
+}
+
+class ToggleTechniqueCmd {
+    constructor(indices, key, value, fretValue = null) {
+        this.indices = indices.slice();
+        this.key = key;
+        this.value = !!value;
+        this.fretValue = fretValue;
+        const nn = notes();
+        this.old = this.indices.map(i => ({
+            tech: !!(nn[i] && nn[i].techniques && nn[i].techniques[key]),
+            fret: nn[i] ? nn[i].fret : 0,
+        }));
+    }
+    exec() {
+        const nn = notes();
+        for (const i of this.indices) {
+            const n = nn[i];
+            if (!n) continue;
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.value;
+            if (this.fretValue !== null) n.fret = this.fretValue;
+        }
+    }
+    rollback() {
+        const nn = notes();
+        this.indices.forEach((i, k) => {
+            const n = nn[i];
+            if (!n) return;
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.old[k].tech;
+            n.fret = this.old[k].fret;
+        });
+    }
 }
 
 // Set the full bend shape (peak `bend`, intent `bend_intent`, curve
@@ -2253,13 +2676,21 @@ function onMouseDown(e) {
     // Check for sustain edge grab first
     const edgeIdx = hitNoteEdge(x, y);
     if (edgeIdx >= 0) {
-        if (!S.sel.has(edgeIdx)) { S.sel.clear(); S.sel.add(edgeIdx); }
-        const n = notes()[edgeIdx];
+        const nn = notes();
+        const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, !isKeysMode() && !e.altKey);
+        const allResizeSelected = resizeIndices.every(i => S.sel.has(i));
+        if (!allResizeSelected) {
+            S.sel.clear();
+            for (const i of resizeIndices) S.sel.add(i);
+        }
+        const n = nn[edgeIdx];
         S.drag = {
             type: 'resize',
             noteIdx: edgeIdx,
+            indices: resizeIndices,
             startX: x,
             origSustain: n.sustain || 0,
+            origSustains: resizeIndices.map(i => nn[i].sustain || 0),
         };
         draw();
         return;
@@ -2339,6 +2770,8 @@ function onMouseMove(e) {
 
 function _onMouseMoveBody(e, x, y, L) {
 
+    if (_loopStripOnMouseMove(e)) return;
+
     // Bar-range drag on the beat bar — re-snap the span to the cursor.
     if (S.drag && S.drag.type === 'barsel') {
         S.barSel = _barSpanForTimes(S.drag.startTime, xToTime(x));
@@ -2391,7 +2824,7 @@ function _onMouseMoveBody(e, x, y, L) {
 
     if (S.drag.type === 'pan') {
         const dx = x - S.drag.startX;
-        S.scrollX = Math.max(0, S.drag.origScroll - dx / S.zoom);
+        S.scrollX = _editorClampScrollX(S.drag.origScroll - dx / S.zoom);
         draw();
         return;
     }
@@ -2434,7 +2867,11 @@ function _onMouseMoveBody(e, x, y, L) {
     if (S.drag.type === 'resize') {
         const dt = (x - S.drag.startX) / S.zoom;
         const nn = notes();
-        nn[S.drag.noteIdx].sustain = Math.max(0, S.drag.origSustain + dt);
+        const nextSustains = _resizeSustainsForDeltaPure(
+            nn, S.drag.indices, S.drag.origSustain, dt);
+        for (let i = 0; i < S.drag.indices.length; i++) {
+            nn[S.drag.indices[i]].sustain = nextSustains[i];
+        }
         draw();
         return;
     }
@@ -2479,6 +2916,7 @@ function _onMouseMoveBody(e, x, y, L) {
 
 function onMouseUp(e) {
     if (!S.drag) return;
+    if (_loopStripOnMouseUp()) return;
     const { x, y } = getMousePos(e);
 
     // Bar-range select finalise — refresh the Loop-in-3D button state.
@@ -2524,11 +2962,14 @@ function onMouseUp(e) {
 
     if (S.drag.type === 'resize') {
         const nn = notes();
-        const finalSustain = nn[S.drag.noteIdx].sustain;
-        // Revert so the command can apply it
-        nn[S.drag.noteIdx].sustain = S.drag.origSustain;
-        if (finalSustain !== S.drag.origSustain) {
-            S.history.exec(new ResizeSustainCmd(S.drag.noteIdx, finalSustain));
+        const finalSustains = S.drag.indices.map(i => nn[i].sustain || 0);
+        // Revert so the command can apply the grouped edit as one undo step.
+        for (let i = 0; i < S.drag.indices.length; i++) {
+            nn[S.drag.indices[i]].sustain = S.drag.origSustains[i];
+        }
+        const changed = finalSustains.some((v, i) => v !== S.drag.origSustains[i]);
+        if (changed) {
+            S.history.exec(new ResizeSustainGroupCmd(S.drag.indices, finalSustains));
         }
     }
 
@@ -2613,15 +3054,731 @@ function onWheel(e) {
         S.zoom = Math.max(20, Math.min(2000, S.zoom * factor));
         // Keep the time under cursor stable
         S.scrollX = timeBefore - (x - LABEL_W) / S.zoom;
-        S.scrollX = Math.max(0, S.scrollX);
+        S.scrollX = _editorClampScrollX(S.scrollX);
     } else {
         // Scroll = pan
-        S.scrollX = Math.max(0, S.scrollX + e.deltaY / S.zoom * 2);
+        S.scrollX = _editorClampScrollX(S.scrollX + e.deltaY / S.zoom * 2);
     }
     updateZoomDisplay();
     draw();
 }
 
+
+const EDITOR_SHORTCUT_PROFILE_KEY = 'editor.shortcutProfile';
+const EDITOR_RIGHT_CLICK_BEHAVIOR_KEY = 'editor.rightClickBehavior';
+const EDITOR_SHORTCUT_PROFILES = new Set(['feedback', 'eof']);
+const EDITOR_RIGHT_CLICK_BEHAVIORS = new Set(['context', 'eofEdit']);
+let editorShortcutProfile = 'feedback';
+let editorRightClickBehavior = null;
+let editorWaveformVisible = true;
+
+/* @pure:shortcut-profile:start */
+function _editorKeySigPure(e) {
+    const mods = [];
+    if (e.ctrlKey || e.metaKey) mods.push('Ctrl');
+    if (e.shiftKey) mods.push('Shift');
+    if (e.altKey) mods.push('Alt');
+    let key = e.key || '';
+    if (key.length === 1) key = key.toUpperCase();
+    return mods.concat(key).join('+');
+}
+
+const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
+    { id: 'save', label: 'Save project', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+S', eof: 'F2 / Ctrl+S' } },
+    { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
+    { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
+    { id: 'importXml', label: 'Import XML source', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F7' } },
+    { id: 'importGp', label: 'Import Guitar Pro source', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F12' } },
+    { id: 'prevBeat', label: 'Jump to previous beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Up', eof: 'Page Up' } },
+    { id: 'nextBeat', label: 'Jump to next beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Down', eof: 'Page Down' } },
+    { id: 'prevNote', label: 'Jump to previous note', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+Left', eof: 'Shift+Page Up' } },
+    { id: 'nextNote', label: 'Jump to next note', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+Right', eof: 'Shift+Page Down' } },
+    { id: 'prevGrid', label: 'Jump to previous grid line', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Page Up', eof: 'Ctrl+Shift+Page Up' } },
+    { id: 'nextGrid', label: 'Jump to next grid line', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Page Down', eof: 'Ctrl+Shift+Page Down' } },
+    { id: 'prevAnchor', label: 'Jump to previous anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Left', eof: 'Alt+Page Up' } },
+    { id: 'nextAnchor', label: 'Jump to next anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Right', eof: 'Alt+Page Down' } },
+    { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: '[' } },
+    { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: ']' } },
+    { id: 'toggleSnap', label: 'Toggle snap on/off', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'G', eof: '' } },
+    { id: 'snapDown', label: 'Decrease snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: ',', eof: ',' } },
+    { id: 'snapUp', label: 'Increase snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: '.', eof: '.' } },
+    { id: 'editFret', label: 'Edit fret / fingering', group: 'Notes', status: 'ready', keys: { feedback: 'F', eof: 'F / Ctrl+F' } },
+    { id: 'noteMenu', label: 'Open note edit menu', group: 'Notes', status: 'ready', keys: { feedback: '', eof: 'N' } },
+    { id: 'bend', label: 'Edit bend', group: 'Notes', status: 'ready', keys: { feedback: 'B', eof: 'Ctrl+B' } },
+    { id: 'unpitchedSlide', label: 'Edit unpitched slide', group: 'Notes', status: 'ready', keys: { feedback: 'U', eof: 'Ctrl+U' } },
+    { id: 'transposeStringUp', label: 'Move selection up one string', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Up', eof: 'Shift+Up' } },
+    { id: 'transposeStringDown', label: 'Move selection down one string', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Down', eof: 'Shift+Down' } },
+    { id: 'slideUp', label: 'Pitched slide up', group: 'Notes', status: 'planned', keys: { feedback: 'Ctrl+Up', eof: 'Ctrl+Up' } },
+    { id: 'slideDown', label: 'Pitched slide down', group: 'Notes', status: 'planned', keys: { feedback: 'Ctrl+Down', eof: 'Ctrl+Down' } },
+    { id: 'toggleHammerOn', label: 'Toggle hammer-on', group: 'Techniques', status: 'ready', keys: { feedback: 'H', eof: 'H' } },
+    { id: 'togglePullOff', label: 'Toggle pull-off', group: 'Techniques', status: 'ready', keys: { feedback: 'P', eof: 'P' } },
+    { id: 'toggleTap', label: 'Toggle tap', group: 'Techniques', status: 'ready', keys: { feedback: 'Y', eof: 'T / Ctrl+T' } },
+    { id: 'togglePinchHarmonic', label: 'Toggle pinch harmonic', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+N', eof: 'Shift+H' } },
+    { id: 'toggleNaturalHarmonic', label: 'Toggle natural harmonic', group: 'Techniques', status: 'ready', keys: { feedback: 'N', eof: 'Ctrl+H' } },
+    { id: 'togglePalmMute', label: 'Toggle palm mute', group: 'Techniques', status: 'ready', keys: { feedback: 'M', eof: 'Ctrl+M' } },
+    { id: 'toggleMuteOpen', label: 'Mute and set fret open', group: 'Techniques', status: 'ready', keys: { feedback: 'X', eof: 'Ctrl+X' } },
+    { id: 'toggleMuteRetain', label: 'Mute and retain fret', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+X', eof: 'Shift+X' } },
+    { id: 'toggleVibrato', label: 'Toggle vibrato', group: 'Techniques', status: 'ready', keys: { feedback: 'V', eof: 'Shift+V' } },
+    { id: 'toggleLinkNext', label: 'Toggle link-next', group: 'Techniques', status: 'ready', keys: { feedback: '', eof: 'Shift+N' } },
+    { id: 'toggleAccent', label: 'Toggle accent', group: 'Techniques', status: 'ready', keys: { feedback: 'A', eof: 'Ctrl+Shift+A' } },
+    { id: 'toggleIgnore', label: 'Toggle ignore', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+I', eof: 'Ctrl+Shift+I' } },
+    { id: 'toggleTremolo', label: 'Toggle tremolo', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+O', eof: 'Ctrl+Shift+O' } },
+    { id: 'togglePop', label: 'Toggle pop / pluck', group: 'Techniques', status: 'ready', keys: { feedback: 'O', eof: 'Ctrl+Shift+P' } },
+    { id: 'fretUp', label: 'Increase selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl++', eof: 'Ctrl++' } },
+    { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+-' } },
+    { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
+    { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', eof: 'Ctrl+L' } },
+    { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+R', eof: 'Shift+R' } },
+    { id: 'addSection', label: 'Add section at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+M', eof: 'Shift+S' } },
+    { id: 'addPhrase', label: 'Add phrase at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+P', eof: 'Shift+P' } },
+    { id: 'addToneChange', label: 'Add tone change at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+Shift+T', eof: 'Ctrl+Shift+T' } },
+    { id: 'addHandshape', label: 'Add handshape from selection', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+H', eof: 'Ctrl+Shift+H' } },
+    { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+I' } },
+    { id: 'toggleGridDisplay', label: 'Toggle grid display density', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Shift+G', eof: 'Shift+G' } },
+    { id: 'customGridSnap', label: 'Open custom snap settings', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Alt+G', eof: 'Ctrl+Shift+G' } },
+    { id: 'midiTones', label: 'MIDI tone spot-check', group: 'Preview', status: 'planned', keys: { feedback: '', eof: 'Shift+T' } },
+    { id: 'placeMoverPhrase', label: 'Place mover phrase', group: 'Structure', status: 'planned', keys: { feedback: 'Ctrl+Shift+R', eof: 'Ctrl+Shift+R' } },
+]);
+
+function _editorShortcutRowsPure(profile) {
+    const p = profile === 'eof' ? 'eof' : 'feedback';
+    return EDITOR_SHORTCUT_COMMANDS.map(cmd => ({
+        id: cmd.id,
+        label: cmd.label,
+        group: cmd.group,
+        status: cmd.status,
+        key: (cmd.keys && cmd.keys[p]) || '',
+    }));
+}
+function _editorEofCommandForKeyPure(e) {
+    const sig = _editorKeySigPure(e);
+    const key = (e.key || '').toLowerCase();
+    const plain = !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
+    const ctrl = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
+    const shift = e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+    const ctrlShift = (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey;
+    const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+
+    if (sig === 'F2') return 'save';
+    if (sig === 'F5') return 'toggleWaveform';
+    if (sig === 'F6') return 'importMidi';
+    if (sig === 'F7') return 'importXml';
+    if (sig === 'F12') return 'importGp';
+    if (sig === 'PageUp') return 'prevBeat';
+    if (sig === 'PageDown') return 'nextBeat';
+    if (sig === 'Shift+PageUp') return 'prevNote';
+    if (sig === 'Shift+PageDown') return 'nextNote';
+    if (sig === 'Ctrl+Shift+PageUp') return 'prevGrid';
+    if (sig === 'Ctrl+Shift+PageDown') return 'nextGrid';
+    if (sig === 'Alt+PageUp') return 'prevAnchor';
+    if (sig === 'Alt+PageDown') return 'nextAnchor';
+    if (plain && key === '[') return 'shortenSustain';
+    if (plain && key === ']') return 'lengthenSustain';
+    if (plain && key === ',') return 'snapDown';
+    if (plain && key === '.') return 'snapUp';
+    if (plain && key === 'f') return 'editFret';
+    if (plain && key === 'h') return 'toggleHammerOn';
+    if (plain && key === 'p') return 'togglePullOff';
+    if (plain && key === 'n') return 'noteMenu';
+    if (plain && key === 't') return 'toggleTap';
+    if (shift && key === 'f') return 'setAnchor';
+    if (shift && key === 'g') return 'toggleGridDisplay';
+    if (shift && key === 'h') return 'togglePinchHarmonic';
+    if (shift && key === 'i') return 'setTimeSignature';
+    if (shift && key === 'n') return 'toggleLinkNext';
+    if (shift && key === 'p') return 'addPhrase';
+    if (shift && key === 'r') return 'resnapSelection';
+    if (shift && key === 's') return 'addSection';
+    if (shift && key === 't') return 'midiTones';
+    if (shift && key === 'v') return 'toggleVibrato';
+    if (shift && key === 'x') return 'toggleMuteRetain';
+    if (ctrl && key === 'b') return 'bend';
+    if (ctrl && key === 'f') return 'editFret';
+    if (ctrl && key === 'h') return 'toggleNaturalHarmonic';
+    if (ctrl && key === 'l') return 'selectLike';
+    if (ctrl && key === 'm') return 'togglePalmMute';
+    if (ctrl && key === 's') return 'save';
+    if (ctrl && key === 't') return 'toggleTap';
+    if (ctrl && key === 'u') return 'unpitchedSlide';
+    if (ctrl && key === 'x') return 'toggleMuteOpen';
+     if (ctrl && (key === '+' || key === '=')) return 'fretUp';
+    if (ctrl && key === '-') return 'fretDown';
+    if (ctrlShift && key === 'a') return 'toggleAccent';
+    if (ctrlShift && key === 'g') return 'customGridSnap';
+    if (ctrlShift && key === 'h') return 'addHandshape';
+    if (ctrlShift && key === 'i') return 'toggleIgnore';
+    if (ctrlShift && key === 'o') return 'toggleTremolo';
+    if (ctrlShift && key === 'p') return 'togglePop';
+    if (ctrlShift && key === 'r') return 'placeMoverPhrase';
+    if (ctrlShift && key === 't') return 'addToneChange';
+    if (ctrlShift && e.key === 'ArrowUp') return 'slideUp';
+    if (ctrlShift && e.key === 'ArrowDown') return 'slideDown';
+    if (shift && e.key === 'ArrowUp') return 'transposeStringUp';
+    if (shift && e.key === 'ArrowDown') return 'transposeStringDown';
+    if (ctrl && e.key === 'ArrowUp') return 'slideUp';
+    if (ctrl && e.key === 'ArrowDown') return 'slideDown';
+    if (alt && (e.key === 'PageUp' || e.key === 'PageDown')) return e.key === 'PageUp' ? 'prevAnchor' : 'nextAnchor';
+    return null;
+}
+
+
+function _editorDefaultRightClickBehaviorPure(profile) {
+    return profile === 'eof' ? 'eofEdit' : 'context';
+}
+
+function _editorEffectiveRightClickBehaviorPure(profile, savedBehavior) {
+    return (savedBehavior === 'context' || savedBehavior === 'eofEdit')
+        ? savedBehavior
+        : _editorDefaultRightClickBehaviorPure(profile);
+}
+
+function _editorFeedbackCommandForKeyPure(e) {
+    const sig = _editorKeySigPure(e);
+    const key = (e.key || '').toLowerCase();
+    const plain = !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
+    const ctrl = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
+    const shift = e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+    const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+    const ctrlAlt = (e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey;
+    const ctrlShift = (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey;
+
+    if (ctrl && key === 's') return 'save';
+    if (plain && key === 'w') return 'toggleWaveform';
+    if (sig === 'PageUp') return 'prevBeat';
+    if (sig === 'PageDown') return 'nextBeat';
+    if (alt && e.key === 'ArrowLeft') return 'prevNote';
+    if (alt && e.key === 'ArrowRight') return 'nextNote';
+    if (sig === 'Ctrl+PageUp') return 'prevGrid';
+    if (sig === 'Ctrl+PageDown') return 'nextGrid';
+    if (ctrlAlt && e.key === 'ArrowLeft') return 'prevAnchor';
+    if (ctrlAlt && e.key === 'ArrowRight') return 'nextAnchor';
+    if (plain && key === 'g') return 'toggleSnap';
+    if (plain && key === ',') return 'snapDown';
+    if (plain && key === '.') return 'snapUp';
+    if (plain && key === 'f') return 'editFret';
+    if (plain && key === 'b') return 'bend';
+    if (plain && key === 'u') return 'unpitchedSlide';
+    if (shift && e.key === 'ArrowUp') return 'transposeStringUp';
+    if (shift && e.key === 'ArrowDown') return 'transposeStringDown';
+    if (plain && key === 'h') return 'toggleHammerOn';
+    if (plain && key === 'p') return 'togglePullOff';
+    if (plain && key === 'y') return 'toggleTap';
+    if (plain && key === 'v') return 'toggleVibrato';
+    if (plain && key === 'm') return 'togglePalmMute';
+    if (plain && key === 'x') return 'toggleMuteOpen';
+    if (shift && key === 'x') return 'toggleMuteRetain';
+    if (plain && key === 'n') return 'toggleNaturalHarmonic';
+    if (shift && key === 'n') return 'togglePinchHarmonic';
+    if (plain && key === 'o') return 'togglePop';
+    if (plain && key === 'a') return 'toggleAccent';
+    if (shift && key === 't') return 'setTimeSignature';
+    if (ctrl && key === 'h') return 'addHandshape';
+    if (ctrlShift && key === 'i') return 'toggleIgnore';
+    if (ctrlShift && key === 'o') return 'toggleTremolo';
+    if (ctrlShift && key === 't') return 'addToneChange';
+    if (ctrl && (key === '+' || key === '=')) return 'fretUp';
+    if (ctrl && key === '-') return 'fretDown';
+    if (shift && key === 'f') return 'setAnchor';
+    if (ctrl && key === 'l') return 'selectLike';
+    if (shift && key === 'r') return 'resnapSelection';
+    if (shift && key === 'm') return 'addSection';
+    if (shift && key === 'p') return 'addPhrase';
+    if (ctrl && e.key === 'ArrowUp') return 'slideUp';
+    if (ctrl && e.key === 'ArrowDown') return 'slideDown';
+    return null;
+}
+/* @pure:shortcut-profile:end */
+
+function _editorIsTypingTarget(e) {
+    return !!(e && e.target && e.target.matches && e.target.matches('input, select, textarea'));
+}
+
+function _editorSyncRightClickBehaviorControls() {
+    const val = _editorEffectiveRightClickBehaviorPure(editorShortcutProfile, editorRightClickBehavior);
+    const el = document.getElementById('editor-right-click-behavior');
+    if (el) el.value = val;
+    const hint = document.getElementById('editor-right-click-hint');
+    if (hint) {
+        hint.textContent = val === 'eofEdit'
+            ? 'Right-click note lanes add/remove notes; lanes and markers keep context menus.'
+            : 'Right-click opens context menus.';
+    }
+}
+
+function _editorLoadShortcutProfile() {
+    try {
+        const saved = localStorage.getItem(EDITOR_SHORTCUT_PROFILE_KEY);
+        if (EDITOR_SHORTCUT_PROFILES.has(saved)) editorShortcutProfile = saved;
+        const savedRightClick = localStorage.getItem(EDITOR_RIGHT_CLICK_BEHAVIOR_KEY);
+        if (EDITOR_RIGHT_CLICK_BEHAVIORS.has(savedRightClick)) editorRightClickBehavior = savedRightClick;
+    } catch (_) {}
+    const el = document.getElementById('editor-shortcut-profile');
+    if (el) el.value = editorShortcutProfile;
+    _editorSyncRightClickBehaviorControls();
+}
+
+window.editorSetRightClickBehavior = (behavior) => {
+    editorRightClickBehavior = EDITOR_RIGHT_CLICK_BEHAVIORS.has(behavior) ? behavior : null;
+    try {
+        if (editorRightClickBehavior) localStorage.setItem(EDITOR_RIGHT_CLICK_BEHAVIOR_KEY, editorRightClickBehavior);
+        else localStorage.removeItem(EDITOR_RIGHT_CLICK_BEHAVIOR_KEY);
+    } catch (_) {}
+    _editorSyncRightClickBehaviorControls();
+    setStatus(_editorEffectiveRightClickBehaviorPure(editorShortcutProfile, editorRightClickBehavior) === 'eofEdit'
+        ? 'Right-click behavior: add/remove notes'
+        : 'Right-click behavior: context menus');
+};
+window.editorSetShortcutProfile = (profile) => {
+    editorShortcutProfile = EDITOR_SHORTCUT_PROFILES.has(profile) ? profile : 'feedback';
+    try { localStorage.setItem(EDITOR_SHORTCUT_PROFILE_KEY, editorShortcutProfile); } catch (_) {}
+    const el = document.getElementById('editor-shortcut-profile');
+    if (el) el.value = editorShortcutProfile;
+    const panelEl = document.getElementById('editor-shortcut-panel-profile');
+    if (panelEl) panelEl.value = editorShortcutProfile;
+    _editorSyncRightClickBehaviorControls();
+    _editorRenderShortcutPanel();
+    setStatus(editorShortcutProfile === 'eof' ? 'Shortcut profile: EOF Legacy' : 'Shortcut profile: FeedBack');
+};
+
+function _editorCommandById(id) {
+    return EDITOR_SHORTCUT_COMMANDS.find(cmd => cmd.id === id) || null;
+}
+
+function _editorRenderShortcutPanel() {
+    const panel = document.getElementById('editor-shortcut-panel');
+    const list = document.getElementById('editor-shortcut-command-list');
+    if (!panel || !list || panel.classList.contains('hidden')) return;
+    const profileEl = document.getElementById('editor-shortcut-panel-profile');
+    if (profileEl) profileEl.value = editorShortcutProfile;
+    _editorSyncRightClickBehaviorControls();
+    const subtitle = document.getElementById('editor-shortcut-panel-subtitle');
+    if (subtitle) {
+        subtitle.textContent = editorShortcutProfile === 'eof'
+            ? 'EOF Legacy shows migration-friendly keys and clickable command controls.'
+            : 'FeedBack shows clickable command controls; the native key map will expand in a later pass.';
+    }
+    list.replaceChildren();
+    const groups = new Map();
+    for (const row of _editorShortcutRowsPure(editorShortcutProfile)) {
+        if (!groups.has(row.group)) groups.set(row.group, []);
+        groups.get(row.group).push(row);
+    }
+    for (const [group, rows] of groups) {
+        const section = document.createElement('div');
+        section.className = 'rounded border border-gray-700/70 bg-dark-900/45';
+        const title = document.createElement('div');
+        title.className = 'px-2 py-1.5 border-b border-gray-700/70 text-[11px] uppercase tracking-wide text-gray-500';
+        title.textContent = group;
+        section.appendChild(title);
+        const body = document.createElement('div');
+        body.className = 'divide-y divide-gray-800';
+        for (const row of rows) {
+            const line = document.createElement('div');
+            line.className = 'flex items-center gap-2 px-2 py-1.5';
+            const label = document.createElement('button');
+            label.type = 'button';
+            label.className = row.status === 'ready'
+                ? 'min-w-0 flex-1 text-left text-gray-200 hover:text-white'
+                : 'min-w-0 flex-1 text-left text-gray-500 cursor-not-allowed';
+            label.textContent = row.label;
+            label.disabled = row.status !== 'ready';
+            label.onclick = () => window.editorRunShortcutCommand(row.id);
+            const key = document.createElement('span');
+            key.className = 'shrink-0 rounded bg-dark-700 border border-gray-700 px-1.5 py-0.5 font-mono text-[11px] text-gray-300';
+            key.textContent = row.key || 'Button';
+            const badge = document.createElement('span');
+            badge.className = row.status === 'ready'
+                ? 'shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-green-900/50 text-green-300 border border-green-800/60'
+                : 'shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-dark-700 text-gray-500 border border-gray-700';
+            badge.textContent = row.status === 'ready' ? 'Ready' : 'Planned';
+            line.append(label, key, badge);
+            body.appendChild(line);
+        }
+        section.appendChild(body);
+        list.appendChild(section);
+    }
+}
+
+window.editorToggleShortcutPanel = (force) => {
+    const panel = document.getElementById('editor-shortcut-panel');
+    if (!panel) return;
+    const show = force === undefined ? panel.classList.contains('hidden') : !!force;
+    panel.classList.toggle('hidden', !show);
+    if (show) _editorRenderShortcutPanel();
+};
+
+window.editorRunShortcutCommand = (id) => {
+    const def = _editorCommandById(id);
+    if (!def) return false;
+    if (def.status !== 'ready') {
+        setStatus(`${def.label} is planned but not wired yet.`);
+        return true;
+    }
+    const handled = _editorRunEofCommand(id);
+    _editorRenderShortcutPanel();
+    return handled;
+};
+function _editorCurrentNoteIndices() {
+    return (!S.drumEditMode && !S.tempoMapMode && S.sel && S.sel.size) ? [...S.sel] : [];
+}
+
+function _editorToggleTechnique(key, { openFret = false } = {}) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const nn = notes();
+    const next = !idxs.every(i => !!(nn[i] && nn[i].techniques && nn[i].techniques[key]));
+    S.history.exec(new ToggleTechniqueCmd(idxs, key, next, openFret ? 0 : null));
+    draw();
+    updateStatus();
+    return true;
+}
+
+function _editorAdjustSelectedFret(delta) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const nn = notes();
+    for (const i of idxs) {
+        if (!nn[i]) continue;
+        const next = Math.max(0, Math.min(24, (parseInt(nn[i].fret) || 0) + delta));
+        S.history.exec(new ChangeFretCmd(i, next));
+    }
+    draw();
+    updateStatus();
+    return true;
+}
+
+function _editorAdjustSelectedSustain(delta) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const nn = notes();
+    const orig = idxs.map(i => nn[i] ? (nn[i].sustain || 0) : 0);
+    const next = idxs.map((i, k) => {
+        const vals = _resizeSustainsForDeltaPure(nn, [i], orig[k], delta);
+        return vals[0] || 0;
+    });
+    if (!next.some((v, i) => v !== orig[i])) return true;
+    S.history.exec(new ResizeSustainGroupCmd(idxs, next));
+    draw();
+    updateStatus();
+    return true;
+}
+
+function _editorToggleSnapEnabled() {
+    window.editorSetSnapEnabled(!S.snapEnabled);
+    return true;
+}
+
+function _editorSnapStepSeconds() {
+    if (!S.beats || S.beats.length < 2) return 0.25;
+    const t = S.cursorTime || 0;
+    let bi = 0;
+    for (let i = 0; i < S.beats.length - 1; i++) {
+        if (S.beats[i].time <= t) bi = i; else break;
+    }
+    const bt = S.beats[bi].time;
+    const nt = bi < S.beats.length - 1 ? S.beats[bi + 1].time : bt + 0.5;
+    const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
+    const subs = _editorSnapSubdivisionsPure(sv);
+    if (!subs) return Math.max(0.001, nt - bt);
+    return Math.max(0.001, (nt - bt) / subs);
+}
+
+function _editorSeekToTime(t) {
+    S.cursorTime = Math.max(0, Math.min(S.duration || Infinity, t));
+    const margin = 0.15 * (canvas ? canvas.width / S.zoom : 10);
+    if (S.cursorTime < S.scrollX) S.scrollX = _editorClampScrollX(S.cursorTime - margin);
+    const right = S.scrollX + ((canvas ? canvas.width : 800) - LABEL_W) / S.zoom;
+    if (S.cursorTime > right) S.scrollX = _editorClampScrollX(S.cursorTime - margin);
+    if (S.playing) { stopPlayback(); startPlayback(); }
+    draw();
+    updateTimeDisplay();
+}
+
+function _editorJumpBeat(dir) {
+    const beats = (S.beats || []).map(b => b.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
+    const cur = S.cursorTime || 0;
+    const next = dir > 0 ? beats.find(t => t > cur + 0.0001) : [...beats].reverse().find(t => t < cur - 0.0001);
+    if (next !== undefined) _editorSeekToTime(next);
+}
+
+function _editorJumpNote(dir) {
+    const times = notes().map(n => n.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
+    const cur = S.cursorTime || 0;
+    const next = dir > 0 ? times.find(t => t > cur + 0.0001) : [...times].reverse().find(t => t < cur - 0.0001);
+    if (next !== undefined) _editorSeekToTime(next);
+}
+
+function _editorJumpGrid(dir) {
+    _editorSeekToTime((S.cursorTime || 0) + dir * _editorSnapStepSeconds());
+}
+
+function _editorJumpAnchor(dir) {
+    const arr = S.arrangements[S.currentArr] || {};
+    const anchors = _anchorProjection(arr).map(a => a.anchor.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
+    const cur = S.cursorTime || 0;
+    const next = dir > 0 ? anchors.find(t => t > cur + 0.0001) : [...anchors].reverse().find(t => t < cur - 0.0001);
+    if (next !== undefined) _editorSeekToTime(next);
+}
+
+function _editorSelectLike() {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select a note first'); return false; }
+    const n0 = notes()[idxs[0]];
+    if (!n0) return false;
+    S.sel.clear();
+    notes().forEach((n, i) => {
+        if (n.string === n0.string && n.fret === n0.fret) S.sel.add(i);
+    });
+    draw();
+    updateStatus();
+    return true;
+}
+
+function _editorResnapSelection() {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const nn = notes();
+    const oldTimes = idxs.map(i => nn[i].time);
+    const newTimes = oldTimes.map(t => snapTime(t));
+    for (let i = 0; i < idxs.length; i++) nn[idxs[i]].time = oldTimes[i];
+    const dtimes = newTimes.map((t, i) => t - oldTimes[i]);
+    const dstrings = idxs.map(() => 0);
+    S.history.exec(new MoveNoteCmd(idxs, dtimes, dstrings, null));
+    draw();
+    updateStatus();
+    return true;
+}
+
+function _editorSetAnchorAtCursor() {
+    if (!S.arrangements.length || isKeysMode()) { setStatus('Anchors are for guitar/bass arrangements'); return false; }
+    const idxs = _editorCurrentNoteIndices();
+    const nn = notes();
+    const atCursor = idxs.map(i => nn[i]).filter(Boolean);
+    const fret = atCursor.length ? Math.max(1, Math.min(...atCursor.map(n => n.fret || 1))) : 1;
+    const anchor = { time: snapTime(S.cursorTime || 0), fret, width: 4 };
+    S.history.exec(new AddAnchorCmd(S.currentArr, anchor));
+    S.anchorSel = anchor;
+    draw();
+    return true;
+}
+
+function _editorAddSectionAtCursor() {
+    const name = 'section';
+    const num = S.sections.filter(s => s.name === name).length + 1;
+    S.sections.push({ name, number: num, start_time: snapTime(S.cursorTime || 0) });
+    S.sections.sort((a, b) => a.start_time - b.start_time);
+    draw();
+    setStatus('Section added');
+    return true;
+}
+
+function _editorAddPhraseAtCursor() {
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return false;
+    if (!Array.isArray(arr.phrases)) arr.phrases = [];
+    const name = 'phrase';
+    const num = arr.phrases.filter(p => p.name === name).length + 1;
+    arr.phrases.push({ name, number: num, start_time: snapTime(S.cursorTime || 0), levels: [] });
+    arr.phrases.sort((a, b) => (a.start_time || 0) - (b.start_time || 0));
+    draw();
+    setStatus('Phrase added');
+    return true;
+}
+
+function _editorAddToneAtCursor() {
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return false;
+    const tones = _ensureTones(arr);
+    const slots = (tones.slots || []).slice();
+    const name = slots[1] || slots[0] || 'Tone A';
+    const change = { t: snapTime(S.cursorTime || 0), name };
+    S.history.exec(new AddToneChangeCmd(S.currentArr, change));
+    S.toneSel = change;
+    draw();
+    setStatus('Tone change added');
+    return true;
+}
+
+function _editorAddHandshapeFromSelection() {
+    const ctx = _selectedChordContext();
+    if (!ctx) { setStatus('Select one chord group first'); return false; }
+    const sustains = ctx.notes.map(n => n.sustain || 0);
+    const start = ctx.time;
+    const end = start + Math.max(0.25, ...sustains);
+    const hs = { start_time: start, end_time: end, arp: false };
+    S.history.exec(new AddHandshapeCmd(S.currentArr, hs, lanes()));
+    S.handshapeSel = hs;
+    draw();
+    setStatus('Handshape added');
+    return true;
+}
+
+function _editorOpenImportXml() {
+    window.editorShowCreateModal();
+    setStatus('Choose EOF XML files in the New dialog.');
+    setTimeout(() => document.getElementById('editor-create-eof')?.click(), 0);
+}
+
+function _editorOpenImportGp() {
+    if (S.arrangements.length) window.editorShowImportGuitarModal();
+    else window.editorShowCreateModal();
+    setTimeout(() => {
+        const input = document.getElementById(S.arrangements.length ? 'editor-import-guitar-file' : 'editor-create-gp');
+        input?.click();
+    }, 0);
+}
+
+function _editorOpenImportMidi() {
+    if (S.arrangements.length) window.editorShowAddKeysModal();
+    else window.editorShowCreateModal();
+    setTimeout(() => {
+        const input = document.getElementById(S.arrangements.length ? 'editor-add-keys-file' : 'editor-create-gp');
+        input?.click();
+    }, 0);
+}
+
+async function _editorPromptTempoSignatureAtCursor() {
+    const val = await _editorPromptText({
+        title: 'Set Time Signature', label: 'Beats per measure', value: '4', placeholder: '4',
+    });
+    if (val == null) return;
+    const beats = Math.max(1, Math.min(16, parseInt(val, 10) || 4));
+    const d = _tempoResolvedMeasureIdx();
+    if (d >= 0) _tempoSetBeatsPerMeasure(d, beats);
+}
+
+function _editorToggleWaveform() {
+    editorWaveformVisible = !editorWaveformVisible;
+    draw();
+    setStatus(editorWaveformVisible ? 'Waveform shown' : 'Waveform hidden');
+}
+
+function _editorUnsupportedEofCommand(label) {
+    setStatus(`${label} is not available in this editor mode yet.`);
+    return true;
+}
+
+function _editorRunEofCommand(cmd) {
+    switch (cmd) {
+    case 'save': editorSave(); return true;
+    case 'toggleWaveform': return _editorToggleWaveform();
+    case 'importMidi': _editorOpenImportMidi(); return true;
+    case 'importXml': _editorOpenImportXml(); return true;
+    case 'importGp': _editorOpenImportGp(); return true;
+    case 'prevBeat': _editorJumpBeat(-1); return true;
+    case 'nextBeat': _editorJumpBeat(+1); return true;
+    case 'prevNote': _editorJumpNote(-1); return true;
+    case 'nextNote': _editorJumpNote(+1); return true;
+    case 'prevGrid': _editorJumpGrid(-1); return true;
+    case 'nextGrid': _editorJumpGrid(+1); return true;
+    case 'prevAnchor': _editorJumpAnchor(-1); return true;
+    case 'nextAnchor': _editorJumpAnchor(+1); return true;
+    case 'toggleSnap': return _editorToggleSnapEnabled();
+    case 'shortenSustain': return _editorAdjustSelectedSustain(-_editorSnapStepSeconds());
+    case 'lengthenSustain': return _editorAdjustSelectedSustain(+_editorSnapStepSeconds());
+    case 'snapDown': window.editorSetSnap(Math.max(0, S.snapIdx - 1)); return true;
+    case 'snapUp': window.editorSetSnap(Math.min(SNAP_VALUES.length - 1, S.snapIdx + 1)); return true;
+    case 'editFret': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptFret(idxs[0]); else setStatus('Select a note first'); return true; }
+    case 'noteMenu': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) showContextMenu(window.innerWidth / 2, window.innerHeight / 2, idxs[0]); else setStatus('Select a note first'); return true; }
+    case 'bend': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptBend(idxs[0]); else setStatus('Select a note first'); return true; }
+    case 'unpitchedSlide': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptSlideUnpitch(idxs[0]); else setStatus('Select a note first'); return true; }
+    case 'slideUp': return _editorUnsupportedEofCommand('Pitched slide shortcut');
+    case 'slideDown': return _editorUnsupportedEofCommand('Pitched slide shortcut');
+    case 'transposeStringUp': _execMoveString(+1); return true;
+    case 'transposeStringDown': _execMoveString(-1); return true;
+    case 'toggleHammerOn': return _editorToggleTechnique('hammer_on');
+    case 'togglePullOff': return _editorToggleTechnique('pull_off');
+    case 'toggleTap': return _editorToggleTechnique('tap');
+    case 'togglePinchHarmonic': return _editorToggleTechnique('harmonic_pinch');
+    case 'toggleNaturalHarmonic': return _editorToggleTechnique('harmonic');
+    case 'togglePalmMute': return _editorToggleTechnique('palm_mute');
+    case 'toggleFretHandMute': return _editorToggleTechnique('fret_hand_mute');
+    case 'toggleMuteOpen': return _editorToggleTechnique('mute', { openFret: true });
+    case 'toggleMuteRetain': return _editorToggleTechnique('mute');
+    case 'toggleVibrato': return _editorToggleTechnique('vibrato');
+    case 'toggleLinkNext': return _editorToggleTechnique('link_next');
+    case 'toggleAccent': return _editorToggleTechnique('accent');
+    case 'toggleIgnore': return _editorToggleTechnique('ignore');
+    case 'toggleTremolo': return _editorToggleTechnique('tremolo');
+    case 'togglePop': return _editorToggleTechnique('pluck');
+    case 'fretUp': return _editorAdjustSelectedFret(+1);
+    case 'fretDown': return _editorAdjustSelectedFret(-1);
+    case 'setAnchor': return _editorSetAnchorAtCursor();
+    case 'selectLike': return _editorSelectLike();
+    case 'resnapSelection': return _editorResnapSelection();
+    case 'addSection': return _editorAddSectionAtCursor();
+    case 'addPhrase': return _editorAddPhraseAtCursor();
+    case 'addToneChange': return _editorAddToneAtCursor();
+    case 'addHandshape': return _editorAddHandshapeFromSelection();
+    case 'setTimeSignature': _editorPromptTempoSignatureAtCursor(); return true;
+    case 'toggleGridDisplay': return _editorUnsupportedEofCommand('Grid display toggle');
+    case 'customGridSnap': return _editorUnsupportedEofCommand('Custom grid snap');
+    case 'midiTones': return _editorUnsupportedEofCommand('MIDI tones');
+    case 'placeMoverPhrase': return _editorUnsupportedEofCommand('Mover phrase');
+    default: return false;
+    }
+}
+
+function _editorDispatchFeedbackShortcut(e) {
+    if (editorShortcutProfile !== 'feedback' || _editorIsTypingTarget(e)) return false;
+    const cmd = _editorFeedbackCommandForKeyPure(e);
+    if (!cmd) return false;
+    const def = _editorCommandById(cmd);
+    if (def && def.status !== 'ready') return false;
+    e.preventDefault();
+    return _editorRunEofCommand(cmd);
+}
+function _editorDispatchEofShortcut(e) {
+    if (editorShortcutProfile !== 'eof' || _editorIsTypingTarget(e)) return false;
+    const cmd = _editorEofCommandForKeyPure(e);
+    if (!cmd) return false;
+    e.preventDefault();
+    return _editorRunEofCommand(cmd);
+}
+
+function _editorRightClickNoteEdit(e, x, y) {
+    const behavior = _editorEffectiveRightClickBehaviorPure(editorShortcutProfile, editorRightClickBehavior);
+    if (behavior !== 'eofEdit' || !S.arrangements.length) return false;
+    // Block mid-take edits like every other note-editing input — a MIDI take
+    // reassigns arr.notes = _recNotes on Stop, so an add/remove here would be
+    // silently overwritten and muddle undo history.
+    if (_recState === 'recording') return false;
+    const keysMode = isKeysMode();
+    const laneBottom = keysMode
+        ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
+        : WAVEFORM_H + lanes() * LANE_H;
+    if (y < WAVEFORM_H || y > laneBottom) return false;
+    // Only inside the timeline grid — a right-click on the left string/piano
+    // label margin (x < LABEL_W) is not a note edit; without this it would
+    // clamp xToTime()<0 to 0 and add a note at the song start.
+    if (x < LABEL_W) return false;
+
+    const idx = hitNote(x, y);
+    if (idx >= 0) {
+        S.history.exec(new DeleteNotesCmd([idx]));
+        draw();
+        updateStatus();
+        setStatus('Note removed');
+        return true;
+    }
+
+    const time = snapTime(Math.max(0, xToTime(x)));
+    let note;
+    if (keysMode) {
+        const midi = yToMidi(y);
+        note = { time, string: midiToString(midi), fret: midiToFret(midi), sustain: 0, techniques: {} };
+    } else {
+        note = { time, string: yToStr(y), fret: 0, sustain: 0, techniques: {} };
+    }
+    const cmd = new AddNoteCmd(note);
+    S.history.exec(cmd);
+    S.sel.clear();
+    if (cmd.idx >= 0) S.sel.add(cmd.idx);
+    draw();
+    updateStatus();
+    setStatus('Note added');
+    return true;
+}
 function onContextMenu(e) {
     if (S.drumEditMode) { e.preventDefault(); return; }  // drum-edit mode handles interaction
     if (S.tempoMapMode) { e.preventDefault(); _tempoMapOnContextMenu(e); return; }
@@ -2648,6 +3805,8 @@ function onContextMenu(e) {
             if (onHandshapeLaneContextMenu(e, x, y)) return;
         }
     }
+
+    if (_editorRightClickNoteEdit(e, x, y)) return;
 
     // Right-click on beat bar or lanes with no note = section menu
     const beatBarY = isKeysMode()
@@ -2735,6 +3894,25 @@ function onKeyDown(e) {
     // because it routes to editorTogglePlay → editorStopRecordMidi,
     // which cleanly finalizes the take.
     if (_recState === 'recording') return;
+
+    // Drum-edit articulation toggles take priority over the shortcut-profile
+    // dispatch: a plain 'f' in drum-edit mode must toggle flam, not resolve to
+    // the FeedBack/EOF `editFret` command (which claims plain 'f'). Only fires
+    // with a drum selection; otherwise falls through to the dispatch below.
+    if (S.drumEditMode && S.drumSel.size && S.drumTab
+        && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
+        && !e.target.matches('input, select, textarea')) {
+        const dk = e.key.toLowerCase();
+        if (dk === 'g' || dk === 'f' || dk === 'k') {
+            e.preventDefault();
+            _drumEditorToggleArticulation(dk);
+            draw();
+            return;
+        }
+    }
+
+    if (_editorDispatchFeedbackShortcut(e)) return;
+    if (_editorDispatchEofShortcut(e)) return;
 
     // Tempo-map mode: Insert key adds a sync point at the cursor.
     if (S.tempoMapMode && e.key === 'Insert'
@@ -2838,22 +4016,6 @@ function onKeyDown(e) {
             return;
         }
     }
-    // Drum-edit articulation toggles — only when one or more hits are
-    // selected. G = ghost, F = flam, K = choke (cymbal pieces only, ignored
-    // on drums). Plain key (no Shift/Ctrl/Meta/Alt modifiers) so they don't
-    // fight Ctrl+G, Shift+G, etc.
-    if (S.drumEditMode && S.drumSel.size && S.drumTab
-        && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
-        && !e.target.matches('input, select, textarea')) {
-        const k = e.key.toLowerCase();
-        if (k === 'g' || k === 'f' || k === 'k') {
-            e.preventDefault();
-            _drumEditorToggleArticulation(k);
-            draw();
-            return;
-        }
-    }
-
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
         e.preventDefault();
         editorUndo();
@@ -3384,6 +4546,7 @@ async function loadAudio(url) {
         const buf = await resp.arrayBuffer();
         S.audioBuffer = await S.audioCtx.decodeAudioData(buf);
         S.duration = S.audioBuffer.duration;
+        _editorApplyScrollBounds();
         computeWaveform();
     } catch (e) {
         console.error('Audio load error:', e);
@@ -3428,20 +4591,36 @@ function computeWaveform() {
     S.waveformPeaks = _buildWaveformPeaks(data, binSamples);
 }
 
-function startPlayback() {
-    if (!S.audioBuffer || !S.audioCtx) return;
-    if (S.audioCtx.state === 'suspended') S.audioCtx.resume();
+function _startAudioSourceAtCursor() {
     S.audioSource = S.audioCtx.createBufferSource();
     S.audioSource.buffer = S.audioBuffer;
     S.audioSource.connect(S.audioCtx.destination);
     S.audioSource.start(0, S.cursorTime);
     S.playStartWall = S.audioCtx.currentTime;
     S.playStartTime = S.cursorTime;
+}
+
+function _restartPlaybackAt(t) {
+    if (S.audioSource) {
+        try { S.audioSource.stop(); } catch (_) {}
+        S.audioSource = null;
+    }
+    S.cursorTime = Math.max(0, Math.min(S.duration || Infinity, t));
+    _startAudioSourceAtCursor();
+}
+
+function startPlayback() {
+    if (!S.audioBuffer || !S.audioCtx) return;
+    if (S.audioCtx.state === 'suspended') S.audioCtx.resume();
+    const region = _selectedLoopRegion();
+    if (S.loopEnabled && region && (S.cursorTime < region.startTime || S.cursorTime >= region.endTime)) {
+        S.cursorTime = region.startTime;
+    }
+    _startAudioSourceAtCursor();
     S.playing = true;
     updatePlayIcon();
     playbackTick();
 }
-
 function stopPlayback() {
     if (S.audioSource) {
         try { S.audioSource.stop(); } catch (_) {}
@@ -3455,6 +4634,16 @@ function stopPlayback() {
 function playbackTick() {
     if (!S.playing) return;
     S.cursorTime = S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
+    const loopRestart = _recState === 'recording'
+        ? null
+        : _loopPlaybackRestartTimePure(S.cursorTime, S.barSel, S.loopEnabled, S.duration);
+    if (loopRestart !== null) {
+        _restartPlaybackAt(loopRestart);
+        updateTimeDisplay();
+        draw();
+        rafId = requestAnimationFrame(playbackTick);
+        return;
+    }
     if (S.cursorTime >= S.duration) {
         // If a live MIDI recording is active, finalize it at the song end
         // before resetting the cursor — otherwise chartTimeNow() keeps
@@ -3474,7 +4663,7 @@ function playbackTick() {
     const cx = timeToX(S.cursorTime);
     const w = canvas ? canvas.width / DPR : 800;
     if (cx > w * 0.8) {
-        S.scrollX = S.cursorTime - (w * 0.3) / S.zoom;
+        S.scrollX = _editorClampScrollX(S.cursorTime - (w * 0.3) / S.zoom);
     }
 
     updateTimeDisplay();
@@ -3492,6 +4681,16 @@ function updatePlayIcon() {
     }
 }
 
+function updateMeasureDisplay() {
+    const el = document.getElementById('editor-measure-display');
+    if (!el) return;
+    const selectedIdx = S.tempoMapMode ? S.tempoSel : -1;
+    const r = _editorMeasureSignatureReadoutPure(S.beats || [], S.cursorTime || 0, selectedIdx);
+    el.textContent = r.label;
+    el.title = r.measure === null
+        ? 'No measure grid available'
+        : `Measure ${r.measure}, time signature ${r.numerator}/${r.denominator}`;
+}
 function updateTimeDisplay() {
     const el = document.getElementById('editor-time-display');
     if (!el) return;
@@ -3501,6 +4700,7 @@ function updateTimeDisplay() {
         return m + ':' + String(s).padStart(2, '0');
     };
     el.textContent = fmt(S.cursorTime) + ' / ' + fmt(S.duration);
+    updateMeasureDisplay();
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -3585,6 +4785,7 @@ async function loadCDLC(filename) {
         // Drop any bar-range selection from the previously-loaded song; a
         // pending view (highway handoff / return trip) re-sets it below.
         S.barSel = null;
+        S.returnToHighway = false;
         S.history = new EditHistory();
 
         // Reset offset UI so _effectiveAudioOffset() doesn't carry over a
@@ -4841,9 +6042,82 @@ function updateZoomDisplay() {
     if (el) el.textContent = Math.round(S.zoom);
 }
 
+function _tempoResolvedMeasureIdx() {
+    if (!S.tempoMapMode) return -1;
+    if (S.tempoSel >= 0) return S.tempoSel;
+    const measures = _tempoMeasures();
+    if (!measures.length) return -1;
+    const t = Math.max(0, S.cursorTime || 0);
+    for (let k = measures.length - 1; k >= 0; k--) {
+        if (measures[k].time <= t + 1e-6) return measures[k].i;
+    }
+    return measures[0].i;
+}
+
+
+/* @pure:measure-readout:start */
+function _editorMeasureSignatureReadoutPure(beats, time, selectedIdx) {
+    if (!Array.isArray(beats) || !beats.length) return { label: 'M-- --', measure: null, numerator: null, denominator: null };
+    let idx = Number.isInteger(selectedIdx) && selectedIdx >= 0 && selectedIdx < beats.length && beats[selectedIdx] && beats[selectedIdx].measure > 0
+        ? selectedIdx
+        : -1;
+    const t = Number.isFinite(Number(time)) ? Number(time) : 0;
+    if (idx < 0) {
+        for (let i = 0; i < beats.length; i++) {
+            const b = beats[i];
+            if (!b || b.measure <= 0) continue;
+            if ((Number(b.time) || 0) <= t + 1e-6) idx = i;
+            else break;
+        }
+    }
+    if (idx < 0) idx = beats.findIndex(b => b && b.measure > 0);
+    if (idx < 0) return { label: 'M-- --', measure: null, numerator: null, denominator: null };
+    const downbeat = beats[idx];
+    let nextIdx = beats.length;
+    for (let i = idx + 1; i < beats.length; i++) {
+        if (beats[i] && beats[i].measure > 0) { nextIdx = i; break; }
+    }
+    let numerator = Math.max(1, nextIdx - idx);
+    if (nextIdx === beats.length) {
+        let prevIdx = -1;
+        for (let i = idx - 1; i >= 0; i--) {
+            if (beats[i] && beats[i].measure > 0) { prevIdx = i; break; }
+        }
+        if (prevIdx >= 0) numerator = Math.max(1, idx - prevIdx);
+    }
+    const den = _tempoNormalizeDenominatorPure(downbeat.den);
+    const measure = downbeat.measure;
+    return { label: `M${measure} ${numerator}/${den}`, measure, numerator, denominator: den };
+}
+/* @pure:measure-readout:end */
 function updateBPMDisplay() {
     const el = document.getElementById('editor-bpm');
-    if (el && S.beats.length >= 2) el.value = getTabBPM().toFixed(1);
+    if (!el || S.beats.length < 2) return;
+    if (document.activeElement === el) return;
+    if (S.tempoMapMode) {
+        const d = _tempoResolvedMeasureIdx();
+        const m = _tempoMeasures().find(mm => mm.i === d) || null;
+        if (m && !m.isLast && m.bpm > 0) {
+            el.value = m.bpm.toFixed(2);
+            return;
+        }
+    }
+    el.value = getTabBPM().toFixed(1);
+}
+
+function updateTempoSigDisplay() {
+    const numEl = document.getElementById('editor-tempo-sig');
+    const denEl = document.getElementById('editor-tempo-sig-den');
+    if ((!numEl && !denEl) || document.activeElement === numEl || document.activeElement === denEl) return;
+    const d = _tempoResolvedMeasureIdx();
+    if (d < 0) {
+        if (numEl) numEl.value = '';
+        if (denEl) denEl.value = '4';
+        return;
+    }
+    if (numEl) numEl.value = String(_tempoMeasureBeatCount(d));
+    if (denEl) denEl.value = String(_tempoMeasureDenominator(d));
+    updateMeasureDisplay();
 }
 
 // Defer a `resizeCanvas` until layout has settled — used when a
@@ -4881,6 +6155,9 @@ function resizeCanvas() {
     canvas.height = h * DPR;
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
+    // The max scroll depends on the (now-changed) canvas width — re-clamp so a
+    // widen doesn't leave the timeline scrolled past the new max with blank tail.
+    _editorApplyScrollBounds();
     draw();
 }
 
@@ -4908,13 +6185,52 @@ window.editorTogglePlay = () => {
 window.editorZoom = (dir) => {
     const factor = dir > 0 ? 1.3 : 0.77;
     S.zoom = Math.max(20, Math.min(2000, S.zoom * factor));
+    _editorApplyScrollBounds();
     updateZoomDisplay();
     draw();
 };
-window.editorSetSnap = (idx) => { S.snapIdx = idx; };
+window.editorSetSnap = (idx) => {
+    const n = parseInt(idx, 10);
+    S.snapIdx = Math.max(0, Math.min(SNAP_VALUES.length - 1, Number.isFinite(n) ? n : S.snapIdx));
+    const el = document.getElementById('editor-snap');
+    if (el) el.selectedIndex = S.snapIdx;
+};
+window.editorSetSnapEnabled = (enabled) => {
+    S.snapEnabled = !!enabled;
+    const el = document.getElementById('editor-snap-enabled');
+    if (el) el.checked = S.snapEnabled;
+    setStatus(S.snapEnabled ? 'Snap enabled' : 'Snap disabled');
+};
 window.editorSetBPM = (val) => {
     const newBPM = parseFloat(val);
     if (!newBPM || newBPM <= 0 || S.beats.length < 2) return;
+    if (!S.tempoMapMode && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01)) {
+        setStatus('Use Tempo Map to edit songs with multiple tempo events.');
+        updateBPMDisplay();
+        draw();
+        return;
+    }
+    if (S.tempoMapMode) {
+        const d = _tempoResolvedMeasureIdx();
+        if (d < 0) return;
+        const measures = _tempoMeasures();
+        const m = measures.find(mm => mm.i === d) || null;
+        if (!m || m.isLast || !(m.bpm > 0)) {
+            setStatus('Select a non-final measure to edit its BPM.');
+            updateBPMDisplay();
+            return;
+        }
+        const newBeats = _tempoSetMeasureBpmPure(S.beats, d, newBPM, MIN_MEASURE, _r3);
+        if (!newBeats) {
+            updateBPMDisplay();
+            return;
+        }
+        S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })), newBeats, 'bpm'));
+        updateBPMDisplay();
+        draw();
+        setStatus(`Measure ${m.measure} tempo changed: ${m.bpm.toFixed(2)} → ${newBPM.toFixed(2)} BPM`);
+        return;
+    }
     const oldBPM = getTabBPM();
     const factor = oldBPM / newBPM;
     if (Math.abs(factor - 1) < 0.001) return;
@@ -4928,8 +6244,42 @@ window.editorSetBPM = (val) => {
     for (const b of S.beats) b.time *= factor;
     for (const s of S.sections) s.start_time *= factor;
 
+    updateBPMDisplay();
     draw();
     setStatus(`Tempo changed: ${oldBPM.toFixed(1)} → ${newBPM.toFixed(1)} BPM`);
+};
+window.editorSetTempoSignature = (val) => {
+    if (!S.tempoMapMode || S.beats.length < 2) return;
+    const d = _tempoResolvedMeasureIdx();
+    if (d < 0) return;
+    const n = parseInt(val, 10);
+    if (!Number.isFinite(n)) { updateTempoSigDisplay(); return; }
+    const m = _tempoMeasures().find(mm => mm.i === d) || null;
+    const prevNum = _tempoMeasureBeatCount(d);
+    const prevDen = _tempoMeasureDenominator(d);
+    _tempoSetBeatsPerMeasure(d, n);
+    updateTempoSigDisplay();
+    const nextNum = _tempoMeasureBeatCount(d);
+    if (m && prevNum !== nextNum) {
+        setStatus(`Measure ${m.measure} time signature changed: ${prevNum}/${prevDen} → ${nextNum}/${prevDen}`);
+    }
+};
+window.editorSetTempoSignatureDenominator = (val) => {
+    if (!S.tempoMapMode || S.beats.length < 2) return;
+    const d = _tempoResolvedMeasureIdx();
+    if (d < 0) return;
+    const m = _tempoMeasures().find(mm => mm.i === d) || null;
+    const prevNum = _tempoMeasureBeatCount(d);
+    const prevDen = _tempoMeasureDenominator(d);
+    const newBeats = _tempoSetDenominatorOnBeatsPure(S.beats, d, val);
+    if (!newBeats) { updateTempoSigDisplay(); return; }
+    S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), newBeats, 'timesig-den'));
+    updateTempoSigDisplay();
+    draw();
+    const nextDen = _tempoMeasureDenominator(d);
+    if (m && prevDen !== nextDen) {
+        setStatus(`Measure ${m.measure} time signature changed: ${prevNum}/${prevDen} → ${prevNum}/${nextDen}`);
+    }
 };
 // Rigidly shift all of ONE arrangement's time-bearing fields by `delta` seconds:
 // notes, chords (+ their notes), source + authored anchors, handshape spans, and
@@ -5065,6 +6415,28 @@ function _effectiveLoopRegion() {
     return null;
 }
 
+/* @pure:pending-view:start */
+function _resolvePendingViewStatePure(pv, fallbackZoom, viewWidthPx, labelW) {
+    const nextZoom = (typeof pv.zoom === 'number' && pv.zoom > 0) ? pv.zoom : fallbackZoom;
+    const out = {
+        returnToHighway: !!pv.returnToHighway,
+        barSel: pv.barSel ? { startTime: pv.barSel.startTime, endTime: pv.barSel.endTime } : null,
+        zoom: nextZoom,
+        cursorTime: typeof pv.cursorTime === 'number'
+            ? pv.cursorTime
+            : (pv.barSel ? pv.barSel.startTime : null),
+        scrollX: null,
+    };
+    if (typeof pv.scrollX === 'number') {
+        out.scrollX = Math.max(0, pv.scrollX);
+    } else if (pv.barSel) {
+        const margin = (Math.max(0, viewWidthPx - labelW) * 0.25) / Math.max(0.0001, nextZoom);
+        out.scrollX = Math.max(0, pv.barSel.startTime - margin);
+    }
+    return out;
+}
+/* @pure:pending-view:end */
+
 // Enable the toolbar button when there's a region to preview (a bar drag OR a
 // note selection) on a loaded, playable song. Create-mode sessions have
 // nothing on disk for the highway to stream, so they stay disabled.
@@ -5074,11 +6446,14 @@ function _updateLoopIn3DBtn() {
     const region = _effectiveLoopRegion();
     const ok = !!(region && S.filename && !S.createMode);
     btn.disabled = !ok;
+    btn.textContent = S.returnToHighway ? '↩ Back to 3D' : '▶ Loop in 3D';
     btn.title = S.createMode
         ? 'Build the song first to preview it on the 3D highway'
         : (region
-            ? 'Loop this region on the 3D highway'
-            : 'Select some notes, or drag across the bottom beat bar, to pick a region');
+            ? (S.returnToHighway
+                ? 'Save and preview this region back on the 3D highway'
+                : 'Loop this region on the 3D highway')
+            : 'Select some notes or set a loop region to pick what the 3D highway should preview');
 }
 window._editorUpdateLoopIn3DBtn = _updateLoopIn3DBtn;
 
@@ -5132,19 +6507,16 @@ function _applyEditorPendingView(filename) {
         // Reuse the arrangement switch (re-flattens chords, redraws).
         window.editorSelectArrangement(pv.arrangement);
     }
-    if (pv.barSel) S.barSel = { startTime: pv.barSel.startTime, endTime: pv.barSel.endTime };
-    if (typeof pv.zoom === 'number' && pv.zoom > 0) { S.zoom = pv.zoom; updateZoomDisplay(); }
-    if (typeof pv.cursorTime === 'number') S.cursorTime = pv.cursorTime;
-    if (typeof pv.scrollX === 'number') {
-        S.scrollX = Math.max(0, pv.scrollX);
-    } else if (pv.barSel) {
-        // No explicit scroll captured (came straight from the highway) —
-        // center the region with a little lead-in margin.
-        const w = canvas ? canvas.width / DPR : 800;
-        const margin = (w - LABEL_W) * 0.25 / S.zoom;
-        S.scrollX = Math.max(0, pv.barSel.startTime - margin);
-    }
+    const viewW = canvas ? (canvas.width / DPR) : 800;
+    const next = _resolvePendingViewStatePure(pv, S.zoom, viewW, LABEL_W);
+    S.returnToHighway = next.returnToHighway;
+    if (next.barSel) S.barSel = next.barSel;
+    if (typeof next.zoom === 'number' && next.zoom > 0) { S.zoom = next.zoom; updateZoomDisplay(); }
+    if (typeof next.cursorTime === 'number') S.cursorTime = next.cursorTime;
+    if (typeof next.scrollX === 'number') S.scrollX = _editorClampScrollX(next.scrollX);
+    else _editorApplyScrollBounds();
     updateStatus();
+    _updateLoopIn3DBtn();
     draw();
 }
 
@@ -5382,6 +6754,8 @@ let createState = {
     artPath: null,
     previewPath: null,
     eofFiles: null,    // FileList[] of selected EOF arrangement XMLs
+    initialArrangement: 'Lead',
+    initDrumTab: true,
 };
 
 // ════════════════════════════════════════════════════════════════════
@@ -7457,6 +8831,78 @@ window.editorDoCreate = async () => {
     }
 };
 
+async function _editorDoBlankCreate() {
+    const status = document.getElementById('editor-create-status');
+    const btn = document.getElementById('editor-create-go');
+    const val = (id) => ((document.getElementById(id)?.value) || '').trim();
+    const title = val('editor-create-title');
+    const artist = val('editor-create-artist');
+    if (!title) {
+        if (status) status.textContent = 'Title is required.';
+        if (btn) btn.disabled = false;
+        return;
+    }
+    if (!artist) {
+        if (status) status.textContent = 'Artist is required.';
+        if (btn) btn.disabled = false;
+        return;
+    }
+    if (!_createHasAudioInput()) {
+        if (status) status.textContent = 'Audio is required for an audio-only project.';
+        if (btn) btn.disabled = false;
+        return;
+    }
+    if (btn) btn.disabled = true;
+
+    if (!createState.audioUrl) {
+        status.textContent = 'Uploading audio...';
+        const ok = await uploadCreateAudio();
+        if (!ok) { if (btn) btn.disabled = false; return; }
+    }
+
+    const artInput = document.getElementById('editor-create-art');
+    if (artInput && artInput.files && artInput.files.length && !createState.artPath) {
+        const form = new FormData();
+        form.append('file', artInput.files[0]);
+        try {
+            const r = await fetch('/api/plugins/editor/upload-art', { method: 'POST', body: form });
+            const d = await r.json();
+            if (d.art_path) createState.artPath = d.art_path;
+        } catch (_) {}
+    }
+
+    createState.initDrumTab = !!document.getElementById('editor-create-drum-tab')?.checked;
+    const metadata = {
+        title,
+        artist,
+        album: val('editor-create-album'),
+        year: val('editor-create-year'),
+        audio_url: createState.audioUrl,
+        initial_arrangement: createState.initialArrangement || 'Lead',
+        init_drum_tab: !!createState.initDrumTab,
+    };
+    if (createState.artPath) metadata.art_path = createState.artPath;
+
+    const form = new FormData();
+    form.append('metadata', JSON.stringify(metadata));
+    status.textContent = 'Building sloppak...';
+    try {
+        const resp = await fetch('/api/plugins/editor/create_sloppak', { method: 'POST', body: form });
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+            status.textContent = 'Error: ' + (data.error || resp.statusText);
+            if (btn) btn.disabled = false;
+            return;
+        }
+        editorHideCreateModal();
+        if (typeof _kickLibraryRescan === 'function') _kickLibraryRescan();
+        await loadCDLC(data.filename);
+    } catch (e) {
+        status.textContent = 'Failed: ' + e.message;
+        if (btn) btn.disabled = false;
+    }
+}
+
 // Apply a create-mode import result (from convert-gp OR import-xml-project) to
 // the editor and open it. The two import sources return the same shape
 // (_song_to_dict + session_id + create_mode), so this is shared.
@@ -7488,6 +8934,9 @@ window.editorApplyCreateResult = async (data) => {
     S.handshapeSel = null;
     S.scrollX = 0;
     S.cursorTime = 0;
+    S.barSel = null;
+    S.loopEnabled = false;
+    S.returnToHighway = false;
     S.history = new EditHistory();
     S.createMode = true;
 
@@ -7816,6 +9265,7 @@ window.editorApplyReplaceAudio = async () => {
             return;
         }
         if (S.cursorTime > S.duration) S.cursorTime = 0;
+        _editorApplyScrollBounds();
         document.getElementById('editor-play-btn').disabled = false;
         document.getElementById('editor-sync-btn').classList.remove('hidden');
         updateTimeDisplay();
@@ -7910,6 +9360,8 @@ function init() {
     _applyV3Layout();
     S.history = new EditHistory();
 
+    _editorLoadShortcutProfile();
+
     // Restore the Tempo Map "apply to" scope preference.
     try {
         const sc = localStorage.getItem('editor-tempomap-scope');
@@ -7923,6 +9375,8 @@ function init() {
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('contextmenu', onContextMenu);
     document.addEventListener('keydown', onKeyDown);
+    document.getElementById('editor-loop-strip-track')?.addEventListener('mousedown', _loopStripOnMouseDown);
+    document.getElementById('editor-loop-strip-clear')?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _clearBarSelection(); });
 
     // Prevent middle-click paste
     canvas.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
@@ -10011,7 +11465,7 @@ function _tempoMapDraw(w, h) {
                 ctx.fillText(`${m.bpm.toFixed(2)} BPM`, xMid, WAVEFORM_H + 17);
                 ctx.fillStyle = '#64748b';
                 ctx.font = '9px monospace';
-                ctx.fillText(`${m.beats}/4`, xMid, WAVEFORM_H + 30);
+                ctx.fillText(`${m.beats}/${_tempoMeasureDenominator(m.i)}`, xMid, WAVEFORM_H + 30);
             }
         }
 
@@ -10062,12 +11516,40 @@ function _tempoMapDraw(w, h) {
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(
-        `Tempo Map — ${measures.length} measures · drag a pole to retime · `
-        + `right-click: insert/delete · [ ]: time signature`,
-        LABEL_W + 6, hudY);
+    ctx.fillText(_tempoMapHudTextPure(measures.length, w), LABEL_W + 6, hudY);
 }
 
+/* @pure:tempo-map-guidance:start */
+function _tempoMapHudTextPure(measureCount, width) {
+    const n = Number.isFinite(Number(measureCount)) ? Number(measureCount) : 0;
+    if (Number(width) < 760) {
+        return `Tempo Map - ${n} measures - right-click sync point: BPM / signature`;
+    }
+    return `Tempo Map - ${n} measures - drag poles to retime - right-click sync point: BPM / signature/delete - right-click grid: insert`;
+}
+/* @pure:tempo-map-guidance:end */
+
+function _ensureTempoSignatureControl() {
+    let wrap = document.getElementById('editor-tempo-sig-wrap');
+    if (wrap) return wrap;
+    const bpm = document.getElementById('editor-bpm');
+    if (!bpm || !bpm.parentNode) return null;
+    wrap = document.createElement('span');
+    wrap.id = 'editor-tempo-sig-wrap';
+    wrap.className = 'hidden items-center gap-1';
+    wrap.innerHTML = '<span class="text-xs text-gray-500">Sig:</span>'
+        + '<input type="number" id="editor-tempo-sig" min="1" max="16" step="1" '
+        + 'class="w-11 bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none text-center" '
+        + 'title="Edit selected measure beats per bar" onchange="editorSetTempoSignature(this.value)">'
+        + '<span class="text-xs text-gray-500">/</span>'
+        + '<select id="editor-tempo-sig-den" '
+        + 'class="w-12 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs text-gray-300 outline-none" '
+        + 'title="Edit selected measure beat unit" onchange="editorSetTempoSignatureDenominator(this.value)">'
+        + '<option value="2">2</option><option value="4">4</option><option value="8">8</option><option value="16">16</option></select>';
+    const bpmNext = bpm.nextSibling;
+    bpm.parentNode.insertBefore(wrap, bpmNext);
+    return wrap;
+}
 // ── Tempo Map toolbar toggle ────────────────────────────────────────
 
 function _ensureTempoMapButton() {
@@ -10080,7 +11562,7 @@ function _ensureTempoMapButton() {
         btn.type = 'button';
         btn.textContent = '🎵 Tempo Map';
         btn.className = 'px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden';
-        btn.title = 'Open the EOF-style tempo-map editor';
+        btn.title = 'Open Tempo Map to edit sync points, BPM, and time signatures';
         btn.onclick = () => {
             // Finalize any in-progress canvas drag before switching
             // modes — commit a moved sync-point / drum drag (don't
@@ -10111,14 +11593,20 @@ let _tempoMapBtnState = '';  // memoized signature; updates only on change
 
 function _refreshTempoMapButton() {
     const btn = _ensureTempoMapButton();
+    const sigWrap = _ensureTempoSignatureControl();
     if (!btn) return;
     // The grid is song-wide and round-trips through archive + sloppak, so
     // the button is NOT format-gated — only a beat grid is required.
     const hasGrid = !!(S.beats && S.beats.length >= 2);
-    const sig = `${!!S.sessionId}|${hasGrid}|${!!S.tempoMapMode}`;
+    const hasMultipleBpms = hasGrid && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01);
+    const sig = `${!!S.sessionId}|${hasGrid}|${!!S.tempoMapMode}|${hasMultipleBpms}`;
     if (sig === _tempoMapBtnState) return;
     _tempoMapBtnState = sig;
     btn.classList.toggle('hidden', !S.sessionId || !hasGrid);
+    if (sigWrap) {
+        sigWrap.classList.toggle('hidden', !S.tempoMapMode || !hasGrid);
+        sigWrap.classList.toggle('inline-flex', !!S.tempoMapMode && hasGrid);
+    }
     if (S.tempoMapMode) {
         btn.textContent = '🎸 Back to Notes';
         btn.classList.add('bg-amber-600', 'hover:bg-amber-500');
@@ -10128,24 +11616,33 @@ function _refreshTempoMapButton() {
         btn.classList.remove('bg-amber-600', 'hover:bg-amber-500');
         btn.classList.add('bg-dark-600', 'hover:bg-dark-500');
     }
-    // The toolbar BPM input / Sync button show a single song-wide tempo;
-    // in tempo-map mode the song can have many per-measure BPMs, so the
-    // input would be misleading — disable it while the mode is active.
-    for (const id of ['editor-bpm', 'editor-sync-btn']) {
-        const el = document.getElementById(id);
-        if (!el) continue;
-        el.disabled = !!S.tempoMapMode;
-        el.style.opacity = S.tempoMapMode ? '0.4' : '';
+    // Sync works on the song-wide BPM only, so keep that disabled in
+    // tempo-map mode. The BPM input itself stays active there and edits the
+    // selected measure (or the one under the playhead if nothing is selected).
+    const bpmEl = document.getElementById('editor-bpm');
+    if (bpmEl) {
+        const disableGlobalBpm = !S.tempoMapMode && hasMultipleBpms;
+        bpmEl.disabled = disableGlobalBpm;
+        bpmEl.style.opacity = disableGlobalBpm ? '0.55' : '';
+        if (bpmEl.dataset.origTitle === undefined) bpmEl.dataset.origTitle = bpmEl.title || '';
+        bpmEl.title = S.tempoMapMode
+            ? 'Edit the selected measure BPM in Tempo Map mode'
+            : disableGlobalBpm
+                ? 'Open Tempo Map to edit a song with multiple tempo events'
+                : bpmEl.dataset.origTitle;
+    }
+    const syncEl = document.getElementById('editor-sync-btn');
+    if (syncEl) {
+        syncEl.disabled = !!S.tempoMapMode;
+        syncEl.style.opacity = S.tempoMapMode ? '0.4' : '';
         if (S.tempoMapMode) {
-            // Stash the element's own tooltip once so we can put it back
-            // on exit instead of permanently blanking it.
-            if (el.dataset.origTitle === undefined) {
-                el.dataset.origTitle = el.title || '';
+            if (syncEl.dataset.origTitle === undefined) {
+                syncEl.dataset.origTitle = syncEl.title || '';
             }
-            el.title = 'Disabled in Tempo Map mode — edit per-measure tempo on the grid';
-        } else if (el.dataset.origTitle !== undefined) {
-            el.title = el.dataset.origTitle;
-            delete el.dataset.origTitle;
+            syncEl.title = 'Disabled in Tempo Map mode — edit per-measure tempo on the grid';
+        } else if (syncEl.dataset.origTitle !== undefined) {
+            syncEl.title = syncEl.dataset.origTitle;
+            delete syncEl.dataset.origTitle;
         }
     }
 }
@@ -10260,8 +11757,8 @@ function _tempoMapOnMouseDown(e, x, y) {
     draw();
 }
 
-// Right-click in tempo-map mode: insert a sync point on open grid, or
-// delete / change the time signature of the sync point under the cursor.
+// Right-click in tempo-map mode: insert on open grid, or edit/delete
+// the sync point under the cursor.
 function _tempoMapOnContextMenu(e) {
     const { x, y } = getMousePos(e);
     const menu = document.getElementById('editor-context-menu');
@@ -10274,6 +11771,9 @@ function _tempoMapOnContextMenu(e) {
     if (onPole >= 0) {
         const cur = _tempoMeasureBeatCount(onPole);
         html += `<div class="px-3 py-1 text-xs text-gray-500">Measure: ${cur} beats</div>`;
+        const m = _tempoMeasures().find(mm => mm.i === onPole) || null;
+        if (m && !m.isLast && m.bpm > 0) html += mkBtn('bpmedit', 'Set BPM…');
+        html += mkBtn('tsedit', 'Set time signature…');
         if (cur < 16) html += mkBtn('tsplus', 'Add a beat (time signature +)');
         if (cur > 1) html += mkBtn('tsminus', 'Remove a beat (time signature −)');
         html += '<div class="border-t border-gray-700 my-1"></div>';
@@ -10288,6 +11788,8 @@ function _tempoMapOnContextMenu(e) {
             const a = btn.dataset.action;
             if (a === 'delete') _tempoDeleteSyncPoint(onPole);
             else if (a === 'insert') _tempoInsertSyncPoint(xToTime(x));
+            else if (a === 'bpmedit') _tempoPromptMeasureBpm(onPole);
+            else if (a === 'tsedit') _tempoPromptTimeSignature(onPole);
             else if (a === 'tsplus') _tempoSetBeatsPerMeasure(onPole, _tempoMeasureBeatCount(onPole) + 1);
             else if (a === 'tsminus') _tempoSetBeatsPerMeasure(onPole, _tempoMeasureBeatCount(onPole) - 1);
         };
@@ -10374,27 +11876,91 @@ function _tempoDeleteSyncPoint(beatIdx) {
 // beats. The measure's [downbeat, next-downbeat] time span is fixed,
 // so only the interior grid lines move — note times are untouched.
 
-function _tempoSetBeatsPerMeasure(d, newCount) {
-    newCount = Math.max(1, Math.min(16, Math.round(newCount)));
-    const beats = S.beats || [];
-    if (d < 0 || d >= beats.length || beats[d].measure <= 0) return;
+/* @pure:tempo-map-timesig:start */
+const TEMPO_SIGNATURE_DENOMINATORS = Object.freeze([2, 4, 8, 16]);
+
+function _tempoNormalizeDenominatorPure(value) {
+    const n = parseInt(value, 10);
+    return TEMPO_SIGNATURE_DENOMINATORS.includes(n) ? n : 4;
+}
+
+function _tempoParseSignatureInputPure(value) {
+    const raw = String(value || '').trim();
+    const m = raw.match(/^(\d{1,2})\s*\/\s*(\d{1,2})$/);
+    if (!m) return null;
+    const numerator = Math.max(1, Math.min(16, parseInt(m[1], 10)));
+    const denominator = parseInt(m[2], 10);
+    if (!TEMPO_SIGNATURE_DENOMINATORS.includes(denominator)) return null;
+    return { numerator, denominator };
+}
+
+function _tempoSetDenominatorOnBeatsPure(beats, d, denominator) {
+    if (!Array.isArray(beats) || d < 0 || d >= beats.length || !beats[d] || beats[d].measure <= 0) return null;
+    const den = _tempoNormalizeDenominatorPure(denominator);
+    const out = beats.map(b => ({ ...b }));
+    out[d].den = den;
+    return out;
+}
+
+function _tempoSetBeatsPerMeasurePure(beats, d, newCount, duration, round) {
+    const count = Math.max(1, Math.min(16, Math.round(newCount)));
+    if (!Array.isArray(beats) || d < 0 || d >= beats.length || !beats[d] || beats[d].measure <= 0) return null;
     let ndb = -1;
-    for (let i = d + 1; i < beats.length; i++) { if (beats[i].measure > 0) { ndb = i; break; } }
+    for (let i = d + 1; i < beats.length; i++) {
+        if (beats[i].measure > 0) { ndb = i; break; }
+    }
     const startT = beats[d].time;
     let endT, tailIdx;
     if (ndb >= 0) { endT = beats[ndb].time; tailIdx = ndb; }
-    else { endT = S.duration || beats[beats.length - 1].time; tailIdx = beats.length; }
-    if (endT <= startT) return;
+    else { endT = duration || beats[beats.length - 1].time; tailIdx = beats.length; }
+    if (endT <= startT) return null;
+    const r = typeof round === 'function' ? round : (v => v);
     const head = beats.slice(0, d + 1).map(b => ({ ...b }));
     const tail = beats.slice(tailIdx).map(b => ({ ...b }));
     const interior = [];
-    for (let k = 1; k < newCount; k++) {
-        interior.push({ time: _r3(startT + (endT - startT) * k / newCount), measure: -1 });
+    for (let k = 1; k < count; k++) {
+        interior.push({ time: r(startT + (endT - startT) * k / count), measure: -1 });
     }
-    const newBeats = head.concat(interior, tail);
+    return head.concat(interior, tail);
+}
+/* @pure:tempo-map-timesig:end */
+
+function _tempoSetBeatsPerMeasure(d, newCount) {
+    const beats = S.beats || [];
+    const newBeats = _tempoSetBeatsPerMeasurePure(beats, d, newCount, S.duration, _r3);
+    if (!newBeats) return;
     _tempoRenumberMeasures(newBeats);
     S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig'));
+    updateTempoSigDisplay();
     draw();
+}
+
+function _tempoSetTimeSignature(d, numerator, denominator) {
+    const beats = S.beats || [];
+    let newBeats = _tempoSetBeatsPerMeasurePure(beats, d, numerator, S.duration, _r3);
+    if (!newBeats) return false;
+    newBeats = _tempoSetDenominatorOnBeatsPure(newBeats, d, denominator);
+    if (!newBeats) return false;
+    _tempoRenumberMeasures(newBeats);
+    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig'));
+    updateTempoSigDisplay();
+    draw();
+    return true;
+}
+
+function _tempoPromptTimeSignature(d) {
+    if (d < 0 || !S.beats[d] || S.beats[d].measure <= 0) return;
+    const current = `${_tempoMeasureBeatCount(d)}/${_tempoMeasureDenominator(d)}`;
+    const raw = window.prompt('Set time signature for selected measure', current);
+    if (raw === null) return;
+    const parsed = _tempoParseSignatureInputPure(raw);
+    if (!parsed) {
+        setStatus('Enter a time signature like 7/8, 4/4, or 5/16.');
+        return;
+    }
+    if (_tempoSetTimeSignature(d, parsed.numerator, parsed.denominator)) {
+        setStatus(`Measure ${S.beats[d].measure} time signature set to ${parsed.numerator}/${parsed.denominator}`);
+    }
 }
 
 // Beats currently in the measure starting at downbeat index `d`.
@@ -10405,7 +11971,11 @@ function _tempoMeasureBeatCount(d) {
     }
     return beats.length - d;  // last measure
 }
-
+function _tempoMeasureDenominator(d) {
+    const beats = S.beats || [];
+    const b = beats[d] || null;
+    return _tempoNormalizeDenominatorPure(b && b.den);
+}
 // Undo command for insert/delete/time-signature edits — these only
 // change `measure` fields / sub-beat layout, never beat times, so no
 // note re-timing is involved; it just swaps the beats array.
@@ -10422,6 +11992,69 @@ class TempoGridCmd {
 // ── Drag: move a sync point, re-spacing the two adjacent measures ────
 
 const MIN_MEASURE = 0.05;  // s — minimum gap a dragged downbeat keeps
+
+/* @pure:tempo-map-bpm:start */
+function _tempoMeasureBpmsPure(beats, round) {
+    if (!Array.isArray(beats) || beats.length < 2) return [];
+    const r = typeof round === 'function' ? round : (v => v);
+    const bpms = [];
+    for (let d = 0; d < beats.length; d++) {
+        const b = beats[d];
+        if (!b || b.measure <= 0) continue;
+        let ndb = -1;
+        for (let i = d + 1; i < beats.length; i++) {
+            if (beats[i] && beats[i].measure > 0) { ndb = i; break; }
+        }
+        if (ndb < 0) continue;
+        const beatCount = ndb - d;
+        const span = Number(beats[ndb].time) - Number(b.time);
+        if (beatCount <= 0 || !Number.isFinite(span) || span <= 0) continue;
+        bpms.push(r((beatCount * 60) / span));
+    }
+    return bpms;
+}
+
+function _tempoHasMultipleMeasureBpmsPure(beats, tolerance) {
+    const tol = Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.01;
+    const bpms = _tempoMeasureBpmsPure(beats, v => Math.round(v * 1000) / 1000);
+    if (bpms.length < 2) return false;
+    const first = bpms[0];
+    return bpms.some(bpm => Math.abs(bpm - first) > tol);
+}
+
+function _tempoParseBpmInputPure(value) {
+    const bpm = parseFloat(String(value || '').trim());
+    return Number.isFinite(bpm) && bpm > 0 ? bpm : null;
+}
+
+function _tempoSetMeasureBpmPure(beats, d, newBpm, minMeasure, round) {
+    if (!Array.isArray(beats) || beats.length < 2 || !Number.isFinite(newBpm) || newBpm <= 0) return null;
+    if (d < 0 || d >= beats.length || !beats[d] || beats[d].measure <= 0) return null;
+    let ndb = -1;
+    for (let i = d + 1; i < beats.length; i++) {
+        if (beats[i].measure > 0) { ndb = i; break; }
+    }
+    if (ndb < 0) return null;
+    const beatCount = ndb - d;
+    if (beatCount <= 0) return null;
+    const r = typeof round === 'function' ? round : (v => v);
+    const gapMin = Number.isFinite(minMeasure) && minMeasure > 0 ? minMeasure : 0.05;
+    const startT = beats[d].time;
+    const oldEnd = beats[ndb].time;
+    const span = Math.max(gapMin, (beatCount * 60) / newBpm);
+    const newEnd = r(startT + span);
+    const dt = newEnd - oldEnd;
+    const out = beats.map(b => ({ ...b }));
+    for (let k = 1; k < beatCount; k++) {
+        out[d + k].time = r(startT + (newEnd - startT) * k / beatCount);
+    }
+    out[ndb].time = newEnd;
+    for (let i = ndb + 1; i < out.length; i++) {
+        out[i].time = r(out[i].time + dt);
+    }
+    return out;
+}
+/* @pure:tempo-map-bpm:end */
 
 // Move the downbeat at index `d` in `beats` to `newT`, re-spacing the
 // interior sub-beats of the two adjacent measures. Downbeats other than
@@ -10451,6 +12084,38 @@ function _tempoApplyDrag(beats, d, newT) {
     } else {
         const dt = newT - oldT;
         for (let i = d + 1; i < beats.length; i++) beats[i].time += dt;
+    }
+}
+
+function _tempoSetMeasureBpm(d, newBPM) {
+    const beats = S.beats || [];
+    const measures = _tempoMeasures();
+    const m = measures.find(mm => mm.i === d) || null;
+    if (!m || m.isLast || !(m.bpm > 0)) return false;
+    const newBeats = _tempoSetMeasureBpmPure(beats, d, newBPM, MIN_MEASURE, _r3);
+    if (!newBeats) return false;
+    S.history.exec(new TempoMapCmd(beats.map(b => ({ ...b })), newBeats, 'bpm'));
+    updateBPMDisplay();
+    draw();
+    return true;
+}
+
+function _tempoPromptMeasureBpm(d) {
+    const measures = _tempoMeasures();
+    const m = measures.find(mm => mm.i === d) || null;
+    if (!m || m.isLast || !(m.bpm > 0)) {
+        setStatus('Select a non-final measure to edit its BPM.');
+        return;
+    }
+    const raw = window.prompt('Set BPM for selected measure', m.bpm.toFixed(2));
+    if (raw === null) return;
+    const bpm = _tempoParseBpmInputPure(raw);
+    if (bpm === null) {
+        setStatus('Enter a positive BPM value.');
+        return;
+    }
+    if (_tempoSetMeasureBpm(d, bpm)) {
+        setStatus(`Measure ${m.measure} tempo changed: ${m.bpm.toFixed(2)} → ${bpm.toFixed(2)} BPM`);
     }
 }
 

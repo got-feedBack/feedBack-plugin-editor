@@ -49,9 +49,11 @@
             <svg id="editor-play-icon" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
         </button>
         <span id="editor-time-display" class="text-xs text-gray-500 font-mono w-20">0:00 / 0:00</span>
+        <span id="editor-measure-display" class="text-xs text-gray-500 font-mono w-16" title="Current measure and time signature">M-- --</span>
         <!-- Loop selected bars on the 3D highway (drag the bottom beat bar to
              select a range first). Returns to this exact edit position on exit. -->
-        <button id="editor-loop3d-btn" onclick="editorLoopIn3D()" class="px-3 py-1 bg-accent hover:bg-accent-light rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled title="Drag across the bottom beat bar to select bars first">▶ Loop in 3D</button>
+        <button id="editor-loop3d-btn" onclick="editorLoopIn3D()" class="px-3 py-1 bg-accent hover:bg-accent-light rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled title="Select some notes or set a loop region first">▶ Loop in 3D</button>
+        <button id="editor-loop-region-btn" onclick="editorToggleLoopRegion()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled title="Set a loop region first">Loop</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
 
@@ -90,14 +92,43 @@
             <option>1/2</option>
             <option selected>1/4</option>
             <option>1/8</option>
+            <option>1/12</option>
             <option>1/16</option>
-            <option>Off</option>
+            <option>1/24</option>
+            <option>1/32</option>
+            <option>1/48</option>
+            <option>1/64</option>
+            <option>1/96</option>
         </select>
+        <label class="flex items-center gap-1 text-xs text-gray-400" title="Toggle grid snapping without changing the selected resolution">
+            <input id="editor-snap-enabled" type="checkbox" checked onchange="editorSetSnapEnabled(this.checked)" class="accent-accent"> On
+        </label>
+
+        <div class="h-4 w-px bg-gray-700"></div>
+
+        <!-- Shortcuts -->
+        <span class="text-xs text-gray-500">Keys:</span>
+        <select id="editor-shortcut-profile" onchange="editorSetShortcutProfile(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Keyboard shortcut profile">
+            <option value="feedback">FeedBack</option>
+            <option value="eof">EOF Legacy</option>
+        </select>
+        <button id="editor-shortcuts-btn" onclick="editorToggleShortcutPanel()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs" title="Show shortcut and command controls">Shortcuts…</button>
     </div>
 
     <!-- Canvas area + inspector panel -->
     <div class="flex-1 flex overflow-hidden">
         <div id="editor-canvas-wrap" class="flex-1 relative overflow-hidden bg-dark-900">
+            <div id="editor-loop-strip" class="absolute top-2 left-[52px] right-3 z-20 h-8 select-none">
+                <div id="editor-loop-strip-track" class="relative h-full rounded-md border border-gray-700/80 bg-dark-800/85 backdrop-blur-sm">
+                    <div id="editor-loop-strip-empty" class="absolute inset-0 flex items-center px-3 text-[10px] uppercase tracking-wide text-gray-500">Loop region</div>
+                    <div id="editor-loop-strip-selection" class="hidden absolute top-1 bottom-1 rounded bg-accent/30 border border-accent/70">
+                        <button id="editor-loop-strip-start" class="absolute left-0 top-0 bottom-0 w-2 -translate-x-1/2 rounded-full bg-accent-light hover:bg-white" title="Drag loop start"></button>
+                        <button id="editor-loop-strip-end" class="absolute right-0 top-0 bottom-0 w-2 translate-x-1/2 rounded-full bg-accent-light hover:bg-white" title="Drag loop end"></button>
+                        <div id="editor-loop-strip-label" class="absolute inset-0 flex items-center justify-center px-3 text-[11px] font-medium text-white pointer-events-none"></div>
+                    </div>
+                    <button id="editor-loop-strip-clear" class="hidden absolute right-1 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Clear loop region">Clear</button>
+                </div>
+            </div>
             <canvas id="editor-canvas" class="absolute inset-0"></canvas>
             <!-- Stem mixer panel — floating, populated by _renderStemMixer() -->
             <div id="editor-stem-mixer" class="hidden absolute top-3 right-3 z-20 w-60 bg-dark-800/95 border border-gray-700 rounded-lg shadow-xl backdrop-blur">
@@ -106,6 +137,30 @@
                     <button onclick="editorToggleStemMixer()" class="text-gray-500 hover:text-white text-sm leading-none">&times;</button>
                 </div>
                 <div id="editor-stem-mixer-rows" class="p-2 space-y-1.5 max-h-[60vh] overflow-y-auto"></div>
+            </div>
+            <div id="editor-shortcut-panel" class="hidden absolute top-12 right-3 z-30 w-[34rem] max-w-[calc(100%-1.5rem)] bg-dark-800/95 border border-gray-700 rounded-lg shadow-xl backdrop-blur text-xs text-gray-200">
+                <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+                    <div>
+                        <div class="font-semibold">Shortcut Controls</div>
+                        <div id="editor-shortcut-panel-subtitle" class="text-[11px] text-gray-500">Command buttons follow the active shortcut profile.</div>
+                    </div>
+                    <button onclick="editorToggleShortcutPanel(false)" class="text-gray-500 hover:text-white text-sm leading-none">&times;</button>
+                </div>
+                <div class="px-3 py-2 border-b border-gray-700 flex flex-wrap items-center gap-2">
+                    <span class="text-gray-500">Profile</span>
+                    <select id="editor-shortcut-panel-profile" onchange="editorSetShortcutProfile(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none">
+                        <option value="feedback">FeedBack</option>
+                        <option value="eof">EOF Legacy</option>
+                    </select>
+                    <span class="text-gray-500 ml-2">Right-click</span>
+                    <select id="editor-right-click-behavior" onchange="editorSetRightClickBehavior(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none">
+                        <option value="context">Context menus</option>
+                        <option value="eofEdit">Add/remove notes</option>
+                    </select>
+                    <span id="editor-right-click-hint" class="ml-auto text-[11px] text-gray-500">Disabled rows are planned commands.</span>
+                </div>
+                <div class="px-3 py-1.5 border-b border-gray-800 text-[11px] text-gray-500">Shortcut keys are handled only while the editor has focus; browser/system conflicts stay outside editor focus.</div>
+                <div id="editor-shortcut-command-list" class="p-2 space-y-2 max-h-[62vh] overflow-y-auto"></div>
             </div>
         </div>
         <!-- Inspector panel — populated by `_renderInspector` whenever the
