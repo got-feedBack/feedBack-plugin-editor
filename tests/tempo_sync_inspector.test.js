@@ -38,6 +38,8 @@ t('asks for a selected sync point before enabling edits', () => {
     assert.strictEqual(state.bpmDisabled, true);
     assert.strictEqual(state.signatureDisabled, true);
     assert.strictEqual(state.bpmValue, '');
+    assert.strictEqual(state.canInsert, true);
+    assert.strictEqual(state.canDelete, false);
 });
 
 t('shows editable BPM and signature for a selected non-final measure', () => {
@@ -49,6 +51,9 @@ t('shows editable BPM and signature for a selected non-final measure', () => {
     assert.strictEqual(state.denominatorValue, '8');
     assert.strictEqual(state.signatureDisabled, false);
     assert.strictEqual(state.hint, '7/8');
+    assert.strictEqual(state.canInsert, true);
+    assert.strictEqual(state.canDelete, true);
+    assert.strictEqual(state.deleteTitle, 'Delete selected sync point');
 });
 
 t('keeps signature editable but disables BPM for the final measure', () => {
@@ -59,6 +64,9 @@ t('keeps signature editable but disables BPM for the final measure', () => {
     assert.strictEqual(state.signatureDisabled, false);
     assert.ok(state.bpmTitle.includes('closing downbeat'));
     assert.ok(state.hint.includes('final measure BPM'));
+    assert.strictEqual(state.canInsert, true);
+    assert.strictEqual(state.canDelete, false);
+    assert.ok(state.deleteTitle.includes('cannot be deleted'));
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
