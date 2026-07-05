@@ -16,7 +16,7 @@ if (!m) {
 }
 
 const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _tempoSetMeasureBpmPure, _tempoMeasureBpmsPure, _tempoHasMultipleMeasureBpmsPure };'
+    '"use strict";' + m[0] + '\nreturn { _tempoSetMeasureBpmPure, _tempoMeasureBpmsPure, _tempoHasMultipleMeasureBpmsPure, _tempoParseBpmInputPure };'
 )();
 
 let pass = 0;
@@ -48,6 +48,15 @@ t('supports slowing a selected measure without changing later measure lengths', 
 
 t('returns null for the final measure with no closing downbeat', () => {
     assert.strictEqual(api._tempoSetMeasureBpmPure(beats, 4, 90, 0.05, v => v), null);
+});
+
+
+t('parses direct BPM input', () => {
+    assert.strictEqual(api._tempoParseBpmInputPure('120'), 120);
+    assert.strictEqual(api._tempoParseBpmInputPure('87.5'), 87.5);
+    assert.strictEqual(api._tempoParseBpmInputPure('0'), null);
+    assert.strictEqual(api._tempoParseBpmInputPure('-10'), null);
+    assert.strictEqual(api._tempoParseBpmInputPure('bad'), null);
 });
 
 t('detects whether the grid has multiple measure tempos', () => {
