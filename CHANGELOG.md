@@ -23,6 +23,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "fret" no longer reads as an arbitrary number. Tests:
   `tests/anchor_authoring.test.js` (full-set promotion on click + on add-new,
   undo-restores-fallback, idempotent-when-authored).
+- **Create a song from audio alone — "New…" no longer forces a Guitar Pro / EOF
+  file.** The create modal labelled its Guitar Pro and EOF XML inputs *optional*
+  but hard-disabled the Create button unless one was picked, and its
+  blank-chart options (initial arrangement + drum tab) were never wired up — so
+  an audio-only feedpak could only be made through a second, separate "New
+  Sloppak" dialog. The modal now leads with an explicit **Blank / Guitar Pro /
+  EOF XML** mode picker (Blank is the default): Blank shows the initial-
+  arrangement toggle (Lead / Rhythm / Bass) + a drum-tab option and enables
+  Create on audio + title + artist, routing to the existing `create_sloppak`
+  backend and opening the new feedpak straight in the editor; the GP and EOF
+  modes keep their import flows. The "New" chooser's entries now open this one
+  unified modal (in Blank / GP mode) instead of a parallel dialog, and the
+  toolbar's **Build Song** button is renamed **Build feedpak**. Tests:
+  `tests/create_gate.test.js` (per-mode Create-button enable logic). Keys /
+  Drums-as-arrangement and extended tunings still need `create_sloppak` backend
+  work (tracked separately); the now-unreferenced standalone New-Sloppak dialog
+  can be removed in a follow-up.
 
 ### Changed
 - **The audio lane now draws a real waveform.** It previously showed a

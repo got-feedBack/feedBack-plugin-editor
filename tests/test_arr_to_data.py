@@ -6,7 +6,12 @@ lightweight fakes rather than a full parser fixture.
 """
 from types import SimpleNamespace
 
-from routes import _NOTE_TECH_BOOL_FIELDS, _NOTE_TECH_FIELDS, _arr_to_data
+from routes import (
+    _NOTE_TECH_BOOL_FIELDS,
+    _NOTE_TECH_FIELDS,
+    _arr_to_data,
+    _extended_manifest_meta,
+)
 
 
 def _tech_defaults(**kw):
@@ -39,6 +44,33 @@ def _tech_defaults(**kw):
     )
     base.update(kw)
     return base
+
+
+def test_extended_manifest_meta_normalizes_import_fields():
+    """The GP/EOF import paths run the modal's spec-complete fields through this
+    into exactly the shapes `_write_sloppak_pak` writes, so a chart import keeps
+    the same metadata a blank project does."""
+    out = _extended_manifest_meta({
+        "album_artist": "  Various Artists ",
+        "track": "3", "disc": 2,
+        "genres": "Rock, Metal, Rock",       # string + dup
+        "isrc": "us-abc-24-00001",           # hyphenated / lower
+        "mbid": "ABC-DEF",                   # upper
+        "language": "en",
+        "authors": "me, you, me",            # string + dup
+    })
+    assert out == {
+        "album_artist": "Various Artists",
+        "track": 3, "disc": 2,
+        "genres": ["Rock", "Metal"],
+        "isrc": "USABC2400001",
+        "mbid": "abc-def",
+        "language": "en",
+        "authors": ["me", "you"],
+    }
+    # Lenient: malformed / empty fields are dropped, never an error.
+    assert _extended_manifest_meta({"track": "x", "genres": "", "disc": True}) == {}
+    assert _extended_manifest_meta(None) == {}
 
 
 def _note(**kw):
