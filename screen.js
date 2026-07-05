@@ -10623,6 +10623,8 @@ function _tempoMapOnContextMenu(e) {
     if (onPole >= 0) {
         const cur = _tempoMeasureBeatCount(onPole);
         html += `<div class="px-3 py-1 text-xs text-gray-500">Measure: ${cur} beats</div>`;
+        const m = _tempoMeasures().find(mm => mm.i === onPole) || null;
+        if (m && !m.isLast && m.bpm > 0) html += mkBtn('bpmedit', 'Set BPM…');
         html += mkBtn('tsedit', 'Set time signature…');
         if (cur < 16) html += mkBtn('tsplus', 'Add a beat (time signature +)');
         if (cur > 1) html += mkBtn('tsminus', 'Remove a beat (time signature −)');
@@ -10638,6 +10640,7 @@ function _tempoMapOnContextMenu(e) {
             const a = btn.dataset.action;
             if (a === 'delete') _tempoDeleteSyncPoint(onPole);
             else if (a === 'insert') _tempoInsertSyncPoint(xToTime(x));
+            else if (a === 'bpmedit') _tempoPromptMeasureBpm(onPole);
             else if (a === 'tsedit') _tempoPromptTimeSignature(onPole);
             else if (a === 'tsplus') _tempoSetBeatsPerMeasure(onPole, _tempoMeasureBeatCount(onPole) + 1);
             else if (a === 'tsminus') _tempoSetBeatsPerMeasure(onPole, _tempoMeasureBeatCount(onPole) - 1);
@@ -10871,6 +10874,11 @@ function _tempoHasMultipleMeasureBpmsPure(beats, tolerance) {
     return bpms.some(bpm => Math.abs(bpm - first) > tol);
 }
 
+function _tempoParseBpmInputPure(value) {
+    const bpm = parseFloat(String(value || '').trim());
+    return Number.isFinite(bpm) && bpm > 0 ? bpm : null;
+}
+
 function _tempoSetMeasureBpmPure(beats, d, newBpm, minMeasure, round) {
     if (!Array.isArray(beats) || beats.length < 2 || !Number.isFinite(newBpm) || newBpm <= 0) return null;
     if (d < 0 || d >= beats.length || !beats[d] || beats[d].measure <= 0) return null;
@@ -10928,6 +10936,38 @@ function _tempoApplyDrag(beats, d, newT) {
     } else {
         const dt = newT - oldT;
         for (let i = d + 1; i < beats.length; i++) beats[i].time += dt;
+    }
+}
+
+function _tempoSetMeasureBpm(d, newBPM) {
+    const beats = S.beats || [];
+    const measures = _tempoMeasures();
+    const m = measures.find(mm => mm.i === d) || null;
+    if (!m || m.isLast || !(m.bpm > 0)) return false;
+    const newBeats = _tempoSetMeasureBpmPure(beats, d, newBPM, MIN_MEASURE, _r3);
+    if (!newBeats) return false;
+    S.history.exec(new TempoMapCmd(beats.map(b => ({ ...b })), newBeats, 'bpm'));
+    updateBPMDisplay();
+    draw();
+    return true;
+}
+
+function _tempoPromptMeasureBpm(d) {
+    const measures = _tempoMeasures();
+    const m = measures.find(mm => mm.i === d) || null;
+    if (!m || m.isLast || !(m.bpm > 0)) {
+        setStatus('Select a non-final measure to edit its BPM.');
+        return;
+    }
+    const raw = window.prompt('Set BPM for selected measure', m.bpm.toFixed(2));
+    if (raw === null) return;
+    const bpm = _tempoParseBpmInputPure(raw);
+    if (bpm === null) {
+        setStatus('Enter a positive BPM value.');
+        return;
+    }
+    if (_tempoSetMeasureBpm(d, bpm)) {
+        setStatus(`Measure ${m.measure} tempo changed: ${m.bpm.toFixed(2)} → ${bpm.toFixed(2)} BPM`);
     }
 }
 
