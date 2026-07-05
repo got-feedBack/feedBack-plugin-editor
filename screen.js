@@ -6134,6 +6134,12 @@ window.editorSetSnapEnabled = (enabled) => {
 window.editorSetBPM = (val) => {
     const newBPM = parseFloat(val);
     if (!newBPM || newBPM <= 0 || S.beats.length < 2) return;
+    if (!S.tempoMapMode && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01)) {
+        setStatus('Use Tempo Map to edit songs with multiple tempo events.');
+        updateBPMDisplay();
+        draw();
+        return;
+    }
     if (S.tempoMapMode) {
         const d = _tempoResolvedMeasureIdx();
         if (d < 0) return;
@@ -10444,7 +10450,8 @@ function _refreshTempoMapButton() {
     // The grid is song-wide and round-trips through archive + sloppak, so
     // the button is NOT format-gated — only a beat grid is required.
     const hasGrid = !!(S.beats && S.beats.length >= 2);
-    const sig = `${!!S.sessionId}|${hasGrid}|${!!S.tempoMapMode}`;
+    const hasMultipleBpms = hasGrid && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01);
+    const sig = `${!!S.sessionId}|${hasGrid}|${!!S.tempoMapMode}|${hasMultipleBpms}`;
     if (sig === _tempoMapBtnState) return;
     _tempoMapBtnState = sig;
     btn.classList.toggle('hidden', !S.sessionId || !hasGrid);
@@ -10466,12 +10473,15 @@ function _refreshTempoMapButton() {
     // selected measure (or the one under the playhead if nothing is selected).
     const bpmEl = document.getElementById('editor-bpm');
     if (bpmEl) {
-        bpmEl.disabled = false;
-        bpmEl.style.opacity = '';
+        const disableGlobalBpm = !S.tempoMapMode && hasMultipleBpms;
+        bpmEl.disabled = disableGlobalBpm;
+        bpmEl.style.opacity = disableGlobalBpm ? '0.55' : '';
         if (bpmEl.dataset.origTitle === undefined) bpmEl.dataset.origTitle = bpmEl.title || '';
         bpmEl.title = S.tempoMapMode
             ? 'Edit the selected measure BPM in Tempo Map mode'
-            : bpmEl.dataset.origTitle;
+            : disableGlobalBpm
+                ? 'Open Tempo Map to edit a song with multiple tempo events'
+                : bpmEl.dataset.origTitle;
     }
     const syncEl = document.getElementById('editor-sync-btn');
     if (syncEl) {
@@ -10793,6 +10803,34 @@ class TempoGridCmd {
 const MIN_MEASURE = 0.05;  // s — minimum gap a dragged downbeat keeps
 
 /* @pure:tempo-map-bpm:start */
+function _tempoMeasureBpmsPure(beats, round) {
+    if (!Array.isArray(beats) || beats.length < 2) return [];
+    const r = typeof round === 'function' ? round : (v => v);
+    const bpms = [];
+    for (let d = 0; d < beats.length; d++) {
+        const b = beats[d];
+        if (!b || b.measure <= 0) continue;
+        let ndb = -1;
+        for (let i = d + 1; i < beats.length; i++) {
+            if (beats[i] && beats[i].measure > 0) { ndb = i; break; }
+        }
+        if (ndb < 0) continue;
+        const beatCount = ndb - d;
+        const span = Number(beats[ndb].time) - Number(b.time);
+        if (beatCount <= 0 || !Number.isFinite(span) || span <= 0) continue;
+        bpms.push(r((beatCount * 60) / span));
+    }
+    return bpms;
+}
+
+function _tempoHasMultipleMeasureBpmsPure(beats, tolerance) {
+    const tol = Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.01;
+    const bpms = _tempoMeasureBpmsPure(beats, v => Math.round(v * 1000) / 1000);
+    if (bpms.length < 2) return false;
+    const first = bpms[0];
+    return bpms.some(bpm => Math.abs(bpm - first) > tol);
+}
+
 function _tempoSetMeasureBpmPure(beats, d, newBpm, minMeasure, round) {
     if (!Array.isArray(beats) || beats.length < 2 || !Number.isFinite(newBpm) || newBpm <= 0) return null;
     if (d < 0 || d >= beats.length || !beats[d] || beats[d].measure <= 0) return null;
