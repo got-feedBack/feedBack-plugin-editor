@@ -16,7 +16,7 @@ if (!m) {
 }
 
 const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _tempoSetMeasureBpmPure };'
+    '"use strict";' + m[0] + '\nreturn { _tempoSetMeasureBpmPure, _tempoMeasureBpmsPure, _tempoHasMultipleMeasureBpmsPure };'
 )();
 
 let pass = 0;
@@ -48,6 +48,19 @@ t('supports slowing a selected measure without changing later measure lengths', 
 
 t('returns null for the final measure with no closing downbeat', () => {
     assert.strictEqual(api._tempoSetMeasureBpmPure(beats, 4, 90, 0.05, v => v), null);
+});
+
+t('detects whether the grid has multiple measure tempos', () => {
+    assert.strictEqual(api._tempoHasMultipleMeasureBpmsPure(beats, 0.01), false);
+    const varied = [
+        { time: 0, measure: 1 },
+        { time: 1, measure: -1 },
+        { time: 2, measure: 2 },
+        { time: 2.5, measure: -1 },
+        { time: 3, measure: 3 },
+    ];
+    assert.deepStrictEqual(api._tempoMeasureBpmsPure(varied, v => Math.round(v)), [60, 120]);
+    assert.strictEqual(api._tempoHasMultipleMeasureBpmsPure(varied, 0.01), true);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
