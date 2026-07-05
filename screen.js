@@ -6097,12 +6097,14 @@ function updateBPMDisplay() {
     if (!el || S.beats.length < 2) return;
     if (document.activeElement === el) return;
     if (S.tempoMapMode) {
-        const d = _tempoResolvedMeasureIdx();
+        const d = S.tempoSel;
         const m = _tempoMeasures().find(mm => mm.i === d) || null;
         if (m && !m.isLast && m.bpm > 0) {
             el.value = m.bpm.toFixed(2);
             return;
         }
+        el.value = '';
+        return;
     }
     el.value = getTabBPM().toFixed(1);
 }
@@ -6111,15 +6113,17 @@ function updateTempoSigDisplay() {
     const numEl = document.getElementById('editor-tempo-sig');
     const denEl = document.getElementById('editor-tempo-sig-den');
     if ((!numEl && !denEl) || document.activeElement === numEl || document.activeElement === denEl) return;
-    const d = _tempoResolvedMeasureIdx();
+    const d = S.tempoMapMode ? S.tempoSel : _tempoResolvedMeasureIdx();
     if (d < 0) {
         if (numEl) numEl.value = '';
         if (denEl) denEl.value = '4';
+        _refreshTempoSyncInspector();
         return;
     }
     if (numEl) numEl.value = String(_tempoMeasureBeatCount(d));
     if (denEl) denEl.value = String(_tempoMeasureDenominator(d));
     updateMeasureDisplay();
+    _refreshTempoSyncInspector();
 }
 
 // Defer a `resizeCanvas` until layout has settled — used when a
@@ -6213,7 +6217,7 @@ window.editorSetBPM = (val) => {
         return;
     }
     if (S.tempoMapMode) {
-        const d = _tempoResolvedMeasureIdx();
+        const d = S.tempoSel;
         if (d < 0) return;
         const measures = _tempoMeasures();
         const m = measures.find(mm => mm.i === d) || null;
@@ -6252,7 +6256,7 @@ window.editorSetBPM = (val) => {
 };
 window.editorSetTempoSignature = (val) => {
     if (!S.tempoMapMode || S.beats.length < 2) return;
-    const d = _tempoResolvedMeasureIdx();
+    const d = S.tempoSel;
     if (d < 0) return;
     const n = parseInt(val, 10);
     if (!Number.isFinite(n)) { updateTempoSigDisplay(); return; }
@@ -6268,7 +6272,7 @@ window.editorSetTempoSignature = (val) => {
 };
 window.editorSetTempoSignatureDenominator = (val) => {
     if (!S.tempoMapMode || S.beats.length < 2) return;
-    const d = _tempoResolvedMeasureIdx();
+    const d = S.tempoSel;
     if (d < 0) return;
     const m = _tempoMeasures().find(mm => mm.i === d) || null;
     const prevNum = _tempoMeasureBeatCount(d);
@@ -11492,7 +11496,7 @@ function _tempoMeasures() {
         }
         out.push({
             k, i, time, measure: beats[i].measure,
-            nextI, nextTime, beats: beatCount, bpm, isLast: nextI === null,
+            nextI, nextTime, beats: beatCount, denominator: _tempoMeasureDenominator(i), bpm, isLast: nextI === null,
         });
     }
     return out;
@@ -11622,6 +11626,94 @@ function _tempoMapHudTextPure(measureCount, width) {
 }
 /* @pure:tempo-map-guidance:end */
 
+/* @pure:tempo-sync-inspector:start */
+function _tempoSyncInspectorStatePure(measures, selectedIndex) {
+    const rows = Array.isArray(measures) ? measures : [];
+    const selected = rows.find(m => m && m.i === selectedIndex) || null;
+    if (!selected) {
+        return {
+            label: 'No sync point selected',
+            bpmValue: '',
+            bpmDisabled: true,
+            bpmTitle: 'Select a Tempo Map sync point to edit its BPM',
+            numeratorValue: '',
+            denominatorValue: '4',
+            signatureDisabled: true,
+            hint: 'Select a sync point on the Tempo Map grid.',
+        };
+    }
+    const numerator = Math.max(1, Math.min(16, Number(selected.beats) || 4));
+    const denominator = [2, 4, 8, 16].includes(Number(selected.denominator))
+        ? Number(selected.denominator)
+        : 4;
+    const hasBpm = !selected.isLast && Number(selected.bpm) > 0;
+    return {
+        label: `Measure ${selected.measure}`,
+        bpmValue: hasBpm ? Number(selected.bpm).toFixed(2) : '',
+        bpmDisabled: !hasBpm,
+        bpmTitle: hasBpm
+            ? 'Edit selected sync point BPM'
+            : 'Final measure has no closing downbeat for a local BPM calculation',
+        numeratorValue: String(numerator),
+        denominatorValue: String(denominator),
+        signatureDisabled: false,
+        hint: hasBpm
+            ? `${numerator}/${denominator}`
+            : `${numerator}/${denominator} - final measure BPM needs a closing downbeat.`,
+    };
+}
+/* @pure:tempo-sync-inspector:end */
+
+function _ensureTempoSyncInspector() {
+    let el = document.getElementById('editor-tempo-sync-inspector');
+    if (el) return el;
+    const bpm = document.getElementById('editor-bpm');
+    if (!bpm || !bpm.parentNode) return null;
+    el = document.createElement('span');
+    el.id = 'editor-tempo-sync-inspector';
+    el.className = 'hidden items-center gap-1.5 px-2 py-0.5 rounded border border-gray-700 bg-dark-700/60 text-xs';
+    el.innerHTML = '<span class="text-gray-500">Sync point:</span>'
+        + '<span id="editor-tempo-sync-label" class="text-gray-200 font-medium min-w-[5.5rem]">No selection</span>'
+        + '<span id="editor-tempo-sync-hint" class="text-gray-500"></span>';
+    bpm.parentNode.insertBefore(el, bpm.previousElementSibling || bpm);
+    return el;
+}
+
+let _tempoSyncInspectorState = '';
+function _refreshTempoSyncInspector() {
+    const el = _ensureTempoSyncInspector();
+    const bpmEl = document.getElementById('editor-bpm');
+    const numEl = document.getElementById('editor-tempo-sig');
+    const denEl = document.getElementById('editor-tempo-sig-den');
+    if (!el) return;
+    const hasGrid = !!(S.beats && S.beats.length >= 2);
+    const visible = !!S.tempoMapMode && hasGrid;
+    const state = _tempoSyncInspectorStatePure(visible ? _tempoMeasures() : [], visible ? S.tempoSel : -1);
+    const sig = `${visible}|${S.tempoSel}|${state.label}|${state.bpmValue}|${state.bpmDisabled}|${state.numeratorValue}|${state.denominatorValue}|${state.signatureDisabled}|${state.hint}`;
+    _tempoSyncInspectorState = sig;
+    el.classList.toggle('hidden', !visible);
+    el.classList.toggle('inline-flex', visible);
+    const label = document.getElementById('editor-tempo-sync-label');
+    const hint = document.getElementById('editor-tempo-sync-hint');
+    if (label) label.textContent = state.label;
+    if (hint) hint.textContent = state.hint;
+    if (bpmEl && visible) {
+        if (document.activeElement !== bpmEl) bpmEl.value = state.bpmValue;
+        bpmEl.disabled = state.bpmDisabled;
+        bpmEl.style.opacity = state.bpmDisabled ? '0.55' : '';
+        bpmEl.title = state.bpmTitle;
+    }
+    if (numEl && visible) {
+        if (document.activeElement !== numEl) numEl.value = state.numeratorValue;
+        numEl.disabled = state.signatureDisabled;
+        numEl.style.opacity = state.signatureDisabled ? '0.55' : '';
+    }
+    if (denEl && visible) {
+        if (document.activeElement !== denEl) denEl.value = state.denominatorValue;
+        denEl.disabled = state.signatureDisabled;
+        denEl.style.opacity = state.signatureDisabled ? '0.55' : '';
+    }
+}
 function _ensureTempoSignatureControl() {
     let wrap = document.getElementById('editor-tempo-sig-wrap');
     if (wrap) return wrap;
@@ -11772,6 +11864,7 @@ function _ensureTempoScopeToggle() {
                     localStorage.setItem('editor-tempomap-scope', S.tempoRideScope);
                 } catch (_) { /* localStorage unavailable */ }
                 _refreshTempoScopeToggle();
+    _refreshTempoSyncInspector();
                 draw();
             };
         });
@@ -12808,6 +12901,7 @@ draw = function () {
     _refreshDrumEditButton();
     _refreshTempoMapButton();
     _refreshTempoScopeToggle();
+    _refreshTempoSyncInspector();
     return _origDraw.apply(this, arguments);
 };
 
