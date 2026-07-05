@@ -105,6 +105,20 @@ def test_tolerates_stray_delimiters_and_blank_fields():
     assert math.isclose(proj.sync_points[0].time_secs, 1.0, abs_tol=1e-6)
 
 
+def test_non_finite_sync_fields_are_skipped_not_raised():
+    # inf/-inf/nan/overflow in a numeric field must not raise (int(inf) is an
+    # OverflowError) or leak a non-JSON-serialisable inf time_secs that would
+    # 500 the endpoint at response render — the bad point is dropped, good
+    # points survive.
+    xml = (
+        '<track title="T" artist="A"><scoreUrl>s.gp</scoreUrl>'
+        "<sync>3#inf;1;0;500#1000;1e400;0;500#2000;2;0;500</sync></track>"
+    )
+    proj = gpa.parse_goplayalong(xml)
+    assert [sp.bar for sp in proj.sync_points] == [2]
+    assert all(math.isfinite(sp.time_secs) for sp in proj.sync_points)
+
+
 def test_missing_leading_count_still_parses_points():
     # A file without the count header: every token is a point.
     xml = (

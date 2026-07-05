@@ -33,6 +33,7 @@ existing ``sync_points`` response shape.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 # Prefer defusedxml (hardened against entity-expansion / external-entity attacks
@@ -116,11 +117,19 @@ def _parse_sync_payload(payload: str) -> tuple[int, list[GpaSyncPoint]]:
             continue
         try:
             audio_ms = float(fields[0])
-            bar = int(float(fields[1]))
+            bar_f = float(fields[1])
             beat = float(fields[2]) if len(fields) > 2 and fields[2] != "" else 0.0
             ms_per_beat = float(fields[3]) if len(fields) > 3 and fields[3] != "" else 0.0
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, OverflowError):
             continue
+        # Reject non-finite values (inf / -inf / nan): they can't be a real sync
+        # point, int(inf) raises OverflowError, and an inf time_secs would
+        # serialize to non-JSON-compliant `Infinity` and 500 the endpoint at
+        # response render. Skip the point rather than fail the whole import.
+        if not (math.isfinite(audio_ms) and math.isfinite(bar_f)
+                and math.isfinite(beat) and math.isfinite(ms_per_beat)):
+            continue
+        bar = int(bar_f)
         bpm = (60000.0 / ms_per_beat) if ms_per_beat > 0 else 0.0
         points.append(GpaSyncPoint(bar=bar, time_secs=audio_ms / 1000.0,
                                    modified_bpm=round(bpm, 4), beat=beat))

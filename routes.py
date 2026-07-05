@@ -5022,7 +5022,7 @@ def setup(app, context):
                           "<track> XML with <sync> data alongside a .gp score."}, 400)
         try:
             proj = gpa.parse_goplayalong(raw)
-        except ValueError as e:
+        except (ValueError, OverflowError) as e:
             return JSONResponse(
                 {"error": f"Could not parse GoPlayAlong file: {e}"}, 400)
         return {
