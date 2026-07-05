@@ -7437,6 +7437,8 @@ async function _stageGpFile(file) {
         if (_asStatus) _asStatus.textContent = '';
         const _asInput = document.getElementById('editor-autosync-audio');
         if (_asInput) _asInput.value = '';
+        const _asYt = document.getElementById('editor-autosync-yt-url');
+        if (_asYt) _asYt.value = '';
         const _syncCount = document.getElementById('editor-gp8-sync-count');
         if (_syncCount) _syncCount.textContent = createState.gpSyncCount;
         _refreshGpAudioUI();
@@ -8552,16 +8554,85 @@ window.editorAutoSyncAudioSelected = async (input) => {
         const resp = await fetch('/api/plugins/editor/upload-audio', { method: 'POST', body: form });
         const data = await resp.json();
         if (data.error) { if (status) status.textContent = 'Upload failed: ' + data.error; return; }
-        createState.autoSyncAudioUrl = data.audio_url;
-        createState.gp8AudioMode = 'autosync';
-        // Clear any previous sync result so editorDoCreate() re-runs autosync
-        // rather than reusing a stale offset from a prior upload
-        createState.lastSync = null;
-        const _rr = document.getElementById('editor-refine-row');
-        if (_rr) _rr.classList.add('hidden');
-        if (status) status.textContent = `✓ ${file.name} ready for auto-sync`;
+        _setAutoSyncSource(data.audio_url, file.name);
     } catch (e) {
         if (status) status.textContent = 'Upload failed: ' + e.message;
+    }
+};
+
+// Record a new auto-sync audio source (file upload or YouTube download).
+// Clears any previous sync result so editorDoCreate() re-runs autosync
+// rather than reusing a stale result from a prior audio source.
+function _setAutoSyncSource(audioUrl, label) {
+    createState.autoSyncAudioUrl = audioUrl;
+    createState.gp8AudioMode = 'autosync';
+    createState.lastSync = null;
+    const _rr = document.getElementById('editor-refine-row');
+    if (_rr) _rr.classList.add('hidden');
+    const status = document.getElementById('editor-autosync-status');
+    if (status) status.textContent = `✓ ${label} ready for auto-sync`;
+}
+
+// POST refine-sync for the current lastSync/audio/GP state and merge the
+// refined points back into createState.lastSync. Shared by the automatic
+// refine in editorDoCreate and the manual Refine button so the two can't
+// drift apart. Returns the response data (or null on network failure).
+async function _requestRefineSync(barsPerPoint) {
+    try {
+        const resp = await fetch('/api/plugins/editor/refine-sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                audio_url: createState.autoSyncAudioUrl,
+                audio_offset: createState.lastSync.audio_offset,
+                sync_points: createState.lastSync.sync_points || [],
+                bars_per_point: barsPerPoint,
+                // Lets the server refine on exact per-bar score times
+                // (odd meters, mid-song tempo changes) instead of a 4/4
+                // approximation rebuilt from the points alone.
+                gp_path: createState.gpPath || '',
+            }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            createState.lastSync = { ...createState.lastSync, ...data };
+        }
+        return data;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Download a YouTube URL as the auto-sync audio source. Same downstream
+// state as editorAutoSyncAudioSelected — the fetched audio becomes both the
+// alignment target and the imported song audio.
+window.editorAutoSyncYtFetch = async () => {
+    const urlInput = document.getElementById('editor-autosync-yt-url');
+    const url = (urlInput?.value || '').trim();
+    const status = document.getElementById('editor-autosync-status');
+    if (!url) {
+        if (status) status.textContent = 'Enter a YouTube URL first.';
+        return;
+    }
+    const btn = document.getElementById('editor-autosync-yt-btn');
+    if (btn) btn.disabled = true;
+    if (status) status.textContent = 'Downloading audio from YouTube...';
+    try {
+        const resp = await fetch('/api/plugins/editor/youtube-audio', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+        });
+        const data = await resp.json();
+        if (data.error) {
+            if (status) status.textContent = 'Download failed: ' + data.error;
+            return;
+        }
+        _setAutoSyncSource(data.audio_url, data.title || 'YouTube audio');
+    } catch (e) {
+        if (status) status.textContent = 'Download failed: ' + e.message;
+    } finally {
+        if (btn) btn.disabled = false;
     }
 };
 
@@ -8573,25 +8644,14 @@ window.editorRefineSync = async () => {
     if (status) status.textContent = 'Refining...';
     if (btn) btn.disabled = true;
     try {
-        const resp = await fetch('/api/plugins/editor/refine-sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                audio_url: createState.autoSyncAudioUrl,
-                audio_offset: createState.lastSync.audio_offset,
-                sync_points: createState.lastSync.sync_points || [],
-                bars_per_point: barsPerPoint,
-            }),
-        });
-        const data = await resp.json();
-        if (data.error) {
+        const data = await _requestRefineSync(barsPerPoint);
+        if (!data) {
+            if (status) status.textContent = 'Error: refine request failed';
+        } else if (data.error) {
             if (status) status.textContent = `Failed: ${data.error}`;
         } else {
-            createState.lastSync = { ...createState.lastSync, ...data };
             if (status) status.textContent = `✓ ${data.sync_point_count} points refined, offset ${(data.audio_offset ?? 0).toFixed(3)}s`;
         }
-    } catch (e) {
-        if (status) status.textContent = `Error: ${e.message}`;
     } finally {
         if (btn) btn.disabled = false;
     }
@@ -8746,15 +8806,29 @@ window.editorDoCreate = async () => {
                 _autoSyncOffset = syncData.audio_offset;
                 createState.lastSync = syncData;
                 createState.lastSync.audio_offset = _autoSyncOffset;
+                // Immediately refine the coarse DTW points with the onset
+                // phase sweep — the DTW pass alone is only accurate to its
+                // analysis-frame size (~190ms), which is audibly out of
+                // sync. Refine failure is non-fatal: coarse points still
+                // beat a scalar offset, so keep them and continue.
+                status.textContent = 'Refining sync to per-bar accuracy...';
+                const refData = await _requestRefineSync(
+                    Math.max(1, parseInt(document.getElementById('editor-refine-bars')?.value) || 8));
+                if (refData?.ok) {
+                    _autoSyncOffset = refData.audio_offset;
+                    createState.lastSync.audio_offset = _autoSyncOffset;
+                }
+
                 if (!createState.autoSyncCoupled) {
                     // MANUAL autosync: show refine row and pause for a second
-                    // click. The COUPLED master-audio flow (Fork A) skips this
-                    // and falls straight through to convert — one click.
+                    // click (optionally re-refine at a different density).
+                    // The COUPLED master-audio flow (Fork A) skips this and
+                    // falls straight through to convert — one click.
                     const _refineRow = document.getElementById('editor-refine-row');
                     if (_refineRow) _refineRow.classList.remove('hidden');
                     const _goBtn = document.getElementById('editor-create-go');
                     if (_goBtn) _goBtn.textContent = 'Import & Open in Editor';
-                    status.textContent = `✓ Synced: ${syncData.sync_point_count} points, offset ${(_autoSyncOffset ?? 0).toFixed(3)}s — optionally refine below, then click Import.`;
+                    status.textContent = `✓ Synced: ${createState.lastSync.sync_point_count} points, offset ${(_autoSyncOffset ?? 0).toFixed(3)}s — click Import to apply per-bar sync.`;
                     if (_goBtn) {
                         _goBtn.disabled = false;
                         _goBtn.removeAttribute('aria-disabled');
@@ -8812,6 +8886,12 @@ window.editorDoCreate = async () => {
                 // otherwise to keep the API surface tight.
                 ...(_gpAudioMode === 'embedded' ? { audio_mode: 'embedded' } : {}),
                 ...(_autoSyncOffset !== null ? { audio_offset: _autoSyncOffset } : {}),
+                // Per-bar sync points (autosync mode only): the server warps
+                // the whole chart onto the recording's timeline instead of
+                // applying just the scalar bar-1 offset. audio_offset above
+                // stays as the fallback when the warp can't be applied.
+                ...(_gpAudioMode === 'autosync' && createState.lastSync?.sync_points?.length
+                    ? { sync_points: createState.lastSync.sync_points } : {}),
                 track_indices: trackIndices.length ? trackIndices : null,
                 title: document.getElementById('editor-create-title').value || 'Untitled',
                 artist: document.getElementById('editor-create-artist').value || 'Unknown',
@@ -8825,6 +8905,17 @@ window.editorDoCreate = async () => {
         if (data.error) { status.textContent = 'Error: ' + data.error; btn.disabled = false; return; }
 
         await window.editorApplyCreateResult(data);
+        // Surface how the sync landed: 'warp' = chart follows the recording
+        // bar-by-bar; 'offset' = the server fell back to the scalar offset,
+        // with sync_reason saying why ('repeats' is the only user-actionable
+        // cause; everything else gets a generic message).
+        if (typeof setStatus === 'function' && data.sync_applied === 'warp') {
+            setStatus('Imported with per-bar audio sync.');
+        } else if (typeof setStatus === 'function' && data.sync_applied === 'offset') {
+            setStatus(data.sync_reason === 'repeats'
+                ? 'This file uses repeats/jumps, which per-bar sync can’t map yet — applied start offset only.'
+                : 'Per-bar sync could not be applied to this import — applied start offset only.');
+        }
     } catch (e) {
         status.textContent = 'Import failed: ' + e.message;
         btn.disabled = false;

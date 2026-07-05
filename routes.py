@@ -73,6 +73,40 @@ _NOTE_TECH_BOOL_FIELDS = frozenset({
 })
 
 
+def _parse_sync_points_payload(raw):
+    """Validate a client sync_points payload (the JSON shape autosync-gp
+    returns). Returns (points, error): `points` is a list of coerced
+    dicts with keys bar/time_secs/modified_bpm/original_bpm, `error` is
+    a message for a 400 response. Exactly one of the two is None.
+    """
+    if not isinstance(raw, list):
+        return None, "sync_points must be a list"
+    # Bound the list: a real song has at most a few hundred bars, so a
+    # larger payload is malformed/abusive — reject before doing the work.
+    if len(raw) > 2000:
+        return None, "too many sync_points (max 2000)"
+    required_keys = {"bar", "time_secs", "modified_bpm", "original_bpm"}
+    points = []
+    for i, sp in enumerate(raw):
+        if not isinstance(sp, dict) or not required_keys.issubset(sp):
+            return None, f"sync_points[{i}] missing required keys: {required_keys}"
+        try:
+            bar = int(sp["bar"])
+            tsec = float(sp["time_secs"])
+            mbpm = float(sp["modified_bpm"])
+            obpm = float(sp["original_bpm"])
+        except (TypeError, ValueError):
+            return None, f"sync_points[{i}] contains non-numeric values"
+        # Reject NaN/Inf (float() accepts "nan"/"inf") and out-of-range
+        # values before they reach the sync math.
+        if (not all(math.isfinite(v) for v in (tsec, mbpm, obpm))
+                or bar < 0 or tsec < 0 or mbpm <= 0 or obpm <= 0):
+            return None, f"sync_points[{i}] has out-of-range values"
+        points.append({"bar": bar, "time_secs": tsec,
+                       "modified_bpm": mbpm, "original_bpm": obpm})
+    return points, None
+
+
 def _note_tech_default(field):
     """The value a technique field takes when a parser/core object omits it.
 
@@ -1771,6 +1805,50 @@ def _gp_notation_sidecar_path(xml_path):
         return Path(notation_sidecar_path(str(p)))
     except Exception:
         return p.with_name(p.stem + ".notation.json")
+
+
+def _warp_notation_sidecar(xml_path, warp) -> None:
+    """Retime a GP notation sidecar (``<stem>.notation.json``) in place with
+    the given time-mapping callable.
+
+    convert_file writes sidecar times on the conversion timeline; when the
+    per-bar sync warp retimes the arrangement, the sidecar must follow or
+    the keys notation view desyncs from the notes. Absolute times live in
+    ``measures[].t`` and each voice beat's ``t`` (``dur`` is notational, not
+    seconds). Missing/malformed sidecars are left untouched.
+    """
+    sidecar = _gp_notation_sidecar_path(xml_path)
+    if not sidecar.exists():
+        return
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(payload, dict) or not isinstance(payload.get("measures"), list):
+        return
+    for measure in payload["measures"]:
+        if not isinstance(measure, dict):
+            continue
+        if isinstance(measure.get("t"), (int, float)):
+            measure["t"] = round(warp(float(measure["t"])), 3)
+        staves = measure.get("staves")
+        if not isinstance(staves, dict):
+            continue
+        for staff in staves.values():
+            if not isinstance(staff, dict):
+                continue
+            for voice in staff.get("voices") or []:
+                if not isinstance(voice, dict):
+                    continue
+                for beat in voice.get("beats") or []:
+                    if isinstance(beat, dict) and isinstance(beat.get("t"), (int, float)):
+                        beat["t"] = round(warp(float(beat["t"])), 3)
+    try:
+        sidecar.write_text(json.dumps(payload), encoding="utf-8")
+    except OSError:
+        import logging as _elog
+        _elog.getLogger("slopsmith.plugin.editor").warning(
+            "could not rewrite warped notation sidecar %s", sidecar)
 
 
 def _attach_gp_notation(arr, xml_path):
@@ -4851,54 +4929,42 @@ def setup(app, context):
         if not is_available():
             return JSONResponse({"error": "librosa not available"}, 503)
 
-        # Validate sync_points_raw before constructing SyncPoints
-        if not isinstance(sync_points_raw, list):
-            return JSONResponse({"error": "sync_points must be a list"}, 400)
-        # Bound the list: a real song has at most a few hundred bars, so a
-        # larger payload is malformed/abusive — reject before doing the work.
-        if len(sync_points_raw) > 2000:
-            return JSONResponse({"error": "too many sync_points (max 2000)"}, 400)
-        _required_keys = {"bar", "time_secs", "modified_bpm", "original_bpm"}
-        for _i, _sp in enumerate(sync_points_raw):
-            if not isinstance(_sp, dict) or not _required_keys.issubset(_sp):
-                return JSONResponse(
-                    {"error": f"sync_points[{_i}] missing required keys: {_required_keys}"},
-                    400,
-                )
-            try:
-                _bar = int(_sp["bar"])
-                _tsec = float(_sp["time_secs"])
-                _mbpm = float(_sp["modified_bpm"])
-                _obpm = float(_sp["original_bpm"])
-            except (TypeError, ValueError):
-                return JSONResponse(
-                    {"error": f"sync_points[{_i}] contains non-numeric values"}, 400
-                )
-            # Reject NaN/Inf (float() accepts "nan"/"inf") and out-of-range
-            # values before they reach the phase-sweep math.
-            if (not all(math.isfinite(_v) for _v in (_tsec, _mbpm, _obpm))
-                    or _bar < 0 or _tsec < 0 or _mbpm <= 0 or _obpm <= 0):
-                return JSONResponse(
-                    {"error": f"sync_points[{_i}] has out-of-range values"}, 400
-                )
+        _points, _perr = _parse_sync_points_payload(sync_points_raw)
+        if _perr:
+            return JSONResponse({"error": _perr}, 400)
+
+        # Optional GP file: refine_sync uses it for exact per-bar score
+        # times (odd meters, mid-song tempo changes); without it the server
+        # falls back to a 4/4 model built from the points' authored tempos.
+        # A gp_path that was SENT but fails validation is a hard 400 (same
+        # contract as convert-gp) — silently refining on the 4/4 model would
+        # return 200 with degraded points and no client-visible signal.
+        _gp_path = None
+        _gp_raw = (data or {}).get("gp_path", "")
+        if _gp_raw:
+            _gp_validated = _validate_editor_upload_path(_gp_raw, "slopsmith_gp_")
+            if not _gp_validated:
+                return JSONResponse({"error": "GP file not found"}, 400)
+            _gp_path = str(_gp_validated)
 
         sync = GpSyncData(
             audio_offset=audio_offset,
             audio_asset_id='',
             sync_points=[
                 SyncPoint(
-                    bar=int(sp["bar"]),
-                    time_secs=float(sp["time_secs"]),
-                    modified_tempo=float(sp["modified_bpm"]),
-                    original_tempo=float(sp["original_bpm"]),
+                    bar=sp["bar"],
+                    time_secs=sp["time_secs"],
+                    modified_tempo=sp["modified_bpm"],
+                    original_tempo=sp["original_bpm"],
                 )
-                for sp in sync_points_raw
+                for sp in _points
             ],
         )
 
         def _run():
             return refine_sync(sync, str(audio_path),
-                               bars_per_point=bars_per_point)
+                               bars_per_point=bars_per_point,
+                               gp_path=_gp_path)
 
         try:
             refined = await asyncio.get_running_loop().run_in_executor(None, _run)
@@ -5082,6 +5148,24 @@ def setup(app, context):
                 return JSONResponse({"error": "audio_offset must be a number"}, 400)
             if not math.isfinite(_provided_offset):
                 return JSONResponse({"error": "audio_offset must be finite"}, 400)
+            # The client round-trips auto_sync's GpSyncData value, which uses
+            # the GP sign convention: NEGATIVE when the audio has a lead-in
+            # before bar 1. convert_file ADDS its offset to note times, so a
+            # lead-in must be applied as a POSITIVE shift — same negation the
+            # embedded-audio path below applies to the GP8 FramePadding
+            # offset, and for the same reason (applied as-is, a 5s intro
+            # shifted the chart 5s the wrong way).
+            _provided_offset = -_provided_offset
+        # Per-bar sync points (auto-sync flow). When present and usable, the
+        # converted chart is warped onto the recording's timeline bar by bar
+        # instead of only shifted by the scalar audio_offset — the offset
+        # stays as the fallback when the warp can't be applied.
+        _sync_points_payload = data.get("sync_points") or []
+        _warp_points = None
+        if _sync_points_payload:
+            _warp_points, _sync_err = _parse_sync_points_payload(_sync_points_payload)
+            if _sync_err:
+                return JSONResponse({"error": _sync_err}, 400)
         track_indices = data.get("track_indices")  # None = auto-select
         arrangement_names = data.get("arrangement_names")  # {idx: name}
         title = data.get("title", "")
@@ -5190,11 +5274,55 @@ def setup(app, context):
                 if arrangement_names:
                     names_map = {int(k): v for k, v in arrangement_names.items()}
 
+            # Decide up front whether the per-bar warp applies: in warp mode
+            # the conversion runs at offset 0 and the anchors (which encode
+            # bar 1's audio time) place the whole chart; in offset mode the
+            # scalar offset is baked in during conversion as before.
+            _warp_anchors = None
+            _warp_skip = None  # why the warp was skipped, for the response
+            if (_warp_points and len(_warp_points) >= 2
+                    and _audio_mode != "embedded"):
+                try:
+                    from lib.gp_autosync import (
+                        bar_start_times, build_warp_anchors,
+                        gp_has_expandable_repeats,
+                    )
+                    from lib.gp8_audio_sync import SyncPoint as _WarpSP
+                    if gp_has_expandable_repeats(gp_path):
+                        # GP3/4/5 repeat expansion produces an as-performed
+                        # timeline the as-written sync points can't map onto.
+                        _warp_skip = "repeats"
+                        import logging as _elog
+                        _elog.getLogger("slopsmith.plugin.editor").info(
+                            "convert-gp: %s uses repeats/directions — "
+                            "per-bar sync unavailable, applying offset only",
+                            gp_path,
+                        )
+                    else:
+                        _anchors = build_warp_anchors(
+                            [_WarpSP(bar=p["bar"], time_secs=p["time_secs"],
+                                     modified_tempo=p["modified_bpm"],
+                                     original_tempo=p["original_bpm"])
+                             for p in _warp_points],
+                            bar_start_times(gp_path),
+                        )
+                        if len(_anchors) >= 2:
+                            _warp_anchors = _anchors
+                        else:
+                            _warp_skip = "degenerate"
+                except Exception:
+                    _warp_skip = "error"
+                    import logging as _elog
+                    _elog.getLogger("slopsmith.plugin.editor").exception(
+                        "convert-gp: warp setup failed — falling back to "
+                        "offset-only sync"
+                    )
+
             # Convert GP to XMLs
             xml_paths = convert_file(
                 gp_path, tmp,
                 track_indices=indices,
-                audio_offset=_provided_offset,
+                audio_offset=0.0 if _warp_anchors else _provided_offset,
                 arrangement_names=names_map,
             )
 
@@ -5239,6 +5367,21 @@ def setup(app, context):
                             start_time=float(s.get("startTime", "0")),
                         ))
 
+            # Apply the per-bar warp: retime every note/beat/section from the
+            # tab's authored timeline onto the recording's (Songsterr-style
+            # piecewise mapping — the recording's tempo drift is followed
+            # instead of accumulating).
+            if _warp_anchors:
+                from lib.gp_autosync import warp_song_times, warp_time
+                warp_song_times(song, lambda t: warp_time(t, _warp_anchors))
+                # The GP notation sidecars (keys tracks) were written by
+                # convert_file on the unwarped timeline — retime them on
+                # disk so _attach_gp_notation and the sloppak assembly read
+                # times consistent with the warped notes.
+                for _xp in xml_paths:
+                    _warp_notation_sidecar(
+                        _xp, lambda t: warp_time(t, _warp_anchors))
+
             # If we have a local audio file path, copy to static
             if audio_path and Path(audio_path).exists():
                 audio_id = re.sub(r"[^a-zA-Z0-9_-]", "_", title or "gp_import")[:60]
@@ -5248,6 +5391,15 @@ def setup(app, context):
                 audio_url = f"{STORAGE_URL}/editor_audio_{audio_id}{ext}"
 
             result = _song_to_dict(song, audio_url)
+            # Derived at the read site so the flag can never drift from what
+            # actually happened: anchors set => the warp above ran.
+            if _warp_points:
+                result["sync_applied"] = "warp" if _warp_anchors else "offset"
+                if not _warp_anchors:
+                    # 'repeats' | 'degenerate' | 'error' | 'unavailable' —
+                    # lets the client explain the fallback truthfully
+                    # instead of guessing at a cause.
+                    result["sync_reason"] = _warp_skip or "unavailable"
             return result, tmp, xml_paths
 
         try:

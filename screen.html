@@ -306,6 +306,13 @@
                 <input type="file" id="editor-autosync-audio" accept=".wem,.ogg,.flac,.mp3,.wav,.m4a,.aac"
                     onchange="editorAutoSyncAudioSelected(this)"
                     class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
+                <div class="mt-1 flex items-center gap-2">
+                    <span class="text-xs text-gray-600">or</span>
+                    <input type="text" id="editor-autosync-yt-url" placeholder="https://youtube.com/watch?v=..."
+                        class="flex-1 bg-dark-700 border border-gray-700 rounded px-2 py-0.5 text-xs text-gray-300 outline-none focus:border-accent">
+                    <button onclick="editorAutoSyncYtFetch()" id="editor-autosync-yt-btn"
+                        class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs text-gray-300 transition">Fetch</button>
+                </div>
                 <div id="editor-autosync-status" class="text-xs text-gray-600 mt-1"></div>
                 <div id="editor-refine-row" class="hidden mt-2 flex items-center gap-2 flex-wrap">
                     <span class="text-xs text-gray-500">Refine sync every</span>
