@@ -3139,6 +3139,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+I' } },
     { id: 'tempoBeatMinus', label: 'Remove a beat from selected measure', group: 'Tempo map', status: 'ready', keys: { feedback: '[ (Tempo Map)', eof: '[ (Tempo Map)' } },
     { id: 'tempoBeatPlus', label: 'Add a beat to selected measure', group: 'Tempo map', status: 'ready', keys: { feedback: '] (Tempo Map)', eof: '] (Tempo Map)' } },
+    { id: 'tempoBeatUnit', label: 'Set selected measure beat unit', group: 'Tempo map', status: 'ready', keys: { feedback: 'D (Tempo Map)', eof: 'D (Tempo Map)' } },
     { id: 'tempoSetBpm', label: 'Set selected sync-point BPM', group: 'Tempo map', status: 'ready', keys: { feedback: 'B (Tempo Map)', eof: 'B (Tempo Map)' } },
     { id: 'tempoInsertSync', label: 'Insert sync point at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
     { id: 'tempoDeleteSync', label: 'Delete selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
@@ -3171,6 +3172,7 @@ function _editorEofCommandForKeyPure(e, mode) {
         if (plain && key === 'b') return 'tempoSetBpm';
         if (plain && key === '[') return 'tempoBeatMinus';
         if (plain && key === ']') return 'tempoBeatPlus';
+        if (plain && key === 'd') return 'tempoBeatUnit';
         if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
         if (plain && (e.key === 'Delete' || e.key === 'Backspace')) return 'tempoDeleteSync';
     }
@@ -3262,6 +3264,7 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
         if (plain && key === 'b') return 'tempoSetBpm';
         if (plain && key === '[') return 'tempoBeatMinus';
         if (plain && key === ']') return 'tempoBeatPlus';
+        if (plain && key === 'd') return 'tempoBeatUnit';
         if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
         if (plain && (e.key === 'Delete' || e.key === 'Backspace')) return 'tempoDeleteSync';
     }
@@ -3719,6 +3722,34 @@ function _editorAdjustTempoMeasureBeats(delta) {
     return true;
 }
 
+function _editorPromptTempoBeatUnitAtSelection() {
+    if (!S.tempoMapMode || S.tempoSel < 0) {
+        setStatus('Select a Tempo Map sync point first.');
+        return true;
+    }
+    const d = S.tempoSel;
+    if (!S.beats[d] || S.beats[d].measure <= 0) {
+        setStatus('Select a Tempo Map measure downbeat first.');
+        return true;
+    }
+    const prevNum = _tempoMeasureBeatCount(d);
+    const prevDen = _tempoMeasureDenominator(d);
+    const raw = window.prompt('Set beat unit for selected measure (2, 4, 8, or 16)', String(prevDen));
+    if (raw === null) return true;
+    const newBeats = _tempoSetDenominatorOnBeatsPure(S.beats, d, raw);
+    if (!newBeats) {
+        setStatus('Enter a beat unit of 2, 4, 8, or 16.');
+        return true;
+    }
+    S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), newBeats, 'timesig-den'));
+    updateTempoSigDisplay();
+    draw();
+    const nextDen = _tempoMeasureDenominator(d);
+    if (prevDen !== nextDen) {
+        setStatus(`Measure ${S.beats[d].measure} time signature changed: ${prevNum}/${prevDen} → ${prevNum}/${nextDen}`);
+    }
+    return true;
+}
 function _editorRunEofCommand(cmd) {
     switch (cmd) {
     case 'save': editorSave(); return true;
@@ -3775,6 +3806,7 @@ function _editorRunEofCommand(cmd) {
     case 'setTimeSignature': _editorPromptTempoSignatureAtCursor(); return true;
     case 'tempoBeatMinus': return _editorAdjustTempoMeasureBeats(-1);
     case 'tempoBeatPlus': return _editorAdjustTempoMeasureBeats(+1);
+    case 'tempoBeatUnit': return _editorPromptTempoBeatUnitAtSelection();
     case 'tempoSetBpm': return _editorPromptTempoBpmAtSelection();
     case 'tempoInsertSync': return _editorInsertTempoSyncAtCursor();
     case 'tempoDeleteSync': return _editorDeleteTempoSyncSelection();

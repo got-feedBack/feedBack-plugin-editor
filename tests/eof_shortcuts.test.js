@@ -82,6 +82,7 @@ t('exposes ready and planned shortcut command rows', () => {
     assert.strictEqual(customSnap.key, 'Ctrl+Shift+G');
     assert.strictEqual(rows.find(r => r.id === 'toggleTempoMap').key, 'T (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatMinus').key, '[ (Tempo Map)');
+    assert.strictEqual(rows.find(r => r.id === 'tempoBeatUnit').key, 'D (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoSetBpm').key, 'B (Tempo Map)');
 });
 
@@ -93,6 +94,7 @@ t('exposes wired FeedBack Native key labels', () => {
     assert.strictEqual(rows.find(r => r.id === 'importGp').key, '');
     assert.strictEqual(rows.find(r => r.id === 'toggleTempoMap').key, 'T');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatPlus').key, '] (Tempo Map)');
+    assert.strictEqual(rows.find(r => r.id === 'tempoBeatUnit').key, 'D (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoInsertSync').key, 'I (Tempo Map)');
 });
 
@@ -123,6 +125,7 @@ t('maps FeedBack Native Tempo Map commands by active mode', () => {
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('i'), 'tempoMap'), 'tempoInsertSync');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('['), 'tempoMap'), 'tempoBeatMinus');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev(']'), 'tempoMap'), 'tempoBeatPlus');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('d'), 'tempoMap'), 'tempoBeatUnit');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('Delete'), 'tempoMap'), 'tempoDeleteSync');
 });
 
@@ -134,6 +137,7 @@ t('maps EOF Tempo Map commands by active mode', () => {
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('[')), 'shortenSustain');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('['), 'tempoMap'), 'tempoBeatMinus');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev(']'), 'tempoMap'), 'tempoBeatPlus');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('d'), 'tempoMap'), 'tempoBeatUnit');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('Insert'), 'tempoMap'), 'tempoInsertSync');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('Backspace'), 'tempoMap'), 'tempoDeleteSync');
 });
