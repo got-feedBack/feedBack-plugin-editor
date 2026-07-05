@@ -3136,13 +3136,19 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'addToneChange', label: 'Add tone change at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+Shift+T', eof: 'Ctrl+Shift+T' } },
     { id: 'addHandshape', label: 'Add handshape from selection', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+H', eof: 'Ctrl+Shift+H' } },
     { id: 'toggleTempoMap', label: 'Enter/exit Tempo Map', group: 'Tempo map', status: 'ready', keys: { feedback: 'T', eof: 'T (Tempo Map)' } },
-    { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+I' } },
+    { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+T / Shift+I' } },
+    { id: 'tempoBeatCount', label: 'Set selected measure beat count', group: 'Tempo map', status: 'ready', keys: { feedback: 'N (Tempo Map)', eof: 'N (Tempo Map)' } },
     { id: 'tempoBeatMinus', label: 'Remove a beat from selected measure', group: 'Tempo map', status: 'ready', keys: { feedback: '[ (Tempo Map)', eof: '[ (Tempo Map)' } },
     { id: 'tempoBeatPlus', label: 'Add a beat to selected measure', group: 'Tempo map', status: 'ready', keys: { feedback: '] (Tempo Map)', eof: '] (Tempo Map)' } },
     { id: 'tempoBeatUnit', label: 'Set selected measure beat unit', group: 'Tempo map', status: 'ready', keys: { feedback: 'D (Tempo Map)', eof: 'D (Tempo Map)' } },
     { id: 'tempoSetBpm', label: 'Set selected sync-point BPM', group: 'Tempo map', status: 'ready', keys: { feedback: 'B (Tempo Map)', eof: 'B (Tempo Map)' } },
+    { id: 'tempoTapBpm', label: 'Tap tempo for selected sync point', group: 'Tempo map', status: 'planned', keys: { feedback: 'Shift+B (Tempo Map)', eof: 'Shift+B (Tempo Map)' } },
     { id: 'tempoInsertSync', label: 'Insert sync point at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
     { id: 'tempoDeleteSync', label: 'Delete selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
+    { id: 'tempoToggleSyncLock', label: 'Split or lock selected sync point', group: 'Tempo map', status: 'planned', keys: { feedback: 'S (Tempo Map)', eof: 'S (Tempo Map)' } },
+    { id: 'tempoToggleRideScope', label: 'Toggle Tempo Map note ride scope', group: 'Tempo map', status: 'ready', keys: { feedback: 'Ctrl+T (Tempo Map)', eof: 'Ctrl+T (Tempo Map)' } },
+    { id: 'tempoFullDialog', label: 'Open full tempo dialog', group: 'Tempo map', status: 'planned', keys: { feedback: 'Alt+T (Tempo Map)', eof: 'Alt+T (Tempo Map)' } },
+    { id: 'tempoRebuildGrid', label: 'Rebuild visible beat grid', group: 'Tempo map', status: 'planned', keys: { feedback: 'Ctrl+Shift+T (Tempo Map)', eof: 'Ctrl+Shift+T (Tempo Map)' } },
     { id: 'toggleGridDisplay', label: 'Toggle grid display density', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Shift+G', eof: 'Shift+G' } },
     { id: 'customGridSnap', label: 'Open custom snap settings', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Alt+G', eof: 'Ctrl+Shift+G' } },
     { id: 'midiTones', label: 'MIDI tone spot-check', group: 'Preview', status: 'planned', keys: { feedback: '', eof: 'Shift+T' } },
@@ -3170,9 +3176,16 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (mode === 'tempoMap') {
         if (plain && key === 't') return 'toggleTempoMap';
         if (plain && key === 'b') return 'tempoSetBpm';
+        if (shift && key === 'b') return 'tempoTapBpm';
+        if (plain && key === 'n') return 'tempoBeatCount';
         if (plain && key === '[') return 'tempoBeatMinus';
         if (plain && key === ']') return 'tempoBeatPlus';
         if (plain && key === 'd') return 'tempoBeatUnit';
+        if (plain && key === 's') return 'tempoToggleSyncLock';
+        if (shift && key === 't') return 'setTimeSignature';
+        if (ctrl && key === 't') return 'tempoToggleRideScope';
+        if (alt && key === 't') return 'tempoFullDialog';
+        if (ctrlShift && key === 't') return 'tempoRebuildGrid';
         if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
         if (plain && (e.key === 'Delete' || e.key === 'Backspace')) return 'tempoDeleteSync';
     }
@@ -3262,9 +3275,16 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (mode === 'tempoMap') {
         if (plain && key === 't') return 'toggleTempoMap';
         if (plain && key === 'b') return 'tempoSetBpm';
+        if (shift && key === 'b') return 'tempoTapBpm';
+        if (plain && key === 'n') return 'tempoBeatCount';
         if (plain && key === '[') return 'tempoBeatMinus';
         if (plain && key === ']') return 'tempoBeatPlus';
         if (plain && key === 'd') return 'tempoBeatUnit';
+        if (plain && key === 's') return 'tempoToggleSyncLock';
+        if (shift && key === 't') return 'setTimeSignature';
+        if (ctrl && key === 't') return 'tempoToggleRideScope';
+        if (alt && key === 't') return 'tempoFullDialog';
+        if (ctrlShift && key === 't') return 'tempoRebuildGrid';
         if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
         if (plain && (e.key === 'Delete' || e.key === 'Backspace')) return 'tempoDeleteSync';
     }
@@ -3722,6 +3742,42 @@ function _editorAdjustTempoMeasureBeats(delta) {
     return true;
 }
 
+function _editorPromptTempoBeatCountAtSelection() {
+    if (!S.tempoMapMode || S.tempoSel < 0) {
+        setStatus('Select a Tempo Map sync point first.');
+        return true;
+    }
+    const d = S.tempoSel;
+    if (!S.beats[d] || S.beats[d].measure <= 0) {
+        setStatus('Select a Tempo Map measure downbeat first.');
+        return true;
+    }
+    const prevCount = _tempoMeasureBeatCount(d);
+    const raw = window.prompt('Set beat count for selected measure (1-16)', String(prevCount));
+    if (raw === null) return true;
+    const nextCount = parseInt(raw, 10);
+    if (!Number.isFinite(nextCount) || nextCount < 1 || nextCount > 16) {
+        setStatus('Enter a beat count from 1 to 16.');
+        return true;
+    }
+    _tempoSetBeatsPerMeasure(d, nextCount);
+    return true;
+}
+
+function _editorToggleTempoRideScope() {
+    if (!S.tempoMapMode) return false;
+    S.tempoRideScope = S.tempoRideScope === 'all' ? 'drum' : 'all';
+    try {
+        localStorage.setItem('editor-tempomap-scope', S.tempoRideScope);
+    } catch (_) { /* localStorage unavailable */ }
+    _refreshTempoScopeToggle();
+    _refreshTempoSyncInspector();
+    draw();
+    setStatus(S.tempoRideScope === 'all'
+        ? 'Tempo Map edits retime notes for all instruments.'
+        : 'Tempo Map edits retime drum tab notes only.');
+    return true;
+}
 function _editorPromptTempoBeatUnitAtSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
         setStatus('Select a Tempo Map sync point first.');
@@ -3804,12 +3860,18 @@ function _editorRunEofCommand(cmd) {
     case 'addHandshape': return _editorAddHandshapeFromSelection();
     case 'toggleTempoMap': return _editorToggleTempoMapMode();
     case 'setTimeSignature': _editorPromptTempoSignatureAtCursor(); return true;
+    case 'tempoBeatCount': return _editorPromptTempoBeatCountAtSelection();
     case 'tempoBeatMinus': return _editorAdjustTempoMeasureBeats(-1);
     case 'tempoBeatPlus': return _editorAdjustTempoMeasureBeats(+1);
     case 'tempoBeatUnit': return _editorPromptTempoBeatUnitAtSelection();
     case 'tempoSetBpm': return _editorPromptTempoBpmAtSelection();
+    case 'tempoTapBpm': return _editorUnsupportedEofCommand('Tap tempo shortcut');
     case 'tempoInsertSync': return _editorInsertTempoSyncAtCursor();
     case 'tempoDeleteSync': return _editorDeleteTempoSyncSelection();
+    case 'tempoToggleSyncLock': return _editorUnsupportedEofCommand('Sync-point split/lock');
+    case 'tempoToggleRideScope': return _editorToggleTempoRideScope();
+    case 'tempoFullDialog': return _editorUnsupportedEofCommand('Full tempo dialog');
+    case 'tempoRebuildGrid': return _editorUnsupportedEofCommand('Beat-grid rebuild');
     case 'toggleGridDisplay': return _editorUnsupportedEofCommand('Grid display toggle');
     case 'customGridSnap': return _editorUnsupportedEofCommand('Custom grid snap');
     case 'midiTones': return _editorUnsupportedEofCommand('MIDI tones');
