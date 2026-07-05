@@ -3137,6 +3137,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'addHandshape', label: 'Add handshape from selection', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+H', eof: 'Ctrl+Shift+H' } },
     { id: 'toggleTempoMap', label: 'Enter/exit Tempo Map', group: 'Tempo map', status: 'ready', keys: { feedback: 'T', eof: 'T (Tempo Map)' } },
     { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+I' } },
+    { id: 'tempoBeatMinus', label: 'Remove a beat from selected measure', group: 'Tempo map', status: 'ready', keys: { feedback: '[ (Tempo Map)', eof: '[ (Tempo Map)' } },
+    { id: 'tempoBeatPlus', label: 'Add a beat to selected measure', group: 'Tempo map', status: 'ready', keys: { feedback: '] (Tempo Map)', eof: '] (Tempo Map)' } },
     { id: 'tempoSetBpm', label: 'Set selected sync-point BPM', group: 'Tempo map', status: 'ready', keys: { feedback: 'B (Tempo Map)', eof: 'B (Tempo Map)' } },
     { id: 'tempoInsertSync', label: 'Insert sync point at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
     { id: 'tempoDeleteSync', label: 'Delete selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
@@ -3167,6 +3169,8 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (mode === 'tempoMap') {
         if (plain && key === 't') return 'toggleTempoMap';
         if (plain && key === 'b') return 'tempoSetBpm';
+        if (plain && key === '[') return 'tempoBeatMinus';
+        if (plain && key === ']') return 'tempoBeatPlus';
         if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
         if (plain && (e.key === 'Delete' || e.key === 'Backspace')) return 'tempoDeleteSync';
     }
@@ -3256,6 +3260,8 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (mode === 'tempoMap') {
         if (plain && key === 't') return 'toggleTempoMap';
         if (plain && key === 'b') return 'tempoSetBpm';
+        if (plain && key === '[') return 'tempoBeatMinus';
+        if (plain && key === ']') return 'tempoBeatPlus';
         if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
         if (plain && (e.key === 'Delete' || e.key === 'Backspace')) return 'tempoDeleteSync';
     }
@@ -3701,6 +3707,18 @@ function _editorDeleteTempoSyncSelection() {
     return true;
 }
 
+function _editorAdjustTempoMeasureBeats(delta) {
+    if (!S.tempoMapMode || S.tempoSel < 0) {
+        setStatus('Select a Tempo Map sync point first.');
+        return true;
+    }
+    const d = S.tempoSel;
+    if (S.beats[d] && S.beats[d].measure > 0) {
+        _tempoSetBeatsPerMeasure(d, _tempoMeasureBeatCount(d) + delta);
+    }
+    return true;
+}
+
 function _editorRunEofCommand(cmd) {
     switch (cmd) {
     case 'save': editorSave(); return true;
@@ -3755,6 +3773,8 @@ function _editorRunEofCommand(cmd) {
     case 'addHandshape': return _editorAddHandshapeFromSelection();
     case 'toggleTempoMap': return _editorToggleTempoMapMode();
     case 'setTimeSignature': _editorPromptTempoSignatureAtCursor(); return true;
+    case 'tempoBeatMinus': return _editorAdjustTempoMeasureBeats(-1);
+    case 'tempoBeatPlus': return _editorAdjustTempoMeasureBeats(+1);
     case 'tempoSetBpm': return _editorPromptTempoBpmAtSelection();
     case 'tempoInsertSync': return _editorInsertTempoSyncAtCursor();
     case 'tempoDeleteSync': return _editorDeleteTempoSyncSelection();
@@ -3966,18 +3986,6 @@ function onKeyDown(e) {
             && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
         _tempoInsertSyncPoint(S.cursorTime);
-        return;
-    }
-
-    // Tempo-map mode: [ / ] change the selected measure's time signature.
-    if (S.tempoMapMode && (e.key === '[' || e.key === ']') && S.tempoSel >= 0
-            && !e.target.matches('input, select, textarea')) {
-        e.preventDefault();
-        const d = S.tempoSel;
-        if (S.beats[d] && S.beats[d].measure > 0) {
-            const cur = _tempoMeasureBeatCount(d);
-            _tempoSetBeatsPerMeasure(d, cur + (e.key === ']' ? 1 : -1));
-        }
         return;
     }
 
