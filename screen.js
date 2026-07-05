@@ -3136,6 +3136,9 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'addToneChange', label: 'Add tone change at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+Shift+T', eof: 'Ctrl+Shift+T' } },
     { id: 'addHandshape', label: 'Add handshape from selection', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+H', eof: 'Ctrl+Shift+H' } },
     { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+I' } },
+    { id: 'tempoSetBpm', label: 'Set selected sync-point BPM', group: 'Tempo map', status: 'ready', keys: { feedback: 'B (Tempo Map)', eof: 'B (Tempo Map)' } },
+    { id: 'tempoInsertSync', label: 'Insert sync point at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
+    { id: 'tempoDeleteSync', label: 'Delete selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
     { id: 'toggleGridDisplay', label: 'Toggle grid display density', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Shift+G', eof: 'Shift+G' } },
     { id: 'customGridSnap', label: 'Open custom snap settings', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Alt+G', eof: 'Ctrl+Shift+G' } },
     { id: 'midiTones', label: 'MIDI tone spot-check', group: 'Preview', status: 'planned', keys: { feedback: '', eof: 'Shift+T' } },
@@ -3152,7 +3155,7 @@ function _editorShortcutRowsPure(profile) {
         key: (cmd.keys && cmd.keys[p]) || '',
     }));
 }
-function _editorEofCommandForKeyPure(e) {
+function _editorEofCommandForKeyPure(e, mode) {
     const sig = _editorKeySigPure(e);
     const key = (e.key || '').toLowerCase();
     const plain = !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
@@ -3160,6 +3163,11 @@ function _editorEofCommandForKeyPure(e) {
     const shift = e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
     const ctrlShift = (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey;
     const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+    if (mode === 'tempoMap') {
+        if (plain && key === 'b') return 'tempoSetBpm';
+        if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
+        if (plain && (e.key === 'Delete' || e.key === 'Backspace')) return 'tempoDeleteSync';
+    }
 
     if (sig === 'F2') return 'save';
     if (sig === 'F5') return 'toggleWaveform';
@@ -3234,7 +3242,7 @@ function _editorEffectiveRightClickBehaviorPure(profile, savedBehavior) {
         : _editorDefaultRightClickBehaviorPure(profile);
 }
 
-function _editorFeedbackCommandForKeyPure(e) {
+function _editorFeedbackCommandForKeyPure(e, mode) {
     const sig = _editorKeySigPure(e);
     const key = (e.key || '').toLowerCase();
     const plain = !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
@@ -3243,6 +3251,11 @@ function _editorFeedbackCommandForKeyPure(e) {
     const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
     const ctrlAlt = (e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey;
     const ctrlShift = (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey;
+    if (mode === 'tempoMap') {
+        if (plain && key === 'b') return 'tempoSetBpm';
+        if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
+        if (plain && (e.key === 'Delete' || e.key === 'Backspace')) return 'tempoDeleteSync';
+    }
 
     if (ctrl && key === 's') return 'save';
     if (plain && key === 'w') return 'toggleWaveform';
@@ -3660,6 +3673,30 @@ function _editorUnsupportedEofCommand(label) {
     return true;
 }
 
+function _editorPromptTempoBpmAtSelection() {
+    if (!S.tempoMapMode || S.tempoSel < 0) {
+        setStatus('Select a Tempo Map sync point first.');
+        return true;
+    }
+    _tempoPromptMeasureBpm(S.tempoSel);
+    return true;
+}
+
+function _editorInsertTempoSyncAtCursor() {
+    if (!S.tempoMapMode) return false;
+    _tempoInsertSyncPoint(S.cursorTime);
+    return true;
+}
+
+function _editorDeleteTempoSyncSelection() {
+    if (!S.tempoMapMode || S.tempoSel < 0) {
+        setStatus('Select a Tempo Map sync point first.');
+        return true;
+    }
+    _tempoDeleteSyncPoint(S.tempoSel);
+    return true;
+}
+
 function _editorRunEofCommand(cmd) {
     switch (cmd) {
     case 'save': editorSave(); return true;
@@ -3713,6 +3750,9 @@ function _editorRunEofCommand(cmd) {
     case 'addToneChange': return _editorAddToneAtCursor();
     case 'addHandshape': return _editorAddHandshapeFromSelection();
     case 'setTimeSignature': _editorPromptTempoSignatureAtCursor(); return true;
+    case 'tempoSetBpm': return _editorPromptTempoBpmAtSelection();
+    case 'tempoInsertSync': return _editorInsertTempoSyncAtCursor();
+    case 'tempoDeleteSync': return _editorDeleteTempoSyncSelection();
     case 'toggleGridDisplay': return _editorUnsupportedEofCommand('Grid display toggle');
     case 'customGridSnap': return _editorUnsupportedEofCommand('Custom grid snap');
     case 'midiTones': return _editorUnsupportedEofCommand('MIDI tones');
@@ -3723,7 +3763,7 @@ function _editorRunEofCommand(cmd) {
 
 function _editorDispatchFeedbackShortcut(e) {
     if (editorShortcutProfile !== 'feedback' || _editorIsTypingTarget(e)) return false;
-    const cmd = _editorFeedbackCommandForKeyPure(e);
+    const cmd = _editorFeedbackCommandForKeyPure(e, S.tempoMapMode ? 'tempoMap' : 'note');
     if (!cmd) return false;
     const def = _editorCommandById(cmd);
     if (def && def.status !== 'ready') return false;
@@ -3732,7 +3772,7 @@ function _editorDispatchFeedbackShortcut(e) {
 }
 function _editorDispatchEofShortcut(e) {
     if (editorShortcutProfile !== 'eof' || _editorIsTypingTarget(e)) return false;
-    const cmd = _editorEofCommandForKeyPure(e);
+    const cmd = _editorEofCommandForKeyPure(e, S.tempoMapMode ? 'tempoMap' : 'note');
     if (!cmd) return false;
     e.preventDefault();
     return _editorRunEofCommand(cmd);
