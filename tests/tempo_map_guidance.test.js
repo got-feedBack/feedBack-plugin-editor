@@ -16,7 +16,7 @@ if (!m) {
 }
 
 const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _tempoMapHudTextPure };'
+    '"use strict";' + m[0] + '\nreturn { _tempoMapHudTextPure, _syncAppliedMessagePure };'
 )();
 
 let pass = 0;
@@ -44,6 +44,30 @@ t('uses full guidance when there is room', () => {
 
 t('normalizes invalid measure counts to zero', () => {
     assert.ok(api._tempoMapHudTextPure('bad', 960).includes('0 measures'));
+});
+
+t('warp import message points at the Tempo Map fine-tune path', () => {
+    const text = api._syncAppliedMessagePure('warp', null);
+    assert.ok(text.includes('per-bar audio sync'));
+    assert.ok(text.includes('Tempo Map'));
+    assert.ok(/drift/i.test(text));
+});
+
+t('offset (repeats) message explains the fallback and points at Tempo Map', () => {
+    const text = api._syncAppliedMessagePure('offset', 'repeats');
+    assert.ok(/repeats\/jumps/.test(text));
+    assert.ok(text.includes('Tempo Map'));
+});
+
+t('offset (other) message is generic and points at Tempo Map', () => {
+    const text = api._syncAppliedMessagePure('offset', 'anchors');
+    assert.ok(text.includes('could not be applied'));
+    assert.ok(text.includes('Tempo Map'));
+});
+
+t('no message when no audio sync was applied', () => {
+    assert.strictEqual(api._syncAppliedMessagePure(undefined, undefined), '');
+    assert.strictEqual(api._syncAppliedMessagePure('', ''), '');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

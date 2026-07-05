@@ -8911,17 +8911,12 @@ window.editorDoCreate = async () => {
         if (data.error) { status.textContent = 'Error: ' + data.error; btn.disabled = false; return; }
 
         await window.editorApplyCreateResult(data);
-        // Surface how the sync landed: 'warp' = chart follows the recording
-        // bar-by-bar; 'offset' = the server fell back to the scalar offset,
-        // with sync_reason saying why ('repeats' is the only user-actionable
-        // cause; everything else gets a generic message).
-        if (typeof setStatus === 'function' && data.sync_applied === 'warp') {
-            setStatus('Imported with per-bar audio sync.');
-        } else if (typeof setStatus === 'function' && data.sync_applied === 'offset') {
-            setStatus(data.sync_reason === 'repeats'
-                ? 'This file uses repeats/jumps, which per-bar sync can’t map yet — applied start offset only.'
-                : 'Per-bar sync could not be applied to this import — applied start offset only.');
-        }
+        // Surface how the sync landed ('warp' = chart follows the recording
+        // bar-by-bar; 'offset' = server fell back to the scalar offset), and —
+        // for either — point the user at the Tempo Map editor to fine-tune any
+        // residual drift by hand. See _syncAppliedMessagePure.
+        const _syncMsg = _syncAppliedMessagePure(data.sync_applied, data.sync_reason);
+        if (_syncMsg && typeof setStatus === 'function') setStatus(_syncMsg);
     } catch (e) {
         status.textContent = 'Import failed: ' + e.message;
         btn.disabled = false;
@@ -11624,6 +11619,24 @@ function _tempoMapHudTextPure(measureCount, width) {
     }
     return `Tempo Map - ${n} measures - drag poles to retime - right-click sync point: BPM / signature/delete - right-click grid: insert`;
 }
+// Status shown right after an audio-synced GP import. Names the Tempo Map tool
+// so a drifting chart has an obvious, discoverable fix — the #1 confusion in the
+// field is not knowing the beatmap is editable at all (auto-sync can only
+// approximate a human performance between sync points, so some drift is
+// expected and is meant to be fine-tuned by hand).
+function _syncAppliedMessagePure(syncApplied, syncReason) {
+    const tip = ' Drifting from the recording? Open 🎵 Tempo Map to drag the beat grid onto the audio.';
+    if (syncApplied === 'warp') {
+        return 'Imported with per-bar audio sync.' + tip;
+    }
+    if (syncApplied === 'offset') {
+        const base = syncReason === 'repeats'
+            ? 'This file uses repeats/jumps, which per-bar sync can’t map yet — applied start offset only.'
+            : 'Per-bar sync could not be applied to this import — applied start offset only.';
+        return base + tip;
+    }
+    return '';
+}
 /* @pure:tempo-map-guidance:end */
 
 /* @pure:tempo-sync-inspector:start */
@@ -11794,7 +11807,7 @@ function _ensureTempoMapButton() {
         btn.type = 'button';
         btn.textContent = '🎵 Tempo Map';
         btn.className = 'px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden';
-        btn.title = 'Open Tempo Map to edit sync points, BPM, and time signatures';
+        btn.title = 'Open Tempo Map to fix a chart drifting from the audio — drag the beat grid, edit BPM & time signatures';
         btn.onclick = () => {
             // Finalize any in-progress canvas drag before switching
             // modes — commit a moved sync-point / drum drag (don't
