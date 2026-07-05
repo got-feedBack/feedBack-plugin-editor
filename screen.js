@@ -11639,6 +11639,9 @@ function _tempoSyncInspectorStatePure(measures, selectedIndex) {
             numeratorValue: '',
             denominatorValue: '4',
             signatureDisabled: true,
+            canInsert: rows.length > 0,
+            canDelete: false,
+            deleteTitle: 'Select an interior sync point to delete it',
             hint: 'Select a sync point on the Tempo Map grid.',
         };
     }
@@ -11647,6 +11650,8 @@ function _tempoSyncInspectorStatePure(measures, selectedIndex) {
         ? Number(selected.denominator)
         : 4;
     const hasBpm = !selected.isLast && Number(selected.bpm) > 0;
+    const selectedOrdinal = rows.indexOf(selected);
+    const canDelete = selectedOrdinal > 0 && selectedOrdinal < rows.length - 1;
     return {
         label: `Measure ${selected.measure}`,
         bpmValue: hasBpm ? Number(selected.bpm).toFixed(2) : '',
@@ -11657,6 +11662,11 @@ function _tempoSyncInspectorStatePure(measures, selectedIndex) {
         numeratorValue: String(numerator),
         denominatorValue: String(denominator),
         signatureDisabled: false,
+        canInsert: true,
+        canDelete,
+        deleteTitle: canDelete
+            ? 'Delete selected sync point'
+            : 'First and final sync points cannot be deleted',
         hint: hasBpm
             ? `${numerator}/${denominator}`
             : `${numerator}/${denominator} - final measure BPM needs a closing downbeat.`,
@@ -11674,7 +11684,13 @@ function _ensureTempoSyncInspector() {
     el.className = 'hidden items-center gap-1.5 px-2 py-0.5 rounded border border-gray-700 bg-dark-700/60 text-xs';
     el.innerHTML = '<span class="text-gray-500">Sync point:</span>'
         + '<span id="editor-tempo-sync-label" class="text-gray-200 font-medium min-w-[5.5rem]">No selection</span>'
-        + '<span id="editor-tempo-sync-hint" class="text-gray-500"></span>';
+        + '<span id="editor-tempo-sync-hint" class="text-gray-500"></span>'
+        + '<button type="button" id="editor-tempo-sync-insert" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Insert a sync point at the playhead">Insert</button>'
+        + '<button type="button" id="editor-tempo-sync-delete" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete selected sync point">Delete</button>';
+    const insertBtn = el.querySelector('#editor-tempo-sync-insert');
+    const deleteBtn = el.querySelector('#editor-tempo-sync-delete');
+    if (insertBtn) insertBtn.onclick = () => _tempoInsertSyncPoint(S.cursorTime);
+    if (deleteBtn) deleteBtn.onclick = () => { if (S.tempoSel >= 0) _tempoDeleteSyncPoint(S.tempoSel); };
     bpm.parentNode.insertBefore(el, bpm.previousElementSibling || bpm);
     return el;
 }
@@ -11685,11 +11701,13 @@ function _refreshTempoSyncInspector() {
     const bpmEl = document.getElementById('editor-bpm');
     const numEl = document.getElementById('editor-tempo-sig');
     const denEl = document.getElementById('editor-tempo-sig-den');
+    const insertBtn = document.getElementById('editor-tempo-sync-insert');
+    const deleteBtn = document.getElementById('editor-tempo-sync-delete');
     if (!el) return;
     const hasGrid = !!(S.beats && S.beats.length >= 2);
     const visible = !!S.tempoMapMode && hasGrid;
     const state = _tempoSyncInspectorStatePure(visible ? _tempoMeasures() : [], visible ? S.tempoSel : -1);
-    const sig = `${visible}|${S.tempoSel}|${state.label}|${state.bpmValue}|${state.bpmDisabled}|${state.numeratorValue}|${state.denominatorValue}|${state.signatureDisabled}|${state.hint}`;
+    const sig = `${visible}|${S.tempoSel}|${state.label}|${state.bpmValue}|${state.bpmDisabled}|${state.numeratorValue}|${state.denominatorValue}|${state.signatureDisabled}|${state.canInsert}|${state.canDelete}|${state.hint}`;
     _tempoSyncInspectorState = sig;
     el.classList.toggle('hidden', !visible);
     el.classList.toggle('inline-flex', visible);
@@ -11733,6 +11751,14 @@ function _refreshTempoSyncInspector() {
             denEl.disabled = false;
             denEl.style.opacity = '';
         }
+    }
+    if (insertBtn && visible) {
+        insertBtn.disabled = !state.canInsert;
+        insertBtn.title = 'Insert a sync point at the playhead';
+    }
+    if (deleteBtn && visible) {
+        deleteBtn.disabled = !state.canDelete;
+        deleteBtn.title = state.deleteTitle;
     }
 }
 function _ensureTempoSignatureControl() {
