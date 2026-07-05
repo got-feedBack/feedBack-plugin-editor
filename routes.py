@@ -85,10 +85,12 @@ def _parse_sync_points_payload(raw):
     # larger payload is malformed/abusive — reject before doing the work.
     if len(raw) > 2000:
         return None, "too many sync_points (max 2000)"
-    required_keys = {"bar", "time_secs", "modified_bpm", "original_bpm"}
+    # Tuple, not set: the members render in a stable order inside the 400
+    # error message (a set's repr order is non-deterministic across runs).
+    required_keys = ("bar", "time_secs", "modified_bpm", "original_bpm")
     points = []
     for i, sp in enumerate(raw):
-        if not isinstance(sp, dict) or not required_keys.issubset(sp):
+        if not isinstance(sp, dict) or not all(k in sp for k in required_keys):
             return None, f"sync_points[{i}] missing required keys: {required_keys}"
         try:
             bar = int(sp["bar"])
@@ -5310,6 +5312,15 @@ def setup(app, context):
                             _warp_anchors = _anchors
                         else:
                             _warp_skip = "degenerate"
+                except ImportError:
+                    # Expected on older cores that predate the warp helpers —
+                    # a compatibility case, not an error: fall back quietly.
+                    _warp_skip = "unavailable"
+                    import logging as _elog
+                    _elog.getLogger("slopsmith.plugin.editor").info(
+                        "convert-gp: core lacks lib.gp_autosync warp helpers "
+                        "— applying offset-only sync"
+                    )
                 except Exception:
                     _warp_skip = "error"
                     import logging as _elog
