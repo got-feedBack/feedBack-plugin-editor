@@ -7,6 +7,7 @@ from pathlib import Path
 from routes import (
     _build_song_timeline,
     _load_song_timeline,
+    _merge_song_timeline_payload,
     _write_song_timeline_sidecar,
 )
 
@@ -96,3 +97,39 @@ def test_load_song_timeline_takes_priority_and_restores_denominators():
         {"time": 1.0, "measure": 2, "den": 8},
     ]
     assert loaded["sections"] == [{"name": "verse", "number": 2, "start_time": 8.0}]
+
+def test_write_song_timeline_sidecar_preserves_unknown_modulation_metadata():
+    workdir = _workdir("preserves_unknown")
+    existing = {
+        "version": 1,
+        "beats": [{"time": 99.0, "measure": 1}],
+        "time_signatures": [{"time": 99.0, "ts": [9, 8]}],
+        "metric_modulations": [
+            {"time": 2.0, "from": "quarter", "to": "dotted-quarter"},
+        ],
+        "notes": "author annotation",
+    }
+    (workdir / "song_timeline.json").write_text(json.dumps(existing), encoding="utf-8")
+    manifest = {"song_timeline": "song_timeline.json"}
+
+    _write_song_timeline_sidecar(workdir, manifest, _beats(), [])
+
+    payload = json.loads((workdir / "song_timeline.json").read_text(encoding="utf-8"))
+    assert payload["metric_modulations"] == existing["metric_modulations"]
+    assert payload["notes"] == "author annotation"
+    assert payload["beats"][0] == {"time": 0.0, "measure": 1}
+    assert payload["time_signatures"][0] == {"time": 0.0, "ts": [4, 4]}
+
+
+def test_merge_song_timeline_payload_drops_stale_owned_arrays_when_absent():
+    merged = _merge_song_timeline_payload(
+        {
+            "version": 1,
+            "beats": [{"time": 1.0, "measure": 1}],
+            "tempos": [{"time": 1.0, "bpm": 80}],
+            "custom": {"keep": True},
+        },
+        {"version": 1, "sections": []},
+    )
+
+    assert merged == {"version": 1, "sections": [], "custom": {"keep": True}}

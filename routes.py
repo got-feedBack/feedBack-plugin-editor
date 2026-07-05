@@ -291,6 +291,35 @@ def _load_song_timeline(source_dir: Path, manifest: dict) -> dict | None:
     return result or None
 
 
+def _read_existing_song_timeline_payload(source_dir: Path, manifest: dict) -> dict:
+    rel = (manifest or {}).get("song_timeline") or "song_timeline.json"
+    if not isinstance(rel, str):
+        rel = "song_timeline.json"
+    source_resolved = source_dir.resolve()
+    timeline_path = (source_resolved / rel).resolve()
+    try:
+        timeline_path.relative_to(source_resolved)
+    except ValueError:
+        return {}
+    if not timeline_path.exists() or not timeline_path.is_file():
+        return {}
+    try:
+        existing = json.loads(timeline_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return existing if isinstance(existing, dict) else {}
+
+
+def _merge_song_timeline_payload(existing: dict, generated: dict) -> dict:
+    merged = dict(existing or {})
+    for key in ("version", "tempos", "time_signatures", "beats", "sections"):
+        if key in generated:
+            merged[key] = generated[key]
+        else:
+            merged.pop(key, None)
+    return merged
+
+
 def _write_song_timeline_sidecar(source_dir: Path, manifest: dict,
                                  beats: list, sections: list) -> None:
     payload = _build_song_timeline(beats, sections)
@@ -306,6 +335,10 @@ def _write_song_timeline_sidecar(source_dir: Path, manifest: dict,
             pass
         manifest.pop("song_timeline", None)
         return
+    payload = _merge_song_timeline_payload(
+        _read_existing_song_timeline_payload(source_dir, manifest),
+        payload,
+    )
     timeline_path.write_text(
         json.dumps(payload, separators=(",", ":")),
         encoding="utf-8",
