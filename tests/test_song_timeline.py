@@ -76,6 +76,27 @@ def test_write_song_timeline_sidecar_removes_stale_empty_grid():
     assert "song_timeline" not in manifest
 
 
+def test_write_song_timeline_sidecar_preserves_unknown_on_empty_grid():
+    workdir = _workdir("empty_grid_preserves_unknown")
+    existing = {
+        "version": 1,
+        "beats": [{"time": 99.0, "measure": 1}],
+        "metric_modulations": [{"time": 2.0, "from": "quarter", "to": "eighth"}],
+        "notes": "author annotation",
+    }
+    (workdir / "song_timeline.json").write_text(json.dumps(existing), encoding="utf-8")
+    manifest = {"song_timeline": "song_timeline.json"}
+
+    _write_song_timeline_sidecar(workdir, manifest, [], [])
+
+    assert manifest["song_timeline"] == "song_timeline.json"
+    payload = json.loads((workdir / "song_timeline.json").read_text(encoding="utf-8"))
+    assert payload == {
+        "metric_modulations": existing["metric_modulations"],
+        "notes": "author annotation",
+    }
+
+
 def test_load_song_timeline_takes_priority_and_restores_denominators():
     workdir = _workdir("load_priority")
     (workdir / "song_timeline.json").write_text(json.dumps({

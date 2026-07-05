@@ -310,9 +310,14 @@ def _read_existing_song_timeline_payload(source_dir: Path, manifest: dict) -> di
     return existing if isinstance(existing, dict) else {}
 
 
+# Keys the editor authoritatively owns in song_timeline.json — everything else
+# (metric modulations, author annotations, future keys) is preserved verbatim.
+_OWNED_TIMELINE_KEYS = ("version", "tempos", "time_signatures", "beats", "sections")
+
+
 def _merge_song_timeline_payload(existing: dict, generated: dict) -> dict:
     merged = dict(existing or {})
-    for key in ("version", "tempos", "time_signatures", "beats", "sections"):
+    for key in _OWNED_TIMELINE_KEYS:
         if key in generated:
             merged[key] = generated[key]
         else:
@@ -329,6 +334,19 @@ def _write_song_timeline_sidecar(source_dir: Path, manifest: dict,
     except ValueError:
         raise RuntimeError("song_timeline path escapes sandbox")
     if payload is None:
+        # Empty grid: the editor owns no timeline. Preserve any hand-authored
+        # unknown keys (the whole point of this feature) rather than unlinking
+        # them — only drop the sidecar when nothing survives the owned-key strip.
+        existing = _read_existing_song_timeline_payload(source_dir, manifest)
+        leftover = {k: v for k, v in existing.items()
+                    if k not in _OWNED_TIMELINE_KEYS}
+        if leftover:
+            timeline_path.write_text(
+                json.dumps(leftover, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            manifest["song_timeline"] = "song_timeline.json"
+            return
         try:
             timeline_path.unlink(missing_ok=True)
         except OSError:
