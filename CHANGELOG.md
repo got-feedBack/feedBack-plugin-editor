@@ -61,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-bin min/max/RMS cache (~3 ms/bin) and aggregated per pixel column so the
   shape stays sharp at any zoom. Same lane, same seek behaviour — no layout or
   API change. Pure helper `_buildWaveformPeaks` covered by tests.
+- **Point people at Tempo Map when an import drifts from the audio.** Auto-sync can only approximate a *human* performance between sync points, so an imported chart often starts aligned and then drifts (falls behind / gets ahead) — and the #1 confusion in the field is not realizing the **beatmap is editable at all**. The post-import status now names the fix in both cases: per-bar `warp` and the scalar `offset` fallback (GP3/4/5 repeats/jumps, degenerate anchors) each end with *"Drifting from the recording? Open 🎵 Tempo Map to drag the beat grid onto the audio."*, and the toolbar button's tooltip now reads "…fix a chart drifting from the audio — drag the beat grid, edit BPM & time signatures." No behavior change to the import itself; the Tempo Map editor (drag sync points, per-measure BPM + time signature, insert/delete, drum-vs-all ride scope) already existed. Tests: `tests/tempo_map_guidance.test.js` (`_syncAppliedMessagePure`).
 
 ### Added
 - **Import a Guitar Pro guitar/bass track into the song you're editing —
