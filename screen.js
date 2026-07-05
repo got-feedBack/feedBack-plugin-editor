@@ -3135,6 +3135,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'addPhrase', label: 'Add phrase at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+P', eof: 'Shift+P' } },
     { id: 'addToneChange', label: 'Add tone change at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+Shift+T', eof: 'Ctrl+Shift+T' } },
     { id: 'addHandshape', label: 'Add handshape from selection', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+H', eof: 'Ctrl+Shift+H' } },
+    { id: 'toggleTempoMap', label: 'Enter/exit Tempo Map', group: 'Tempo map', status: 'ready', keys: { feedback: 'T', eof: 'T (Tempo Map)' } },
     { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+I' } },
     { id: 'tempoSetBpm', label: 'Set selected sync-point BPM', group: 'Tempo map', status: 'ready', keys: { feedback: 'B (Tempo Map)', eof: 'B (Tempo Map)' } },
     { id: 'tempoInsertSync', label: 'Insert sync point at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
@@ -3164,6 +3165,7 @@ function _editorEofCommandForKeyPure(e, mode) {
     const ctrlShift = (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey;
     const alt = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
     if (mode === 'tempoMap') {
+        if (plain && key === 't') return 'toggleTempoMap';
         if (plain && key === 'b') return 'tempoSetBpm';
         if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
         if (plain && (e.key === 'Delete' || e.key === 'Backspace')) return 'tempoDeleteSync';
@@ -3252,11 +3254,13 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     const ctrlAlt = (e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey;
     const ctrlShift = (e.ctrlKey || e.metaKey) && e.shiftKey && !e.altKey;
     if (mode === 'tempoMap') {
+        if (plain && key === 't') return 'toggleTempoMap';
         if (plain && key === 'b') return 'tempoSetBpm';
         if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
         if (plain && (e.key === 'Delete' || e.key === 'Backspace')) return 'tempoDeleteSync';
     }
 
+    if (plain && key === 't') return 'toggleTempoMap';
     if (ctrl && key === 's') return 'save';
     if (plain && key === 'w') return 'toggleWaveform';
     if (sig === 'PageUp') return 'prevBeat';
@@ -3749,6 +3753,7 @@ function _editorRunEofCommand(cmd) {
     case 'addPhrase': return _editorAddPhraseAtCursor();
     case 'addToneChange': return _editorAddToneAtCursor();
     case 'addHandshape': return _editorAddHandshapeFromSelection();
+    case 'toggleTempoMap': return _editorToggleTempoMapMode();
     case 'setTimeSignature': _editorPromptTempoSignatureAtCursor(); return true;
     case 'tempoSetBpm': return _editorPromptTempoBpmAtSelection();
     case 'tempoInsertSync': return _editorInsertTempoSyncAtCursor();
@@ -11932,6 +11937,32 @@ function _ensureTempoSignatureControl() {
 }
 // ── Tempo Map toolbar toggle ────────────────────────────────────────
 
+function _editorToggleTempoMapMode() {
+    const hasGrid = !!(S.beats && S.beats.length >= 2);
+    if (!hasGrid) {
+        setStatus('No beat grid on this song - nothing to tempo-map.');
+        return true;
+    }
+    // Finalize any in-progress canvas drag before switching modes.
+    _finalizeActiveDrag();
+    S.tempoMapMode = !S.tempoMapMode;
+    S.tempoSel = -1;
+    S.tempoHover = -1;
+    if (S.tempoMapMode) {
+        // Tempo and drum modes are mutually exclusive.
+        S.drumEditMode = false;
+        S.drumSel = new Set();
+        hideContextMenu();
+        hideAddNote();
+        S.sel.clear();
+    }
+    _refreshTempoMapButton();
+    _refreshDrumEditButton();
+    draw();
+    setStatus(S.tempoMapMode ? 'Tempo Map mode' : 'Note edit mode');
+    return true;
+}
+
 function _ensureTempoMapButton() {
     let btn = document.getElementById('editor-tempo-map-btn');
     if (!btn) {
@@ -11943,27 +11974,7 @@ function _ensureTempoMapButton() {
         btn.textContent = '🎵 Tempo Map';
         btn.className = 'px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden';
         btn.title = 'Open Tempo Map to fix a chart drifting from the audio — drag the beat grid, edit BPM & time signatures';
-        btn.onclick = () => {
-            // Finalize any in-progress canvas drag before switching
-            // modes — commit a moved sync-point / drum drag (don't
-            // discard the edit) and clear S.drag so the global mouse
-            // handlers don't act on a stale drag afterwards.
-            _finalizeActiveDrag();
-            S.tempoMapMode = !S.tempoMapMode;
-            S.tempoSel = -1;
-            S.tempoHover = -1;
-            if (S.tempoMapMode) {
-                // Tempo and drum modes are mutually exclusive.
-                S.drumEditMode = false;
-                S.drumSel = new Set();
-                hideContextMenu();
-                hideAddNote();
-                S.sel.clear();
-            }
-            _refreshTempoMapButton();
-            _refreshDrumEditButton();
-            draw();
-        };
+        btn.onclick = () => _editorToggleTempoMapMode();
         anchor.parentNode.insertBefore(btn, anchor.nextSibling);
     }
     return btn;
