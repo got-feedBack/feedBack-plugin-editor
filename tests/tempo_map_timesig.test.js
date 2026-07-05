@@ -16,7 +16,7 @@ if (!m) {
 }
 
 const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _tempoSetBeatsPerMeasurePure, _tempoNormalizeDenominatorPure, _tempoSetDenominatorOnBeatsPure };'
+    '"use strict";' + m[0] + '\nreturn { _tempoSetBeatsPerMeasurePure, _tempoNormalizeDenominatorPure, _tempoParseSignatureInputPure, _tempoSetDenominatorOnBeatsPure };'
 )();
 
 let pass = 0;
@@ -56,6 +56,15 @@ t('normalizes supported beat-unit denominators', () => {
     assert.strictEqual(api._tempoNormalizeDenominatorPure('8'), 8);
     assert.strictEqual(api._tempoNormalizeDenominatorPure(3), 4);
     assert.strictEqual(api._tempoNormalizeDenominatorPure('bad'), 4);
+});
+
+
+t('parses direct time signature input', () => {
+    assert.deepStrictEqual(api._tempoParseSignatureInputPure('7/8'), { numerator: 7, denominator: 8 });
+    assert.deepStrictEqual(api._tempoParseSignatureInputPure(' 12 / 16 '), { numerator: 12, denominator: 16 });
+    assert.deepStrictEqual(api._tempoParseSignatureInputPure('99/4'), { numerator: 16, denominator: 4 });
+    assert.strictEqual(api._tempoParseSignatureInputPure('7/3'), null);
+    assert.strictEqual(api._tempoParseSignatureInputPure('bad'), null);
 });
 
 t('sets denominator on a selected downbeat without moving beat times', () => {
