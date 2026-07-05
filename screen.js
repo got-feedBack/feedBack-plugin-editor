@@ -7063,6 +7063,11 @@ window.editorShowCreateModal = () => {
         audioUrl: null, audioName: null, audioDuration: null, audioFile: null, midiInfo: null,
         artPath: null, previewPath: null,
         gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null, autoSyncCoupled: false,
+        // GoPlayAlong sync sidecar (goplayalong.com): a <track> .xml that carries
+        // the bar→audio sync for a separately-staged Guitar Pro chart. When set,
+        // editorDoCreate() sources the sync from it (parse-goplayalong-sync)
+        // instead of onset auto-detection. Never a chart of its own.
+        goplayalongFile: null, goplayalongScore: '',
     };
     const setVal = (id) => { const el = document.getElementById(id); if (el) el.value = ''; };
     const setTxt = (id) => { const el = document.getElementById(id); if (el) el.textContent = ''; };
@@ -7750,13 +7755,27 @@ window.editorContentImportSelected = async (input) => {
     const midiFiles = files.filter((f) => ['.mid', '.midi'].includes(_extOf(f)));
     const unknown = files.filter((f) => ![..._IMPORT_AUDIO, ..._IMPORT_GP, '.xml', '.mid', '.midi'].includes(_extOf(f)));
 
+    // A .xml is either a GoPlayAlong sync sidecar (a <track> carrying <sync> —
+    // it aligns a separately-added Guitar Pro chart to audio) or an EOF/RS
+    // arrangement (the chart itself). Sniff the content so the two aren't
+    // confused — handing a GoPlayAlong file to the arrangement loader is exactly
+    // the "not a recognised EOF arrangement XML" failure this avoids.
+    const gpaXmls = [];
+    const eofXmls = [];
+    for (const f of xmlFiles) {
+        let t = '';
+        try { t = await f.text(); } catch (_) { /* unreadable — treat as EOF below */ }
+        if (/<track\b/i.test(t) && /<sync\b/i.test(t)) gpaXmls.push(f); else eofXmls.push(f);
+    }
+    if (gpaXmls.length) await _stageGoplayalong(gpaXmls[0]);
+
     // Chart slot (exclusive): a Guitar Pro file wins over RS/EOF XML if both are
     // added together. Stage the chart BEFORE the audio so the coupling sees it.
     if (gpFiles.length) {
         await _stageGpFile(gpFiles[0]);
-        if (xmlFiles.length && status) status.textContent += ' (RS XML ignored — one chart source per song.)';
-    } else if (xmlFiles.length) {
-        _stageEofFiles(xmlFiles);
+        if (eofXmls.length && status) status.textContent += ' (RS XML ignored — one chart source per song.)';
+    } else if (eofXmls.length) {
+        _stageEofFiles(eofXmls);
     }
     // Master-audio slot (one master track for now; stems later).
     if (audioFiles.length) {
@@ -7826,6 +7845,34 @@ function _stageEofFiles(xmls) {
     if (iStatus) iStatus.textContent = createState.eofName + ' added as the chart.';
 }
 
+// Stage a GoPlayAlong sync sidecar (.xml). It is NOT a chart — it carries the
+// bar→audio sync for a separately-staged Guitar Pro file. Prefills title/artist
+// from the <track> attributes and remembers the referenced score filename so we
+// can nudge the user to add the matching .gp.
+async function _stageGoplayalong(file) {
+    createState.goplayalongFile = file;
+    createState.goplayalongScore = '';
+    try {
+        const t = await file.text();
+        const title = (t.match(/\btitle="([^"]*)"/i) || [])[1];
+        const artist = (t.match(/\bartist="([^"]*)"/i) || [])[1];
+        createState.goplayalongScore = (t.match(/<scoreUrl>\s*([^<]*?)\s*<\/scoreUrl>/i) || [])[1] || '';
+        const titleEl = document.getElementById('editor-create-title');
+        const artistEl = document.getElementById('editor-create-artist');
+        if (titleEl && !titleEl.value.trim() && title) titleEl.value = title;
+        if (artistEl && !artistEl.value.trim() && artist) artistEl.value = artist;
+    } catch (_) { /* metadata prefill is best-effort */ }
+    _refreshGpAudioUI();   // couple the staged master audio into the sync
+    const iStatus = document.getElementById('editor-create-import-status');
+    if (iStatus) {
+        iStatus.textContent = createState.gpPath
+            ? 'GoPlayAlong sync added — it will align the tab to your audio.'
+            : ('GoPlayAlong sync added — now add its Guitar Pro file'
+               + (createState.goplayalongScore ? ' (' + createState.goplayalongScore + ')' : '')
+               + ' and the audio.');
+    }
+}
+
 function _stageMidi(files) {
     createState.midiInfo = files.length === 1 ? files[0].name : (files.length + ' MIDI files');
     const iStatus = document.getElementById('editor-create-import-status');
@@ -7863,6 +7910,11 @@ function renderStaged() {
     } else if (createState.eofFiles && createState.eofFiles.length) {
         rows.push({ role: 'chart', chip: 'Chart · RS XML', chipStyle: 'background:rgba(129,140,248,0.20);color:#c7d2fe',
             name: createState.eofName || 'RS/EOF XML', detail: '' });
+    }
+    if (createState.goplayalongFile) {
+        rows.push({ role: 'goplayalong', chip: 'Sync · GoPlayAlong', chipStyle: 'background:rgba(52,211,153,0.18);color:#6ee7b7',
+            name: createState.goplayalongFile.name,
+            detail: createState.gpPath ? 'aligns the tab' : 'add the Guitar Pro file' });
     }
     if (createState.midiInfo) {
         rows.push({ role: 'midi', chip: 'MIDI · adds after create', chipCls: 'bg-dark-600 text-gray-400',
@@ -7931,6 +7983,10 @@ window.editorStagedRemove = (role) => {
         createState.lastSync = null; createState.autoSyncAudioUrl = null;
         document.getElementById('editor-create-tracks')?.classList.add('hidden');
         _refreshGpAudioUI();        // no gpPath → hides GP audio UI
+    } else if (role === 'goplayalong') {
+        createState.goplayalongFile = null; createState.goplayalongScore = '';
+        createState.lastSync = null;        // drop any GoPlayAlong-derived sync
+        _refreshGpAudioUI();
     } else if (role === 'midi') {
         createState.midiInfo = null;
     }
@@ -8792,6 +8848,45 @@ window.editorDoCreate = async () => {
         btn.disabled = false;
         return;
     }
+    // GoPlayAlong authored sync (gated on goplayalongFile so normal imports are
+    // untouched): use the sidecar's per-bar points instead of onset detection.
+    // Populates createState.lastSync exactly like autosync-gp does, so the
+    // convert step below sends the same sync_points to convert-gp — no onset
+    // refine (the authored points are already per-bar accurate).
+    if (_gpAudioMode === 'autosync' && createState.goplayalongFile
+            && createState.autoSyncAudioUrl && _autoSyncOffset === null) {
+        status.textContent = 'Applying GoPlayAlong sync…';
+        try {
+            const gForm = new FormData();
+            gForm.append('file', createState.goplayalongFile);
+            const gResp = await fetch('/api/plugins/editor/parse-goplayalong-sync', { method: 'POST', body: gForm });
+            const gData = await gResp.json();
+            if (gData.ok && gData.sync_points && gData.sync_points.length) {
+                _autoSyncOffset = gData.audio_offset;
+                createState.lastSync = gData;
+                createState.lastSync.audio_offset = _autoSyncOffset;
+                const _goBtn = document.getElementById('editor-create-go');
+                if (_goBtn) {
+                    _goBtn.disabled = false;
+                    _goBtn.removeAttribute('aria-disabled');
+                    _goBtn.textContent = 'Import & Open in Editor';
+                    _goBtn.focus();
+                }
+                status.textContent = `✓ GoPlayAlong sync: ${gData.sync_point_count} points, offset ${(_autoSyncOffset ?? 0).toFixed(3)}s — click Import to apply.`;
+                return;   // click Import again → convert with these points (matches the autosync UX)
+            }
+            status.textContent = 'GoPlayAlong sync failed: ' + (gData.error || 'no sync points found')
+                + '. Remove the sync file (✕) to import without it.';
+            btn.disabled = false;
+            return;
+        } catch (e) {
+            status.textContent = 'GoPlayAlong sync request failed: ' + e.message
+                + '. Remove the sync file (✕) to import without it.';
+            btn.disabled = false;
+            return;
+        }
+    }
+
     if (_gpAudioMode === 'autosync' && createState.autoSyncAudioUrl && _autoSyncOffset === null) {
         status.textContent = 'Auto-syncing tab to audio (~10s)...';
         try {
