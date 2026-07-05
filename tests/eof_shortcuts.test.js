@@ -64,6 +64,8 @@ t('maps EOF technique shortcuts to command IDs', () => {
 t('maps EOF import and save function keys', () => {
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('F2')), 'save');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('F5')), 'toggleWaveform');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('?', { shift: true })), 'showShortcutHelp');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('k', { ctrl: true })), 'openCommandPalette');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('F6')), 'importMidi');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('F7')), 'importXml');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('F12')), 'importGp');
@@ -81,6 +83,8 @@ t('exposes ready and planned shortcut command rows', () => {
     assert.strictEqual(customSnap.status, 'planned');
     assert.strictEqual(customSnap.key, 'Ctrl+Shift+G');
     assert.strictEqual(rows.find(r => r.id === 'toggleTempoMap').key, 'T (Tempo Map)');
+    assert.strictEqual(rows.find(r => r.id === 'showShortcutHelp').key, '?');
+    assert.strictEqual(rows.find(r => r.id === 'openCommandPalette').key, 'Ctrl+K');
     assert.strictEqual(rows.find(r => r.id === 'setTimeSignature').key, 'Shift+T / Shift+I');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatCount').key, 'N (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatMinus').key, '[ (Tempo Map)');
@@ -95,6 +99,8 @@ t('exposes wired FeedBack Native key labels', () => {
     assert.strictEqual(rows.find(r => r.id === 'save').key, 'Ctrl+S');
     assert.strictEqual(rows.find(r => r.id === 'prevNote').key, 'Alt+Left');
     assert.strictEqual(rows.find(r => r.id === 'toggleWaveform').key, 'W');
+    assert.strictEqual(rows.find(r => r.id === 'showShortcutHelp').key, '?');
+    assert.strictEqual(rows.find(r => r.id === 'openCommandPalette').key, 'Ctrl+K');
     assert.strictEqual(rows.find(r => r.id === 'importGp').key, '');
     assert.strictEqual(rows.find(r => r.id === 'toggleTempoMap').key, 'T');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatCount').key, 'N (Tempo Map)');
@@ -107,6 +113,8 @@ t('exposes wired FeedBack Native key labels', () => {
 
 t('maps FeedBack Native timeline and grid shortcuts', () => {
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('w')), 'toggleWaveform');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('?', { shift: true })), 'showShortcutHelp');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('k', { ctrl: true })), 'openCommandPalette');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('g')), 'toggleSnap');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('PageUp')), 'prevBeat');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('ArrowRight', { alt: true })), 'nextNote');

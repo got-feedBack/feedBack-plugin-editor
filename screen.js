@@ -3088,6 +3088,8 @@ function _editorKeySigPure(e) {
 const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'save', label: 'Save project', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+S', eof: 'F2 / Ctrl+S' } },
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
+    { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
+    { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
     { id: 'importXml', label: 'Import XML source', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F7' } },
     { id: 'importGp', label: 'Import Guitar Pro source', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F12' } },
@@ -3192,6 +3194,8 @@ function _editorEofCommandForKeyPure(e, mode) {
 
     if (sig === 'F2') return 'save';
     if (sig === 'F5') return 'toggleWaveform';
+    if (shift && key === '?') return 'showShortcutHelp';
+    if (ctrl && key === 'k') return 'openCommandPalette';
     if (sig === 'F6') return 'importMidi';
     if (sig === 'F7') return 'importXml';
     if (sig === 'F12') return 'importGp';
@@ -3292,6 +3296,8 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (plain && key === 't') return 'toggleTempoMap';
     if (ctrl && key === 's') return 'save';
     if (plain && key === 'w') return 'toggleWaveform';
+    if (shift && key === '?') return 'showShortcutHelp';
+    if (ctrl && key === 'k') return 'openCommandPalette';
     if (sig === 'PageUp') return 'prevBeat';
     if (sig === 'PageDown') return 'nextBeat';
     if (alt && e.key === 'ArrowLeft') return 'prevNote';
@@ -3701,6 +3707,11 @@ function _editorToggleWaveform() {
     setStatus(editorWaveformVisible ? 'Waveform shown' : 'Waveform hidden');
 }
 
+function _editorShowShortcutDiscovery(commandLabel) {
+    window.editorToggleShortcutPanel(true);
+    setStatus(commandLabel);
+    return true;
+}
 function _editorUnsupportedEofCommand(label) {
     setStatus(`${label} is not available in this editor mode yet.`);
     return true;
@@ -3810,6 +3821,8 @@ function _editorRunEofCommand(cmd) {
     switch (cmd) {
     case 'save': editorSave(); return true;
     case 'toggleWaveform': return _editorToggleWaveform();
+    case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
+    case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
     case 'importXml': _editorOpenImportXml(); return true;
     case 'importGp': _editorOpenImportGp(); return true;
