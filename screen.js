@@ -4681,6 +4681,16 @@ function updatePlayIcon() {
     }
 }
 
+function updateMeasureDisplay() {
+    const el = document.getElementById('editor-measure-display');
+    if (!el) return;
+    const selectedIdx = S.tempoMapMode ? S.tempoSel : -1;
+    const r = _editorMeasureSignatureReadoutPure(S.beats || [], S.cursorTime || 0, selectedIdx);
+    el.textContent = r.label;
+    el.title = r.measure === null
+        ? 'No measure grid available'
+        : `Measure ${r.measure}, time signature ${r.numerator}/${r.denominator}`;
+}
 function updateTimeDisplay() {
     const el = document.getElementById('editor-time-display');
     if (!el) return;
@@ -4690,6 +4700,7 @@ function updateTimeDisplay() {
         return m + ':' + String(s).padStart(2, '0');
     };
     el.textContent = fmt(S.cursorTime) + ' / ' + fmt(S.duration);
+    updateMeasureDisplay();
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -5973,6 +5984,42 @@ function _tempoResolvedMeasureIdx() {
     return measures[0].i;
 }
 
+
+/* @pure:measure-readout:start */
+function _editorMeasureSignatureReadoutPure(beats, time, selectedIdx) {
+    if (!Array.isArray(beats) || !beats.length) return { label: 'M-- --', measure: null, numerator: null, denominator: null };
+    let idx = Number.isInteger(selectedIdx) && selectedIdx >= 0 && selectedIdx < beats.length && beats[selectedIdx] && beats[selectedIdx].measure > 0
+        ? selectedIdx
+        : -1;
+    const t = Number.isFinite(Number(time)) ? Number(time) : 0;
+    if (idx < 0) {
+        for (let i = 0; i < beats.length; i++) {
+            const b = beats[i];
+            if (!b || b.measure <= 0) continue;
+            if ((Number(b.time) || 0) <= t + 1e-6) idx = i;
+            else break;
+        }
+    }
+    if (idx < 0) idx = beats.findIndex(b => b && b.measure > 0);
+    if (idx < 0) return { label: 'M-- --', measure: null, numerator: null, denominator: null };
+    const downbeat = beats[idx];
+    let nextIdx = beats.length;
+    for (let i = idx + 1; i < beats.length; i++) {
+        if (beats[i] && beats[i].measure > 0) { nextIdx = i; break; }
+    }
+    let numerator = Math.max(1, nextIdx - idx);
+    if (nextIdx === beats.length) {
+        let prevIdx = -1;
+        for (let i = idx - 1; i >= 0; i--) {
+            if (beats[i] && beats[i].measure > 0) { prevIdx = i; break; }
+        }
+        if (prevIdx >= 0) numerator = Math.max(1, idx - prevIdx);
+    }
+    const den = _tempoNormalizeDenominatorPure(downbeat.den);
+    const measure = downbeat.measure;
+    return { label: `M${measure} ${numerator}/${den}`, measure, numerator, denominator: den };
+}
+/* @pure:measure-readout:end */
 function updateBPMDisplay() {
     const el = document.getElementById('editor-bpm');
     if (!el || S.beats.length < 2) return;
@@ -6000,6 +6047,7 @@ function updateTempoSigDisplay() {
     }
     if (numEl) numEl.value = String(_tempoMeasureBeatCount(d));
     if (denEl) denEl.value = String(_tempoMeasureDenominator(d));
+    updateMeasureDisplay();
 }
 
 // Defer a `resizeCanvas` until layout has settled — used when a
