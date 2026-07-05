@@ -11697,21 +11697,42 @@ function _refreshTempoSyncInspector() {
     const hint = document.getElementById('editor-tempo-sync-hint');
     if (label) label.textContent = state.label;
     if (hint) hint.textContent = state.hint;
-    if (bpmEl && visible) {
-        if (document.activeElement !== bpmEl) bpmEl.value = state.bpmValue;
-        bpmEl.disabled = state.bpmDisabled;
-        bpmEl.style.opacity = state.bpmDisabled ? '0.55' : '';
-        bpmEl.title = state.bpmTitle;
+    // The BPM / signature inputs are SHARED with normal (non-tempo-map) editing.
+    // In tempo-map mode we gate them on the current sync-point selection; when
+    // NOT in tempo-map mode we must restore them to their normal editable state,
+    // otherwise leaving tempo-map mode with no selection (or the final measure
+    // selected) would strand them disabled.
+    if (bpmEl) {
+        if (visible) {
+            if (document.activeElement !== bpmEl) bpmEl.value = state.bpmValue;
+            bpmEl.disabled = state.bpmDisabled;
+            bpmEl.style.opacity = state.bpmDisabled ? '0.55' : '';
+            bpmEl.title = state.bpmTitle;
+        } else {
+            bpmEl.disabled = false;
+            bpmEl.style.opacity = '';
+            bpmEl.title = '';
+        }
     }
-    if (numEl && visible) {
-        if (document.activeElement !== numEl) numEl.value = state.numeratorValue;
-        numEl.disabled = state.signatureDisabled;
-        numEl.style.opacity = state.signatureDisabled ? '0.55' : '';
+    if (numEl) {
+        if (visible) {
+            if (document.activeElement !== numEl) numEl.value = state.numeratorValue;
+            numEl.disabled = state.signatureDisabled;
+            numEl.style.opacity = state.signatureDisabled ? '0.55' : '';
+        } else {
+            numEl.disabled = false;
+            numEl.style.opacity = '';
+        }
     }
-    if (denEl && visible) {
-        if (document.activeElement !== denEl) denEl.value = state.denominatorValue;
-        denEl.disabled = state.signatureDisabled;
-        denEl.style.opacity = state.signatureDisabled ? '0.55' : '';
+    if (denEl) {
+        if (visible) {
+            if (document.activeElement !== denEl) denEl.value = state.denominatorValue;
+            denEl.disabled = state.signatureDisabled;
+            denEl.style.opacity = state.signatureDisabled ? '0.55' : '';
+        } else {
+            denEl.disabled = false;
+            denEl.style.opacity = '';
+        }
     }
 }
 function _ensureTempoSignatureControl() {
@@ -11864,7 +11885,7 @@ function _ensureTempoScopeToggle() {
                     localStorage.setItem('editor-tempomap-scope', S.tempoRideScope);
                 } catch (_) { /* localStorage unavailable */ }
                 _refreshTempoScopeToggle();
-    _refreshTempoSyncInspector();
+                _refreshTempoSyncInspector();
                 draw();
             };
         });
