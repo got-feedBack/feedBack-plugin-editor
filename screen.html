@@ -90,15 +90,17 @@
         <select id="editor-snap" onchange="editorSetSnap(this.selectedIndex)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none">
             <option>1/1</option>
             <option>1/2</option>
+            <option>1/3T</option>
             <option selected>1/4</option>
+            <option>1/6T</option>
             <option>1/8</option>
-            <option>1/12</option>
+            <option>1/12T</option>
             <option>1/16</option>
-            <option>1/24</option>
+            <option>1/24T</option>
             <option>1/32</option>
-            <option>1/48</option>
+            <option>1/48T</option>
             <option>1/64</option>
-            <option>1/96</option>
+            <option>1/96T</option>
         </select>
         <label class="flex items-center gap-1 text-xs text-gray-400" title="Toggle grid snapping without changing the selected resolution">
             <input id="editor-snap-enabled" type="checkbox" checked onchange="editorSetSnapEnabled(this.checked)" class="accent-accent"> On
