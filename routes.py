@@ -4989,6 +4989,64 @@ def setup(app, context):
             _elog.getLogger("slopsmith.plugin.editor").exception("refine-sync failed")
             return JSONResponse({"error": "Refine failed. See server logs for details."}, 500)
 
+    # ── GoPlayAlong sync sidecar → sync_points ───────────────────────
+
+    def _load_goplayalong():
+        """Load the sibling goplayalong parser (namespaced via load_sibling when
+        the host provides it; bare import otherwise — the plugin dir is on
+        sys.path and the module name is unique)."""
+        _ls = context.get("load_sibling")
+        if _ls:
+            return _ls("goplayalong")
+        import goplayalong  # noqa: PLC0415 - lazy, optional fallback
+        return goplayalong
+
+    @app.post("/api/plugins/editor/parse-goplayalong-sync")
+    async def parse_goplayalong_sync(file: UploadFile = File(...)):
+        """Parse a GoPlayAlong (.xml) sync sidecar into the editor's sync model.
+
+        GoPlayAlong (goplayalong.com) exports a ``<track>`` XML that points at a
+        Guitar Pro score + an audio file and stores the bar→audio sync points —
+        it carries **no chart**, which is why the EOF importer rejects it as "not
+        a recognised EOF arrangement XML". This returns the same ``sync_points`` /
+        ``audio_offset`` shape as ``autosync-gp`` / ``extract-gp-sync``, so the
+        existing ``convert-gp`` path applies the authored sync to the referenced
+        ``.gp`` instead of re-deriving it via onset detection. ``score_url`` /
+        ``audio_url`` tell the caller which files the project references.
+        """
+        raw = await file.read()
+        gpa = _load_goplayalong()
+        if not gpa.is_goplayalong_xml(raw):
+            return JSONResponse(
+                {"error": "Not a GoPlayAlong file — a GoPlayAlong export is a "
+                          "<track> XML with <sync> data alongside a .gp score."}, 400)
+        try:
+            proj = gpa.parse_goplayalong(raw)
+        except (ValueError, OverflowError) as e:
+            return JSONResponse(
+                {"error": f"Could not parse GoPlayAlong file: {e}"}, 400)
+        return {
+            "ok": True,
+            "title": proj.title,
+            "artist": proj.artist,
+            "score_url": proj.score_url,
+            "audio_url": proj.audio_url,
+            "audio_offset": proj.audio_offset,
+            "sync_point_count": len(proj.sync_points),
+            "sync_points": [
+                {
+                    "bar": sp.bar,
+                    "time_secs": round(sp.time_secs, 3),
+                    "modified_bpm": round(sp.modified_bpm, 2),
+                    # GoPlayAlong stores only the synced tempo, not the score's
+                    # authored tempo; mirror it so convert-gp's warp ratio is a
+                    # no-op (the bar→time_secs pairs are the authoritative map).
+                    "original_bpm": round(sp.modified_bpm, 2),
+                }
+                for sp in proj.sync_points
+            ],
+        }
+
     # ── MIDI import: list tracks ─────────────────────────────────────
 
     @app.post("/api/plugins/editor/import-midi")
