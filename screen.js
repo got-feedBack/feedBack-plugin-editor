@@ -10355,11 +10355,18 @@ function _tempoMapDraw(w, h) {
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(
-        `Tempo Map — ${measures.length} measures · drag a pole to retime · `
-        + `right-click: insert/delete · [ ]: time signature`,
-        LABEL_W + 6, hudY);
+    ctx.fillText(_tempoMapHudTextPure(measures.length, w), LABEL_W + 6, hudY);
 }
+
+/* @pure:tempo-map-guidance:start */
+function _tempoMapHudTextPure(measureCount, width) {
+    const n = Number.isFinite(Number(measureCount)) ? Number(measureCount) : 0;
+    if (Number(width) < 760) {
+        return `Tempo Map - ${n} measures - right-click sync point: BPM / signature`;
+    }
+    return `Tempo Map - ${n} measures - drag poles to retime - right-click sync point: BPM / signature/delete - right-click grid: insert`;
+}
+/* @pure:tempo-map-guidance:end */
 
 function _ensureTempoSignatureControl() {
     let wrap = document.getElementById('editor-tempo-sig-wrap');
@@ -10394,7 +10401,7 @@ function _ensureTempoMapButton() {
         btn.type = 'button';
         btn.textContent = '🎵 Tempo Map';
         btn.className = 'px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden';
-        btn.title = 'Open the EOF-style tempo-map editor';
+        btn.title = 'Open Tempo Map to edit sync points, BPM, and time signatures';
         btn.onclick = () => {
             // Finalize any in-progress canvas drag before switching
             // modes — commit a moved sync-point / drum drag (don't
@@ -10589,8 +10596,8 @@ function _tempoMapOnMouseDown(e, x, y) {
     draw();
 }
 
-// Right-click in tempo-map mode: insert a sync point on open grid, or
-// delete / change the time signature of the sync point under the cursor.
+// Right-click in tempo-map mode: insert on open grid, or edit/delete
+// the sync point under the cursor.
 function _tempoMapOnContextMenu(e) {
     const { x, y } = getMousePos(e);
     const menu = document.getElementById('editor-context-menu');
