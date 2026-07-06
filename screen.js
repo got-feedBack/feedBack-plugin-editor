@@ -5871,6 +5871,14 @@ function _renderInspector() {
         ${chordHtml}
         <div class="space-y-2 border-t border-gray-700 pt-3">
             <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Time (s)</span>
+                <input type="number" min="0" step="0.01" value="${inputVal(sharedTime)}"
+                    placeholder="${sharedTime === null ? 'mixed' : ''}"
+                    onchange="editorInspectorSetField('time', this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs"
+                    title="Set the note's start time in seconds (for aligning to the recording)">
+            </label>
+            <label class="flex items-center gap-2">
                 <span class="w-24 text-gray-400">Sustain</span>
                 <input type="number" min="0" step="0.05" value="${inputVal(sharedSustain)}"
                     placeholder="${sharedSustain === null ? 'mixed' : ''}"
@@ -5975,6 +5983,10 @@ function _renderInspector() {
 // enforce — `type="number" min/max` on the inputs is only a UI hint;
 // users can paste / type out-of-range values, so we clamp here too.
 const _INSPECTOR_BOUNDS = {
+    // Time (start position, seconds): non-negative, no upper clamp (a note
+    // can't sit before the song start; the duration bound is soft). Lets an
+    // author type a precise onset to align a note to the recording.
+    time: { min: 0, max: Infinity, integer: false },
     // Sustain has no hard upper bound elsewhere (drag-resize / add-note
     // dialog leave it unconstrained), so the inspector matches — only
     // the lower clamp matters for input sanity.
@@ -6017,8 +6029,8 @@ function _coerceInspectorNumber(rawValue, bounds) {
 }
 
 window.editorInspectorSetField = (field, raw) => {
-    const sel = _selectedNotes();
-    if (sel.length === 0) return;
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) return;
     const bounds = _INSPECTOR_BOUNDS[field];
     if (!bounds) return;
     const v = _coerceInspectorNumber(raw, bounds);
@@ -6029,8 +6041,21 @@ window.editorInspectorSetField = (field, raw) => {
         _renderInspector();
         return;
     }
+    // Route through the undo history: the sustain edit used to mutate
+    // notes in place with no undo, and Time is new. Both apply to every
+    // selected note (matching the field's "set all" semantics) as one
+    // command, so a numeric edit is a single Ctrl+Z.
+    const nn = notes();
     if (field === 'sustain') {
-        for (const n of sel) n.sustain = v;
+        S.history.exec(new ResizeSustainGroupCmd(idxs, idxs.map(() => v)));
+    } else if (field === 'time') {
+        // MoveNoteCmd applies per-note deltas; convert the absolute target
+        // time to a delta per note (no re-sort — same as _editorResnapSelection,
+        // and hitNote is a linear scan, so order isn't load-bearing).
+        const dtimes = idxs.map(i => v - (nn[i] ? nn[i].time : 0));
+        S.history.exec(new MoveNoteCmd(idxs, dtimes, idxs.map(() => 0), null));
+    } else {
+        return;
     }
     draw();
     updateStatus();
