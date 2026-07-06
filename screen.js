@@ -3219,6 +3219,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+-' } },
     { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
     { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', eof: 'Ctrl+L' } },
+    { id: 'duplicateSelection', label: 'Duplicate selection to next position', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+D', eof: 'Ctrl+D' } },
     { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+R', eof: 'Shift+R' } },
     { id: 'addSection', label: 'Add section at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+M', eof: 'Shift+S' } },
     { id: 'addPhrase', label: 'Add phrase at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+P', eof: 'Shift+P' } },
@@ -3714,6 +3715,86 @@ function _editorJumpAnchor(dir) {
     if (next !== undefined) _editorSeekToTime(next);
 }
 
+/* @pure:duplicate:start */
+// Time shift for a duplicate: place the copy immediately after the
+// selection so a repeated Ctrl+D tiles a phrase. Multi-time selections
+// shift by their own span (selection length); a single note or a chord
+// (all one time) shifts by one grid step. Returns 0 for an empty / all-
+// non-finite selection so the caller no-ops. Interior timing is preserved
+// (the whole selection shifts by one offset — never re-quantized), so a
+// swung or syncopated phrase duplicates with its feel intact.
+function _duplicateShiftPure(times, snapStep) {
+    if (!Array.isArray(times) || !times.length) return 0;
+    let lo = Infinity, hi = -Infinity;
+    for (const t of times) {
+        const v = Number(t);
+        if (!Number.isFinite(v)) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+    }
+    if (!Number.isFinite(lo)) return 0;
+    const span = hi - lo;
+    const step = (Number.isFinite(snapStep) && snapStep > 0) ? snapStep : 0.25;
+    return span > 1e-9 ? span : step;
+}
+
+// Batch-add `newNotes` to the note array `list`, keeping it time-sorted;
+// rollback removes exactly those refs (indexOf, not stored indices — the
+// sort reshuffles). `onChange(fn)` wraps the mutation so a caller can keep
+// its selection bound across the sort/splice; it defaults to just running
+// `fn`, which is what the tests use to drive the command in isolation.
+class AddNotesCmd {
+    constructor(list, newNotes, onChange) {
+        this.list = list;
+        this.newNotes = newNotes;
+        this.onChange = (typeof onChange === 'function') ? onChange : ((fn) => fn());
+    }
+    exec() {
+        this.onChange(() => {
+            for (const n of this.newNotes) this.list.push(n);
+            this.list.sort((a, b) => a.time - b.time);
+        });
+    }
+    rollback() {
+        this.onChange(() => {
+            for (const n of this.newNotes) {
+                const i = this.list.indexOf(n);
+                if (i >= 0) this.list.splice(i, 1);
+            }
+        });
+    }
+}
+/* @pure:duplicate:end */
+
+// Ctrl+D — copy the selection to the next position (one selection-length
+// later) as one undoable command, leaving the copies selected so a repeat
+// tiles the phrase. Mirrors the paste command's stable-selection handling.
+function _editorDuplicateSelection() {
+    if (S.drumEditMode || S.tempoMapMode || !S.sel.size) return false;
+    const nn = notes();
+    const selNotes = [...S.sel].map(i => nn[i]).filter(Boolean);
+    if (!selNotes.length) return false;
+    const shift = _duplicateShiftPure(
+        selNotes.map(n => n.time), _editorSnapStepSeconds());
+    if (shift <= 0) return false;
+    const newNotes = selNotes.map(n => ({
+        time: n.time + shift,
+        string: n.string,
+        fret: n.fret,
+        sustain: n.sustain || 0,
+        techniques: { ...(n.techniques || {}) },
+    }));
+    S.history.exec(new AddNotesCmd(nn, newNotes, _withStableSelection));
+    // Reselect the copies so a repeated Ctrl+D keeps tiling forward.
+    S.sel.clear();
+    const added = new Set(newNotes);
+    for (let i = 0; i < nn.length; i++) if (added.has(nn[i])) S.sel.add(i);
+    draw();
+    updateStatus();
+    setStatus(`Duplicated ${newNotes.length} note${newNotes.length === 1 ? '' : 's'}`);
+    return true;
+}
+
 function _editorSelectLike() {
     const idxs = _editorCurrentNoteIndices();
     if (!idxs.length) { setStatus('Select a note first'); return false; }
@@ -4015,6 +4096,7 @@ function _editorRunEofCommand(cmd) {
     case 'fretDown': return _editorAdjustSelectedFret(-1);
     case 'setAnchor': return _editorSetAnchorAtCursor();
     case 'selectLike': return _editorSelectLike();
+    case 'duplicateSelection': return _editorDuplicateSelection();
     case 'resnapSelection': return _editorResnapSelection();
     case 'addSection': return _editorAddSectionAtCursor();
     case 'addPhrase': return _editorAddPhraseAtCursor();
@@ -4354,6 +4436,17 @@ function onKeyDown(e) {
             const nn = notes();
             for (let i = 0; i < nn.length; i++) S.sel.add(i);
             draw();
+            return;
+        }
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+        // Duplicate the selection to the next position. Same mode/focus
+        // gate as copy/paste below; preventDefault so the browser's
+        // bookmark shortcut doesn't fire.
+        if (!S.drumEditMode && !S.tempoMapMode && S.sel.size
+                && !e.target.matches('input, select, textarea')) {
+            e.preventDefault();
+            _editorDuplicateSelection();
             return;
         }
     }
