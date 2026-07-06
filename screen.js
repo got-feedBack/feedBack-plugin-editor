@@ -1968,6 +1968,26 @@ class ChangeFretCmd {
     rollback() { notes()[this.index].fret = this.oldFret; }
 }
 
+class ChangeFretGroupCmd {
+    constructor(indices, newFret) {
+        this.indices = indices.slice();
+        this.newFret = newFret;
+        const nn = notes();
+        this.oldFrets = this.indices.map(i => nn[i] ? nn[i].fret : 0);
+    }
+    exec() {
+        const nn = notes();
+        for (const i of this.indices) {
+            if (nn[i]) nn[i].fret = this.newFret;
+        }
+    }
+    rollback() {
+        const nn = notes();
+        for (let i = 0; i < this.indices.length; i++) {
+            if (nn[this.indices[i]]) nn[this.indices[i]].fret = this.oldFrets[i];
+        }
+    }
+}
 class ToggleTechniqueCmd {
     constructor(indices, key, value, fretValue = null) {
         this.indices = indices.slice();
@@ -3107,6 +3127,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'snapDown', label: 'Decrease snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: ',', eof: ',' } },
     { id: 'snapUp', label: 'Increase snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: '.', eof: '.' } },
     { id: 'editFret', label: 'Edit fret / fingering', group: 'Notes', status: 'ready', keys: { feedback: 'F', eof: 'F / Ctrl+F' } },
+    { id: 'setFretDigit', label: 'Set selected fret 0-9', group: 'Notes', status: 'ready', keys: { feedback: '0-9', eof: '0-9' } },
+    { id: 'setFretTen', label: 'Set selected fret 10', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+0', eof: 'Shift+0' } },
     { id: 'noteMenu', label: 'Open note edit menu', group: 'Notes', status: 'ready', keys: { feedback: '', eof: 'N' } },
     { id: 'bend', label: 'Edit bend', group: 'Notes', status: 'ready', keys: { feedback: 'B', eof: 'Ctrl+B' } },
     { id: 'unpitchedSlide', label: 'Edit unpitched slide', group: 'Notes', status: 'ready', keys: { feedback: 'U', eof: 'Ctrl+U' } },
@@ -3212,6 +3234,8 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (plain && key === ',') return 'snapDown';
     if (plain && key === '.') return 'snapUp';
     if (plain && key === 'f') return 'editFret';
+    if (plain && /^[0-9]$/.test(key)) return 'setFretDigit:' + key;
+    if (shift && key === ')') return 'setFretTen';
     if (plain && key === 'h') return 'toggleHammerOn';
     if (plain && key === 'p') return 'togglePullOff';
     if (plain && key === 'n') return 'noteMenu';
@@ -3310,6 +3334,8 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (plain && key === ',') return 'snapDown';
     if (plain && key === '.') return 'snapUp';
     if (plain && key === 'f') return 'editFret';
+    if (plain && /^[0-9]$/.test(key)) return 'setFretDigit:' + key;
+    if (shift && key === ')') return 'setFretTen';
     if (plain && key === 'b') return 'bend';
     if (plain && key === 'u') return 'unpitchedSlide';
     if (shift && e.key === 'ArrowUp') return 'transposeStringUp';
@@ -3487,6 +3513,16 @@ function _editorToggleTechnique(key, { openFret = false } = {}) {
     return true;
 }
 
+function _editorSetSelectedFret(fret) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const next = Math.max(0, Math.min(24, Number(fret) || 0));
+    S.history.exec(new ChangeFretGroupCmd(idxs, next));
+    draw();
+    updateStatus();
+    setStatus(`Selected fret set to ${next}`);
+    return true;
+}
 function _editorAdjustSelectedFret(delta) {
     const idxs = _editorCurrentNoteIndices();
     if (!idxs.length) { setStatus('Select notes first'); return false; }
@@ -3818,6 +3854,9 @@ function _editorPromptTempoBeatUnitAtSelection() {
     return true;
 }
 function _editorRunEofCommand(cmd) {
+    if (typeof cmd === 'string' && cmd.startsWith('setFretDigit:')) {
+        return _editorSetSelectedFret(parseInt(cmd.slice('setFretDigit:'.length), 10));
+    }
     switch (cmd) {
     case 'save': editorSave(); return true;
     case 'toggleWaveform': return _editorToggleWaveform();
@@ -3840,6 +3879,7 @@ function _editorRunEofCommand(cmd) {
     case 'snapDown': window.editorSetSnap(Math.max(0, S.snapIdx - 1)); return true;
     case 'snapUp': window.editorSetSnap(Math.min(SNAP_VALUES.length - 1, S.snapIdx + 1)); return true;
     case 'editFret': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptFret(idxs[0]); else setStatus('Select a note first'); return true; }
+    case 'setFretTen': return _editorSetSelectedFret(10);
     case 'noteMenu': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) showContextMenu(window.innerWidth / 2, window.innerHeight / 2, idxs[0]); else setStatus('Select a note first'); return true; }
     case 'bend': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptBend(idxs[0]); else setStatus('Select a note first'); return true; }
     case 'unpitchedSlide': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptSlideUnpitch(idxs[0]); else setStatus('Select a note first'); return true; }
