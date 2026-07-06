@@ -1274,14 +1274,22 @@ function reconstructChords() {
 // that genuinely needs the paint this instant (the once-per-frame playback
 // tick, which already runs inside its own rAF) calls drawNow() directly.
 let _drawQueued = false;
+let _drawRafId = 0;
 function draw() {
     if (_drawQueued) return;
     _drawQueued = true;
-    requestAnimationFrame(_drawFlush);
+    _drawRafId = requestAnimationFrame(_drawFlush);
 }
 function _drawFlush() {
+    _drawRafId = 0;
     _drawQueued = false;
     drawNow();
+}
+// Cancel a coalesced repaint that hasn't flushed yet (used by the boot
+// teardown so a torn-down injection can't paint on a stale frame).
+function _cancelPendingDraw() {
+    if (_drawRafId) { cancelAnimationFrame(_drawRafId); _drawRafId = 0; }
+    _drawQueued = false;
 }
 /* @pure:draw-coalesce:end */
 
