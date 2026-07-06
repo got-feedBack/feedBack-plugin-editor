@@ -12911,6 +12911,7 @@ function _editorToggleTempoMapMode() {
     S.tempoMapMode = !S.tempoMapMode;
     S.tempoSel = -1;
     S.tempoHover = -1;
+    _tapTempo = null;   // abandon any pending tap run on mode change
     if (S.tempoMapMode) {
         // Tempo and drum modes are mutually exclusive.
         S.drumEditMode = false;
@@ -13099,6 +13100,7 @@ function _tempoMapOnMouseDown(e, x, y) {
 
     // Click a sync-point pole to select it and start a drag.
     const hit = _tempoSyncAtX(x, y);
+    if (hit !== S.tempoSel) _tapTempo = null;   // selection moved — drop stale tap run
     S.tempoSel = hit;
     if (hit >= 0) {
         S.drag = {
@@ -13497,10 +13499,9 @@ function _tempoPromptMeasureBpm(d) {
 }
 
 /* @pure:tap-tempo:start */
-// BPM from a run of tap timestamps (ms, ascending). Uses the MEDIAN of the
-// last 8 intervals so one flubbed tap doesn't skew the estimate, and rejects
-// implausible results (outside 20–400 BPM) instead of offering them.
-function _tapTempoBpmPure(taps) {
+// Median inter-tap interval (ms) over the last 8 gaps, or null when there
+// aren't two good taps or the clock ran backwards. Range-agnostic.
+function _tapTempoMedianGapPure(taps) {
     if (!Array.isArray(taps) || taps.length < 2) return null;
     const recent = taps.slice(-9);           // at most 8 intervals
     const gaps = [];
@@ -13511,9 +13512,28 @@ function _tapTempoBpmPure(taps) {
     }
     const sorted = [...gaps].sort((a, b) => a - b);
     const mid = sorted.length >> 1;
-    const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// BPM from a run of tap timestamps (ms, ascending). Uses the MEDIAN of the
+// last 8 intervals so one flubbed tap doesn't skew the estimate, and rejects
+// implausible results (outside 20–400 BPM) instead of offering them.
+function _tapTempoBpmPure(taps) {
+    const median = _tapTempoMedianGapPure(taps);
+    if (median === null) return null;
     const bpm = 60000 / median;
     return (bpm >= 20 && bpm <= 400) ? bpm : null;
+}
+
+// Why no estimate is shown: 'ok' (a valid BPM is available), 'insufficient'
+// (not enough good taps yet), or 'out-of-range' (a plausible median exists
+// but the implied BPM is outside 20–400). Lets the status say *why* it's
+// still waiting instead of an always-"keep tapping" message.
+function _tapTempoStatusReasonPure(taps) {
+    const median = _tapTempoMedianGapPure(taps);
+    if (median === null) return 'insufficient';
+    const bpm = 60000 / median;
+    return (bpm >= 20 && bpm <= 400) ? 'ok' : 'out-of-range';
 }
 /* @pure:tap-tempo:end */
 
@@ -13545,11 +13565,30 @@ function _editorTapTempoAtSelection() {
     }
     _tapTempo.taps.push(now);
     _tapTempo.bpm = _tapTempoBpmPure(_tapTempo.taps);
-    setStatus(_tapTempo.bpm === null
-        ? `Tap tempo: keep tapping Shift+B… (${_tapTempo.taps.length})`
-        : `Tap tempo: ${_tapTempo.bpm.toFixed(1)} BPM over ${_tapTempo.taps.length} taps — Enter applies to measure ${_tapTempo.measure}, Esc cancels`);
+    if (_tapTempo.bpm !== null) {
+        setStatus(`Tap tempo: ${_tapTempo.bpm.toFixed(1)} BPM over ${_tapTempo.taps.length} taps — Enter applies to measure ${_tapTempo.measure}, Esc cancels`);
+    } else if (_tapTempoStatusReasonPure(_tapTempo.taps) === 'out-of-range') {
+        setStatus(`Tap tempo: that pace is out of range (20–400 BPM) — keep tapping Shift+B… (${_tapTempo.taps.length})`);
+    } else {
+        setStatus(`Tap tempo: keep tapping Shift+B… (${_tapTempo.taps.length})`);
+    }
     return true;
 }
+
+/* @pure:tap-tempo-apply:start */
+// Decide what an Enter press should do with a pending tap run `t`, given the
+// currently-selected sync point `tempoSel` and the current clock `now` (ms).
+// Refuses a run captured against a different sync point ('stale-selection' —
+// the selection moved out from under the run) or one that has aged past
+// `staleMs`. Returns 'apply' only when the run still targets `tempoSel`.
+function _tapTempoApplyDecisionPure(t, tempoSel, now, staleMs) {
+    if (!t) return 'none';
+    if (t.d !== tempoSel) return 'stale-selection';
+    if (t.bpm === null) return 'too-few';
+    if (Number(now) - Number(t.taps[t.taps.length - 1]) > staleMs) return 'expired';
+    return 'apply';
+}
+/* @pure:tap-tempo-apply:end */
 
 // Enter/Escape resolution for a live tap run. Called early in the keydown
 // handler; consumes the key only while a run is pending in Tempo Map mode.
@@ -13560,9 +13599,12 @@ function _tapTempoHandleKey(e) {
         e.preventDefault();
         const t = _tapTempo;
         _tapTempo = null;
-        if (t.bpm === null) {
+        const decision = _tapTempoApplyDecisionPure(t, S.tempoSel, performance.now(), TAP_TEMPO_STALE_MS);
+        if (decision === 'stale-selection') {
+            setStatus('Tap tempo cancelled — sync-point selection changed.');
+        } else if (decision === 'too-few') {
             setStatus('Tap tempo cancelled — not enough taps.');
-        } else if (performance.now() - t.taps[t.taps.length - 1] > TAP_TEMPO_STALE_MS) {
+        } else if (decision === 'expired') {
             setStatus('Tap tempo expired — tap again.');
         } else if (_tempoSetMeasureBpm(t.d, t.bpm)) {
             setStatus(`Measure ${t.measure} tempo set to ${t.bpm.toFixed(1)} BPM (tapped)`);

@@ -20,8 +20,17 @@ if (!m) {
     console.error('FAIL: @pure:tap-tempo block not found in screen.js');
     process.exit(1);
 }
-const { _tapTempoBpmPure } = new Function(
-    '"use strict";' + m[0] + '\nreturn { _tapTempoBpmPure };'
+const { _tapTempoBpmPure, _tapTempoStatusReasonPure } = new Function(
+    '"use strict";' + m[0] + '\nreturn { _tapTempoBpmPure, _tapTempoStatusReasonPure };'
+)();
+
+const ma = src.match(/\/\* @pure:tap-tempo-apply:start \*\/[\s\S]*?\/\* @pure:tap-tempo-apply:end \*\//);
+if (!ma) {
+    console.error('FAIL: @pure:tap-tempo-apply block not found in screen.js');
+    process.exit(1);
+}
+const { _tapTempoApplyDecisionPure } = new Function(
+    '"use strict";' + ma[0] + '\nreturn { _tapTempoApplyDecisionPure };'
 )();
 
 let pass = 0, fail = 0;
@@ -70,6 +79,32 @@ t('non-monotonic or duplicate timestamps → null (bad clock, no guess)', () => 
 t('even interval count uses the middle pair average', () => {
     // Gaps 480 and 520 → median 500 → 120 BPM.
     assert.strictEqual(_tapTempoBpmPure([0, 480, 1000]), 120);
+});
+
+t('status reason distinguishes out-of-range from insufficient', () => {
+    assert.strictEqual(_tapTempoStatusReasonPure(run(4, 100)), 'out-of-range', '600 BPM is out of range, not "keep tapping"');
+    assert.strictEqual(_tapTempoStatusReasonPure(run(4, 4000)), 'out-of-range', '15 BPM is out of range');
+    assert.strictEqual(_tapTempoStatusReasonPure([1000]), 'insufficient', 'one tap → still insufficient');
+    assert.strictEqual(_tapTempoStatusReasonPure([1000, 900]), 'insufficient', 'bad clock → insufficient, no guess');
+    assert.strictEqual(_tapTempoStatusReasonPure(run(5, 500)), 'ok', 'steady 120 BPM → ok');
+});
+
+// Apply-time revalidation: a run captured against sync point d must not apply
+// to a different currently-selected sync point (the stale-measure bug).
+t('apply refuses a run whose target ≠ current selection', () => {
+    const t = { d: 3, measure: 4, taps: [0, 500, 1000], bpm: 120 };
+    const now = 1000;
+    assert.strictEqual(_tapTempoApplyDecisionPure(t, 3, now, 15000), 'apply', 'same selection applies');
+    assert.strictEqual(_tapTempoApplyDecisionPure(t, 5, now, 15000), 'stale-selection', 'moved selection refuses');
+    assert.strictEqual(_tapTempoApplyDecisionPure(t, -1, now, 15000), 'stale-selection', 'deselected refuses');
+});
+
+t('apply decision also gates on taps and staleness', () => {
+    const t = { d: 2, measure: 3, taps: [0, 500, 1000], bpm: 120 };
+    assert.strictEqual(_tapTempoApplyDecisionPure(null, 2, 1000, 15000), 'none');
+    assert.strictEqual(_tapTempoApplyDecisionPure({ ...t, bpm: null }, 2, 1000, 15000), 'too-few');
+    assert.strictEqual(_tapTempoApplyDecisionPure(t, 2, 1000 + 15001, 15000), 'expired', 'aged past window');
+    assert.strictEqual(_tapTempoApplyDecisionPure(t, 2, 1000, 15000), 'apply');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
