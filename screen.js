@@ -3188,6 +3188,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleTremolo', label: 'Toggle tremolo', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+O', eof: 'Ctrl+Shift+O' } },
     { id: 'togglePop', label: 'Toggle pop / pluck', group: 'Techniques', status: 'ready', keys: { feedback: 'O', eof: 'Ctrl+Shift+P' } },
     { id: 'toggleSlap', label: 'Toggle slap', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+O', eof: 'Shift+O' } },
+    { id: 'cyclePickDirection', label: 'Cycle pick direction', group: 'Techniques', status: 'ready', keys: { feedback: 'K', eof: 'K' } },
     { id: 'fretUp', label: 'Increase selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl++', eof: 'Ctrl++' } },
     { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+-' } },
     { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
@@ -3275,6 +3276,7 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (plain && /^[0-9]$/.test(key)) return 'setFretDigit:' + key;
     if (shift && key === ')') return 'setFretTen';
     if (plain && key === 'h') return 'toggleHammerOn';
+    if (plain && key === 'k') return 'cyclePickDirection';
     if (plain && key === 'p') return 'togglePullOff';
     if (plain && key === 's') return 'slideEditor';
     if (plain && key === 'n') return 'noteMenu';
@@ -3386,6 +3388,7 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (shift && e.key === 'ArrowUp') return 'transposeStringUp';
     if (shift && e.key === 'ArrowDown') return 'transposeStringDown';
     if (plain && key === 'h') return 'toggleHammerOn';
+    if (plain && key === 'k') return 'cyclePickDirection';
     if (plain && key === 'p') return 'togglePullOff';
     if (plain && key === 'y') return 'toggleTap';
     if (plain && key === 'v') return 'toggleVibrato';
@@ -3567,6 +3570,24 @@ function _editorSetSelectedFret(fret) {
     draw();
     updateStatus();
     setStatus(`Selected fret set to ${next}`);
+    return true;
+}
+function _editorCyclePickDirection() {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const nn = notes();
+    const vals = idxs.map(i => {
+        const v = nn[i] && nn[i].techniques ? nn[i].techniques.pick_direction : -1;
+        return Number.isInteger(v) ? v : -1;
+    });
+    const same = vals.every(v => v === vals[0]);
+    const current = same ? vals[0] : -1;
+    const next = current < 0 ? 0 : (current === 0 ? 1 : -1);
+    S.history.exec(new SetTeachingMarkCmd(idxs, 'pick_direction', next));
+    draw();
+    updateStatus();
+    _renderInspector();
+    setStatus(next < 0 ? 'Pick direction cleared' : (next === 0 ? 'Pick direction: down' : 'Pick direction: up'));
     return true;
 }
 function _editorAdjustSelectedFret(delta) {
@@ -3952,6 +3973,7 @@ function _editorRunEofCommand(cmd) {
     case 'toggleTremolo': return _editorToggleTechnique('tremolo');
     case 'togglePop': return _editorToggleTechnique('pluck');
     case 'toggleSlap': return _editorToggleTechnique('slap');
+    case 'cyclePickDirection': return _editorCyclePickDirection();
     case 'fretUp': return _editorAdjustSelectedFret(+1);
     case 'fretDown': return _editorAdjustSelectedFret(-1);
     case 'setAnchor': return _editorSetAnchorAtCursor();
