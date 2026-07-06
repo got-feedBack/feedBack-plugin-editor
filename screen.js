@@ -3270,6 +3270,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'save', label: 'Save project', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+S', eof: 'F2 / Ctrl+S' } },
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
     { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', eof: 'C' } },
+    { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -4069,6 +4070,7 @@ function _editorRunEofCommand(cmd) {
     case 'save': editorSave(); return true;
     case 'toggleWaveform': return _editorToggleWaveform();
     case 'toggleGuideClap': return _editorToggleGuideClap();
+    case 'toggleMetronome': return _editorToggleMetronome();
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -5220,6 +5222,23 @@ function _guideWindowEndPure(rawTo, loopEnabled, loopEndTime) {
     if (loopEnabled && Number.isFinite(loopEndTime)) return Math.min(rawTo, loopEndTime);
     return rawTo;
 }
+// Metronome clicks for the beat rows in [from, to): every beat entry gets a
+// click, downbeats (measure > 0) get the accent; sub-beats are measure -1.
+// Same half-open window contract as the clap query so the shared scheduler
+// never double-fires a beat across adjacent ticks.
+function _metroClicksInWindowPure(beats, from, to) {
+    if (!Array.isArray(beats) || !beats.length || !(to > from)) return [];
+    let lo = 0, hi = beats.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (beats[mid].time < from) lo = mid + 1; else hi = mid;
+    }
+    const out = [];
+    for (let i = lo; i < beats.length && beats[i].time < to; i++) {
+        out.push({ t: beats[i].time, accent: beats[i].measure > 0 });
+    }
+    return out;
+}
 /* @pure:guide-clap:end */
 
 const GUIDE_LOOKAHEAD = 0.12;  // seconds scheduled ahead of the transport
@@ -5236,6 +5255,10 @@ function editorGuideClapEnabled() {
     try { return localStorage.getItem('editorGuideClap') === '1'; }
     catch (_) { return false; }
 }
+function editorMetronomeEnabled() {
+    try { return localStorage.getItem('editorMetronome') === '1'; }
+    catch (_) { return false; }
+}
 
 // Guide-voice bus ONLY: the claps sum through their own gain into a limiter
 // so many simultaneous voices can never spike, then to the destination. The
@@ -5249,6 +5272,10 @@ function _ensureMasterBus() {
     const ctx = S.audioCtx;
     const guideGain = ctx.createGain();
     guideGain.gain.value = 0.35;
+    // Click sits well under the reference/guide (≈ -12 dB) — the metronome
+    // should be felt, not fought with.
+    const clickGain = ctx.createGain();
+    clickGain.gain.value = 0.25;
     const limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -1;
     limiter.knee.value = 0;
@@ -5256,8 +5283,9 @@ function _ensureMasterBus() {
     limiter.attack.value = 0.003;
     limiter.release.value = 0.25;
     guideGain.connect(limiter);
+    clickGain.connect(limiter);
     limiter.connect(ctx.destination);
-    _masterBus = { guideGain, limiter };
+    _masterBus = { guideGain, clickGain, limiter };
     return _masterBus;
 }
 
@@ -5292,6 +5320,27 @@ function _guideClapVoiceAt(when) {
     _guideVoices.push({ osc, gain: g, until: when + 0.06 });
 }
 
+// Metronome click: a band-limited soft pip. The accent (downbeat) is
+// differentiated mainly by PITCH (~1000 vs ~800 Hz) with only a small level
+// delta — the hearing-safe way to accent, rather than a louder transient.
+function _metroClickVoiceAt(when, accent) {
+    const bus = _ensureMasterBus();
+    if (!bus) return;
+    const ctx = S.audioCtx;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = accent ? 1000 : 800;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(accent ? 0.9 : 0.68, when + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 0.04);
+    osc.connect(g);
+    g.connect(bus.clickGain);
+    osc.start(when);
+    osc.stop(when + 0.05);
+    _guideVoices.push({ osc, gain: g, until: when + 0.05 });
+}
+
 // Cancel every queued-but-unfinished clap — stale voices would otherwise
 // fire at their pre-seek positions after a loop wrap or scrub.
 function _guideCancelVoices() {
@@ -5309,7 +5358,9 @@ function _guideResetSchedule() {
 }
 
 function _guideTick() {
-    if (!S.playing || !S.audioCtx || !editorGuideClapEnabled()) return;
+    const claps = editorGuideClapEnabled();
+    const metro = editorMetronomeEnabled();
+    if (!S.playing || !S.audioCtx || (!claps && !metro)) return;
     const nowChart = S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
     // Clamp the lookahead end to the loop-region end while looping, so no clap
     // is scheduled past the boundary before the rAF wrap cancels the window.
@@ -5321,14 +5372,23 @@ function _guideTick() {
     // event exactly at the cursor audible.
     const from = Math.max(_guideScheduledUntil, nowChart - 0.005);
     if (to <= from) return;
-    const times = _guideClapTimesInWindowPure(_guideSourceTimes(), from, to);
-    for (const t of times) {
-        // Cross-tick dedupe: skip an event in the same 1 ms bucket as the last
-        // clap already fired in a previous window (chord split by the boundary).
-        const key = Math.round(t * 1000);
-        if (key === _guideLastFiredKey) continue;
-        _guideLastFiredKey = key;
-        _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime));
+    if (claps) {
+        const times = _guideClapTimesInWindowPure(_guideSourceTimes(), from, to);
+        for (const t of times) {
+            // Cross-tick dedupe: skip an event in the same 1 ms bucket as the last
+            // clap already fired in a previous window (chord split by the boundary).
+            const key = Math.round(t * 1000);
+            if (key === _guideLastFiredKey) continue;
+            _guideLastFiredKey = key;
+            _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime));
+        }
+    }
+    if (metro) {
+        const clicks = _metroClicksInWindowPure(S.beats || [], from, to);
+        for (const c of clicks) {
+            _metroClickVoiceAt(
+                _guideChartToCtxPure(c.t, S.playStartWall, S.playStartTime), c.accent);
+        }
     }
     _guideScheduledUntil = to;
     // Drop bookkeeping for voices that already finished (bounded memory).
@@ -5341,7 +5401,7 @@ function _guideTick() {
 // Start/stop the scheduler to match "playing AND enabled". Called from
 // startPlayback/stopPlayback and from the toggle (mid-play enable works).
 function _guideTimerSync() {
-    const want = S.playing && editorGuideClapEnabled();
+    const want = S.playing && (editorGuideClapEnabled() || editorMetronomeEnabled());
     if (want && !_guideTimer) {
         _guideScheduledUntil = S.playStartTime
             + (S.audioCtx.currentTime - S.playStartWall);
@@ -5376,6 +5436,30 @@ function _editorToggleGuideClap() {
 }
 window.editorToggleGuideClap = _editorToggleGuideClap;
 _refreshGuideBtn();
+
+function _refreshMetronomeBtn() {
+    const btn = document.getElementById('editor-metronome-btn');
+    if (!btn) return;
+    const on = editorMetronomeEnabled();
+    btn.classList.toggle('bg-accent', on);
+    btn.classList.toggle('hover:bg-accent-light', on);
+    btn.classList.toggle('bg-dark-600', !on);
+    btn.classList.toggle('hover:bg-dark-500', !on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+function _editorToggleMetronome() {
+    const next = !editorMetronomeEnabled();
+    try { localStorage.setItem('editorMetronome', next ? '1' : '0'); } catch (_) {}
+    _refreshMetronomeBtn();
+    _guideTimerSync();
+    setStatus(next
+        ? 'Metronome on — clicks follow the beat grid, accented on downbeats'
+        : 'Metronome off');
+    return true;
+}
+window.editorToggleMetronome = _editorToggleMetronome;
+_refreshMetronomeBtn();
 
 function updateMeasureDisplay() {
     const el = document.getElementById('editor-measure-display');

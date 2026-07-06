@@ -56,6 +56,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without bound, and removing an arrangement now clears the history (the splice
   renumbers arrangements, so older commands would target the wrong one — same
   rationale as the save-time reset). Tests: `tests/drum_undo.test.js`.
+- **Metronome click.** A new `Click` transport toggle schedules a soft pip on
+  every beat-grid row during playback, with downbeats accented mainly by
+  PITCH (~1000 vs ~800 Hz, only a small level delta) — the hearing-safe way
+  to accent. Clicks ride the same lookahead scheduler and limited master bus
+  as the guide claps (their own click gain, ≈ −12 dB under the reference), so
+  they follow tempo changes in the beat grid exactly and cancel cleanly on
+  seek/loop like every other guide voice. The editor previously had no
+  metronome at all. Toggle persists as an editor preference. Tests:
+  `tests/metronome_click.test.js`.
 - **Guide claps — hear your chart while it plays.** A new `Claps` transport
   toggle (shortcut `C` in both the FeedBack and EOF profiles) ticks each
   charted event during playback — drum hits in the drum grid, the current
