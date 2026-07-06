@@ -3527,6 +3527,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'tempoBeatPlus', label: 'Add a beat to selected measure', group: 'Tempo map', status: 'ready', keys: { feedback: '] (Tempo Map)', eof: '] (Tempo Map)' } },
     { id: 'tempoBeatUnit', label: 'Set selected measure beat unit', group: 'Tempo map', status: 'ready', keys: { feedback: 'D (Tempo Map)', eof: 'D (Tempo Map)' } },
     { id: 'tempoSetBpm', label: 'Set selected sync-point BPM', group: 'Tempo map', status: 'ready', keys: { feedback: 'B (Tempo Map)', eof: 'B (Tempo Map)' } },
+    { id: 'tempoModulate', label: 'Metric modulation at selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'M (Tempo Map)', eof: 'M (Tempo Map)' } },
     { id: 'tempoTapBpm', label: 'Tap tempo for selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+B (Tempo Map)', eof: 'Shift+B (Tempo Map)' } },
     { id: 'tempoInsertSync', label: 'Insert sync point at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
     { id: 'tempoDeleteSync', label: 'Delete selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
@@ -3561,6 +3562,7 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (mode === 'tempoMap') {
         if (plain && key === 't') return 'toggleTempoMap';
         if (plain && key === 'b') return 'tempoSetBpm';
+        if (plain && key === 'm') return 'tempoModulate';
         if (shift && key === 'b') return 'tempoTapBpm';
         if (plain && key === 'n') return 'tempoBeatCount';
         if (plain && key === '[') return 'tempoBeatMinus';
@@ -3670,6 +3672,7 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (mode === 'tempoMap') {
         if (plain && key === 't') return 'toggleTempoMap';
         if (plain && key === 'b') return 'tempoSetBpm';
+        if (plain && key === 'm') return 'tempoModulate';
         if (shift && key === 'b') return 'tempoTapBpm';
         if (plain && key === 'n') return 'tempoBeatCount';
         if (plain && key === '[') return 'tempoBeatMinus';
@@ -4327,6 +4330,7 @@ function _editorRunEofCommand(cmd) {
     case 'tempoBeatPlus': return _editorAdjustTempoMeasureBeats(+1);
     case 'tempoBeatUnit': return _editorPromptTempoBeatUnitAtSelection();
     case 'tempoSetBpm': return _editorPromptTempoBpmAtSelection();
+    case 'tempoModulate': return _editorModulateTempoAtSelection();
     case 'tempoTapBpm': return _editorTapTempoAtSelection();
     case 'tempoInsertSync': return _editorInsertTempoSyncAtCursor();
     case 'tempoDeleteSync': return _editorDeleteTempoSyncSelection();
@@ -12802,11 +12806,14 @@ function _ensureTempoSyncInspector() {
         + '<span id="editor-tempo-sync-label" class="text-gray-200 font-medium min-w-[5.5rem]">No selection</span>'
         + '<span id="editor-tempo-sync-hint" class="text-gray-500"></span>'
         + '<button type="button" id="editor-tempo-sync-insert" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Insert a sync point at the playhead">Insert</button>'
-        + '<button type="button" id="editor-tempo-sync-delete" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete selected sync point">Delete</button>';
+        + '<button type="button" id="editor-tempo-sync-delete" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete selected sync point">Delete</button>'
+        + '<button type="button" id="editor-tempo-sync-modulate" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Metric modulation: new tempo = current × ratio, from this measure to the next tempo change (M)">Modulate…</button>';
     const insertBtn = el.querySelector('#editor-tempo-sync-insert');
     const deleteBtn = el.querySelector('#editor-tempo-sync-delete');
+    const modulateBtn = el.querySelector('#editor-tempo-sync-modulate');
     if (insertBtn) insertBtn.onclick = () => _tempoInsertSyncPoint(S.cursorTime);
     if (deleteBtn) deleteBtn.onclick = () => { if (S.tempoSel >= 0) _tempoDeleteSyncPoint(S.tempoSel); };
+    if (modulateBtn) modulateBtn.onclick = () => _editorModulateTempoAtSelection();
     bpm.parentNode.insertBefore(el, bpm.previousElementSibling || bpm);
     return el;
 }
@@ -12871,6 +12878,12 @@ function _refreshTempoSyncInspector() {
     if (insertBtn && visible) {
         insertBtn.disabled = !state.canInsert;
         insertBtn.title = 'Insert a sync point at the playhead';
+    }
+    // Modulate shares the BPM edit's enable condition: a selected,
+    // non-final measure with a computable tempo.
+    const modulateBtn = document.getElementById('editor-tempo-sync-modulate');
+    if (modulateBtn && visible) {
+        modulateBtn.disabled = state.bpmDisabled;
     }
     if (deleteBtn && visible) {
         deleteBtn.disabled = !state.canDelete;
@@ -13435,6 +13448,107 @@ function _tempoSetMeasureBpmPure(beats, d, newBpm, minMeasure, round) {
 }
 /* @pure:tempo-map-bpm:end */
 
+/* @pure:tempo-modulate:start */
+// Parse a metric-modulation ratio: pivot presets 1-4, "3:2"/"3/2"
+// fractions, or a plain decimal. Returns new/old tempo ratio or null.
+function _tempoModulationRatioPure(raw) {
+    if (raw === null || raw === undefined) return null;
+    const s = String(raw).trim();
+    if (!s) return null;
+    // Pivots: 1 quarter=dotted-quarter (×2/3) · 2 dotted-quarter=quarter
+    // (×3/2) · 3 quarter=eighth (×1/2) · 4 eighth=quarter (×2).
+    const preset = { '1': 2 / 3, '2': 3 / 2, '3': 0.5, '4': 2 }[s];
+    if (preset) return preset;
+    const frac = s.match(/^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/);
+    if (frac) {
+        const num = parseFloat(frac[1]);
+        const den = parseFloat(frac[2]);
+        return num > 0 && den > 0 ? num / den : null;
+    }
+    const v = parseFloat(s);
+    return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+// BPM of the measure whose downbeat is beats[d] (null when unbounded).
+function _tempoMeasureBpmAtPure(beats, d) {
+    if (!Array.isArray(beats) || d < 0 || d >= beats.length) return null;
+    if (!beats[d] || beats[d].measure <= 0) return null;
+    let ndb = -1;
+    for (let i = d + 1; i < beats.length; i++) {
+        if (beats[i] && beats[i].measure > 0) { ndb = i; break; }
+    }
+    if (ndb < 0) return null;
+    const span = Number(beats[ndb].time) - Number(beats[d].time);
+    return span > 0 ? ((ndb - d) * 60) / span : null;
+}
+
+// Metric modulation: new tempo = old × ratio, applied from measure d
+// THROUGH THE END OF ITS UNIFORM RUN — the run stops at the first measure
+// whose BPM differs from measure d's by more than tolFrac, so a later
+// hand-authored tempo change is a natural pole the re-space never crosses.
+// Interior beats re-space PROPORTIONALLY (fractional positions preserved,
+// so swung/uneven sub-beats keep their feel); everything after the run
+// rigid-shifts by the accumulated delta. Beat count is unchanged, so the
+// result rides TempoMapCmd (which also remaps note times per its scope).
+// Returns { beats, count, newBpm } or null when invalid / too short.
+function _tempoModulateRunPure(beats, d, ratio, minMeasure, round, tolFrac) {
+    if (!Array.isArray(beats) || beats.length < 2) return null;
+    if (!Number.isFinite(ratio) || ratio <= 0 || ratio === 1) return null;
+    const bpm0 = _tempoMeasureBpmAtPure(beats, d);
+    if (bpm0 === null) return null;
+    const r = typeof round === 'function' ? round : (v => v);
+    const gapMin = Number.isFinite(minMeasure) && minMeasure > 0 ? minMeasure : 0.05;
+    const tol = Number.isFinite(tolFrac) && tolFrac > 0 ? tolFrac : 0.005;
+    // Collect the downbeat indices of the uniform run [d …).
+    const runStarts = [];
+    let i = d;
+    while (i >= 0 && i < beats.length) {
+        const bpm = _tempoMeasureBpmAtPure(beats, i);
+        if (bpm === null) break;                       // final/unbounded measure
+        if (Math.abs(bpm - bpm0) > bpm0 * tol) break;  // next tempo change: stop
+        runStarts.push(i);
+        let ndb = -1;
+        for (let j = i + 1; j < beats.length; j++) {
+            if (beats[j] && beats[j].measure > 0) { ndb = j; break; }
+        }
+        if (ndb < 0) break;
+        i = ndb;
+    }
+    if (!runStarts.length) return null;
+    const out = beats.map(b => ({ ...b }));
+    let shift = 0;   // accumulated delta, applied progressively
+    for (const s0 of runStarts) {
+        let ndb = -1;
+        for (let j = s0 + 1; j < beats.length; j++) {
+            if (beats[j] && beats[j].measure > 0) { ndb = j; break; }
+        }
+        const oldStart = beats[s0].time;
+        const oldSpan = beats[ndb].time - oldStart;
+        const newSpan = oldSpan / ratio;
+        if (newSpan < gapMin) return null;             // refuse absurd results
+        const newStart = out[s0].time;                 // already shifted
+        for (let k = s0 + 1; k < ndb; k++) {
+            const frac = (beats[k].time - oldStart) / oldSpan;
+            out[k].time = r(newStart + frac * newSpan);
+        }
+        out[ndb].time = r(newStart + newSpan);
+        shift = out[ndb].time - beats[ndb].time;
+    }
+    // Rigid-shift everything after the run.
+    const lastNdb = (() => {
+        const s0 = runStarts[runStarts.length - 1];
+        for (let j = s0 + 1; j < beats.length; j++) {
+            if (beats[j] && beats[j].measure > 0) return j;
+        }
+        return beats.length - 1;
+    })();
+    for (let j = lastNdb + 1; j < out.length; j++) {
+        out[j].time = r(beats[j].time + shift);
+    }
+    return { beats: out, count: runStarts.length, newBpm: bpm0 * ratio };
+}
+/* @pure:tempo-modulate:end */
+
 // Move the downbeat at index `d` in `beats` to `newT`, re-spacing the
 // interior sub-beats of the two adjacent measures. Downbeats other than
 // `d` keep their exact time — edits stay local. Mutates `beats`.
@@ -13464,6 +13578,53 @@ function _tempoApplyDrag(beats, d, newT) {
         const dt = newT - oldT;
         for (let i = d + 1; i < beats.length; i++) beats[i].time += dt;
     }
+}
+
+// Metric modulation prompt + apply for the selected sync point. New tempo
+// = current × ratio, from the selected measure to the next tempo change
+// (the uniform-run boundary — hand-authored downstream tempo is a natural
+// pole the re-space never crosses). One undoable TempoMapCmd; notes ride
+// per the current tempo-ride scope, exactly like a BPM edit.
+function _editorModulateTempoAtSelection() {
+    if (!S.tempoMapMode || S.tempoSel < 0) {
+        setStatus('Select a Tempo Map sync point first.');
+        return true;
+    }
+    const measures = _tempoMeasures();
+    const m = measures.find(mm => mm.i === S.tempoSel) || null;
+    if (!m || m.isLast || !(m.bpm > 0)) {
+        setStatus('Select a non-final measure to modulate from.');
+        return true;
+    }
+    const raw = window.prompt(
+        `Metric modulation from ${m.bpm.toFixed(2)} BPM — enter a pivot or ratio:\n`
+        + `  1   quarter = dotted quarter   (new = ×2/3)\n`
+        + `  2   dotted quarter = quarter   (new = ×3/2)\n`
+        + `  3   quarter = eighth           (new = ×1/2)\n`
+        + `  4   eighth = quarter           (new = ×2)\n`
+        + `  or a ratio like 3:2, 2/3, 0.75`,
+        '1');
+    if (raw === null) return true;
+    const ratio = _tempoModulationRatioPure(raw);
+    if (ratio === null || ratio < 0.2 || ratio > 5) {
+        setStatus('Enter a pivot 1–4 or a ratio between 0.2 and 5.');
+        return true;
+    }
+    if (ratio === 1) {
+        setStatus('Ratio 1 is no change.');
+        return true;
+    }
+    const res = _tempoModulateRunPure(S.beats, S.tempoSel, ratio, MIN_MEASURE, _r3, 0.005);
+    if (!res) {
+        setStatus('Could not modulate — the resulting measures would be too short.');
+        return true;
+    }
+    S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })), res.beats, 'modulate'));
+    updateBPMDisplay();
+    draw();
+    setStatus(`Modulated ${m.bpm.toFixed(1)} → ${res.newBpm.toFixed(1)} BPM across `
+        + `${res.count} measure${res.count === 1 ? '' : 's'} (up to the next tempo change)`);
+    return true;
 }
 
 function _tempoSetMeasureBpm(d, newBPM) {
