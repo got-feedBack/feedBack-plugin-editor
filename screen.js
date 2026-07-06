@@ -3186,6 +3186,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleIgnore', label: 'Toggle ignore', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+I', eof: 'Ctrl+Shift+I' } },
     { id: 'toggleTremolo', label: 'Toggle tremolo', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+O', eof: 'Ctrl+Shift+O' } },
     { id: 'togglePop', label: 'Toggle pop / pluck', group: 'Techniques', status: 'ready', keys: { feedback: 'O', eof: 'Ctrl+Shift+P' } },
+    { id: 'toggleSlap', label: 'Toggle slap', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+O', eof: 'Shift+O' } },
     { id: 'fretUp', label: 'Increase selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl++', eof: 'Ctrl++' } },
     { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+-' } },
     { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
@@ -3302,6 +3303,7 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (ctrlShift && key === 'g') return 'customGridSnap';
     if (ctrlShift && key === 'h') return 'addHandshape';
     if (ctrlShift && key === 'i') return 'toggleIgnore';
+    if (shift && key === 'o') return 'toggleSlap';
     if (ctrlShift && key === 'o') return 'toggleTremolo';
     if (ctrlShift && key === 'p') return 'togglePop';
     if (ctrlShift && key === 'r') return 'placeMoverPhrase';
@@ -3390,6 +3392,7 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (plain && key === 'n') return 'toggleNaturalHarmonic';
     if (shift && key === 'n') return 'togglePinchHarmonic';
     if (plain && key === 'o') return 'togglePop';
+    if (shift && key === 'o') return 'toggleSlap';
     if (plain && key === 'a') return 'toggleAccent';
     if (shift && key === 't') return 'setTimeSignature';
     if (ctrl && key === 'h') return 'addHandshape';
@@ -3944,6 +3947,7 @@ function _editorRunEofCommand(cmd) {
     case 'toggleIgnore': return _editorToggleTechnique('ignore');
     case 'toggleTremolo': return _editorToggleTechnique('tremolo');
     case 'togglePop': return _editorToggleTechnique('pluck');
+    case 'toggleSlap': return _editorToggleTechnique('slap');
     case 'fretUp': return _editorAdjustSelectedFret(+1);
     case 'fretDown': return _editorAdjustSelectedFret(-1);
     case 'setAnchor': return _editorSetAnchorAtCursor();
