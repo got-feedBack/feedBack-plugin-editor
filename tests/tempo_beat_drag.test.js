@@ -116,6 +116,16 @@ t('order stays monotonic across the whole grid after an extreme drag', () => {
     }
 });
 
+t('order stays monotonic after slamming to the low clamp edge', () => {
+    const beats = GRID();
+    const bounds = _tempoBeatDragBoundsPure(beats, 2, 0.005, 4);
+    _tempoApplyDrag(beats, 2, bounds.lo);   // slam to the opposite clamp edge
+    for (let i = 1; i < beats.length; i++) {
+        assert.ok(beats[i].time > beats[i - 1].time,
+            `beats[${i}] ${beats[i].time} > beats[${i - 1}] ${beats[i - 1].time}`);
+    }
+});
+
 t('the second measure is untouched by a drag in the first', () => {
     const beats = GRID();
     _tempoApplyDrag(beats, 2, 1.3);

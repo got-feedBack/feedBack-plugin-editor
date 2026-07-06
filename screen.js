@@ -13151,11 +13151,11 @@ function _tempoBeatOnDragMove(x) {
     const dg = S.drag;
     if (!dg || dg.type !== 'tempo-beat') return;
     if (!dg.moved && Math.abs(x - dg.startX) < 3) return;
-    dg.moved = true;
     const d = dg.beatIdx;
     const orig = dg.origBeats;
     const bounds = _tempoBeatDragBoundsPure(orig, d, 0.005, S.duration);
     if (!bounds) return;
+    dg.moved = true;
     const newT = Math.max(bounds.lo, Math.min(bounds.hi, xToTime(x)));
     S.beats = orig.map(b => ({ ...b }));
     _tempoApplyDrag(S.beats, d, newT);
