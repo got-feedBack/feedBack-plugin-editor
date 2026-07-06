@@ -3233,6 +3233,12 @@ function _onMouseMoveBody(e, x, y, L) {
         return;
     }
 
+    // Tempo-map per-beat rubato drag: re-time one beat inside its measure.
+    if (S.drag.type === 'tempo-beat') {
+        _tempoBeatOnDragMove(x);
+        return;
+    }
+
     if (S.drag.type === 'select') {
         S.drag.curX = x;
         S.drag.curY = y;
@@ -3316,7 +3322,7 @@ function onMouseUp(e) {
         return;
     }
 
-    if (S.drag.type === 'tempo-sync') {
+    if (S.drag.type === 'tempo-sync' || S.drag.type === 'tempo-beat') {
         _tempoMapOnDragEnd();
         return;
     }
@@ -12724,7 +12730,7 @@ function _tempoMapHudTextPure(measureCount, width) {
     if (Number(width) < 760) {
         return `Tempo Map - ${n} measures - right-click sync point: BPM / signature`;
     }
-    return `Tempo Map - ${n} measures - drag poles to retime - right-click sync point: BPM / signature/delete - right-click grid: insert`;
+    return `Tempo Map - ${n} measures - drag poles to retime, beat ticks for rubato - right-click sync point: BPM / signature/delete - right-click grid: insert`;
 }
 // Status shown right after an audio-synced GP import. Names the Tempo Map tool
 // so a drifting chart has an obvious, discoverable fix — the #1 confusion in the
@@ -13096,6 +13102,66 @@ function _tempoSyncAtX(x, y) {
     return best;
 }
 
+// Sub-beat hit-test — the per-beat rubato drag's target. Same vertical
+// band as the poles, tighter tolerance so a pole always wins when both
+// are within reach.
+function _tempoSubBeatAtX(x, y) {
+    if (!canvas) return -1;
+    const gridBottom = canvas.height / DPR - TEMPO_HUD_H;
+    if (y < WAVEFORM_H || y > gridBottom) return -1;
+    let best = -1, bestDist = 5;
+    const beats = S.beats || [];
+    for (let i = 0; i < beats.length; i++) {
+        if (beats[i].measure > 0) continue;
+        const d = Math.abs(timeToX(beats[i].time) - x);
+        if (d < bestDist) { bestDist = d; best = i; }
+    }
+    return best;
+}
+
+/* @pure:tempo-beat-drag:start */
+// Drag bounds for an individual beat (usually a sub-beat) at index d:
+// clamped inside its measure's downbeat span with a per-gap minimum, so
+// the proportional re-space can squeeze but never collapse or reorder a
+// gap. Ends without a bounding downbeat clamp against the immediate
+// neighbor (a pickup / trailing sub-beat rigid-shifts its side instead).
+function _tempoBeatDragBoundsPure(beats, d, minGap, duration) {
+    if (!Array.isArray(beats) || d < 0 || d >= beats.length) return null;
+    const gap = Number.isFinite(minGap) && minGap > 0 ? minGap : 0.005;
+    let pdb = -1, ndb = -1;
+    for (let i = d - 1; i >= 0; i--) { if (beats[i].measure > 0) { pdb = i; break; } }
+    for (let i = d + 1; i < beats.length; i++) { if (beats[i].measure > 0) { ndb = i; break; } }
+    const lo = pdb >= 0
+        ? beats[pdb].time + gap * (d - pdb)
+        : (d > 0 ? beats[d - 1].time + gap : 0);
+    const hi = ndb >= 0
+        ? beats[ndb].time - gap * (ndb - d)
+        : (d < beats.length - 1
+            ? beats[d + 1].time - gap
+            : Math.max(beats[d].time, duration || beats[d].time));
+    return hi > lo ? { lo, hi } : null;
+}
+/* @pure:tempo-beat-drag:end */
+
+// Per-beat rubato drag — the intra-bar counterpart of the pole drag.
+// Rebuilds from the original grid each move (no compounding) and lets
+// _tempoApplyDrag re-space the neighbours proportionally around the
+// grabbed beat.
+function _tempoBeatOnDragMove(x) {
+    const dg = S.drag;
+    if (!dg || dg.type !== 'tempo-beat') return;
+    if (!dg.moved && Math.abs(x - dg.startX) < 3) return;
+    const d = dg.beatIdx;
+    const orig = dg.origBeats;
+    const bounds = _tempoBeatDragBoundsPure(orig, d, 0.005, S.duration);
+    if (!bounds) return;
+    dg.moved = true;
+    const newT = Math.max(bounds.lo, Math.min(bounds.hi, xToTime(x)));
+    S.beats = orig.map(b => ({ ...b }));
+    _tempoApplyDrag(S.beats, d, newT);
+    draw();
+}
+
 function _tempoMapOnMouseDown(e, x, y) {
     if (!canvas) return;
 
@@ -13119,6 +13185,21 @@ function _tempoMapOnMouseDown(e, x, y) {
         S.drag = {
             type: 'tempo-sync',
             beatIdx: hit,
+            startX: x,
+            origBeats: S.beats.map(b => ({ ...b })),
+            moved: false,
+        };
+        draw();
+        return;
+    }
+    // No pole under the cursor — try an individual (sub-)beat tick for a
+    // rubato drag: re-time one beat inside its measure without touching
+    // the downbeats. Essential for hand-syncing accel/rit within a bar.
+    const beatHit = _tempoSubBeatAtX(x, y);
+    if (beatHit >= 0) {
+        S.drag = {
+            type: 'tempo-beat',
+            beatIdx: beatHit,
             startX: x,
             origBeats: S.beats.map(b => ({ ...b })),
             moved: false,
@@ -13811,7 +13892,10 @@ function _tempoMapOnDragMove(x) {
 function _tempoMapOnDragEnd() {
     const dg = S.drag;
     S.drag = null;
-    if (!dg || dg.type !== 'tempo-sync') return;
+    // Finalizes both drag kinds — a moved pole ('tempo-sync') and a moved
+    // individual beat ('tempo-beat') — identically: same revert-then-exec,
+    // same equal-count invariant, one undoable TempoMapCmd.
+    if (!dg || (dg.type !== 'tempo-sync' && dg.type !== 'tempo-beat')) return;
     if (!dg.moved) { draw(); return; }  // a click-select, not a drag
     const newBeats = S.beats.map(b => ({ ...b }));
     S.beats = dg.origBeats;  // revert — TempoMapCmd.exec re-applies it
@@ -13835,7 +13919,7 @@ function _tempoMapOnDragEnd() {
 // cleared. Leaves S.drag null either way.
 function _finalizeActiveDrag() {
     if (!S.drag) return;
-    if (S.drag.type === 'tempo-sync') _tempoMapOnDragEnd();
+    if (S.drag.type === 'tempo-sync' || S.drag.type === 'tempo-beat') _tempoMapOnDragEnd();
     else if (S.drag.type === 'drum-move') _drumEditorOnDragEnd();
     // Commit an in-flight handshape create/move/resize through its own mouseup
     // so the edit lands as a history command (instead of being silently
