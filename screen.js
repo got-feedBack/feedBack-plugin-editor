@@ -3756,11 +3756,81 @@ function _editorSetAnchorAtCursor() {
     return true;
 }
 
+/* @pure:section-cmds:start */
+// Sections (S.sections = [{name, number, start_time}]) are kept sorted by
+// start_time; add/rename/delete used to mutate the array raw (push/splice/
+// direct assignment) with no undo — a stray Delete on a section was
+// unrecoverable, and Ctrl+Z after adding one rolled back the last NOTE
+// edit instead. These three command classes route those mutations through
+// EditHistory. They hold the section OBJECT by reference (the array is
+// re-sorted, so indices go stale but refs survive), so exec↔rollback and
+// redo restore S.sections exactly, sort order included. Stable sort keeps
+// equal-start_time siblings in insertion order, so ref removal is
+// unambiguous even when two sections share a time.
+
+// Insert `section` and re-sort in place; returns it.
+function _sectionsInsertSorted(section) {
+    S.sections.push(section);
+    S.sections.sort((a, b) => a.start_time - b.start_time);
+    return section;
+}
+// Index of the first section within `tol` seconds of `time`, else -1 —
+// keyed off the ARGUMENTS, never a global cursor (the section context menu
+// tests a click time against each section here).
+function _sectionNearestIndexPure(sections, time, tol) {
+    if (!Array.isArray(sections)) return -1;
+    const t = Number(time);
+    const w = Number.isFinite(tol) ? tol : 1.0;
+    for (let i = 0; i < sections.length; i++) {
+        if (Math.abs(Number(sections[i].start_time) - t) <= w) return i;
+    }
+    return -1;
+}
+
+class AddSectionCmd {
+    constructor(section) { this.section = section; }
+    exec() { _sectionsInsertSorted(this.section); }
+    rollback() {
+        const i = S.sections.indexOf(this.section);
+        if (i >= 0) S.sections.splice(i, 1);
+    }
+}
+
+class RemoveSectionCmd {
+    constructor(section) { this.section = section; this.idx = -1; }
+    exec() {
+        this.idx = S.sections.indexOf(this.section);
+        if (this.idx >= 0) S.sections.splice(this.idx, 1);
+    }
+    rollback() {
+        // Restore at the EXACT original index (splice, not push+sort), so a
+        // section restored beside an equal-start_time sibling lands back in
+        // its original order — undo LIFO guarantees the array here matches
+        // the state exec left. Fall back to a sorted insert if the section
+        // wasn't found at exec time.
+        if (this.idx >= 0) S.sections.splice(this.idx, 0, this.section);
+        else _sectionsInsertSorted(this.section);
+    }
+}
+
+class RenameSectionCmd {
+    // Name-only, matching the prior rename behavior (the stale `number`
+    // field is left as-is, not recomputed — that's unchanged, just undoable).
+    constructor(section, newName) {
+        this.section = section;
+        this.oldName = section.name;
+        this.newName = newName;
+    }
+    exec() { this.section.name = this.newName; }
+    rollback() { this.section.name = this.oldName; }
+}
+/* @pure:section-cmds:end */
+
 function _editorAddSectionAtCursor() {
     const name = 'section';
     const num = S.sections.filter(s => s.name === name).length + 1;
-    S.sections.push({ name, number: num, start_time: snapTime(S.cursorTime || 0) });
-    S.sections.sort((a, b) => a.start_time - b.start_time);
+    S.history.exec(new AddSectionCmd(
+        { name, number: num, start_time: snapTime(S.cursorTime || 0) }));
     draw();
     setStatus('Section added');
     return true;
@@ -4158,11 +4228,10 @@ function onContextMenu(e) {
 
 function showSectionMenu(cx, cy, time) {
     const menu = document.getElementById('editor-context-menu');
-    // Check if clicking near an existing section
-    let nearSection = null;
-    for (const s of S.sections) {
-        if (Math.abs(s.start_time - time) < 1.0) { nearSection = s; break; }
-    }
+    // Section within 1 s of the click, if any (shared helper — same match
+    // the commands' tests exercise).
+    const nearIdx = _sectionNearestIndexPure(S.sections, time, 1.0);
+    const nearSection = nearIdx >= 0 ? S.sections[nearIdx] : null;
 
     let html = '';
     html += `<button class="w-full text-left px-3 py-1 text-xs hover:bg-dark-500" data-action="add">Add Section Here</button>`;
@@ -4180,17 +4249,20 @@ function showSectionMenu(cx, cy, time) {
                 });
                 if (!name) return;
                 const num = S.sections.filter(s => s.name === name).length + 1;
-                S.sections.push({ name, number: num, start_time: snapTime(time) });
-                S.sections.sort((a, b) => a.start_time - b.start_time);
+                S.history.exec(new AddSectionCmd(
+                    { name, number: num, start_time: snapTime(time) }));
                 draw();
             } else if (btn.dataset.action === 'rename' && nearSection) {
                 const name = await _editorPromptText({
                     title: 'Rename Section', label: 'New name', value: nearSection.name,
                 });
-                if (name) { nearSection.name = name; draw(); }
+                if (name && name !== nearSection.name) {
+                    S.history.exec(new RenameSectionCmd(nearSection, name));
+                    draw();
+                }
             } else if (btn.dataset.action === 'delete' && nearSection) {
-                const i = S.sections.indexOf(nearSection);
-                if (i >= 0) { S.sections.splice(i, 1); draw(); }
+                S.history.exec(new RemoveSectionCmd(nearSection));
+                draw();
             }
         };
     });
