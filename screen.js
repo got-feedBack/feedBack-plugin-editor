@@ -2261,6 +2261,40 @@ class MoveToStringCmd {
 }
 
 // Build the MoveToStringCmd payload and execute it for all selected notes.
+function _getMoveStringSameFretResult(noteIdx, direction) {
+    if (isKeysMode()) return null;
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return null;
+    const n = notes()[noteIdx];
+    if (!n) return null;
+    const targetString = n.string + direction;
+    if (targetString < 0 || targetString >= _stringCountFor(arr)) return null;
+    return { targetString, targetFret: n.fret };
+}
+
+function _execMoveStringSameFret(direction) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const nn = notes();
+    const moves = [];
+    for (const idx of idxs) {
+        const n = nn[idx];
+        const result = _getMoveStringSameFretResult(idx, direction);
+        if (!n || !result) { setStatus('Selection cannot move to that string.'); return true; }
+        moves.push({
+            index: idx,
+            oldString: n.string,
+            oldFret: n.fret,
+            newString: result.targetString,
+            newFret: result.targetFret,
+        });
+    }
+    if (!moves.length) return true;
+    S.history.exec(new MoveToStringCmd(moves));
+    draw();
+    _renderInspector();
+    return true;
+}
 function _execMoveString(direction) {
     const nn = notes();
     const moves = [];
@@ -3132,8 +3166,10 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'noteMenu', label: 'Open note edit menu', group: 'Notes', status: 'ready', keys: { feedback: '', eof: 'N' } },
     { id: 'bend', label: 'Edit bend', group: 'Notes', status: 'ready', keys: { feedback: 'B', eof: 'Ctrl+B' } },
     { id: 'unpitchedSlide', label: 'Edit unpitched slide', group: 'Notes', status: 'ready', keys: { feedback: 'U', eof: 'Ctrl+U' } },
-    { id: 'transposeStringUp', label: 'Move selection up one string', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Up', eof: 'Shift+Up' } },
-    { id: 'transposeStringDown', label: 'Move selection down one string', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Down', eof: 'Shift+Down' } },
+    { id: 'moveStringUp', label: 'Move selection up one string', group: 'Notes', status: 'ready', keys: { feedback: 'Up', eof: 'Up' } },
+    { id: 'moveStringDown', label: 'Move selection down one string', group: 'Notes', status: 'ready', keys: { feedback: 'Down', eof: 'Down' } },
+    { id: 'transposeStringUp', label: 'Move selection up preserving pitch', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Up', eof: 'Shift+Up' } },
+    { id: 'transposeStringDown', label: 'Move selection down preserving pitch', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Down', eof: 'Shift+Down' } },
     { id: 'slideUp', label: 'Pitched slide up', group: 'Notes', status: 'planned', keys: { feedback: 'Ctrl+Up', eof: 'Ctrl+Up' } },
     { id: 'slideDown', label: 'Pitched slide down', group: 'Notes', status: 'planned', keys: { feedback: 'Ctrl+Down', eof: 'Ctrl+Down' } },
     { id: 'toggleHammerOn', label: 'Toggle hammer-on', group: 'Techniques', status: 'ready', keys: { feedback: 'H', eof: 'H' } },
@@ -3272,6 +3308,8 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (ctrlShift && key === 't') return 'addToneChange';
     if (ctrlShift && e.key === 'ArrowUp') return 'slideUp';
     if (ctrlShift && e.key === 'ArrowDown') return 'slideDown';
+    if (plain && e.key === 'ArrowUp') return 'moveStringUp';
+    if (plain && e.key === 'ArrowDown') return 'moveStringDown';
     if (shift && e.key === 'ArrowUp') return 'transposeStringUp';
     if (shift && e.key === 'ArrowDown') return 'transposeStringDown';
     if (ctrl && e.key === 'ArrowUp') return 'slideUp';
@@ -3338,6 +3376,8 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (shift && key === ')') return 'setFretTen';
     if (plain && key === 'b') return 'bend';
     if (plain && key === 'u') return 'unpitchedSlide';
+    if (plain && e.key === 'ArrowUp') return 'moveStringUp';
+    if (plain && e.key === 'ArrowDown') return 'moveStringDown';
     if (shift && e.key === 'ArrowUp') return 'transposeStringUp';
     if (shift && e.key === 'ArrowDown') return 'transposeStringDown';
     if (plain && key === 'h') return 'toggleHammerOn';
@@ -3883,6 +3923,8 @@ function _editorRunEofCommand(cmd) {
     case 'noteMenu': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) showContextMenu(window.innerWidth / 2, window.innerHeight / 2, idxs[0]); else setStatus('Select a note first'); return true; }
     case 'bend': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptBend(idxs[0]); else setStatus('Select a note first'); return true; }
     case 'unpitchedSlide': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptSlideUnpitch(idxs[0]); else setStatus('Select a note first'); return true; }
+    case 'moveStringUp': return _execMoveStringSameFret(+1);
+    case 'moveStringDown': return _execMoveStringSameFret(-1);
     case 'slideUp': return _editorUnsupportedEofCommand('Pitched slide shortcut');
     case 'slideDown': return _editorUnsupportedEofCommand('Pitched slide shortcut');
     case 'transposeStringUp': _execMoveString(+1); return true;
