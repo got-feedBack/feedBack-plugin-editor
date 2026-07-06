@@ -1798,11 +1798,45 @@ function hitNoteEdge(mx, my) {
 // ════════════════════════════════════════════════════════════════════
 
 /* @pure:edit-history:start */
+// Cap the undo stack so a marathon session can't grow memory without bound —
+// the stack held every command since the last save/load. Oldest entries drop
+// first; 500 comfortably exceeds any realistic between-saves editing run.
+const MAX_UNDO = 500;
 class EditHistory {
     constructor() { this.undo = []; this.redo = []; }
-    exec(cmd) { cmd.exec(); this.undo.push(cmd); this.redo = []; this._afterEdit(); this._ui(); }
-    doUndo() { if (!this.undo.length) return; const c = this.undo.pop(); c.rollback(); this.redo.push(c); this._afterEdit(); this._ui(); draw(); updateStatus(); }
-    doRedo() { if (!this.redo.length) return; const c = this.redo.pop(); c.exec(); this.undo.push(c); this._afterEdit(); this._ui(); draw(); updateStatus(); }
+    // Tag each command with the arrangement it was executed against: most
+    // commands resolve their target through the notes()/chords() accessors at
+    // rollback time, so an undo issued after switching arrangements would
+    // silently mutate the WRONG arrangement's notes. Commands that edit
+    // song-level state (drum tab, tempo grid) opt out via `songScope = true`.
+    // The `typeof` guards keep this block browser-free for the test harness.
+    exec(cmd) {
+        cmd._arrIdx = (cmd.songScope === true) ? -1
+            : (typeof S !== 'undefined' ? (S.currentArr ?? -1) : -1);
+        cmd.exec();
+        this.undo.push(cmd);
+        if (this.undo.length > MAX_UNDO) this.undo.shift();
+        this.redo = [];
+        this._afterEdit();
+        this._ui();
+    }
+    doUndo() {
+        if (!this.undo.length) return;
+        const c = this.undo[this.undo.length - 1];
+        // Peek-then-pop: if the command belongs to another arrangement,
+        // _historyEnsureArr switches to it (or refuses when it's gone) BEFORE
+        // the command leaves the stack, so a refused undo loses nothing.
+        if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
+        this.undo.pop(); c.rollback(); this.redo.push(c);
+        this._afterEdit(); this._ui(); draw(); updateStatus();
+    }
+    doRedo() {
+        if (!this.redo.length) return;
+        const c = this.redo[this.redo.length - 1];
+        if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
+        this.redo.pop(); c.exec(); this.undo.push(c);
+        this._afterEdit(); this._ui(); draw(); updateStatus();
+    }
     // #18: drop the whole stack when the model is rebuilt under us (the save /
     // build flatten+reconstructChords round-trip renumbers arr.notes, so every
     // index-based command would now roll back into the wrong note). Reuse the
@@ -1824,6 +1858,24 @@ class EditHistory {
     }
 }
 /* @pure:edit-history:end */
+
+// Route undo/redo to the arrangement a command was executed against (see
+// EditHistory.exec's tagging). Switches the active arrangement when needed so
+// index-based rollbacks land in the right notes array; returns false — leaving
+// the stacks untouched — when that arrangement no longer exists.
+function _historyEnsureArr(cmd) {
+    const idx = (cmd && typeof cmd._arrIdx === 'number') ? cmd._arrIdx : -1;
+    if (idx < 0 || idx === S.currentArr) return true;
+    if (!S.arrangements || !S.arrangements[idx]) {
+        setStatus('Undo target arrangement no longer exists');
+        return false;
+    }
+    window.editorSelectArrangement(idx);
+    const el = document.getElementById('editor-arrangement');
+    if (el) el.value = String(idx);
+    setStatus(`Switched to "${S.arrangements[idx].name}" to apply undo/redo`);
+    return true;
+}
 
 class MoveNoteCmd {
     constructor(indices, dtimes, dstrings, dfrets) {
@@ -3009,9 +3061,9 @@ function onMouseUp(e) {
         return;
     }
 
-    // Drum-edit drag finalise: sort hits, remap selection indices, clear
-    // S.drag. No undo command — out of scope for the initial drum editor
-    // PR (would need a DrumMoveCmd that captures origTimes/origPieces).
+    // Drum-edit drag finalise: routes the completed move through
+    // MoveDrumHitsCmd (revert-then-exec), which owns the sort + selection
+    // remap, so drum moves undo/redo like note moves.
     if (S.drag.type === 'drum-move') {
         _drumEditorOnDragEnd();
         return;
@@ -4304,8 +4356,8 @@ function onKeyDown(e) {
                 return;
             }
         }
-        // Drum-edit mode: delete selected drum hits in place. No undo
-        // (would need a sibling DrumEditCmd class — out of scope for this PR).
+        // Drum-edit mode: delete selected drum hits via DeleteDrumHitsCmd,
+        // so the delete undoes/redoes like the note-delete path below.
         // Guard against focus being inside a form control (mirrors the note-
         // delete path below) so typing in a text input doesn't delete hits.
         if (S.drumEditMode && S.drumSel.size && S.drumTab &&
@@ -9937,6 +9989,12 @@ window.editorRemoveArrangement = async () => {
 
     // Then update frontend state
     S.arrangements.splice(removeIdx, 1);
+    // The splice renumbers every arrangement after removeIdx, so history
+    // commands tagged with the old indices (and the note indices inside them)
+    // would undo into the wrong arrangement. Same rationale as the
+    // reconstructChords() reset (#18): drop the stack when the model shifts
+    // under it.
+    if (S.history) S.history.reset();
     S.currentArr = Math.min(removeIdx, S.arrangements.length - 1);
     S.sel.clear();
     flattenChords();
@@ -13038,6 +13096,131 @@ class TempoMapCmd {
     }
 }
 
+/* @pure:drum-cmds:start */
+// Undo commands for the drum editor — the drum siblings of the note command
+// classes above (drum edits previously bypassed EditHistory entirely). All
+// four hold HIT OBJECT REFERENCES, never indices: the hits array is re-sorted
+// after adds/moves and REPLACED by delete's filter(), so captured indices go
+// stale, but refs survive both. Every exec()/rollback() marks S.drumTabDirty
+// so a save issued after an undo persists the reverted state. All are
+// `songScope` — drum_tab is song-level, not per-arrangement — so undo never
+// needs to switch the active arrangement for them.
+
+// Sort hits by time and rebind S.drumSel to the given refs' fresh indices
+// (S.drumSel is index-based, so every reorder must remap it or the selection
+// silently jumps to different hits).
+function _drumSortAndRemapSel(selectRefs) {
+    const hits = S.drumTab.hits;
+    hits.sort((a, b) => a.t - b.t);
+    S.drumSel = new Set();
+    if (selectRefs && selectRefs.length) {
+        const want = new Set(selectRefs);
+        for (let i = 0; i < hits.length; i++) {
+            if (want.has(hits[i])) S.drumSel.add(i);
+        }
+    }
+}
+
+// Refs for the currently selected hits — snapshot BEFORE a mutation that
+// reorders the array, then hand back to _drumSortAndRemapSel to preserve the
+// user's selection across the reorder.
+function _drumSelectedRefs() {
+    if (!Array.isArray(S.drumTab.hits)) return [];
+    return [...S.drumSel].map(i => S.drumTab.hits[i]).filter(Boolean);
+}
+
+class AddDrumHitCmd {
+    constructor(hit) { this.hit = hit; this.songScope = true; }
+    exec() {
+        if (!Array.isArray(S.drumTab.hits)) S.drumTab.hits = [];
+        const keepSel = _drumSelectedRefs();
+        S.drumTab.hits.push(this.hit);
+        _drumSortAndRemapSel(keepSel);
+        S.drumTabDirty = true;
+        updateArrangementSelector();
+    }
+    rollback() {
+        const keepSel = _drumSelectedRefs().filter(h => h !== this.hit);
+        const i = S.drumTab.hits.indexOf(this.hit);
+        if (i >= 0) S.drumTab.hits.splice(i, 1);
+        _drumSortAndRemapSel(keepSel);
+        S.drumTabDirty = true;
+        updateArrangementSelector();
+    }
+}
+
+class DeleteDrumHitsCmd {
+    constructor(hitRefs) { this.hits = [...hitRefs]; this.songScope = true; }
+    exec() {
+        const drop = new Set(this.hits);
+        S.drumTab.hits = S.drumTab.hits.filter(h => !drop.has(h));
+        S.drumSel = new Set();
+        S.drumTabDirty = true;
+        updateArrangementSelector();
+    }
+    rollback() {
+        S.drumTab.hits.push(...this.hits);
+        // Reselect the restored hits so a follow-up action (re-delete,
+        // articulation toggle) has the same selection the delete consumed.
+        _drumSortAndRemapSel(this.hits);
+        S.drumTabDirty = true;
+        updateArrangementSelector();
+    }
+}
+
+class MoveDrumHitsCmd {
+    // Carries before/after value pairs; exec() SETS the target values rather
+    // than applying a delta, so the drag path can revert-then-exec exactly
+    // like the note-drag MoveNoteCmd finalize (idempotent under redo).
+    constructor(hitRefs, origTimes, origPieces, newTimes, newPieces) {
+        this.hits = [...hitRefs];
+        this.origTimes = origTimes;
+        this.origPieces = origPieces;
+        this.newTimes = newTimes;
+        this.newPieces = newPieces;
+        this.songScope = true;
+    }
+    _apply(times, pieces) {
+        for (let k = 0; k < this.hits.length; k++) {
+            this.hits[k].t = times[k];
+            this.hits[k].p = pieces[k];
+        }
+        // Keep the moved hits selected through the resort (supersedes the old
+        // sentinel-Symbol remap that lived in _drumEditorOnDragEnd).
+        _drumSortAndRemapSel(this.hits);
+        S.drumTabDirty = true;
+    }
+    exec() { this._apply(this.newTimes, this.newPieces); }
+    rollback() { this._apply(this.origTimes, this.origPieces); }
+}
+
+class ToggleDrumArticulationCmd {
+    // g/f/k toggles are involutive per hit, so rollback = exec and mixed
+    // initial states round-trip exactly. The choke cymbal-only gate is applied
+    // at CONSTRUCTION (callers pass only the refs the toggle really touches),
+    // keeping exec/rollback perfectly symmetric.
+    constructor(hitRefs, field) {
+        this.hits = [...hitRefs];
+        this.field = field;
+        this.songScope = true;
+    }
+    _toggle() {
+        for (const h of this.hits) {
+            if (this.field === 'k') {
+                if (h.k) delete h.k; else h.k = 0.08;
+            } else if (h[this.field]) {
+                delete h[this.field];
+            } else {
+                h[this.field] = true;
+            }
+        }
+        S.drumTabDirty = true;
+    }
+    exec() { this._toggle(); }
+    rollback() { this._toggle(); }
+}
+/* @pure:drum-cmds:end */
+
 // Add a hit at the snap-aligned time on the lane under (x, y). Returns
 // true if added (false if click was outside the lane grid).
 function _drumEditorAddHit(x, y) {
@@ -13052,12 +13235,9 @@ function _drumEditorAddHit(x, y) {
     // Clamp after snapping: when the first beat is offset from 0, snapTime
     // can round backward past zero and produce a negative timestamp.
     let t = Math.max(0, snapTime(Math.max(0, rawT)));
-    if (!Array.isArray(S.drumTab.hits)) S.drumTab.hits = [];
-    S.drumTab.hits.push({ t: Math.round(t * 1000) / 1000, p: piece, v: 100 });
-    S.drumTab.hits.sort((a, b) => a.t - b.t);
-    S.drumTabDirty = true;
-    // Keep the ⟳ Drums (N) toolbar count in sync after adding a hit.
-    updateArrangementSelector();
+    // Sort, dirty flag, and the ⟳ Drums (N) toolbar count all live in the
+    // command's exec() so undo/redo replay them identically.
+    S.history.exec(new AddDrumHitCmd({ t: Math.round(t * 1000) / 1000, p: piece, v: 100 }));
     return true;
 }
 
@@ -13191,23 +13371,31 @@ function _drumEditorOnDragMove(x, y) {
 // when S.drag.type === 'drum-move'.
 function _drumEditorOnDragEnd() {
     if (!S.drag || S.drag.type !== 'drum-move' || !S.drumTab) return;
-    const moved = !!S.drag.moved;
-    if (moved) {
-        S.drumTabDirty = true;
+    if (S.drag.moved && Array.isArray(S.drumTab.hits)) {
+        // The drag applied positions live; revert each hit to its origin and
+        // let the command's exec() re-apply the move — the same finalize
+        // pattern as the note-drag MoveNoteCmd path, so undo/redo replay the
+        // exact drag result (sort + selection remap included).
         const hits = S.drumTab.hits;
-        // Tag selected hits with a transient marker so we can recover their
-        // indices after the sort.
-        const sentinel = Symbol('drumSel');
-        for (const idx of S.drag.indices) {
-            if (hits[idx]) hits[idx][sentinel] = true;
+        const refs = [], origT = [], origP = [], newT = [], newP = [];
+        for (let k = 0; k < S.drag.indices.length; k++) {
+            const h = hits[S.drag.indices[k]];
+            if (!h) continue;
+            refs.push(h);
+            origT.push(S.drag.origTimes[k]);
+            origP.push(S.drag.origPieces[k]);
+            newT.push(h.t);
+            newP.push(h.p);
+            h.t = S.drag.origTimes[k];
+            h.p = S.drag.origPieces[k];
         }
-        hits.sort((a, b) => a.t - b.t);
-        S.drumSel = new Set();
-        for (let i = 0; i < hits.length; i++) {
-            if (hits[i][sentinel]) {
-                S.drumSel.add(i);
-                delete hits[i][sentinel];
-            }
+        // Skip the command when the snapped delta was a no-op (sub-grid drag
+        // that rounded back to the start) — no state changed, so pushing an
+        // empty command would only pollute the undo stack.
+        const changed = newT.some((t, k) => t !== origT[k])
+            || newP.some((p, k) => p !== origP[k]);
+        if (refs.length && changed) {
+            S.history.exec(new MoveDrumHitsCmd(refs, origT, origP, newT, newP));
         }
     }
     S.drag = null;
@@ -13263,32 +13451,27 @@ function _drumEditorOnSelectEnd() {
 function _drumEditorDeleteSelection() {
     if (!S.drumTab || !S.drumSel.size) return;
     if (!Array.isArray(S.drumTab.hits)) return;
-    const drop = S.drumSel;
-    S.drumTab.hits = S.drumTab.hits.filter((_, i) => !drop.has(i));
-    S.drumSel = new Set();
-    S.drumTabDirty = true;
-    // Keep the ⟳ Drums (N) toolbar count in sync after deleting hits.
-    updateArrangementSelector();
+    const refs = _drumSelectedRefs();
+    if (!refs.length) return;
+    S.history.exec(new DeleteDrumHitsCmd(refs));
 }
 
 function _drumEditorToggleArticulation(kind) {
     if (!S.drumTab) return;
     // Guard a malformed/older drum_tab with missing/non-array `hits`.
     if (!Array.isArray(S.drumTab.hits)) return;
-    if (S.drumSel.size) S.drumTabDirty = true;
     const field = kind === 'g' ? 'g' : kind === 'f' ? 'f' : 'k';
-    for (const idx of S.drumSel) {
-        const h = S.drumTab.hits[idx];
-        if (!h) continue;
-        if (field === 'k') {
-            // Choke is only meaningful on cymbal pieces; ignored on drums.
+    let refs = _drumSelectedRefs();
+    if (field === 'k') {
+        // Choke is only meaningful on cymbal pieces; filter here so the
+        // command holds exactly the hits it will toggle (symmetric undo).
+        refs = refs.filter(h => {
             const meta = DRUM_PIECE_META[h.p];
-            if (!meta || meta.cat !== 'cymbal') continue;
-            if (h.k) delete h.k; else h.k = 0.08;
-        } else {
-            if (h[field]) delete h[field]; else h[field] = true;
-        }
+            return meta && meta.cat === 'cymbal';
+        });
     }
+    if (!refs.length) return;
+    S.history.exec(new ToggleDrumArticulationCmd(refs, field));
 }
 
 // ── Drum-edit toggle button (injected next to the +Drums button) ─────
