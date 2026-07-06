@@ -1265,7 +1265,35 @@ function reconstructChords() {
 // Drawing
 // ════════════════════════════════════════════════════════════════════
 
+/* @pure:draw-coalesce:start */
+// draw() is called imperatively from ~150 sites, and each call used to
+// repaint the whole canvas immediately — so a single mousemove that hit
+// several state updates paid several full repaints. Coalesce them: draw()
+// now marks the frame dirty and schedules ONE drawNow() on the next
+// animation frame; every existing call site gets batching for free. Code
+// that genuinely needs the paint this instant (the once-per-frame playback
+// tick, which already runs inside its own rAF) calls drawNow() directly.
+let _drawQueued = false;
+let _drawRafId = 0;
 function draw() {
+    if (_drawQueued) return;
+    _drawQueued = true;
+    _drawRafId = requestAnimationFrame(_drawFlush);
+}
+function _drawFlush() {
+    _drawRafId = 0;
+    _drawQueued = false;
+    drawNow();
+}
+// Cancel a coalesced repaint that hasn't flushed yet (used by the boot
+// teardown so a torn-down injection can't paint on a stale frame).
+function _cancelPendingDraw() {
+    if (_drawRafId) { cancelAnimationFrame(_drawRafId); _drawRafId = 0; }
+    _drawQueued = false;
+}
+/* @pure:draw-coalesce:end */
+
+function drawNow() {
     if (!canvas) return;
     // Keep the loop strip (DOM, independent of the canvas render) in sync for
     // EVERY mode — drum-edit and tempo-map both return early below, so rendering
@@ -4951,7 +4979,9 @@ function playbackTick() {
     if (loopRestart !== null) {
         _restartPlaybackAt(loopRestart);
         updateTimeDisplay();
-        draw();
+        // playbackTick already runs once per animation frame — paint
+        // synchronously rather than queueing a second rAF via draw().
+        drawNow();
         rafId = requestAnimationFrame(playbackTick);
         return;
     }
@@ -4966,7 +4996,7 @@ function playbackTick() {
         }
         S.cursorTime = 0;
         updateTimeDisplay(); // reflect the reset immediately before returning
-        draw();
+        drawNow();
         return; // stopPlayback() already cancelled rafId; don't re-schedule.
     }
 
@@ -4978,7 +5008,7 @@ function playbackTick() {
     }
 
     updateTimeDisplay();
-    draw();
+    drawNow();
     rafId = requestAnimationFrame(playbackTick);
 }
 
