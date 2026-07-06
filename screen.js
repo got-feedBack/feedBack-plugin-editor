@@ -455,6 +455,46 @@ function _loopPlaybackRestartTimePure(cursorTime, region, enabled, duration) {
     if (!Number.isFinite(t)) return null;
     return t >= r.endTime - 0.001 ? r.startTime : null;
 }
+
+// ── Loop snap modes ──────────────────────────────────────────────────
+// The loop region supports three edit modes (D16): 'bar' = whole-downbeat
+// spans (the original behavior), 'grid' = edges snapped by snapFn (the
+// editor's subdivision snap — which itself returns raw time when snapping
+// is disabled), 'free' = unsnapped. Bar mode silently degrades to free when
+// the chart has no downbeats, so an un-gridded drifting-tempo song can
+// still loop. Regions carry `mode` so later grid edits relock bar/grid
+// loops but never move a freely drawn one (D17).
+
+function _loopRegionForDragPure(mode, t0, t1, downbeats, duration, snapFn) {
+    let region;
+    if (mode === 'bar' && Array.isArray(downbeats) && downbeats.length) {
+        region = _barSpanForTimesPure(downbeats, duration, t0, t1);
+    } else {
+        const snap = (mode === 'grid' && typeof snapFn === 'function') ? snapFn : (t => t);
+        region = _normalizeLoopRegionPure(
+            { startTime: snap(Math.min(t0, t1)), endTime: snap(Math.max(t0, t1)) },
+            duration);
+    }
+    if (region) region.mode = mode;
+    return region;
+}
+
+function _loopEdgeAdjustPure(mode, region, edge, rawTime, downbeats, duration, snapFn) {
+    if (!region) return region;
+    let next;
+    if (mode === 'bar' && Array.isArray(downbeats) && downbeats.length) {
+        next = _adjustBarSelEdgePure(region, edge, rawTime, downbeats, duration);
+    } else {
+        const snap = (mode === 'grid' && typeof snapFn === 'function') ? snapFn : (t => t);
+        const t = snap(rawTime);
+        const moved = edge === 'start'
+            ? { startTime: Math.min(t, region.endTime - 0.001), endTime: region.endTime }
+            : { startTime: region.startTime, endTime: Math.max(t, region.startTime + 0.001) };
+        next = _normalizeLoopRegionPure(moved, duration) || region;
+    }
+    if (next) next.mode = mode;
+    return next;
+}
 /* @pure:loop-region:end */
 
 // Downbeat times in ascending order, from the song-wide beat grid.
@@ -523,9 +563,14 @@ function _renderLoopStrip() {
     const label = document.getElementById('editor-loop-strip-label');
     if (!root || !empty || !sel || !clear || !label || !canvas) return;
     const beatsReady = _downbeatTimes().length > 0;
-    root.classList.toggle('opacity-60', !beatsReady);
-    empty.textContent = beatsReady ? 'Drag to set loop region' : 'No bar grid available';
-    if (!S.barSel || !beatsReady) {
+    // Never dim or disable the strip: free-mode loops work without a bar
+    // grid, so an un-gridded song can loop while its tempo map is authored.
+    root.classList.remove('opacity-60');
+    empty.textContent = beatsReady
+        ? 'Drag to set loop region'
+        : 'Drag to set loop (free — no bar grid yet)';
+    _refreshLoopModeButtons();
+    if (!S.barSel) {
         sel.classList.add('hidden');
         clear.classList.add('hidden');
         empty.classList.remove('hidden');
@@ -543,7 +588,12 @@ function _renderLoopStrip() {
     const clampedRight = Math.max(0, Math.min(100, right));
     sel.style.left = clampedLeft + '%';
     sel.style.width = Math.max(0, clampedRight - clampedLeft) + '%';
-    label.textContent = _regionMeasureLabel(S.barSel) + '  ' + _fmtLoopTime(S.barSel.startTime) + '–' + _fmtLoopTime(S.barSel.endTime);
+    // "Bars X–Y" only describes a whole-bar span honestly — grid/free
+    // regions get the plain time range instead of a misleading bar label.
+    const barLabelOk = (S.barSel.mode === 'bar' || S.barSel.mode === undefined)
+        && _downbeatTimes().length > 0;
+    label.textContent = (barLabelOk ? _regionMeasureLabel(S.barSel) + '  ' : '')
+        + _fmtLoopTime(S.barSel.startTime) + '–' + _fmtLoopTime(S.barSel.endTime);
     sel.classList.toggle('ring-2', !!S.loopEnabled);
     sel.classList.toggle('ring-accent-light', !!S.loopEnabled);
     _updateLoopRegionControls();
@@ -555,6 +605,70 @@ function _clearBarSelection() {
     _updateLoopRegionControls();
     _updateLoopIn3DBtn();
     draw();
+}
+
+// ── Loop snap-mode preference (editor pref, never the feedpak) ───────
+let _loopSnapModePref = (() => {
+    try {
+        const m = localStorage.getItem('editorLoopSnapMode');
+        return (m === 'grid' || m === 'free') ? m : 'bar';
+    } catch (_) { return 'bar'; }
+})();
+
+// Effective mode for a live edit: Shift = temporary Free (the universal
+// bypass-snap idiom); no downbeats = Free is the only honest mode.
+function _loopLiveMode(shiftKey) {
+    if (shiftKey) return 'free';
+    if (!_downbeatTimes().length) return 'free';
+    return _loopSnapModePref;
+}
+
+window.editorSetLoopSnapMode = (mode) => {
+    if (mode !== 'bar' && mode !== 'grid' && mode !== 'free') return;
+    _loopSnapModePref = mode;
+    try { localStorage.setItem('editorLoopSnapMode', mode); } catch (_) {}
+    _refreshLoopModeButtons();
+    setStatus(mode === 'bar' ? 'Loop snaps to whole bars'
+        : mode === 'grid' ? 'Loop snaps to the current grid subdivision'
+        : 'Loop edges are free — no snapping (hold Shift for this in any mode)');
+};
+
+function _refreshLoopModeButtons() {
+    const group = document.getElementById('editor-loop-strip-modes');
+    if (!group) return;
+    const gridless = !_downbeatTimes().length;
+    for (const btn of group.querySelectorAll('button[data-loop-mode]')) {
+        const mode = btn.dataset.loopMode;
+        const active = gridless ? mode === 'free' : mode === _loopSnapModePref;
+        btn.classList.toggle('bg-accent', active);
+        btn.classList.toggle('text-white', active);
+        btn.classList.toggle('text-gray-400', !active);
+        // Bar/Grid need a beat grid; until one exists Free is forced.
+        const disabled = gridless && mode !== 'free';
+        btn.disabled = disabled;
+        btn.classList.toggle('opacity-40', disabled);
+        btn.title = disabled ? 'Needs a bar grid — set up the tempo map first' : btn.dataset.loopTitle || '';
+    }
+}
+
+// Relock the loop region after the beat grid changes underneath it (D17):
+// bar/grid regions re-snap to the NEW grid per their mode; freely drawn
+// regions are absolute seconds and never move.
+function _loopRelockAfterGridChange() {
+    const r = S.barSel;
+    if (!r || r.mode === 'free') return;
+    const mode = r.mode === 'grid' ? 'grid' : 'bar';
+    // Bar spans use "downbeat strictly AFTER the input" for the end edge, so
+    // feeding the region's own end back in verbatim would grow it by a bar
+    // whenever that end lands exactly on a new downbeat — pull it in a hair.
+    const endProbe = mode === 'bar'
+        ? Math.max(r.startTime, r.endTime - 0.01) : r.endTime;
+    const next = _loopRegionForDragPure(
+        mode, r.startTime, endProbe, _downbeatTimes(),
+        S.duration || r.endTime, snapTime);
+    if (next) S.barSel = next;
+    _renderLoopStrip();
+    _updateLoopIn3DBtn();
 }
 
 function _selectedLoopRegion() {
@@ -593,10 +707,13 @@ function _setLoopRegionEnabled(enabled) {
 
 window.editorToggleLoopRegion = () => _setLoopRegionEnabled(!S.loopEnabled);
 function _loopStripOnMouseDown(e) {
-    if (!canvas || !S.beats.length) return;
+    // Note: no beat-grid gate — free-mode loops must work on a chart with
+    // zero downbeats (the starting state of every drifting-tempo song).
+    if (!canvas) return;
     const track = document.getElementById('editor-loop-strip-track');
     if (!track || !track.contains(e.target)) return;
     if (e.target && e.target.id === 'editor-loop-strip-clear') return;
+    if (e.target && e.target.closest && e.target.closest('#editor-loop-strip-modes')) return;
     const region = S.barSel;
     const rawTime = _loopStripTimeFromClientX(e.clientX);
     if (region) {
@@ -612,7 +729,9 @@ function _loopStripOnMouseDown(e) {
         }
     }
     S.drag = { type: 'loopstrip', mode: 'create', startTime: rawTime };
-    S.barSel = _barSpanForTimes(rawTime, rawTime);
+    S.barSel = _loopRegionForDragPure(
+        _loopLiveMode(e.shiftKey), rawTime, rawTime,
+        _downbeatTimes(), S.duration || rawTime, snapTime);
     _updateLoopIn3DBtn();
     draw();
     e.preventDefault();
@@ -622,12 +741,18 @@ function _loopStripOnMouseMove(e) {
     if (!S.drag || S.drag.type !== 'loopstrip') return false;
     const rawTime = _loopStripTimeFromClientX(e.clientX);
     const downbeats = _downbeatTimes();
+    // Mode is resolved live so pressing/releasing Shift mid-drag flips
+    // between snapped and free without restarting the gesture.
+    const mode = _loopLiveMode(e.shiftKey);
     if (S.drag.mode === 'create') {
-        S.barSel = _barSpanForTimes(S.drag.startTime, rawTime);
+        S.barSel = _loopRegionForDragPure(
+            mode, S.drag.startTime, rawTime, downbeats, S.duration || rawTime, snapTime);
     } else if (S.drag.mode === 'start' && S.barSel) {
-        S.barSel = _adjustBarSelEdgePure(S.barSel, 'start', rawTime, downbeats, S.duration || rawTime);
+        S.barSel = _loopEdgeAdjustPure(
+            mode, S.barSel, 'start', rawTime, downbeats, S.duration || rawTime, snapTime);
     } else if (S.drag.mode === 'end' && S.barSel) {
-        S.barSel = _adjustBarSelEdgePure(S.barSel, 'end', rawTime, downbeats, S.duration || rawTime);
+        S.barSel = _loopEdgeAdjustPure(
+            mode, S.barSel, 'end', rawTime, downbeats, S.duration || rawTime, snapTime);
     }
     _updateLoopIn3DBtn();
     draw();
@@ -7196,7 +7321,7 @@ window.editorToggleTech = (idx, tech) => {
 // already know how to do) and hit the button. Returns null when neither
 // exists.
 function _effectiveLoopRegion() {
-    if (S.barSel) return { startTime: S.barSel.startTime, endTime: S.barSel.endTime };
+    if (S.barSel) return { startTime: S.barSel.startTime, endTime: S.barSel.endTime, mode: S.barSel.mode };
     const sel = _selectedNotes();
     if (sel.length) {
         let lo = Infinity, hi = -Infinity;
@@ -7204,7 +7329,12 @@ function _effectiveLoopRegion() {
             lo = Math.min(lo, n.time);
             hi = Math.max(hi, n.time + (n.sustain || 0));
         }
-        if (Number.isFinite(lo) && Number.isFinite(hi)) return _barSpanForTimes(lo, hi);
+        if (Number.isFinite(lo) && Number.isFinite(hi)) {
+            // A note-selection fallback is a whole-bar span, so tag it 'bar'.
+            const span = _barSpanForTimes(lo, hi);
+            if (span) span.mode = 'bar';
+            return span;
+        }
     }
     return null;
 }
@@ -7214,7 +7344,7 @@ function _resolvePendingViewStatePure(pv, fallbackZoom, viewWidthPx, labelW) {
     const nextZoom = (typeof pv.zoom === 'number' && pv.zoom > 0) ? pv.zoom : fallbackZoom;
     const out = {
         returnToHighway: !!pv.returnToHighway,
-        barSel: pv.barSel ? { startTime: pv.barSel.startTime, endTime: pv.barSel.endTime } : null,
+        barSel: pv.barSel ? { startTime: pv.barSel.startTime, endTime: pv.barSel.endTime, mode: pv.barSel.mode } : null,
         zoom: nextZoom,
         cursorTime: typeof pv.cursorTime === 'number'
             ? pv.cursorTime
@@ -7265,8 +7395,8 @@ window.editorLoopIn3D = async () => {
     }
     // Pin the resolved region as the bar selection so it's highlighted and
     // carried in the return context.
-    S.barSel = { startTime: region.startTime, endTime: region.endTime };
-    const sel = { startTime: region.startTime, endTime: region.endTime };
+    S.barSel = { startTime: region.startTime, endTime: region.endTime, mode: region.mode };
+    const sel = { startTime: region.startTime, endTime: region.endTime, mode: region.mode };
     // Persist edits in place so the highway streams the latest chart. Uses
     // the same save path as the Save button (in-place sloppak write, not the
     // heavy create-mode build).
@@ -13135,9 +13265,31 @@ class TempoGridCmd {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
         this.label = label || 'grid';
+        // Snapshot of the loop selection captured on first exec so rollback can
+        // restore it verbatim (see rollback).
+        this.beforeBarSel = undefined;
     }
-    exec() { S.beats = this.newBeats.map(b => ({ ...b })); }
-    rollback() { S.beats = this.oldBeats.map(b => ({ ...b })); }
+    exec() {
+        // Snapshot the pre-edit loop selection BEFORE relocking. Relock
+        // re-derives S.barSel from the NEW grid and is lossy / not self-inverse,
+        // so replaying it on rollback would MOVE the loop instead of restoring
+        // it. Forward relock stays here so a live grid edit still re-snaps the
+        // loop onto the new grid.
+        if (this.beforeBarSel === undefined) {
+            this.beforeBarSel = S.barSel ? { ...S.barSel } : null;
+        }
+        S.beats = this.newBeats.map(b => ({ ...b }));
+        _loopRelockAfterGridChange();
+    }
+    rollback() {
+        S.beats = this.oldBeats.map(b => ({ ...b }));
+        // Restore the EXACT pre-edit loop selection rather than relocking
+        // (relock is not self-inverse — a bar loop [2,4] would resurface as
+        // [1,6] after edit+undo).
+        S.barSel = this.beforeBarSel ? { ...this.beforeBarSel } : null;
+        _renderLoopStrip();
+        _updateLoopIn3DBtn();
+    }
 }
 
 // ── Drag: move a sync point, re-spacing the two adjacent measures ────
@@ -13513,6 +13665,9 @@ class TempoMapCmd {
         this.label = label || 'tempo';
         this.before = null;
         this.arrs = null;
+        // Snapshot of the loop selection captured on first exec so rollback can
+        // restore it verbatim (see rollback).
+        this.beforeBarSel = undefined;
     }
     exec() {
         // Invariant: oldBeats / newBeats have equal length — TempoMapCmd
@@ -13523,13 +13678,24 @@ class TempoMapCmd {
             this.arrs = (this.scope === 'all') ? _tempoRetimeArrangements() : [];
             this.before = _captureScopedTimes(this.scope, this.arrs);
         }
+        // Snapshot the pre-edit loop selection BEFORE relocking (see rollback);
+        // relock re-derives it from the new grid and is not self-inverse.
+        if (this.beforeBarSel === undefined) {
+            this.beforeBarSel = S.barSel ? { ...S.barSel } : null;
+        }
         S.beats = this.newBeats.map(b => ({ ...b }));
         _applyTempoRemap(_makeTimeRemap(this.oldBeats, this.newBeats),
                          this.scope, this.arrs);
+        _loopRelockAfterGridChange();
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
         _restoreScopedTimes(this.before, this.scope);
+        // Restore the EXACT pre-edit loop selection rather than relocking
+        // (relock is lossy — an undone tempo edit would otherwise move the loop).
+        S.barSel = this.beforeBarSel ? { ...this.beforeBarSel } : null;
+        _renderLoopStrip();
+        _updateLoopIn3DBtn();
     }
 }
 

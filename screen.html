@@ -131,6 +131,11 @@
                         <div id="editor-loop-strip-label" class="absolute inset-0 flex items-center justify-center px-3 text-[11px] font-medium text-white pointer-events-none"></div>
                     </div>
                     <button id="editor-loop-strip-clear" class="hidden absolute right-1 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Clear loop region">Clear</button>
+                    <div id="editor-loop-strip-modes" class="absolute right-14 top-1/2 -translate-y-1/2 flex rounded overflow-hidden border border-gray-700/80 bg-dark-700/90">
+                        <button data-loop-mode="bar" data-loop-title="Loop snaps to whole bars" onclick="editorSetLoopSnapMode('bar')" class="px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-white">Bar</button>
+                        <button data-loop-mode="grid" data-loop-title="Loop snaps to the current grid subdivision" onclick="editorSetLoopSnapMode('grid')" class="px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-white border-l border-gray-700/80">Grid</button>
+                        <button data-loop-mode="free" data-loop-title="No snapping — Shift-drag does this in any mode" onclick="editorSetLoopSnapMode('free')" class="px-1.5 py-0.5 text-[10px] text-gray-400 hover:text-white border-l border-gray-700/80">Free</button>
+                    </div>
                 </div>
             </div>
             <canvas id="editor-canvas" class="absolute inset-0"></canvas>
