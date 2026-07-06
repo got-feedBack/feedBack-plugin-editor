@@ -21,9 +21,9 @@ if (!m) {
 }
 const api = new Function(
     '"use strict";' + m[0]
-    + '\nreturn { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure };'
+    + '\nreturn { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure, _partsArrKindPure };'
 )();
-const { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure } = api;
+const { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure, _partsArrKindPure } = api;
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -78,6 +78,23 @@ t('lane hit-test respects the waveform band and lane bounds', () => {
     assert.strictEqual(_partsLaneAtYPure(WF + 149, WF, LANE, N), 2, 'last lane');
     assert.strictEqual(_partsLaneAtYPure(WF + 150, WF, LANE, N), -1, 'past the stack');
     assert.strictEqual(_partsLaneAtYPure(100, WF, 0, N), -1, 'no layout → no hit');
+});
+
+// ── per-lane instrument tag ────────────────────────────────────────────────────
+t('kind tag is inferred from each lane\'s OWN name, independent of the armed part', () => {
+    // Regression: _partsKindTag used to call the param-less isBassArr(), which
+    // always tested the armed arrangement — so a Bass lane got mistagged
+    // "Guitar" whenever a guitar part was armed. The pure helper keys off the
+    // lane's own name only, so a Bass lane tags Bass regardless of what's armed.
+    assert.strictEqual(_partsArrKindPure('Bass'), 'Bass');
+    assert.strictEqual(_partsArrKindPure('Lead Guitar'), 'Guitar');
+    assert.strictEqual(_partsArrKindPure('Rhythm'), 'Guitar');
+    assert.strictEqual(_partsArrKindPure('Piano'), 'Keys');
+    assert.strictEqual(_partsArrKindPure('Synth Lead'), 'Keys');
+    // Keys precedence + name-anchored keys pattern (matches KEYS_PATTERN).
+    assert.strictEqual(_partsArrKindPure('Bass Synth'), 'Bass', 'unanchored keys word does not win');
+    assert.strictEqual(_partsArrKindPure(''), 'Guitar', 'empty → Guitar');
+    assert.strictEqual(_partsArrKindPure(null), 'Guitar', 'nullish → Guitar');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

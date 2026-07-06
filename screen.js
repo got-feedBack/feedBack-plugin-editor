@@ -4599,6 +4599,19 @@ function onKeyDown(e) {
     // which cleanly finalizes the take.
     if (_recState === 'recording') return;
 
+    // Parts view is a read-only overview — technique editing stays in the
+    // focus editors. Ignore every note-editing shortcut (fret digits, f,
+    // arrows, Delete, technique toggles) so they can't mutate the armed
+    // arrangement hidden behind the overview. Transport (spacebar, handled
+    // above) and the Parts toggle (Shift+A) stay live; Escape is handled by
+    // the global dialog listener. Mirrors the !S.drumEditMode / !S.tempoMapMode
+    // gating used on the individual edit paths below.
+    if (S.partsViewMode
+            && _editorFeedbackCommandForKeyPure(e, 'note') !== 'togglePartsView'
+            && _editorEofCommandForKeyPure(e, 'note') !== 'togglePartsView') {
+        return;
+    }
+
     // Drum-edit articulation toggles take priority over the shortcut-profile
     // dispatch: a plain 'f' in drum-edit mode must toggle flam, not resolve to
     // the FeedBack/EOF `editFret` command (which claims plain 'f'). Only fires
@@ -14799,6 +14812,17 @@ function _partsLaneAtYPure(y, waveformH, laneH, count) {
     const i = Math.floor((y - waveformH) / laneH);
     return i >= 0 && i < count ? i : -1;
 }
+// Instrument tag for a fretted/keyed arrangement, inferred from its NAME
+// alone so every Parts-view lane reflects its OWN part rather than the armed
+// arrangement. Self-contained (regexes inlined) so it stays unit-testable
+// inside this @pure block. Mirrors KEYS_PATTERN (/^(keys|piano|keyboard|
+// synth)/i) and isBassArr's /bass/i test, keys taking precedence.
+function _partsArrKindPure(name) {
+    const s = String(name || '');
+    if (/^(keys|piano|keyboard|synth)/i.test(s)) return 'Keys';
+    if (/bass/i.test(s)) return 'Bass';
+    return 'Guitar';
+}
 /* @pure:parts-view:end */
 
 const PARTS_GUTTER = 140;   // header column (name + tag) — wider than LABEL_W
@@ -14807,9 +14831,9 @@ function _partsKindTag(part) {
     if (part.kind === 'drums') return 'Drums';
     const arr = S.arrangements[part.idx];
     if (!arr) return '';
-    if (KEYS_PATTERN.test(arr.name || '')) return 'Keys';
-    if (isBassArr(arr)) return 'Bass';
-    return 'Guitar';
+    // Detect this lane's OWN arrangement — the param-less isBassArr() always
+    // tests the armed part, which would mistag every non-armed lane.
+    return _partsArrKindPure(arr.name);
 }
 
 function _partsFitText(s, maxPx) {
@@ -14869,7 +14893,9 @@ function _partsDrawSilhouette(part, y0, laneH, w) {
     // Fretted: string-ribbon rows, low strings at the bottom to match the
     // focus editor's orientation.
     const strings = Math.max(1, _stringCountFor(arr));
-    ctx.fillStyle = isBassArr(arr) ? 'rgba(255,170,90,0.8)' : 'rgba(150,220,150,0.8)';
+    // Per-lane bass detection: isBassArr(arr) ignores its arg and tests the
+    // armed part, which would paint every lane the armed part's colour.
+    ctx.fillStyle = _partsArrKindPure(arr.name) === 'Bass' ? 'rgba(255,170,90,0.8)' : 'rgba(150,220,150,0.8)';
     for (const n of events) {
         const x = timeToX(n.time);
         if (x < PARTS_GUTTER || x > w) continue;
@@ -14977,8 +15003,11 @@ function _partsViewOnDblClick(e) {
             if (sel) sel.value = String(part.idx);
         }
         setStatus(`Editing "${part.name}"`);
-    } else {
-        // Open the drum grid — the same entry steps as the Edit Drums button.
+    } else if (S.format === 'sloppak') {
+        // Open the drum grid — the same entry steps AND format gate as the
+        // Edit Drums button (_refreshDrumEditButton hides itself when
+        // format !== 'sloppak'). Without this gate a non-sloppak session
+        // carrying a drum_tab could enter drum mode with no visible exit.
         S.drumEditMode = true;
         S.drumSel = new Set();
         hideContextMenu();
@@ -14987,6 +15016,8 @@ function _partsViewOnDblClick(e) {
         S.tempoMapMode = false;
         S.tempoSel = -1;
         setStatus('Editing drums');
+    } else {
+        setStatus('Drum editing needs a sloppak session');
     }
     _refreshPartsViewButton();
     _refreshDrumEditButton();
