@@ -78,6 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (per-source gains into a limiter), so the mix can never spike — the first
   slice of the DAW-workspace guide-playback engine. The toggle persists as an
   editor preference. Tests: `tests/guide_clap.test.js`.
+- **Loop-edge keyboard nudge.** Click (or Tab to) a loop handle and use the
+  arrow keys to nudge that edge by the region's natural step — Bar mode
+  moves to the adjacent downbeat, Grid mode by one snap-subdivision step,
+  Free mode by 10 ms (50 ms with Shift). No new global shortcuts: the
+  handles are already focusable buttons, so the keys only act while a
+  handle has focus. Nudges never wrap past the song edges or push an edge
+  across its partner. Tests: `tests/loop_nudge.test.js`.
 - **Loop snap modes — Bar / Grid / Free.** The loop region was bar-snapped
   only, and looping was disabled entirely on a chart with no downbeats — the
   exact starting state of a song that wasn't recorded to a click. The loop

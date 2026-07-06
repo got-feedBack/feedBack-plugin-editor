@@ -651,6 +651,62 @@ function _refreshLoopModeButtons() {
     }
 }
 
+/* @pure:loop-nudge:start */
+// Probe time for nudging one loop edge by its mode's natural step:
+// bar → the adjacent downbeat (end edges probe a hair EARLY because the
+// bar adjuster resolves "downbeat strictly after the probe" — feeding the
+// target downbeat verbatim would overshoot by a bar), grid → one snap
+// step, free → ±10 ms (±50 ms coarse). Returns null when there is no
+// adjacent downbeat to move to (never wraps).
+function _loopNudgeProbePure(mode, edge, cur, dir, downbeats, snapStep, coarse) {
+    if (mode === 'bar' && Array.isArray(downbeats) && downbeats.length) {
+        let target;
+        if (dir > 0) {
+            target = downbeats.find(t => t > cur + 1e-6);
+        } else {
+            for (let i = downbeats.length - 1; i >= 0; i--) {
+                if (downbeats[i] < cur - 1e-6) { target = downbeats[i]; break; }
+            }
+        }
+        if (target === undefined) return null;
+        return edge === 'end' ? target - 0.001 : target;
+    }
+    if (mode === 'grid') return cur + dir * snapStep;
+    return cur + dir * (coarse ? 0.05 : 0.01);
+}
+/* @pure:loop-nudge:end */
+
+// Nudge one loop edge by the natural step of the region's snap mode.
+// Driven by arrow keys while a loop handle button has focus.
+function _loopNudgeEdge(edge, dir, coarse) {
+    const r = S.barSel;
+    if (!r) return false;
+    const mode = r.mode === 'grid' || r.mode === 'free' ? r.mode : 'bar';
+    const cur = edge === 'start' ? r.startTime : r.endTime;
+    const downbeats = _downbeatTimes();
+    const probe = _loopNudgeProbePure(
+        mode, edge, cur, dir, downbeats, _editorSnapStepSeconds(), coarse);
+    if (probe === null) return false;
+    const next = _loopEdgeAdjustPure(
+        mode, r, edge, probe, downbeats, S.duration || Math.max(cur, probe), snapTime);
+    if (!next) return false;
+    S.barSel = next;
+    _updateLoopIn3DBtn();
+    _renderLoopStrip();
+    draw();
+    return true;
+}
+
+// Arrow-key nudging on the focused loop handle. The handles are real
+// <button>s, so clicking one focuses it; Left/Right then nudge that edge
+// without claiming any new global shortcut.
+function _loopHandleKeydown(edge, e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    e.stopPropagation();
+    _loopNudgeEdge(edge, e.key === 'ArrowRight' ? 1 : -1, e.shiftKey);
+}
+
 // Relock the loop region after the beat grid changes underneath it (D17):
 // bar/grid regions re-snap to the NEW grid per their mode; freely drawn
 // regions are absolute seconds and never move.
@@ -10489,6 +10545,8 @@ function init() {
     canvas.addEventListener('contextmenu', onContextMenu);
     _globalListeners.add(document, 'keydown', onKeyDown);
     document.getElementById('editor-loop-strip-track')?.addEventListener('mousedown', _loopStripOnMouseDown);
+    document.getElementById('editor-loop-strip-start')?.addEventListener('keydown', (e) => _loopHandleKeydown('start', e));
+    document.getElementById('editor-loop-strip-end')?.addEventListener('keydown', (e) => _loopHandleKeydown('end', e));
     document.getElementById('editor-loop-strip-clear')?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _clearBarSelection(); });
 
     // Prevent middle-click paste
