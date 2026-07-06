@@ -3527,7 +3527,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'tempoBeatPlus', label: 'Add a beat to selected measure', group: 'Tempo map', status: 'ready', keys: { feedback: '] (Tempo Map)', eof: '] (Tempo Map)' } },
     { id: 'tempoBeatUnit', label: 'Set selected measure beat unit', group: 'Tempo map', status: 'ready', keys: { feedback: 'D (Tempo Map)', eof: 'D (Tempo Map)' } },
     { id: 'tempoSetBpm', label: 'Set selected sync-point BPM', group: 'Tempo map', status: 'ready', keys: { feedback: 'B (Tempo Map)', eof: 'B (Tempo Map)' } },
-    { id: 'tempoTapBpm', label: 'Tap tempo for selected sync point', group: 'Tempo map', status: 'planned', keys: { feedback: 'Shift+B (Tempo Map)', eof: 'Shift+B (Tempo Map)' } },
+    { id: 'tempoTapBpm', label: 'Tap tempo for selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+B (Tempo Map)', eof: 'Shift+B (Tempo Map)' } },
     { id: 'tempoInsertSync', label: 'Insert sync point at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
     { id: 'tempoDeleteSync', label: 'Delete selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
     { id: 'tempoToggleSyncLock', label: 'Split or lock selected sync point', group: 'Tempo map', status: 'planned', keys: { feedback: 'S (Tempo Map)', eof: 'S (Tempo Map)' } },
@@ -4327,7 +4327,7 @@ function _editorRunEofCommand(cmd) {
     case 'tempoBeatPlus': return _editorAdjustTempoMeasureBeats(+1);
     case 'tempoBeatUnit': return _editorPromptTempoBeatUnitAtSelection();
     case 'tempoSetBpm': return _editorPromptTempoBpmAtSelection();
-    case 'tempoTapBpm': return _editorUnsupportedEofCommand('Tap tempo shortcut');
+    case 'tempoTapBpm': return _editorTapTempoAtSelection();
     case 'tempoInsertSync': return _editorInsertTempoSyncAtCursor();
     case 'tempoDeleteSync': return _editorDeleteTempoSyncSelection();
     case 'tempoToggleSyncLock': return _editorUnsupportedEofCommand('Sync-point split/lock');
@@ -4533,6 +4533,10 @@ function onKeyDown(e) {
             return;
         }
     }
+
+    // A pending tap-tempo run owns Enter/Escape until resolved — checked
+    // before the profile dispatchers so neither can steal the keys.
+    if (_tapTempoHandleKey(e)) return;
 
     if (_editorDispatchFeedbackShortcut(e)) return;
     if (_editorDispatchEofShortcut(e)) return;
@@ -13490,6 +13494,90 @@ function _tempoPromptMeasureBpm(d) {
     if (_tempoSetMeasureBpm(d, bpm)) {
         setStatus(`Measure ${m.measure} tempo changed: ${m.bpm.toFixed(2)} → ${bpm.toFixed(2)} BPM`);
     }
+}
+
+/* @pure:tap-tempo:start */
+// BPM from a run of tap timestamps (ms, ascending). Uses the MEDIAN of the
+// last 8 intervals so one flubbed tap doesn't skew the estimate, and rejects
+// implausible results (outside 20–400 BPM) instead of offering them.
+function _tapTempoBpmPure(taps) {
+    if (!Array.isArray(taps) || taps.length < 2) return null;
+    const recent = taps.slice(-9);           // at most 8 intervals
+    const gaps = [];
+    for (let i = 1; i < recent.length; i++) {
+        const g = Number(recent[i]) - Number(recent[i - 1]);
+        if (!Number.isFinite(g) || g <= 0) return null;
+        gaps.push(g);
+    }
+    const sorted = [...gaps].sort((a, b) => a - b);
+    const mid = sorted.length >> 1;
+    const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    const bpm = 60000 / median;
+    return (bpm >= 20 && bpm <= 400) ? bpm : null;
+}
+/* @pure:tap-tempo:end */
+
+// ── Tap tempo (Shift+B in Tempo Map mode) ────────────────────────────
+// Tap along to the recording; the median inter-tap interval becomes a
+// pending BPM for the selected sync point. Enter applies it as ONE
+// undoable command (via _tempoSetMeasureBpm), Escape cancels. Pausing
+// longer than the reset window starts a fresh run, so a flubbed take is
+// recoverable by just waiting a beat and tapping again.
+const TAP_TEMPO_RESET_MS = 2000;
+const TAP_TEMPO_STALE_MS = 15000;
+let _tapTempo = null;   // { d, measure, taps: [ms…], bpm: number|null }
+
+function _editorTapTempoAtSelection() {
+    if (!S.tempoMapMode || S.tempoSel < 0) {
+        setStatus('Select a Tempo Map sync point first.');
+        return true;
+    }
+    const measures = _tempoMeasures();
+    const m = measures.find(mm => mm.i === S.tempoSel) || null;
+    if (!m || m.isLast || !(m.bpm > 0)) {
+        setStatus('Select a non-final measure to tap its BPM.');
+        return true;
+    }
+    const now = performance.now();
+    if (!_tapTempo || _tapTempo.d !== S.tempoSel
+            || now - _tapTempo.taps[_tapTempo.taps.length - 1] > TAP_TEMPO_RESET_MS) {
+        _tapTempo = { d: S.tempoSel, measure: m.measure, taps: [], bpm: null };
+    }
+    _tapTempo.taps.push(now);
+    _tapTempo.bpm = _tapTempoBpmPure(_tapTempo.taps);
+    setStatus(_tapTempo.bpm === null
+        ? `Tap tempo: keep tapping Shift+B… (${_tapTempo.taps.length})`
+        : `Tap tempo: ${_tapTempo.bpm.toFixed(1)} BPM over ${_tapTempo.taps.length} taps — Enter applies to measure ${_tapTempo.measure}, Esc cancels`);
+    return true;
+}
+
+// Enter/Escape resolution for a live tap run. Called early in the keydown
+// handler; consumes the key only while a run is pending in Tempo Map mode.
+function _tapTempoHandleKey(e) {
+    if (!_tapTempo || !S.tempoMapMode) return false;
+    if (e.target && e.target.matches && e.target.matches('input, select, textarea')) return false;
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        const t = _tapTempo;
+        _tapTempo = null;
+        if (t.bpm === null) {
+            setStatus('Tap tempo cancelled — not enough taps.');
+        } else if (performance.now() - t.taps[t.taps.length - 1] > TAP_TEMPO_STALE_MS) {
+            setStatus('Tap tempo expired — tap again.');
+        } else if (_tempoSetMeasureBpm(t.d, t.bpm)) {
+            setStatus(`Measure ${t.measure} tempo set to ${t.bpm.toFixed(1)} BPM (tapped)`);
+        } else {
+            setStatus('Tap tempo: could not apply BPM to that measure.');
+        }
+        return true;
+    }
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        _tapTempo = null;
+        setStatus('Tap tempo cancelled');
+        return true;
+    }
+    return false;
 }
 
 function _tempoMapOnDragMove(x) {
