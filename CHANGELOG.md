@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside its own rAF) paints synchronously via `drawNow()` to avoid a frame
   of cursor lag. Groundwork for the multi-part arrange view, which
   multiplies per-repaint cost. Tests: `tests/draw_coalesce.test.js`.
+### Fixed
+- **Screen re-injection no longer stacks global listeners or leaks
+  playback.** The editor registered document/window-level listeners (two
+  keydown handlers, input, mousemove/mouseup, resize) with no teardown — if
+  the host re-injects the screen, every one of them stacked (double
+  keystrokes per press, orphaned handlers, a still-playing audio source
+  from the replaced screen). All global registrations now go through a
+  tracked registry, and each boot calls the previous injection's teardown
+  (published on `window.__editorScreenTeardown`) before registering its
+  own: listeners removed, playback source stopped, rAF cancelled, both
+  MutationObservers disconnected. Teardown-then-reboot rather than a skip
+  guard, so behavior is correct whether or not the host ever re-injects.
+  Canvas-level listeners die with the canvas node and stay untracked.
+  Tests: `tests/boot_teardown.test.js`.
 
 ### Added
 - **Import GoPlayAlong projects (`.gp` + audio + a GoPlayAlong `.xml`).** A GoPlayAlong export is a `<track>` **sync sidecar** — it points at a Guitar Pro score and an audio file and stores the bar→audio sync points, but carries **no chart** — so feeding it to the arrangement importer failed with "not a recognised EOF arrangement XML". Now, in the New-dialog Content Import, drop the Guitar Pro tab + the audio + the GoPlayAlong `.xml` together: the `.xml` is content-sniffed and staged as a **GoPlayAlong sync source** (not mistaken for an EOF arrangement, and it prefills title/artist), and on Import the editor applies GoPlayAlong's **authored** per-bar sync instead of re-deriving it via onset detection. Under the hood: new `goplayalong.py` parser + `/api/plugins/editor/parse-goplayalong-sync` endpoint emit the same `sync_points` / `audio_offset` shape `autosync-gp` / `extract-gp-sync` return, which the existing `convert-gp` warp path consumes (`sync_applied: "warp"`). All GoPlayAlong UI logic is gated on a staged sidecar, so normal GP/EOF/audio imports are byte-for-byte unchanged. Tests: `tests/test_goplayalong.py` (10 cases vs a real export). Verified end-to-end against a real GoPlayAlong project ("Would?" — Alice in Chains): 73 sync points → the referenced `.gp` (87 bars, 7 tracks) → 73 warp anchors → a monotonic per-bar warp.
