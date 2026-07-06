@@ -59,6 +59,7 @@ t('maps EOF technique shortcuts to command IDs', () => {
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('h', { ctrl: true })), 'toggleNaturalHarmonic');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('h', { shift: true })), 'togglePinchHarmonic');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('p', { ctrl: true, shift: true })), 'togglePop');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('o', { shift: true })), 'toggleSlap');
 });
 
 t('maps EOF import and save function keys', () => {
@@ -89,6 +90,7 @@ t('exposes ready and planned shortcut command rows', () => {
     assert.strictEqual(rows.find(r => r.id === 'setFretTen').key, 'Shift+0');
     assert.strictEqual(rows.find(r => r.id === 'moveStringUp').key, 'Up');
     assert.strictEqual(rows.find(r => r.id === 'moveStringDown').key, 'Down');
+    assert.strictEqual(rows.find(r => r.id === 'toggleSlap').key, 'Shift+O');
     assert.strictEqual(rows.find(r => r.id === 'setTimeSignature').key, 'Shift+T / Shift+I');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatCount').key, 'N (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatMinus').key, '[ (Tempo Map)');
@@ -109,6 +111,7 @@ t('exposes wired FeedBack Native key labels', () => {
     assert.strictEqual(rows.find(r => r.id === 'setFretTen').key, 'Shift+0');
     assert.strictEqual(rows.find(r => r.id === 'moveStringUp').key, 'Up');
     assert.strictEqual(rows.find(r => r.id === 'moveStringDown').key, 'Down');
+    assert.strictEqual(rows.find(r => r.id === 'toggleSlap').key, 'Shift+O');
     assert.strictEqual(rows.find(r => r.id === 'importGp').key, '');
     assert.strictEqual(rows.find(r => r.id === 'toggleTempoMap').key, 'T');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatCount').key, 'N (Tempo Map)');
@@ -143,6 +146,7 @@ t('maps FeedBack Native note and technique shortcuts', () => {
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('n')), 'toggleNaturalHarmonic');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('n', { shift: true })), 'togglePinchHarmonic');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('h', { ctrl: true })), 'addHandshape');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('o', { shift: true })), 'toggleSlap');
 });
 
 
