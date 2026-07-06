@@ -31,9 +31,15 @@ if (!m) {
     process.exit(1);
 }
 
-const { _guideClapTimesInWindowPure, _guideChartToCtxPure } = new Function(
+const {
+    _guideClapTimesInWindowPure,
+    _guideChartToCtxPure,
+    _guideSanitizeTimesPure,
+    _guideWindowEndPure,
+} = new Function(
     '"use strict";' + m[0]
-    + '\nreturn { _guideClapTimesInWindowPure, _guideChartToCtxPure };'
+    + '\nreturn { _guideClapTimesInWindowPure, _guideChartToCtxPure,'
+    + ' _guideSanitizeTimesPure, _guideWindowEndPure };'
 )();
 
 let pass = 0, fail = 0;
@@ -91,6 +97,50 @@ t('binary search stays correct on a dense chart', () => {
     // 5002*0.05 = 250.10000000000002 — the window math must not "fix" that).
     const out = _guideClapTimesInWindowPure(times, times[5000], times[5000] + 0.12);
     assert.deepStrictEqual(out, [times[5000], times[5001], times[5002]]);
+});
+
+// ── input sanitizing (unsorted / NaN times) ──────────────────────────────────
+// _guideSourceTimes feeds raw note/hit times through _guideSanitizeTimesPure
+// before the window query. A stray NaN would reach osc.start(NaN) and throw
+// inside the tick (killing clap scheduling); an unsorted array would make the
+// early-terminating window scan drop claps.
+t('sanitize drops non-finite times and sorts ascending', () => {
+    const raw = [2.0, NaN, 0.5, undefined, 1.5, Infinity, null, 1.0];
+    assert.deepStrictEqual(_guideSanitizeTimesPure(raw), [0.5, 1.0, 1.5, 2.0]);
+});
+
+t('non-array input sanitizes to []', () => {
+    assert.deepStrictEqual(_guideSanitizeTimesPure(null), []);
+    assert.deepStrictEqual(_guideSanitizeTimesPure(undefined), []);
+});
+
+t('sanitized unsorted+NaN chart still yields the right window claps', () => {
+    // Simulates a chart whose note times arrive unsorted with a NaN mixed in.
+    const raw = [2.5, NaN, 1.0, 0.5, 2.0, 1.5];
+    const clean = _guideSanitizeTimesPure(raw);
+    // Without the sort, the binary-search window scan below would terminate
+    // early and miss events; without the NaN drop, the tick would throw.
+    assert.deepStrictEqual(_guideClapTimesInWindowPure(clean, 1.0, 2.0), [1.0, 1.5]);
+});
+
+// ── loop-end window clamp (ghost-clap guard) ─────────────────────────────────
+t('window end is clamped to the loop end while looping', () => {
+    // 120 ms lookahead would reach past the loop end at 2.0 — clamp it.
+    assert.strictEqual(_guideWindowEndPure(1.9 + 0.12, true, 2.0), 2.0);
+    // Lookahead entirely inside the loop is left untouched.
+    assert.strictEqual(_guideWindowEndPure(1.5, true, 2.0), 1.5);
+});
+
+t('window end is untouched when not looping or loop end is unknown', () => {
+    assert.strictEqual(_guideWindowEndPure(2.02, false, 2.0), 2.02);
+    assert.strictEqual(_guideWindowEndPure(2.02, true, NaN), 2.02);
+});
+
+t('clamped window schedules no clap past the loop boundary', () => {
+    const times = [1.8, 1.95, 2.05, 2.2];   // last two are past the loop end
+    const rawTo = 1.9 + 0.12;                // 2.02 — would include 2.05
+    const to = _guideWindowEndPure(rawTo, true, 2.0);
+    assert.deepStrictEqual(_guideClapTimesInWindowPure(times, 1.9, to), [1.95]);
 });
 
 // ── transport mapping ────────────────────────────────────────────────────────

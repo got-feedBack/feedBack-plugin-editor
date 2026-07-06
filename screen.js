@@ -5065,11 +5065,11 @@ function computeWaveform() {
 function _startAudioSourceAtCursor() {
     S.audioSource = S.audioCtx.createBufferSource();
     S.audioSource.buffer = S.audioBuffer;
-    // Route through the shared master bus (reference gain → limiter) instead
-    // of raw to destination, so the recording and the guide claps sum through
-    // one level-safe graph.
-    const bus = _ensureMasterBus();
-    S.audioSource.connect(bus ? bus.refGain : S.audioCtx.destination);
+    // Reference recording stays on a transparent path straight to destination
+    // (as it was before guide claps) — the guide-clap limiter must never
+    // color the recording, even when claps are off. Only the guide voices
+    // sum through the limiter (see _ensureMasterBus / _guideClapVoiceAt).
+    S.audioSource.connect(S.audioCtx.destination);
     S.audioSource.start(0, S.cursorTime);
     S.playStartWall = S.audioCtx.currentTime;
     S.playStartTime = S.cursorTime;
@@ -5203,6 +5203,23 @@ function _guideClapTimesInWindowPure(times, from, to) {
 function _guideChartToCtxPure(chartT, playStartWall, playStartTime) {
     return playStartWall + (chartT - playStartTime);
 }
+// Sanitize a raw event-time array before the window query, matching every
+// other time-array consumer in this file (_editorJumpNote / -Beat / -Anchor):
+// drop non-finite entries — a stray NaN/undefined time would reach
+// osc.start(NaN) and throw inside the tick, killing clap scheduling — and
+// sort ascending, which the early-terminating window scan relies on.
+function _guideSanitizeTimesPure(times) {
+    if (!Array.isArray(times)) return [];
+    return times.filter(Number.isFinite).sort((a, b) => a - b);
+}
+// Clamp the lookahead window end to the loop-region end so no clap is
+// scheduled past the boundary: the 120 ms lookahead can queue voices for
+// events after the loop end before the rAF-detected wrap cancels them
+// ("ghost claps" past the loop). No-op when looping is off.
+function _guideWindowEndPure(rawTo, loopEnabled, loopEndTime) {
+    if (loopEnabled && Number.isFinite(loopEndTime)) return Math.min(rawTo, loopEndTime);
+    return rawTo;
+}
 /* @pure:guide-clap:end */
 
 const GUIDE_LOOKAHEAD = 0.12;  // seconds scheduled ahead of the transport
@@ -5210,20 +5227,26 @@ const GUIDE_TICK_MS = 25;      // scheduler cadence
 let _guideTimer = null;
 let _guideScheduledUntil = 0;  // chart-seconds watermark (exclusive)
 let _guideVoices = [];         // queued {osc, gain, until} for cancel-on-seek
+let _guideLastFiredKey = null; // last-fired 1 ms bucket key, PERSISTED across
+                               // ticks so a chord straddling a window boundary
+                               // (same bucket, split by the 25 ms tick) can't
+                               // double-fire — per-window dedupe alone resets.
 
 function editorGuideClapEnabled() {
     try { return localStorage.getItem('editorGuideClap') === '1'; }
     catch (_) { return false; }
 }
 
-// One shared bus: the reference recording and the guide claps each get their
-// own gain, summed through a limiter so the mix can never spike — the
-// skeleton of the reference/guide/click graph the workspace design specs.
+// Guide-voice bus ONLY: the claps sum through their own gain into a limiter
+// so many simultaneous voices can never spike, then to the destination. The
+// reference recording deliberately does NOT pass through here — it stays on a
+// transparent path straight to destination (see _startAudioSourceAtCursor) so
+// the limiter never colors loud / brickwalled reference recordings, whether
+// or not guide claps are ever used.
 let _masterBus = null;
 function _ensureMasterBus() {
     if (_masterBus || !S.audioCtx) return _masterBus;
     const ctx = S.audioCtx;
-    const refGain = ctx.createGain();
     const guideGain = ctx.createGain();
     guideGain.gain.value = 0.35;
     const limiter = ctx.createDynamicsCompressor();
@@ -5232,10 +5255,9 @@ function _ensureMasterBus() {
     limiter.ratio.value = 20;
     limiter.attack.value = 0.003;
     limiter.release.value = 0.25;
-    refGain.connect(limiter);
     guideGain.connect(limiter);
     limiter.connect(ctx.destination);
-    _masterBus = { refGain, guideGain, limiter };
+    _masterBus = { guideGain, limiter };
     return _masterBus;
 }
 
@@ -5244,10 +5266,10 @@ function _ensureMasterBus() {
 function _guideSourceTimes() {
     if (S.drumEditMode) {
         const hits = (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab.hits : [];
-        return hits.map(h => h.t);
+        return _guideSanitizeTimesPure(hits.map(h => h.t));
     }
     if (!S.arrangements.length) return [];
-    return notes().map(n => n.time);
+    return _guideSanitizeTimesPure(notes().map(n => n.time));
 }
 
 function _guideClapVoiceAt(when) {
@@ -5283,12 +5305,17 @@ function _guideCancelVoices() {
 function _guideResetSchedule() {
     _guideCancelVoices();
     _guideScheduledUntil = S.cursorTime || 0;
+    _guideLastFiredKey = null;  // a seek/wrap breaks cross-tick dedupe continuity
 }
 
 function _guideTick() {
     if (!S.playing || !S.audioCtx || !editorGuideClapEnabled()) return;
     const nowChart = S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
-    const to = nowChart + GUIDE_LOOKAHEAD;
+    // Clamp the lookahead end to the loop-region end while looping, so no clap
+    // is scheduled past the boundary before the rAF wrap cancels the window.
+    const loopRegion = S.loopEnabled ? _normalizeLoopRegionPure(S.barSel, S.duration) : null;
+    const to = _guideWindowEndPure(
+        nowChart + GUIDE_LOOKAHEAD, !!loopRegion, loopRegion ? loopRegion.endTime : NaN);
     // If the timer stalled (hidden tab), skip events that are already in the
     // past rather than machine-gunning them late; 5 ms of grace keeps an
     // event exactly at the cursor audible.
@@ -5296,6 +5323,11 @@ function _guideTick() {
     if (to <= from) return;
     const times = _guideClapTimesInWindowPure(_guideSourceTimes(), from, to);
     for (const t of times) {
+        // Cross-tick dedupe: skip an event in the same 1 ms bucket as the last
+        // clap already fired in a previous window (chord split by the boundary).
+        const key = Math.round(t * 1000);
+        if (key === _guideLastFiredKey) continue;
+        _guideLastFiredKey = key;
         _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime));
     }
     _guideScheduledUntil = to;
