@@ -3269,6 +3269,7 @@ function _editorKeySigPure(e) {
 const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'save', label: 'Save project', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+S', eof: 'F2 / Ctrl+S' } },
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
+    { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', eof: 'C' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -3382,6 +3383,7 @@ function _editorEofCommandForKeyPure(e, mode) {
 
     if (sig === 'F2') return 'save';
     if (sig === 'F5') return 'toggleWaveform';
+    if (plain && key === 'c') return 'toggleGuideClap';
     if (shift && key === '?') return 'showShortcutHelp';
     if (ctrl && key === 'k') return 'openCommandPalette';
     if (sig === 'F6') return 'importMidi';
@@ -3491,6 +3493,7 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (plain && key === 't') return 'toggleTempoMap';
     if (ctrl && key === 's') return 'save';
     if (plain && key === 'w') return 'toggleWaveform';
+    if (plain && key === 'c') return 'toggleGuideClap';
     if (shift && key === '?') return 'showShortcutHelp';
     if (ctrl && key === 'k') return 'openCommandPalette';
     if (sig === 'PageUp') return 'prevBeat';
@@ -4065,6 +4068,7 @@ function _editorRunEofCommand(cmd) {
     switch (cmd) {
     case 'save': editorSave(); return true;
     case 'toggleWaveform': return _editorToggleWaveform();
+    case 'toggleGuideClap': return _editorToggleGuideClap();
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -5061,10 +5065,19 @@ function computeWaveform() {
 function _startAudioSourceAtCursor() {
     S.audioSource = S.audioCtx.createBufferSource();
     S.audioSource.buffer = S.audioBuffer;
-    S.audioSource.connect(S.audioCtx.destination);
+    // Route through the shared master bus (reference gain → limiter) instead
+    // of raw to destination, so the recording and the guide claps sum through
+    // one level-safe graph.
+    const bus = _ensureMasterBus();
+    S.audioSource.connect(bus ? bus.refGain : S.audioCtx.destination);
     S.audioSource.start(0, S.cursorTime);
     S.playStartWall = S.audioCtx.currentTime;
     S.playStartTime = S.cursorTime;
+    // Every (re)start is a seek from the clap scheduler's perspective: drop
+    // already-queued voices and restart the window at the new cursor —
+    // without this, claps scheduled before a loop wrap / seek fire at their
+    // old positions ("ghost claps").
+    _guideResetSchedule();
 }
 
 function _restartPlaybackAt(t) {
@@ -5087,6 +5100,7 @@ function startPlayback() {
     S.playing = true;
     updatePlayIcon();
     playbackTick();
+    _guideTimerSync();
 }
 function stopPlayback() {
     if (S.audioSource) {
@@ -5096,6 +5110,8 @@ function stopPlayback() {
     S.playing = false;
     updatePlayIcon();
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    _guideTimerSync();
+    _guideCancelVoices();
 }
 
 function playbackTick() {
@@ -5149,6 +5165,185 @@ function updatePlayIcon() {
         icon.innerHTML = '<path d="M8 5v14l11-7z"/>';
     }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Guide claps — a percussive tick per charted event during playback, so
+// authors can verify note placement by ear (charting-by-ear was silent:
+// the editor had zero note sonification). Claps are scheduled by a
+// setInterval lookahead loop — NOT the rAF draw loop — so audio timing
+// stays sample-accurate even when draw() is saturated, and every voice
+// sums through a limited master bus (hearing safety).
+// ════════════════════════════════════════════════════════════════════
+
+/* @pure:guide-clap:start */
+// Half-open window query over a SORTED event-time array: returns the times t
+// with from <= t < to, deduplicated at 1 ms resolution so a chord stack
+// (several notes at one timestamp) claps once instead of N voices stacking
+// into a louder transient.
+function _guideClapTimesInWindowPure(times, from, to) {
+    if (!Array.isArray(times) || !times.length || !(to > from)) return [];
+    // Binary search for the first index with times[i] >= from.
+    let lo = 0, hi = times.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (times[mid] < from) lo = mid + 1; else hi = mid;
+    }
+    const out = [];
+    let lastKey = null;
+    for (let i = lo; i < times.length && times[i] < to; i++) {
+        const key = Math.round(times[i] * 1000);
+        if (key === lastKey) continue;
+        lastKey = key;
+        out.push(times[i]);
+    }
+    return out;
+}
+// Map chart-seconds onto the AudioContext clock via the transport anchor
+// (_startAudioSourceAtCursor records wall/chart time as the audio starts).
+function _guideChartToCtxPure(chartT, playStartWall, playStartTime) {
+    return playStartWall + (chartT - playStartTime);
+}
+/* @pure:guide-clap:end */
+
+const GUIDE_LOOKAHEAD = 0.12;  // seconds scheduled ahead of the transport
+const GUIDE_TICK_MS = 25;      // scheduler cadence
+let _guideTimer = null;
+let _guideScheduledUntil = 0;  // chart-seconds watermark (exclusive)
+let _guideVoices = [];         // queued {osc, gain, until} for cancel-on-seek
+
+function editorGuideClapEnabled() {
+    try { return localStorage.getItem('editorGuideClap') === '1'; }
+    catch (_) { return false; }
+}
+
+// One shared bus: the reference recording and the guide claps each get their
+// own gain, summed through a limiter so the mix can never spike — the
+// skeleton of the reference/guide/click graph the workspace design specs.
+let _masterBus = null;
+function _ensureMasterBus() {
+    if (_masterBus || !S.audioCtx) return _masterBus;
+    const ctx = S.audioCtx;
+    const refGain = ctx.createGain();
+    const guideGain = ctx.createGain();
+    guideGain.gain.value = 0.35;
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.25;
+    refGain.connect(limiter);
+    guideGain.connect(limiter);
+    limiter.connect(ctx.destination);
+    _masterBus = { refGain, guideGain, limiter };
+    return _masterBus;
+}
+
+// Event times for the active editing surface: the drum grid claps drum hits,
+// every other view claps the current arrangement's (time-sorted) notes.
+function _guideSourceTimes() {
+    if (S.drumEditMode) {
+        const hits = (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab.hits : [];
+        return hits.map(h => h.t);
+    }
+    if (!S.arrangements.length) return [];
+    return notes().map(n => n.time);
+}
+
+function _guideClapVoiceAt(when) {
+    const bus = _ensureMasterBus();
+    if (!bus) return;
+    const ctx = S.audioCtx;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = 1750;
+    const g = ctx.createGain();
+    // Soft tick: 3 ms ramp in (never a 0 ms transient) and ~45 ms exponential
+    // decay — a locatable placement cue without startle.
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.8, when + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 0.048);
+    osc.connect(g);
+    g.connect(bus.guideGain);
+    osc.start(when);
+    osc.stop(when + 0.06);
+    _guideVoices.push({ osc, gain: g, until: when + 0.06 });
+}
+
+// Cancel every queued-but-unfinished clap — stale voices would otherwise
+// fire at their pre-seek positions after a loop wrap or scrub.
+function _guideCancelVoices() {
+    for (const v of _guideVoices) {
+        try { v.osc.stop(); } catch (_) {}
+        try { v.gain.disconnect(); } catch (_) {}
+    }
+    _guideVoices = [];
+}
+
+function _guideResetSchedule() {
+    _guideCancelVoices();
+    _guideScheduledUntil = S.cursorTime || 0;
+}
+
+function _guideTick() {
+    if (!S.playing || !S.audioCtx || !editorGuideClapEnabled()) return;
+    const nowChart = S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
+    const to = nowChart + GUIDE_LOOKAHEAD;
+    // If the timer stalled (hidden tab), skip events that are already in the
+    // past rather than machine-gunning them late; 5 ms of grace keeps an
+    // event exactly at the cursor audible.
+    const from = Math.max(_guideScheduledUntil, nowChart - 0.005);
+    if (to <= from) return;
+    const times = _guideClapTimesInWindowPure(_guideSourceTimes(), from, to);
+    for (const t of times) {
+        _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime));
+    }
+    _guideScheduledUntil = to;
+    // Drop bookkeeping for voices that already finished (bounded memory).
+    if (_guideVoices.length > 64) {
+        const nowCtx = S.audioCtx.currentTime;
+        _guideVoices = _guideVoices.filter(v => v.until > nowCtx);
+    }
+}
+
+// Start/stop the scheduler to match "playing AND enabled". Called from
+// startPlayback/stopPlayback and from the toggle (mid-play enable works).
+function _guideTimerSync() {
+    const want = S.playing && editorGuideClapEnabled();
+    if (want && !_guideTimer) {
+        _guideScheduledUntil = S.playStartTime
+            + (S.audioCtx.currentTime - S.playStartWall);
+        _guideTimer = setInterval(_guideTick, GUIDE_TICK_MS);
+        _guideTick(); // fill the first window now, not one tick late
+    } else if (!want && _guideTimer) {
+        clearInterval(_guideTimer);
+        _guideTimer = null;
+    }
+}
+
+function _refreshGuideBtn() {
+    const btn = document.getElementById('editor-guide-btn');
+    if (!btn) return;
+    const on = editorGuideClapEnabled();
+    btn.classList.toggle('bg-accent', on);
+    btn.classList.toggle('hover:bg-accent-light', on);
+    btn.classList.toggle('bg-dark-600', !on);
+    btn.classList.toggle('hover:bg-dark-500', !on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+function _editorToggleGuideClap() {
+    const next = !editorGuideClapEnabled();
+    try { localStorage.setItem('editorGuideClap', next ? '1' : '0'); } catch (_) {}
+    _refreshGuideBtn();
+    _guideTimerSync();
+    setStatus(next
+        ? 'Guide claps on — charted notes tick during playback (C toggles)'
+        : 'Guide claps off');
+    return true;
+}
+window.editorToggleGuideClap = _editorToggleGuideClap;
+_refreshGuideBtn();
 
 function updateMeasureDisplay() {
     const el = document.getElementById('editor-measure-display');
