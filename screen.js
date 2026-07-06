@@ -3165,6 +3165,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'setFretTen', label: 'Set selected fret 10', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+0', eof: 'Shift+0' } },
     { id: 'noteMenu', label: 'Open note edit menu', group: 'Notes', status: 'ready', keys: { feedback: '', eof: 'N' } },
     { id: 'bend', label: 'Edit bend', group: 'Notes', status: 'ready', keys: { feedback: 'B', eof: 'Ctrl+B' } },
+    { id: 'slideEditor', label: 'Edit pitched slide', group: 'Notes', status: 'ready', keys: { feedback: 'S', eof: 'S' } },
     { id: 'unpitchedSlide', label: 'Edit unpitched slide', group: 'Notes', status: 'ready', keys: { feedback: 'U', eof: 'Ctrl+U' } },
     { id: 'moveStringUp', label: 'Move selection up one string', group: 'Notes', status: 'ready', keys: { feedback: 'Up', eof: 'Up' } },
     { id: 'moveStringDown', label: 'Move selection down one string', group: 'Notes', status: 'ready', keys: { feedback: 'Down', eof: 'Down' } },
@@ -3275,6 +3276,7 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (shift && key === ')') return 'setFretTen';
     if (plain && key === 'h') return 'toggleHammerOn';
     if (plain && key === 'p') return 'togglePullOff';
+    if (plain && key === 's') return 'slideEditor';
     if (plain && key === 'n') return 'noteMenu';
     if (plain && key === 't') return 'toggleTap';
     if (shift && key === 'f') return 'setAnchor';
@@ -3377,6 +3379,7 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (plain && /^[0-9]$/.test(key)) return 'setFretDigit:' + key;
     if (shift && key === ')') return 'setFretTen';
     if (plain && key === 'b') return 'bend';
+    if (plain && key === 's') return 'slideEditor';
     if (plain && key === 'u') return 'unpitchedSlide';
     if (plain && e.key === 'ArrowUp') return 'moveStringUp';
     if (plain && e.key === 'ArrowDown') return 'moveStringDown';
@@ -3925,6 +3928,7 @@ function _editorRunEofCommand(cmd) {
     case 'setFretTen': return _editorSetSelectedFret(10);
     case 'noteMenu': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) showContextMenu(window.innerWidth / 2, window.innerHeight / 2, idxs[0]); else setStatus('Select a note first'); return true; }
     case 'bend': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptBend(idxs[0]); else setStatus('Select a note first'); return true; }
+    case 'slideEditor': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptSlide(idxs[0]); else setStatus('Select a note first'); return true; }
     case 'unpitchedSlide': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptSlideUnpitch(idxs[0]); else setStatus('Select a note first'); return true; }
     case 'moveStringUp': return _execMoveStringSameFret(+1);
     case 'moveStringDown': return _execMoveStringSameFret(-1);
