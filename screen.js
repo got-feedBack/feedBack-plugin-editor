@@ -1835,6 +1835,10 @@ class EditHistory {
         const c = this.redo[this.redo.length - 1];
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
         this.redo.pop(); c.exec(); this.undo.push(c);
+        // Re-apply the MAX_UNDO cap: a redo pushes back onto the undo stack, so
+        // without this a redo-heavy session could grow it past the bound that
+        // exec()/doUndo already enforce. Oldest drops first, mirroring exec().
+        if (this.undo.length > MAX_UNDO) this.undo.shift();
         this._afterEdit(); this._ui(); draw(); updateStatus();
     }
     // #18: drop the whole stack when the model is rebuilt under us (the save /
@@ -1859,10 +1863,22 @@ class EditHistory {
 }
 /* @pure:edit-history:end */
 
+// Guard: true only while _historyEnsureArr drives an arrangement switch to
+// replay an undo/redo. editorSelectArrangement reads it to distinguish a
+// user/manual switch (which must reset history — see there) from this
+// history-replaying switch (which must NOT, or it would drop the very stack it
+// is replaying). Module-scoped so both functions share the one flag.
+let _undoDrivenArrSwitch = false;
+
 // Route undo/redo to the arrangement a command was executed against (see
 // EditHistory.exec's tagging). Switches the active arrangement when needed so
 // index-based rollbacks land in the right notes array; returns false — leaving
 // the stacks untouched — when that arrangement no longer exists.
+//
+// Since every MANUAL arrangement switch now resets the history (see
+// editorSelectArrangement), a command whose _arrIdx differs from S.currentArr
+// can no longer be in the stack, so the branch below is a defensive fallback
+// rather than a hot path — cross-arrangement undo can never actually occur.
 function _historyEnsureArr(cmd) {
     const idx = (cmd && typeof cmd._arrIdx === 'number') ? cmd._arrIdx : -1;
     if (idx < 0 || idx === S.currentArr) return true;
@@ -1870,7 +1886,12 @@ function _historyEnsureArr(cmd) {
         setStatus('Undo target arrangement no longer exists');
         return false;
     }
-    window.editorSelectArrangement(idx);
+    _undoDrivenArrSwitch = true;
+    try {
+        window.editorSelectArrangement(idx);
+    } finally {
+        _undoDrivenArrSwitch = false;
+    }
     const el = document.getElementById('editor-arrangement');
     if (el) el.value = String(idx);
     setStatus(`Switched to "${S.arrangements[idx].name}" to apply undo/redo`);
@@ -6739,6 +6760,16 @@ window.editorSelectArrangement = (val) => {
     S.anchorSel = null;
     S.handshapeSel = null;
     flattenChords();
+    // Undo hardening: flattenChords() re-sorts arr.notes (see _flattenArrChords),
+    // which renumbers the index-based note commands (MoveNoteCmd, DeleteNotesCmd,
+    // ResizeSustainCmd) recorded against this or another arrangement. A later
+    // rollback would then land on the WRONG note and silently corrupt it. So drop
+    // the history on every USER-initiated switch — this makes cross-arrangement
+    // undo impossible, guaranteeing an index-based rollback never spans a re-sort.
+    // The undo-driven switch (_historyEnsureArr) opts out via _undoDrivenArrSwitch
+    // so it doesn't discard the stack it is replaying. Mirrors the save/build
+    // reset() (another arr.notes renumbering event).
+    if (!_undoDrivenArrSwitch && S.history) S.history.reset();
     if (isKeysMode()) updatePianoRange();
     draw();
     updateStatus();
