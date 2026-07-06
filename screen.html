@@ -109,6 +109,16 @@
             <input id="editor-snap-enabled" type="checkbox" checked onchange="editorSetSnapEnabled(this.checked)" class="accent-accent"> On
         </label>
 
+        <!-- Key / scale (piano-roll in-key highlight). Hidden unless a keys
+             arrangement is active; populated + gated by _refreshKeyControls(). -->
+        <div id="editor-key-group" class="hidden items-center gap-1">
+            <div class="h-4 w-px bg-gray-700"></div>
+            <span class="text-xs text-gray-500">Key:</span>
+            <select id="editor-key-tonic" onchange="editorSetKeyTonic(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Song key (tonic)"></select>
+            <select id="editor-key-scale" onchange="editorSetKeyScale(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Scale / mode"></select>
+            <button id="editor-key-highlight-btn" onclick="editorToggleKeyHighlight()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Shade out-of-key rows and dim out-of-key notes in the piano roll" aria-pressed="false">In-key</button>
+        </div>
+
         <div class="h-4 w-px bg-gray-700"></div>
 
         <!-- Shortcuts -->
