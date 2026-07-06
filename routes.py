@@ -227,6 +227,20 @@ def _merge_manifest_entry(old_entry, rebuilt: dict) -> dict:
     return out
 
 
+def _refresh_save_backup(output_path, backup_path) -> None:
+    """Roll the ``.bak`` to the CURRENT on-disk pack before overwriting it,
+    so the backup is always the previous save — one step back. It used to be
+    written only once (``if not backup.exists()``), which meant a user
+    editing a pack over weeks kept a first-ever-save recovery point that
+    grew staler with every save. Best-effort on purpose: a failed backup
+    copy must never block the save itself."""
+    try:
+        if output_path.exists() and output_path.is_file():
+            shutil.copy2(output_path, backup_path)
+    except OSError:
+        pass
+
+
 def _timeline_round_time(value) -> float:
     try:
         return round(float(value), 3)
@@ -3757,11 +3771,9 @@ def setup(app, context):
             if sloppak_form == "dir":
                 return str(output_path)
 
-            # Zip-form: back up the original and re-zip the source dir.
-            if output_path.exists() and output_path.is_file():
-                backup = dlc_dir / (filename + ".bak")
-                if not backup.exists():
-                    shutil.copy2(output_path, backup)
+            # Zip-form: roll the .bak to the current pack (the backup is
+            # always the PREVIOUS save), then re-zip the source dir.
+            _refresh_save_backup(output_path, dlc_dir / (filename + ".bak"))
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_zip = output_path.with_suffix(output_path.suffix + ".tmp")
@@ -6957,14 +6969,14 @@ def setup(app, context):
                     raise FileExistsError(
                         f"{output_path.name} already exists; refusing to overwrite"
                     )
-            # Match the existing /save paths: keep a one-time .bak when
-            # we're about to overwrite an existing sloppak so the user
-            # has a recovery point. Skipped on `fail_if_exists` since
-            # we just atomically created a placeholder there.
+            # Match the /save path: roll the .bak to the current pack (the
+            # backup is always the PREVIOUS save) before overwriting.
+            # Skipped on `fail_if_exists` since we just atomically created
+            # a placeholder there.
             elif output_path.exists() and output_path.is_file():
-                backup = output_path.with_suffix(output_path.suffix + ".bak")
-                if not backup.exists():
-                    shutil.copy2(output_path, backup)
+                _refresh_save_backup(
+                    output_path,
+                    output_path.with_suffix(output_path.suffix + ".bak"))
             tmp_zip = output_path.with_suffix(output_path.suffix + ".tmp")
             try:
                 with zipfile.ZipFile(str(tmp_zip), "w", zipfile.ZIP_DEFLATED) as zf:
