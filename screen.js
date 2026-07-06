@@ -2134,7 +2134,7 @@ class SetPitchedSlideTargetsCmd {
         for (const i of this.indices) {
             const n = notes()[i];
             if (!n.techniques) n.techniques = {};
-            const fret = Math.max(0, Math.min(24, (Number(n.f) || 0) + this.delta));
+            const fret = Math.max(0, Math.min(24, (Number(n.fret) || 0) + this.delta));
             n.techniques.slide_to = fret;
         }
     }
