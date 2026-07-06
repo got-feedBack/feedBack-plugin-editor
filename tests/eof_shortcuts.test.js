@@ -91,6 +91,10 @@ t('exposes ready and planned shortcut command rows', () => {
     assert.strictEqual(rows.find(r => r.id === 'setFretTen').key, 'Shift+0');
     assert.strictEqual(rows.find(r => r.id === 'moveStringUp').key, 'Up');
     assert.strictEqual(rows.find(r => r.id === 'moveStringDown').key, 'Down');
+    assert.strictEqual(rows.find(r => r.id === 'slideUp').status, 'ready');
+    assert.strictEqual(rows.find(r => r.id === 'slideUp').key, 'Ctrl+Up');
+    assert.strictEqual(rows.find(r => r.id === 'slideDown').status, 'ready');
+    assert.strictEqual(rows.find(r => r.id === 'slideDown').key, 'Ctrl+Down');
     assert.strictEqual(rows.find(r => r.id === 'toggleSlap').key, 'Shift+O');
     assert.strictEqual(rows.find(r => r.id === 'slideEditor').key, 'S');
     assert.strictEqual(rows.find(r => r.id === 'cyclePickDirection').key, 'K');
@@ -114,6 +118,10 @@ t('exposes wired FeedBack Native key labels', () => {
     assert.strictEqual(rows.find(r => r.id === 'setFretTen').key, 'Shift+0');
     assert.strictEqual(rows.find(r => r.id === 'moveStringUp').key, 'Up');
     assert.strictEqual(rows.find(r => r.id === 'moveStringDown').key, 'Down');
+    assert.strictEqual(rows.find(r => r.id === 'slideUp').status, 'ready');
+    assert.strictEqual(rows.find(r => r.id === 'slideUp').key, 'Ctrl+Up');
+    assert.strictEqual(rows.find(r => r.id === 'slideDown').status, 'ready');
+    assert.strictEqual(rows.find(r => r.id === 'slideDown').key, 'Ctrl+Down');
     assert.strictEqual(rows.find(r => r.id === 'toggleSlap').key, 'Shift+O');
     assert.strictEqual(rows.find(r => r.id === 'slideEditor').key, 'S');
     assert.strictEqual(rows.find(r => r.id === 'cyclePickDirection').key, 'K');
@@ -145,6 +153,8 @@ t('maps FeedBack Native note and technique shortcuts', () => {
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('ArrowUp')), 'moveStringUp');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('ArrowDown')), 'moveStringDown');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('ArrowUp', { shift: true })), 'transposeStringUp');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('ArrowUp', { ctrl: true })), 'slideUp');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('ArrowDown', { ctrl: true })), 'slideDown');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('t')), 'toggleTempoMap');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('b')), 'bend');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('s')), 'slideEditor');
@@ -183,6 +193,8 @@ t('maps EOF Tempo Map commands by active mode', () => {
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('ArrowUp')), 'moveStringUp');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('ArrowDown')), 'moveStringDown');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('ArrowDown', { shift: true })), 'transposeStringDown');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('ArrowUp', { ctrl: true })), 'slideUp');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('ArrowDown', { ctrl: true })), 'slideDown');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('t'), 'tempoMap'), 'toggleTempoMap');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('b', { ctrl: true })), 'bend');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('b'), 'tempoMap'), 'tempoSetBpm');

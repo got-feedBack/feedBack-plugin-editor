@@ -2121,6 +2121,32 @@ class SetTeachingMarkCmd {
     }
 }
 
+class SetPitchedSlideTargetsCmd {
+    constructor(indices, delta) {
+        this.indices = indices.slice();
+        this.delta = Number(delta) || 0;
+        this.old = this.indices.map(i => {
+            const t = notes()[i].techniques || {};
+            return t.slide_to;
+        });
+    }
+    exec() {
+        for (const i of this.indices) {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            const fret = Math.max(0, Math.min(24, (Number(n.fret) || 0) + this.delta));
+            n.techniques.slide_to = fret;
+        }
+    }
+    rollback() {
+        this.indices.forEach((i, k) => {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques.slide_to = this.old[k];
+        });
+    }
+}
+
 // Edit a chord-instance harmony function (§6.3.1). fn rides the instance: it is
 // carried as `_fn` on EVERY note at the chord's time, so it travels with the
 // notes through any time-mutating edit and reconstructChords adopts it by
@@ -3171,8 +3197,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'moveStringDown', label: 'Move selection down one string', group: 'Notes', status: 'ready', keys: { feedback: 'Down', eof: 'Down' } },
     { id: 'transposeStringUp', label: 'Move selection up preserving pitch', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Up', eof: 'Shift+Up' } },
     { id: 'transposeStringDown', label: 'Move selection down preserving pitch', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Down', eof: 'Shift+Down' } },
-    { id: 'slideUp', label: 'Pitched slide up', group: 'Notes', status: 'planned', keys: { feedback: 'Ctrl+Up', eof: 'Ctrl+Up' } },
-    { id: 'slideDown', label: 'Pitched slide down', group: 'Notes', status: 'planned', keys: { feedback: 'Ctrl+Down', eof: 'Ctrl+Down' } },
+    { id: 'slideUp', label: 'Pitched slide up', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+Up', eof: 'Ctrl+Up' } },
+    { id: 'slideDown', label: 'Pitched slide down', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+Down', eof: 'Ctrl+Down' } },
     { id: 'toggleHammerOn', label: 'Toggle hammer-on', group: 'Techniques', status: 'ready', keys: { feedback: 'H', eof: 'H' } },
     { id: 'togglePullOff', label: 'Toggle pull-off', group: 'Techniques', status: 'ready', keys: { feedback: 'P', eof: 'P' } },
     { id: 'toggleTap', label: 'Toggle tap', group: 'Techniques', status: 'ready', keys: { feedback: 'Y', eof: 'T / Ctrl+T' } },
@@ -3590,6 +3616,17 @@ function _editorCyclePickDirection() {
     setStatus(next < 0 ? 'Pick direction cleared' : (next === 0 ? 'Pick direction: down' : 'Pick direction: up'));
     return true;
 }
+function _editorSetPitchedSlideByStep(delta) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    const step = delta < 0 ? -1 : 1;
+    S.history.exec(new SetPitchedSlideTargetsCmd(idxs, step));
+    draw();
+    updateStatus();
+    _renderInspector();
+    setStatus(step > 0 ? 'Pitched slide up one fret' : 'Pitched slide down one fret');
+    return true;
+}
 function _editorAdjustSelectedFret(delta) {
     const idxs = _editorCurrentNoteIndices();
     if (!idxs.length) { setStatus('Select notes first'); return false; }
@@ -3953,8 +3990,8 @@ function _editorRunEofCommand(cmd) {
     case 'unpitchedSlide': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptSlideUnpitch(idxs[0]); else setStatus('Select a note first'); return true; }
     case 'moveStringUp': return _execMoveStringSameFret(+1);
     case 'moveStringDown': return _execMoveStringSameFret(-1);
-    case 'slideUp': return _editorUnsupportedEofCommand('Pitched slide shortcut');
-    case 'slideDown': return _editorUnsupportedEofCommand('Pitched slide shortcut');
+    case 'slideUp': return _editorSetPitchedSlideByStep(+1);
+    case 'slideDown': return _editorSetPitchedSlideByStep(-1);
     case 'transposeStringUp': _execMoveString(+1); return true;
     case 'transposeStringDown': _execMoveString(-1); return true;
     case 'toggleHammerOn': return _editorToggleTechnique('hammer_on');
