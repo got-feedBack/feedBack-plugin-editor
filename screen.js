@@ -1643,9 +1643,19 @@ function _drawOnsetStrip(w) {
     if (dur <= 0) return;
     const xLo = Math.max(LABEL_W, Math.floor(timeToX(0)));
     const xHi = Math.min(w, Math.ceil(timeToX(dur)));
-    for (const o of onsets) {
+    // onsets are time-sorted and timeToX is monotonic, so the on-screen pixel
+    // is non-decreasing across the array. Binary-search the first visible
+    // onset (px >= xLo) and stop at the first past xHi — no full-array scan.
+    let lo = 0, hi = onsets.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (Math.round(timeToX(onsets[mid].t)) < xLo) lo = mid + 1;
+        else hi = mid;
+    }
+    for (let i = lo; i < onsets.length; i++) {
+        const o = onsets[i];
         const px = Math.round(timeToX(o.t));
-        if (px < xLo || px > xHi) continue;
+        if (px > xHi) break;
         // Stronger attacks read brighter and taller — quiet ghost hits stay
         // visible but understated.
         ctx.fillStyle = `rgba(255,190,80,${(0.30 + 0.45 * o.s).toFixed(3)})`;
@@ -5355,10 +5365,17 @@ function _onsetTimesFromPeaksPure(rms, binSec, opts) {
 
 // ── Onset strip toggle + lazy cache ──────────────────────────────────
 let _onsetCache = null;   // [{t, s}] for the CURRENT waveformPeaks
+let _onsetStripOn = null; // cached enabled flag; null until first read
 
 function _onsetStripEnabled() {
-    try { return localStorage.getItem('editorOnsetStrip') === '1'; }
-    catch (_) { return false; }
+    // Cache the flag so the draw path (every frame during playback) doesn't
+    // hit localStorage synchronously. Seeded once from storage, then kept in
+    // sync by _editorToggleOnsetStrip.
+    if (_onsetStripOn === null) {
+        try { _onsetStripOn = localStorage.getItem('editorOnsetStrip') === '1'; }
+        catch (_) { _onsetStripOn = false; }
+    }
+    return _onsetStripOn;
 }
 
 function _ensureOnsets() {
@@ -5383,6 +5400,7 @@ function _refreshOnsetBtn() {
 
 function _editorToggleOnsetStrip() {
     const next = !_onsetStripEnabled();
+    _onsetStripOn = next;
     try { localStorage.setItem('editorOnsetStrip', next ? '1' : '0'); } catch (_) {}
     _refreshOnsetBtn();
     draw();
