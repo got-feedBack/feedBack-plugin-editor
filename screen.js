@@ -1456,12 +1456,62 @@ function drawGrid(w) {
     }
 }
 
+/* @pure:section-coverage:start */
+// Per-section spans with a hasContent flag: does any charted note-time fall
+// in the section's [start, nextStart) window (the last section runs to the
+// song end, or open-ended when duration is unknown)? A note exactly on a
+// boundary belongs to the LATER section (half-open). Sections are sorted
+// defensively and non-finite start_times dropped. Returns [] when there are
+// no sections. Ambient progress — never a score.
+function _sectionCoveragePure(sections, noteTimes, duration) {
+    if (!Array.isArray(sections) || !sections.length) return [];
+    const secs = sections
+        .filter(s => s && Number.isFinite(Number(s.start_time)))
+        .map(s => Number(s.start_time))
+        .sort((a, b) => a - b);
+    if (!secs.length) return [];
+    const dur = (Number.isFinite(duration) && duration > 0) ? duration : Infinity;
+    const times = Array.isArray(noteTimes)
+        ? noteTimes.map(Number).filter(Number.isFinite)
+        : [];
+    const out = [];
+    for (let i = 0; i < secs.length; i++) {
+        const start = secs[i];
+        const end = (i + 1 < secs.length) ? secs[i + 1] : dur;   // may be Infinity
+        let hasContent = false;
+        for (const t of times) {
+            if (t >= start && t < end) { hasContent = true; break; }
+        }
+        out.push({ start, end, hasContent });
+    }
+    return out;
+}
+/* @pure:section-coverage:end */
+
+// Note times of the ACTIVE arrangement (flattened — chord notes already live
+// in notes() for the current arrangement).
+function _currentNoteTimes() {
+    return notes().map(n => n.time);
+}
+
 function drawSections(w) {
     const st = S.scrollX - 1;
     const et = S.scrollX + (w - LABEL_W) / S.zoom + 1;
     const laneBottom = isKeysMode()
         ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
         : WAVEFORM_H + lanes() * LANE_H;
+    // Completeness strip: a thin band at the top of the lane area tinting
+    // each section by whether the active arrangement has notes in it — an
+    // at-a-glance "where is this chart still empty", drawn under the section
+    // labels/lines below. Neutral, no percentage, no red.
+    const cov = _sectionCoveragePure(S.sections, _currentNoteTimes(), S.duration || 0);
+    for (const c of cov) {
+        const x0 = Math.max(LABEL_W, timeToX(c.start));
+        const x1 = Math.min(w, timeToX(c.end));
+        if (x1 <= x0) continue;
+        ctx.fillStyle = c.hasContent ? 'rgba(120,170,255,0.20)' : 'rgba(255,255,255,0.035)';
+        ctx.fillRect(x0, WAVEFORM_H, x1 - x0, 3);
+    }
     ctx.font = '9px monospace';
     ctx.textBaseline = 'top';
     for (const s of S.sections) {
