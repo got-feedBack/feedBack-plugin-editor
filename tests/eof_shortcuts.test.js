@@ -85,6 +85,8 @@ t('exposes ready and planned shortcut command rows', () => {
     assert.strictEqual(rows.find(r => r.id === 'toggleTempoMap').key, 'T (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'showShortcutHelp').key, '?');
     assert.strictEqual(rows.find(r => r.id === 'openCommandPalette').key, 'Ctrl+K');
+    assert.strictEqual(rows.find(r => r.id === 'setFretDigit').key, '0-9');
+    assert.strictEqual(rows.find(r => r.id === 'setFretTen').key, 'Shift+0');
     assert.strictEqual(rows.find(r => r.id === 'setTimeSignature').key, 'Shift+T / Shift+I');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatCount').key, 'N (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatMinus').key, '[ (Tempo Map)');
@@ -101,6 +103,8 @@ t('exposes wired FeedBack Native key labels', () => {
     assert.strictEqual(rows.find(r => r.id === 'toggleWaveform').key, 'W');
     assert.strictEqual(rows.find(r => r.id === 'showShortcutHelp').key, '?');
     assert.strictEqual(rows.find(r => r.id === 'openCommandPalette').key, 'Ctrl+K');
+    assert.strictEqual(rows.find(r => r.id === 'setFretDigit').key, '0-9');
+    assert.strictEqual(rows.find(r => r.id === 'setFretTen').key, 'Shift+0');
     assert.strictEqual(rows.find(r => r.id === 'importGp').key, '');
     assert.strictEqual(rows.find(r => r.id === 'toggleTempoMap').key, 'T');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatCount').key, 'N (Tempo Map)');
@@ -124,6 +128,8 @@ t('maps FeedBack Native timeline and grid shortcuts', () => {
 
 t('maps FeedBack Native note and technique shortcuts', () => {
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('f')), 'editFret');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('7')), 'setFretDigit:7');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('0', { shift: true })), 'setFretTen');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('t')), 'toggleTempoMap');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('b')), 'bend');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('h')), 'toggleHammerOn');
@@ -153,6 +159,8 @@ t('maps FeedBack Native Tempo Map commands by active mode', () => {
 
 t('maps EOF Tempo Map commands by active mode', () => {
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('t')), 'toggleTap');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('4')), 'setFretDigit:4');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('0', { shift: true })), 'setFretTen');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('t'), 'tempoMap'), 'toggleTempoMap');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('b', { ctrl: true })), 'bend');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('b'), 'tempoMap'), 'tempoSetBpm');
