@@ -3235,7 +3235,7 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (plain && key === '.') return 'snapUp';
     if (plain && key === 'f') return 'editFret';
     if (plain && /^[0-9]$/.test(key)) return 'setFretDigit:' + key;
-    if (shift && key === '0') return 'setFretTen';
+    if (shift && key === ')') return 'setFretTen';
     if (plain && key === 'h') return 'toggleHammerOn';
     if (plain && key === 'p') return 'togglePullOff';
     if (plain && key === 'n') return 'noteMenu';
@@ -3335,7 +3335,7 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (plain && key === '.') return 'snapUp';
     if (plain && key === 'f') return 'editFret';
     if (plain && /^[0-9]$/.test(key)) return 'setFretDigit:' + key;
-    if (shift && key === '0') return 'setFretTen';
+    if (shift && key === ')') return 'setFretTen';
     if (plain && key === 'b') return 'bend';
     if (plain && key === 'u') return 'unpitchedSlide';
     if (shift && e.key === 'ArrowUp') return 'transposeStringUp';
