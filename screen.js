@@ -13465,6 +13465,9 @@ function _tempoModulationRatioPure(raw) {
         const den = parseFloat(frac[2]);
         return num > 0 && den > 0 ? num / den : null;
     }
+    // Bare decimal only — reject leading-numeric garbage like "3abc"/"3:2:1"
+    // that parseFloat would silently truncate to a plausible ratio.
+    if (!/^\d*\.?\d+(?:e[+-]?\d+)?$/i.test(s)) return null;
     const v = parseFloat(s);
     return Number.isFinite(v) && v > 0 ? v : null;
 }

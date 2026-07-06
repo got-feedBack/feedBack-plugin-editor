@@ -65,6 +65,11 @@ t('ratio parser: presets, fractions, decimals, junk', () => {
     assert.strictEqual(_tempoModulationRatioPure('0'), null);
     assert.strictEqual(_tempoModulationRatioPure('3:0'), null);
     assert.strictEqual(_tempoModulationRatioPure(null), null);
+    // Leading-numeric garbage must be REFUSED, not parseFloat-truncated to a
+    // plausible-looking ratio (3:2:1→3, 2/3/4→2, 3abc→3 would all sneak in).
+    assert.strictEqual(_tempoModulationRatioPure('3:2:1'), null);
+    assert.strictEqual(_tempoModulationRatioPure('2/3/4'), null);
+    assert.strictEqual(_tempoModulationRatioPure('3abc'), null);
 });
 
 // ── the uniform run boundary ─────────────────────────────────────────────────
