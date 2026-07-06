@@ -1563,10 +1563,19 @@ function drawNow() {
 function drawWaveform(w) {
     ctx.fillStyle = '#08081a';
     ctx.fillRect(0, 0, w, WAVEFORM_H);
-    if (typeof editorWaveformVisible !== 'undefined' && !editorWaveformVisible) return;
+    // The onset strip is independent of the waveform toggle: waveform off +
+    // onsets on = the pure "blocky" detection view; both on = an overlay.
+    // (typeof guards keep drawWaveform extractable by the render test.)
+    const drawOnsets = () => {
+        if (typeof _drawOnsetStrip === 'function') _drawOnsetStrip(w);
+    };
+    if (typeof editorWaveformVisible !== 'undefined' && !editorWaveformVisible) {
+        drawOnsets();
+        return;
+    }
     const pk = S.waveformPeaks;
     const dur = S.duration || 0;
-    if (!pk || !pk.bins || dur <= 0) return;
+    if (!pk || !pk.bins || dur <= 0) { drawOnsets(); return; }
 
     const N = pk.bins;
     const mid = WAVEFORM_H / 2;
@@ -1618,6 +1627,30 @@ function drawWaveform(w) {
         for (let i = i0; i <= i1; i++) { const r = pk.rms[i]; sumSq += r * r; cnt++; }
         const h = (cnt ? Math.sqrt(sumSq / cnt) : 0) * amp;
         if (h > 0.5) ctx.fillRect(px, mid - h, 1, Math.max(1, 2 * h));
+    }
+
+    drawOnsets();
+}
+
+// Detected-onset blocks over the waveform band — a visual hint of where
+// transients (likely note/beat events) live in the recording. Display
+// only: the strip never places notes (D22).
+function _drawOnsetStrip(w) {
+    if (!_onsetStripEnabled()) return;
+    const onsets = _ensureOnsets();
+    if (!onsets || !onsets.length) return;
+    const dur = S.duration || 0;
+    if (dur <= 0) return;
+    const xLo = Math.max(LABEL_W, Math.floor(timeToX(0)));
+    const xHi = Math.min(w, Math.ceil(timeToX(dur)));
+    for (const o of onsets) {
+        const px = Math.round(timeToX(o.t));
+        if (px < xLo || px > xHi) continue;
+        // Stronger attacks read brighter and taller — quiet ghost hits stay
+        // visible but understated.
+        ctx.fillStyle = `rgba(255,190,80,${(0.30 + 0.45 * o.s).toFixed(3)})`;
+        const h = Math.round((WAVEFORM_H - 6) * (0.55 + 0.45 * o.s));
+        ctx.fillRect(px - 1, WAVEFORM_H - 3 - h, 3, h);
     }
 }
 
@@ -3470,6 +3503,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
     { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', eof: 'C' } },
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -3586,6 +3620,7 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (sig === 'F2') return 'save';
     if (sig === 'F5') return 'toggleWaveform';
     if (plain && key === 'c') return 'toggleGuideClap';
+    if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === '?') return 'showShortcutHelp';
     if (ctrl && key === 'k') return 'openCommandPalette';
     if (sig === 'F6') return 'importMidi';
@@ -3697,6 +3732,7 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (ctrl && key === 's') return 'save';
     if (plain && key === 'w') return 'toggleWaveform';
     if (plain && key === 'c') return 'toggleGuideClap';
+    if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === '?') return 'showShortcutHelp';
     if (ctrl && key === 'k') return 'openCommandPalette';
     if (sig === 'PageUp') return 'prevBeat';
@@ -4273,6 +4309,7 @@ function _editorRunEofCommand(cmd) {
     case 'toggleWaveform': return _editorToggleWaveform();
     case 'toggleGuideClap': return _editorToggleGuideClap();
     case 'toggleMetronome': return _editorToggleMetronome();
+    case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -5269,7 +5306,93 @@ function computeWaveform() {
     // zoom, yet bounded (≈1 MB of typed arrays for a 5-minute song).
     const binSamples = Math.max(64, Math.round(S.audioBuffer.sampleRate * 0.003));
     S.waveformPeaks = _buildWaveformPeaks(data, binSamples);
+    // New audio ⇒ any cached onset analysis is stale.
+    _onsetCache = null;
 }
+
+/* @pure:onset-strip:start */
+// Transient/onset estimation from the waveform RMS cache — a cheap
+// client-side "where do events probably live" hint (no server round-trip,
+// no DSP deps). An onset fires where the RMS rises sharply above the local
+// baseline (the mean of the preceding window), gated by an absolute noise
+// floor and a refractory gap so one attack registers once. Returns
+// [{t, s}] — time in seconds and a 0..1 strength.
+function _onsetTimesFromPeaksPure(rms, binSec, opts) {
+    if (!rms || !rms.length || !(binSec > 0)) return [];
+    const o = opts || {};
+    const baselineBins = Math.max(2, o.baselineBins || 16);
+    const ratio = o.ratio || 1.5;
+    const floorFrac = o.floorFrac || 0.05;
+    const riseFrac = o.riseFrac || 0.03;
+    const minGapSec = o.minGapSec || 0.05;
+    let global = 0;
+    for (let i = 0; i < rms.length; i++) if (rms[i] > global) global = rms[i];
+    if (!(global > 0)) return [];
+    const floor = global * floorFrac;
+    const refractory = Math.max(1, Math.round(minGapSec / binSec));
+    const out = [];
+    let sum = 0;
+    for (let i = 0; i < Math.min(baselineBins, rms.length); i++) sum += rms[i];
+    let lastOnset = -Infinity;
+    for (let i = baselineBins; i < rms.length; i++) {
+        const base = sum / baselineBins;
+        const v = rms[i];
+        if (v > floor && v > rms[i - 1]
+                && v > base * ratio && v - base > global * riseFrac
+                && i - lastOnset >= refractory) {
+            out.push({
+                t: i * binSec,
+                s: Math.max(0, Math.min(1, (v - base) / global)),
+            });
+            lastOnset = i;
+        }
+        // Slide the baseline window.
+        sum += v - rms[i - baselineBins];
+    }
+    return out;
+}
+/* @pure:onset-strip:end */
+
+// ── Onset strip toggle + lazy cache ──────────────────────────────────
+let _onsetCache = null;   // [{t, s}] for the CURRENT waveformPeaks
+
+function _onsetStripEnabled() {
+    try { return localStorage.getItem('editorOnsetStrip') === '1'; }
+    catch (_) { return false; }
+}
+
+function _ensureOnsets() {
+    if (_onsetCache) return _onsetCache;
+    const pk = S.waveformPeaks;
+    const dur = S.duration || 0;
+    if (!pk || !pk.bins || !pk.rms || dur <= 0) return null;
+    _onsetCache = _onsetTimesFromPeaksPure(pk.rms, dur / pk.bins);
+    return _onsetCache;
+}
+
+function _refreshOnsetBtn() {
+    const btn = document.getElementById('editor-onset-btn');
+    if (!btn) return;
+    const on = _onsetStripEnabled();
+    btn.classList.toggle('bg-accent', on);
+    btn.classList.toggle('hover:bg-accent-light', on);
+    btn.classList.toggle('bg-dark-600', !on);
+    btn.classList.toggle('hover:bg-dark-500', !on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+function _editorToggleOnsetStrip() {
+    const next = !_onsetStripEnabled();
+    try { localStorage.setItem('editorOnsetStrip', next ? '1' : '0'); } catch (_) {}
+    _refreshOnsetBtn();
+    draw();
+    setStatus(next
+        ? 'Onset strip on — amber blocks mark detected attacks in the recording (display only)'
+        : 'Onset strip off');
+    return true;
+}
+window.editorToggleOnsetStrip = _editorToggleOnsetStrip;
+_refreshOnsetBtn();
 
 function _startAudioSourceAtCursor() {
     S.audioSource = S.audioCtx.createBufferSource();
