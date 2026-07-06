@@ -28,11 +28,13 @@ function t(name, fn) {
 
 t('uses bar start as cursor fallback and centers scroll when only a region is provided', () => {
     const out = api._resolvePendingViewStatePure({
-        barSel: { startTime: 12, endTime: 20 },
+        barSel: { startTime: 12, endTime: 20, mode: 'free' },
         returnToHighway: true,
     }, 100, 1000, 52);
     assert.strictEqual(out.returnToHighway, true);
-    assert.deepStrictEqual(out.barSel, { startTime: 12, endTime: 20 });
+    // Loop mode must survive the highway round-trip (free/grid loops must not
+    // be silently demoted to 'bar').
+    assert.deepStrictEqual(out.barSel, { startTime: 12, endTime: 20, mode: 'free' });
     assert.strictEqual(out.zoom, 100);
     assert.strictEqual(out.cursorTime, 12);
     assert.ok(out.scrollX < 12 && out.scrollX >= 0);

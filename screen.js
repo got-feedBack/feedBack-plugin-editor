@@ -7321,7 +7321,7 @@ window.editorToggleTech = (idx, tech) => {
 // already know how to do) and hit the button. Returns null when neither
 // exists.
 function _effectiveLoopRegion() {
-    if (S.barSel) return { startTime: S.barSel.startTime, endTime: S.barSel.endTime };
+    if (S.barSel) return { startTime: S.barSel.startTime, endTime: S.barSel.endTime, mode: S.barSel.mode };
     const sel = _selectedNotes();
     if (sel.length) {
         let lo = Infinity, hi = -Infinity;
@@ -7329,7 +7329,12 @@ function _effectiveLoopRegion() {
             lo = Math.min(lo, n.time);
             hi = Math.max(hi, n.time + (n.sustain || 0));
         }
-        if (Number.isFinite(lo) && Number.isFinite(hi)) return _barSpanForTimes(lo, hi);
+        if (Number.isFinite(lo) && Number.isFinite(hi)) {
+            // A note-selection fallback is a whole-bar span, so tag it 'bar'.
+            const span = _barSpanForTimes(lo, hi);
+            if (span) span.mode = 'bar';
+            return span;
+        }
     }
     return null;
 }
@@ -7339,7 +7344,7 @@ function _resolvePendingViewStatePure(pv, fallbackZoom, viewWidthPx, labelW) {
     const nextZoom = (typeof pv.zoom === 'number' && pv.zoom > 0) ? pv.zoom : fallbackZoom;
     const out = {
         returnToHighway: !!pv.returnToHighway,
-        barSel: pv.barSel ? { startTime: pv.barSel.startTime, endTime: pv.barSel.endTime } : null,
+        barSel: pv.barSel ? { startTime: pv.barSel.startTime, endTime: pv.barSel.endTime, mode: pv.barSel.mode } : null,
         zoom: nextZoom,
         cursorTime: typeof pv.cursorTime === 'number'
             ? pv.cursorTime
@@ -7390,8 +7395,8 @@ window.editorLoopIn3D = async () => {
     }
     // Pin the resolved region as the bar selection so it's highlighted and
     // carried in the return context.
-    S.barSel = { startTime: region.startTime, endTime: region.endTime };
-    const sel = { startTime: region.startTime, endTime: region.endTime };
+    S.barSel = { startTime: region.startTime, endTime: region.endTime, mode: region.mode };
+    const sel = { startTime: region.startTime, endTime: region.endTime, mode: region.mode };
     // Persist edits in place so the highway streams the latest chart. Uses
     // the same save path as the Save button (in-place sloppak write, not the
     // heavy create-mode build).
@@ -13260,14 +13265,30 @@ class TempoGridCmd {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
         this.label = label || 'grid';
+        // Snapshot of the loop selection captured on first exec so rollback can
+        // restore it verbatim (see rollback).
+        this.beforeBarSel = undefined;
     }
     exec() {
+        // Snapshot the pre-edit loop selection BEFORE relocking. Relock
+        // re-derives S.barSel from the NEW grid and is lossy / not self-inverse,
+        // so replaying it on rollback would MOVE the loop instead of restoring
+        // it. Forward relock stays here so a live grid edit still re-snaps the
+        // loop onto the new grid.
+        if (this.beforeBarSel === undefined) {
+            this.beforeBarSel = S.barSel ? { ...S.barSel } : null;
+        }
         S.beats = this.newBeats.map(b => ({ ...b }));
         _loopRelockAfterGridChange();
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
-        _loopRelockAfterGridChange();
+        // Restore the EXACT pre-edit loop selection rather than relocking
+        // (relock is not self-inverse — a bar loop [2,4] would resurface as
+        // [1,6] after edit+undo).
+        S.barSel = this.beforeBarSel ? { ...this.beforeBarSel } : null;
+        _renderLoopStrip();
+        _updateLoopIn3DBtn();
     }
 }
 
@@ -13644,6 +13665,9 @@ class TempoMapCmd {
         this.label = label || 'tempo';
         this.before = null;
         this.arrs = null;
+        // Snapshot of the loop selection captured on first exec so rollback can
+        // restore it verbatim (see rollback).
+        this.beforeBarSel = undefined;
     }
     exec() {
         // Invariant: oldBeats / newBeats have equal length — TempoMapCmd
@@ -13654,6 +13678,11 @@ class TempoMapCmd {
             this.arrs = (this.scope === 'all') ? _tempoRetimeArrangements() : [];
             this.before = _captureScopedTimes(this.scope, this.arrs);
         }
+        // Snapshot the pre-edit loop selection BEFORE relocking (see rollback);
+        // relock re-derives it from the new grid and is not self-inverse.
+        if (this.beforeBarSel === undefined) {
+            this.beforeBarSel = S.barSel ? { ...S.barSel } : null;
+        }
         S.beats = this.newBeats.map(b => ({ ...b }));
         _applyTempoRemap(_makeTimeRemap(this.oldBeats, this.newBeats),
                          this.scope, this.arrs);
@@ -13662,7 +13691,11 @@ class TempoMapCmd {
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
         _restoreScopedTimes(this.before, this.scope);
-        _loopRelockAfterGridChange();
+        // Restore the EXACT pre-edit loop selection rather than relocking
+        // (relock is lossy — an undone tempo edit would otherwise move the loop).
+        S.barSel = this.beforeBarSel ? { ...this.beforeBarSel } : null;
+        _renderLoopStrip();
+        _updateLoopIn3DBtn();
     }
 }
 
