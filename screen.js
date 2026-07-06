@@ -4860,8 +4860,63 @@ window.editorConfirmAddNote = function() {
 
 window.editorHideAddNote = hideAddNote;
 
+/* @pure:boot-teardown:start */
+// Tracked registry for document/window-level listeners. The host can
+// re-inject the editor screen; globals registered by a previous injection
+// would otherwise STACK (double keystrokes, orphaned handlers, leaks)
+// because they outlive the replaced DOM. Each boot tears down the previous
+// injection's registrations before adding its own — safe under both host
+// behaviors (no re-injection ⇒ teardown never runs).
+function _makeListenerRegistry() {
+    const items = [];
+    return {
+        add(target, type, fn, opts) {
+            target.addEventListener(type, fn, opts);
+            items.push({ target, type, fn, opts });
+            return fn;
+        },
+        removeAll() {
+            for (const l of items) {
+                try { l.target.removeEventListener(l.type, l.fn, l.opts); } catch (_) {}
+            }
+            items.length = 0;
+        },
+        count() { return items.length; },
+    };
+}
+/* @pure:boot-teardown:end */
+
+// Tear down the PREVIOUS injection (if any) before this one registers its
+// own globals, then publish this injection's teardown for the next one.
+if (typeof window.__editorScreenTeardown === 'function') {
+    try { window.__editorScreenTeardown(); } catch (_) {}
+}
+const _globalListeners = _makeListenerRegistry();
+let _editorScreenObs = null;
+// Handle for the pre-canvas boot poller (setInterval below) so the teardown
+// can stop a late-firing interval from re-running a torn-down injection.
+let _bootPollInterval = null;
+window.__editorScreenTeardown = () => {
+    _globalListeners.removeAll();
+    // Stop any playback this injection owns — the audio graph outlives the
+    // DOM, so a replaced screen would otherwise keep sounding.
+    try { if (S.audioSource) { S.audioSource.stop(); S.audioSource = null; } } catch (_) {}
+    try { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } } catch (_) {}
+    try { if (_editorScreenObs) { _editorScreenObs.disconnect(); _editorScreenObs = null; } } catch (_) {}
+    try { if (_v3TopbarWatch) { _v3TopbarWatch.disconnect(); _v3TopbarWatch = null; } } catch (_) {}
+    // The v3 layout ResizeObserver watches #v3-topbar, a shell-persistent node
+    // that survives re-injection — without this disconnect it (and its fit()
+    // closure) would stack one per re-inject.
+    try { if (_v3LayoutObs) { _v3LayoutObs.disconnect(); _v3LayoutObs = null; } } catch (_) {}
+    // Stop the pre-canvas boot poller if it's still spinning.
+    try { if (_bootPollInterval) { clearInterval(_bootPollInterval); _bootPollInterval = null; } } catch (_) {}
+    // Cancel #98's pending coalesced repaint if that PR is present (no-op when
+    // it isn't) — mirrors the codebase's typeof-guarded optional-hook pattern.
+    if (typeof _cancelPendingDraw === 'function') { try { _cancelPendingDraw(); } catch (_) {} }
+};
+
 // Handle Enter key in add-note dialog
-document.addEventListener('keydown', (e) => {
+_globalListeners.add(document, 'keydown', (e) => {
     if (e.key === 'Enter' && addNoteData) {
         e.preventDefault();
         editorConfirmAddNote();
@@ -8915,7 +8970,7 @@ window.editorSetCreateMode = (mode) => {
 // Step 2 audio inputs also invalidates a cached upload URL — otherwise
 // editorDoCreate() skips re-upload (it only uploads when audioUrl is unset)
 // and reuses the previously-selected file/URL.
-document.addEventListener('input', (e) => {
+_globalListeners.add(document, 'input', (e) => {
     const id = e.target && e.target.id;
     // The from-scratch gate depends on the title; the Match button on title OR
     // artist. updateCreateButton re-checks both (it calls _updateMbButton).
@@ -9879,9 +9934,15 @@ function _applyV3Layout() {
     ensure();
 }
 
+let _editorInited = false;
 function init() {
     canvas = document.getElementById('editor-canvas');
     if (!canvas) return;
+    // Idempotency guard: within a single injection init() must run exactly
+    // once. A re-injection re-executes this whole IIFE fresh (flag resets), so
+    // this only blocks a stray double-invocation (e.g. a late boot-poll tick).
+    if (_editorInited) return;
+    _editorInited = true;
     ctx = canvas.getContext('2d');
     _applyV3Layout();
     S.history = new EditHistory();
@@ -9894,13 +9955,15 @@ function init() {
         if (sc === 'drum' || sc === 'all') S.tempoRideScope = sc;
     } catch (_) { /* localStorage unavailable */ }
 
+    // Canvas-level listeners die with the canvas node on re-injection;
+    // only document/window-level ones must go through the tracked registry.
     canvas.addEventListener('mousedown', onMouseDown);
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    _globalListeners.add(document, 'mousemove', onMouseMove);
+    _globalListeners.add(document, 'mouseup', onMouseUp);
     canvas.addEventListener('dblclick', onDblClick);
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('contextmenu', onContextMenu);
-    document.addEventListener('keydown', onKeyDown);
+    _globalListeners.add(document, 'keydown', onKeyDown);
     document.getElementById('editor-loop-strip-track')?.addEventListener('mousedown', _loopStripOnMouseDown);
     document.getElementById('editor-loop-strip-clear')?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _clearBarSelection(); });
 
@@ -9908,9 +9971,10 @@ function init() {
     canvas.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
 
     resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
+    _globalListeners.add(window, 'resize', resizeCanvas);
 
-    // Observe screen visibility for resize + the entry landing.
+    // Observe screen visibility for resize + the entry landing. Held in
+    // _editorScreenObs so the teardown can disconnect it on re-injection.
     const obs = new MutationObserver(() => {
         const screen = document.getElementById('plugin-editor');
         if (screen && screen.classList.contains('active')) {
@@ -9921,6 +9985,7 @@ function init() {
     });
     const screen = document.getElementById('plugin-editor');
     if (screen) obs.observe(screen, { attributes: true, attributeFilter: ['class'] });
+    _editorScreenObs = obs;
     // Also cover the case where the editor screen is already active at init().
     if (screen && screen.classList.contains('active')) {
         setTimeout(_editorMaybeShowStartLanding, 120);
@@ -13409,10 +13474,13 @@ draw = function () {
 if (document.getElementById('editor-canvas')) {
     init();
 } else {
-    // Wait for plugin screen to be injected
-    const check = setInterval(() => {
+    // Wait for plugin screen to be injected. Held in _bootPollInterval so the
+    // teardown can clear it — otherwise a late tick could re-run init() against
+    // a torn-down injection and re-register orphaned listeners.
+    _bootPollInterval = setInterval(() => {
         if (document.getElementById('editor-canvas')) {
-            clearInterval(check);
+            clearInterval(_bootPollInterval);
+            _bootPollInterval = null;
             init();
         }
     }, 100);
