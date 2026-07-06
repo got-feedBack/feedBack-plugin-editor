@@ -681,7 +681,19 @@ function _loopNudgeProbePure(mode, edge, cur, dir, downbeats, snapStep, coarse) 
 function _loopNudgeEdge(edge, dir, coarse) {
     const r = S.barSel;
     if (!r) return false;
-    const mode = r.mode === 'grid' || r.mode === 'free' ? r.mode : 'bar';
+    // Resolve the mode LIVE, exactly like the drag path (_loopStripOnMouseMove
+    // uses _loopLiveMode): Shift forces Free, the loop snap-mode pref is
+    // honored, and a gridless chart degrades to Free — rather than trusting the
+    // region's stored mode (which diverged from the rest of the editor and
+    // ignored Shift). `coarse` IS e.shiftKey, so it also selects the 50 ms Free
+    // step. Grid mode with the subdivision snap turned OFF has no meaningful
+    // step (a whole-beat jump would be a jarring "nudge"), so it degrades to
+    // Free too — matching the snap-off⇒Free coupling used elsewhere.
+    let mode = _loopLiveMode(coarse);
+    if (mode === 'grid'
+        && !_editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx])) {
+        mode = 'free';
+    }
     const cur = edge === 'start' ? r.startTime : r.endTime;
     const downbeats = _downbeatTimes();
     const probe = _loopNudgeProbePure(
