@@ -33,6 +33,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tests: `tests/boot_teardown.test.js`.
 
 ### Added
+- **Drum edits are undoable.** Click-add, drag-move (time and lane), Delete,
+  and the G/F/K ghost/flam/choke toggles now run through the editor's shared
+  undo history via four new command classes (`AddDrumHitCmd`,
+  `DeleteDrumHitsCmd`, `MoveDrumHitsCmd`, `ToggleDrumArticulationCmd`) — a
+  mis-drag or stray Delete in the drum grid was previously unrecoverable, and
+  Ctrl+Z in drum-edit mode silently undid the last **note** edit in the hidden
+  guitar/keys arrangement instead. The commands hold hit references (never
+  indices — the hits array is re-sorted after adds/moves and replaced by
+  delete's filter), preserve the selection across resorts, and mark the drum
+  tab dirty on both exec and rollback so a save after undo persists the
+  reverted state. Tests: `tests/drum_undo.test.js`.
+
+### Changed
+- **Undo history is hardened for multi-arrangement editing.** Each command is
+  tagged with the arrangement it was executed against; undo/redo now switches
+  back to that arrangement first (updating the arrangement selector) instead
+  of rolling index-based commands back into whichever arrangement happens to
+  be active — which silently corrupted the wrong arrangement's notes. Song-level
+  commands (drum tab) opt out of the switch. The undo stack is also capped at
+  500 commands (oldest dropped first) so a marathon session can't grow memory
+  without bound, and removing an arrangement now clears the history (the splice
+  renumbers arrangements, so older commands would target the wrong one — same
+  rationale as the save-time reset). Tests: `tests/drum_undo.test.js`.
 - **Import GoPlayAlong projects (`.gp` + audio + a GoPlayAlong `.xml`).** A GoPlayAlong export is a `<track>` **sync sidecar** — it points at a Guitar Pro score and an audio file and stores the bar→audio sync points, but carries **no chart** — so feeding it to the arrangement importer failed with "not a recognised EOF arrangement XML". Now, in the New-dialog Content Import, drop the Guitar Pro tab + the audio + the GoPlayAlong `.xml` together: the `.xml` is content-sniffed and staged as a **GoPlayAlong sync source** (not mistaken for an EOF arrangement, and it prefills title/artist), and on Import the editor applies GoPlayAlong's **authored** per-bar sync instead of re-deriving it via onset detection. Under the hood: new `goplayalong.py` parser + `/api/plugins/editor/parse-goplayalong-sync` endpoint emit the same `sync_points` / `audio_offset` shape `autosync-gp` / `extract-gp-sync` return, which the existing `convert-gp` warp path consumes (`sync_applied: "warp"`). All GoPlayAlong UI logic is gated on a staged sidecar, so normal GP/EOF/audio imports are byte-for-byte unchanged. Tests: `tests/test_goplayalong.py` (10 cases vs a real export). Verified end-to-end against a real GoPlayAlong project ("Would?" — Alice in Chains): 73 sync points → the referenced `.gp` (87 bars, 7 tracks) → 73 warp anchors → a monotonic per-bar warp.
 - **GP import with auto-sync now applies the full per-bar sync map (Songsterr-style), and the auto-sync audio can come from a YouTube URL.** Previously the auto-sync flow computed per-bar sync points but `convert-gp` applied only the scalar bar-1 offset, so recordings that drift from the tab's authored tempo went audibly out of sync over the song. Now: `convert-gp` accepts the `sync_points` payload back from the client and warps the whole converted chart (notes, sustains, beats, sections, handshapes, phrase levels, keys notation sidecars) onto the recording's timeline via core's new `lib.gp_autosync` warp helpers, responding with `sync_applied: "warp"`; it falls back to the scalar offset (`sync_applied: "offset"`) for GP3/4/5 files that use repeats/voltas/directions (their playback expansion can't be mapped from as-written sync points), when anchors degenerate, or when core lacks the new helpers. The create flow auto-runs the refine pass (onset phase sweep — requires the new core `refine_sync`, which this endpoint always imported but which never existed until now) right after the coarse DTW sync, and both refine calls send `gp_path` so refinement uses exact per-bar score times instead of a 4/4 approximation. The auto-sync section gains a YouTube URL input (reusing `/youtube-audio`) beside the file upload; the fetched audio becomes both the alignment target and the imported song audio.
 - **Coarse triplet snap divisions — `1/3T` and `1/6T`.** The snap grid now offers
