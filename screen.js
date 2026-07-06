@@ -4893,6 +4893,9 @@ if (typeof window.__editorScreenTeardown === 'function') {
 }
 const _globalListeners = _makeListenerRegistry();
 let _editorScreenObs = null;
+// Handle for the pre-canvas boot poller (setInterval below) so the teardown
+// can stop a late-firing interval from re-running a torn-down injection.
+let _bootPollInterval = null;
 window.__editorScreenTeardown = () => {
     _globalListeners.removeAll();
     // Stop any playback this injection owns — the audio graph outlives the
@@ -4901,6 +4904,15 @@ window.__editorScreenTeardown = () => {
     try { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } } catch (_) {}
     try { if (_editorScreenObs) { _editorScreenObs.disconnect(); _editorScreenObs = null; } } catch (_) {}
     try { if (_v3TopbarWatch) { _v3TopbarWatch.disconnect(); _v3TopbarWatch = null; } } catch (_) {}
+    // The v3 layout ResizeObserver watches #v3-topbar, a shell-persistent node
+    // that survives re-injection — without this disconnect it (and its fit()
+    // closure) would stack one per re-inject.
+    try { if (_v3LayoutObs) { _v3LayoutObs.disconnect(); _v3LayoutObs = null; } } catch (_) {}
+    // Stop the pre-canvas boot poller if it's still spinning.
+    try { if (_bootPollInterval) { clearInterval(_bootPollInterval); _bootPollInterval = null; } } catch (_) {}
+    // Cancel #98's pending coalesced repaint if that PR is present (no-op when
+    // it isn't) — mirrors the codebase's typeof-guarded optional-hook pattern.
+    if (typeof _cancelPendingDraw === 'function') { try { _cancelPendingDraw(); } catch (_) {} }
 };
 
 // Handle Enter key in add-note dialog
@@ -9922,9 +9934,15 @@ function _applyV3Layout() {
     ensure();
 }
 
+let _editorInited = false;
 function init() {
     canvas = document.getElementById('editor-canvas');
     if (!canvas) return;
+    // Idempotency guard: within a single injection init() must run exactly
+    // once. A re-injection re-executes this whole IIFE fresh (flag resets), so
+    // this only blocks a stray double-invocation (e.g. a late boot-poll tick).
+    if (_editorInited) return;
+    _editorInited = true;
     ctx = canvas.getContext('2d');
     _applyV3Layout();
     S.history = new EditHistory();
@@ -13456,10 +13474,13 @@ draw = function () {
 if (document.getElementById('editor-canvas')) {
     init();
 } else {
-    // Wait for plugin screen to be injected
-    const check = setInterval(() => {
+    // Wait for plugin screen to be injected. Held in _bootPollInterval so the
+    // teardown can clear it — otherwise a late tick could re-run init() against
+    // a torn-down injection and re-register orphaned listeners.
+    _bootPollInterval = setInterval(() => {
         if (document.getElementById('editor-canvas')) {
-            clearInterval(check);
+            clearInterval(_bootPollInterval);
+            _bootPollInterval = null;
             init();
         }
     }, 100);

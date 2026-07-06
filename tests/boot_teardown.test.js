@@ -107,5 +107,58 @@ t('re-boot simulation: two registries never double-register', () => {
     assert.strictEqual(live, 2, 'exactly one live set of listeners');
 });
 
+// ── Published teardown body: real cleanup steps beyond the registry ──
+// The window.__editorScreenTeardown closure lives outside the @pure block and
+// closes over module globals. Extract its body and drive it with injected
+// fakes so we can assert the ResizeObserver disconnect and the boot-poll
+// clearInterval actually happen.
+const tm = src.match(/window\.__editorScreenTeardown = \(\) => \{([\s\S]*?)\n\};/);
+if (!tm) {
+    console.error('FAIL: window.__editorScreenTeardown closure not found in screen.js');
+    process.exit(1);
+}
+function runTeardown(over) {
+    const cleared = [];
+    const state = Object.assign({
+        _globalListeners: { removeAll() {} },
+        S: {},
+        rafId: null,
+        _editorScreenObs: null,
+        _v3TopbarWatch: null,
+        _v3LayoutObs: null,
+        _bootPollInterval: null,
+        cancelAnimationFrame: () => {},
+        clearInterval: (id) => { cleared.push(id); },
+    }, over);
+    const fn = new Function(
+        '_globalListeners', 'S', 'rafId', '_editorScreenObs', '_v3TopbarWatch',
+        '_v3LayoutObs', '_bootPollInterval', 'cancelAnimationFrame', 'clearInterval',
+        tm[1] + '\nreturn { _v3LayoutObs, _bootPollInterval };'
+    );
+    const out = fn(state._globalListeners, state.S, state.rafId, state._editorScreenObs,
+        state._v3TopbarWatch, state._v3LayoutObs, state._bootPollInterval,
+        state.cancelAnimationFrame, state.clearInterval);
+    return { out, cleared };
+}
+
+t('teardown disconnects the v3 layout ResizeObserver and nulls it', () => {
+    let disconnected = 0;
+    const obs = { disconnect() { disconnected++; } };   // fake ResizeObserver instance
+    const { out } = runTeardown({ _v3LayoutObs: obs });
+    assert.strictEqual(disconnected, 1, 'ResizeObserver disconnected once');
+    assert.strictEqual(out._v3LayoutObs, null, 'observer reference cleared');
+});
+
+t('teardown clears the pre-canvas boot poll interval and nulls the handle', () => {
+    const { out, cleared } = runTeardown({ _bootPollInterval: 4242 });
+    assert.deepStrictEqual(cleared, [4242], 'clearInterval called with the poll id');
+    assert.strictEqual(out._bootPollInterval, null, 'interval handle cleared');
+});
+
+t('teardown is a no-op on the optional #98 draw-cancel hook when absent', () => {
+    // _cancelPendingDraw is undeclared here → typeof guard must not throw.
+    assert.doesNotThrow(() => runTeardown({}));
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
