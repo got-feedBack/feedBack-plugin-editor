@@ -1907,6 +1907,129 @@ def _warp_notation_sidecar(xml_path, warp) -> None:
             "could not rewrite warped notation sidecar %s", sidecar)
 
 
+def _notation_measure_note_counts(payload):
+    """Per-measure multiset of ``(t_10ms, midi)`` note identities from a
+    notation payload — the comparison key for the measure-granular merge.
+    Times bucket to 10 ms so independently-rounded pipelines (the GP sidecar
+    warp vs the wire writer, both 1 ms grids) can't produce false diffs.
+    Returns a list of Counters, one per measure, or ``None`` when the payload
+    isn't measure-shaped."""
+    from collections import Counter
+    measures = payload.get("measures") if isinstance(payload, dict) else None
+    if not isinstance(measures, list):
+        return None
+    out = []
+    for m in measures:
+        c = Counter()
+        staves = m.get("staves") if isinstance(m, dict) else None
+        if isinstance(staves, dict):
+            for staff in staves.values():
+                if not isinstance(staff, dict):
+                    continue
+                for voice in staff.get("voices") or []:
+                    if not isinstance(voice, dict):
+                        continue
+                    for beat in voice.get("beats") or []:
+                        if not isinstance(beat, dict):
+                            continue
+                        bt = beat.get("t")
+                        if not isinstance(bt, (int, float)):
+                            continue
+                        for note in beat.get("notes") or []:
+                            if isinstance(note, dict) and isinstance(
+                                    note.get("midi"), (int, float)):
+                                c[(round(float(bt), 2), int(note["midi"]))] += 1
+        out.append(c)
+    return out
+
+
+def _wire_measure_note_counts(wire, measure_ts):
+    """Per-measure multiset of ``(t_10ms, midi)`` from the current wire —
+    loose notes plus chord notes (chord notes fall back to the chord's own
+    time when they carry none). ``measure_ts`` are the measure start times;
+    notes before the first measure or after the last window land in the
+    nearest edge measure."""
+    from collections import Counter
+    import bisect
+    counts = [Counter() for _ in measure_ts]
+    if not counts:
+        return counts
+
+    def _add(t, s, f):
+        try:
+            tt = float(t or 0)
+            midi = int(s or 0) * 24 + int(f or 0)
+        except (TypeError, ValueError):
+            return
+        i = bisect.bisect_right(measure_ts, tt + 1e-9) - 1
+        i = max(0, min(len(counts) - 1, i))
+        counts[i][(round(tt, 2), midi)] += 1
+
+    for n in (wire.get("notes") or []):
+        if isinstance(n, dict):
+            _add(n.get("t"), n.get("s"), n.get("f"))
+    for c in (wire.get("chords") or []):
+        if not isinstance(c, dict):
+            continue
+        for cn in (c.get("notes") or []):
+            if isinstance(cn, dict):
+                _add(cn.get("t", c.get("t")), cn.get("s"), cn.get("f"))
+    return counts
+
+
+def _merge_gp_notation_after_edit(gp_payload, lifted_payload, wire):
+    """Measure-granular preserve-on-edit merge (workspace design 0.4).
+
+    A single note edit used to invalidate the WHOLE GP notation sidecar: the
+    save fell through to the heuristic ``notation_lift``, silently discarding
+    the GP payload's exact per-stave hand assignments, dynamics, pedal
+    events, fingering, and grace notes for every measure of the arrangement.
+
+    Instead: measures whose ``(time, midi)`` note multiset still matches the
+    current wire keep their GP measure objects VERBATIM (hand split + attrs
+    intact — staves live per measure, so the splice is structurally clean);
+    only edited measures take the freshly lifted measure. Returns
+    ``(merged_payload, preserved_count, total)`` or ``None`` whenever the
+    two payloads don't align on the same measure grid — the caller then
+    falls back to the full lift, exactly today's behavior. Known honest
+    limit: a sustain-only edit doesn't change ``(t, midi)``, so that
+    measure keeps GP notation and its notational duration may lag the wire.
+    """
+    gm = gp_payload.get("measures") if isinstance(gp_payload, dict) else None
+    lm = lifted_payload.get("measures") if isinstance(lifted_payload, dict) else None
+    if not isinstance(gm, list) or not isinstance(lm, list):
+        return None
+    if not gm or len(gm) != len(lm):
+        return None
+    measure_ts = []
+    for a, b in zip(gm, lm):
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            return None
+        ta, tb = a.get("t"), b.get("t")
+        if not isinstance(ta, (int, float)) or not isinstance(tb, (int, float)):
+            return None
+        # Both payloads must sit on the same beat grid or measures can't
+        # be spliced 1:1.
+        if abs(float(ta) - float(tb)) > 0.002:
+            return None
+        measure_ts.append(float(ta))
+    gp_counts = _notation_measure_note_counts(gp_payload)
+    if gp_counts is None:
+        return None
+    wire_counts = _wire_measure_note_counts(wire or {}, measure_ts)
+    merged = []
+    preserved = 0
+    for i in range(len(gm)):
+        if gp_counts[i] == wire_counts[i]:
+            merged.append(gm[i])
+            preserved += 1
+        else:
+            merged.append(lm[i])
+    out = dict(gp_payload)
+    out["measures"] = merged
+    return out, preserved, len(gm)
+
+
 def _attach_gp_notation(arr, xml_path):
     """Attach the GP-emitted notation sidecar for ``xml_path`` to ``arr`` as
     ``_gp_notation``, stamped ``source:"gp"`` plus a fingerprint of ``arr``'s
@@ -1988,8 +2111,15 @@ def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4),
     # re-stamped so provenance + fingerprint persist for the next save.
     gp_candidate = gp_notation if isinstance(gp_notation, dict) \
         else _read_gp_sidecar(nt_path)
+    # A GP payload whose fingerprint no longer matches is NOT discarded any
+    # more: it feeds the measure-granular merge after the lift below, so an
+    # edit in one measure no longer costs the hand-split/dynamics/pedal/
+    # fingering of every other measure.
+    gp_stale = None
     if isinstance(gp_candidate, dict) and gp_candidate.get("source") == "gp":
         fp_now = _notes_fingerprint(wire.get("notes"), wire.get("chords"))
+        if gp_candidate.get("source_notes_fp") != fp_now:
+            gp_stale = gp_candidate
         if gp_candidate.get("source_notes_fp") == fp_now:
             payload = dict(gp_candidate)
             payload["source"] = "gp"
@@ -2041,6 +2171,29 @@ def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4),
             aid)
         _drop_stale()
         return None
+
+    # Measure-granular preserve-on-edit: splice unchanged measures back in
+    # from the stale GP payload so only the edited measures pay the
+    # heuristic relift. Validated before use; any misalignment or validation
+    # failure falls back to the plain lift (exactly the old behavior).
+    if gp_stale is not None:
+        merged = _merge_gp_notation_after_edit(gp_stale, payload, wire or {})
+        if merged is not None:
+            merged_payload, preserved, total = merged
+            merged_payload["source"] = "gp"
+            merged_payload["source_notes_fp"] = _notes_fingerprint(
+                wire.get("notes"), wire.get("chords"))
+            ok, reason = _validate_notation(merged_payload)
+            if ok:
+                payload = merged_payload
+                _log.info(
+                    "keys arrangement %r: merged GP notation — %d/%d measures "
+                    "preserved, %d relifted", aid, preserved, total,
+                    total - preserved)
+            else:
+                _log.warning(
+                    "keys arrangement %r: GP merge failed validation (%s) — "
+                    "using the full lift", aid, reason)
 
     nt_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
     entry["notation"] = nt_name
