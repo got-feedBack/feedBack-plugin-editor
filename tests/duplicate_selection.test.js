@@ -4,8 +4,9 @@
  *   - _duplicateShiftPure — the time offset a duplicate lands at, and
  *   - AddNotesCmd — the undoable batch-add the duplicate uses,
  * driven through the REAL @pure:edit-history EditHistory (no stub of the
- * subject). Ctrl+D copies the selection one selection-length later (a chord
- * or single note goes one grid step later) so a repeat tiles a phrase.
+ * subject). Ctrl+D copies the selection one selection-length-plus-a-grid-step
+ * later (a chord or single note goes one grid step later) so a repeat tiles a
+ * phrase whose copies ABUT the source instead of double-stacking on the seam.
  *
  * Every command path is round-tripped: exec → rollback restores the note
  * array EXACTLY (deep-equality), exec → rollback → redo reproduces. The
@@ -48,9 +49,10 @@ function t(name, fn) {
 }
 
 // ── _duplicateShiftPure ──────────────────────────────────────────────────────
-t('shift = selection span for a multi-time selection', () => {
-    assert.strictEqual(_duplicateShiftPure([0, 1.8], 0.25), 1.8);
-    assert.strictEqual(_duplicateShiftPure([2, 3, 5], 0.25), 3);
+t('shift = selection span PLUS one grid step for a multi-time selection', () => {
+    // span + step so the copy ABUTS the source (no doubled onset on the seam).
+    assert.strictEqual(_duplicateShiftPure([0, 1.8], 0.25), 1.8 + 0.25);
+    assert.strictEqual(_duplicateShiftPure([2, 3, 5], 0.25), 3 + 0.25);
 });
 
 t('shift = one grid step for a single note or a chord (all one time)', () => {
@@ -73,7 +75,7 @@ t('degenerate / adversarial inputs never throw and no-op to 0', () => {
 });
 
 t('mixed finite/NaN times use only the finite ones for the span', () => {
-    assert.strictEqual(_duplicateShiftPure([NaN, 2, 5], 0.25), 3);
+    assert.strictEqual(_duplicateShiftPure([NaN, 2, 5], 0.25), 3 + 0.25);
 });
 
 t('invalid snap step falls back to a sane default for zero-span selections', () => {
@@ -110,16 +112,25 @@ t('rollback removes only the added refs, leaving originals untouched', () => {
     assert.strictEqual(list[1], keep2);
 });
 
-t('duplicating the duplicates tiles forward (repeat is idempotent in shape)', () => {
-    const list = [n(0, 1), n(1, 2)];        // 1 s phrase
+t('duplicating a gridded selection tiles forward WITHOUT a seam overlap', () => {
+    const list = [n(0, 1), n(1, 2)];        // 1 s phrase on a 1 s grid
     const history = new EditHistory();
-    // First duplicate: shift = span = 1 → copies at 1,2.
-    history.exec(new AddNotesCmd(list, [n(1, 1), n(2, 2)]));
-    // Second duplicate of the copies (span 1) → 2,3.
-    history.exec(new AddNotesCmd(list, [n(2, 1), n(3, 2)]));
-    assert.deepStrictEqual(list.map(x => x.time), [0, 1, 1, 2, 2, 3]);
+    const step = 1;                         // grid step
+    // Drive the shift through the real helper so this pins the integration:
+    // span (1) + step (1) = 2 → the copy's first onset lands one step past
+    // the original's last onset, never ON it.
+    let shift = _duplicateShiftPure([0, 1], step);
+    assert.strictEqual(shift, 2, 'span 1 + grid step 1 = 2 (abut, do not overlap)');
+    history.exec(new AddNotesCmd(list, [n(0 + shift, 1), n(1 + shift, 2)]));   // 2,3
+    // Second duplicate of the copies (now at 2,3).
+    shift = _duplicateShiftPure([2, 3], step);
+    history.exec(new AddNotesCmd(list, [n(2 + shift, 1), n(3 + shift, 2)]));   // 4,5
+    const times = list.map(x => x.time);
+    assert.deepStrictEqual(times, [0, 1, 2, 3, 4, 5], 'no doubled onset at any seam');
+    // Regression guard: every onset is unique — the seam collision is gone.
+    assert.strictEqual(new Set(times).size, times.length, 'no double-stacked note on a boundary');
     history.doUndo();
-    assert.deepStrictEqual(list.map(x => x.time), [0, 1, 1, 2]);
+    assert.deepStrictEqual(list.map(x => x.time), [0, 1, 2, 3]);
     history.doUndo();
     assert.deepStrictEqual(list.map(x => x.time), [0, 1]);
 });

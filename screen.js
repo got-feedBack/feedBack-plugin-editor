@@ -3718,7 +3718,9 @@ function _editorJumpAnchor(dir) {
 /* @pure:duplicate:start */
 // Time shift for a duplicate: place the copy immediately after the
 // selection so a repeated Ctrl+D tiles a phrase. Multi-time selections
-// shift by their own span (selection length); a single note or a chord
+// shift by their span PLUS one grid step, so the copy's first onset lands
+// one step past the original's last onset — the copies ABUT the source
+// instead of stacking a doubled note on the seam. A single note or a chord
 // (all one time) shifts by one grid step. Returns 0 for an empty / all-
 // non-finite selection so the caller no-ops. Interior timing is preserved
 // (the whole selection shifts by one offset — never re-quantized), so a
@@ -3735,7 +3737,7 @@ function _duplicateShiftPure(times, snapStep) {
     if (!Number.isFinite(lo)) return 0;
     const span = hi - lo;
     const step = (Number.isFinite(snapStep) && snapStep > 0) ? snapStep : 0.25;
-    return span > 1e-9 ? span : step;
+    return span > 1e-9 ? span + step : step;
 }
 
 // Batch-add `newNotes` to the note array `list`, keeping it time-sorted;
