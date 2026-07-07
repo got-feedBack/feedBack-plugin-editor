@@ -882,10 +882,113 @@ function _loopStripOnMouseUp() {
     draw();
     return true;
 }
-function isKeysMode() {
+/* @pure:view-pref:start */
+// Per-part editing-view choice (V2/V9 of EDITOR-VIEW-MODALITY-DESIGN):
+// 'string' (fretted lanes) or 'piano' (the roll). Keys-DATA arrangements
+// are piano-locked — their wire packing (string*24+fret) has no string
+// semantics for the lane view to show. Fretted parts default to 'string'
+// and may opt into the roll per part. The choice is EDITOR state
+// (localStorage per song), never pack data.
+function _partViewKeyPure(arr) {
+    if (!arr) return '';
+    const id = arr.id;
+    return (id !== undefined && id !== null && String(id) !== '')
+        ? String(id)
+        : (arr.name || '');
+}
+function _viewForPure(arrName, storedMode) {
+    if (KEYS_PATTERN.test(arrName || '')) return 'piano';
+    return storedMode === 'piano' ? 'piano' : 'string';
+}
+/* @pure:view-pref:end */
+
+// Per-song view prefs, cached so draw-path predicates never parse
+// localStorage per frame. Keyed song filename → { partKey: 'piano' }.
+let _viewPrefCache = null;
+let _viewPrefFor = null;
+function _viewPrefs() {
+    const key = 'editorViewPref:' + (S.filename || '');
+    if (_viewPrefFor === key && _viewPrefCache) return _viewPrefCache;
+    _viewPrefFor = key;
+    _viewPrefCache = {};
+    // Unsaved songs don't read a bare slot every unsaved song would share.
+    if (!S.filename) return _viewPrefCache;
+    try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+            const o = JSON.parse(raw);
+            if (o && typeof o === 'object' && !Array.isArray(o)) _viewPrefCache = o;
+        }
+    } catch (_) { /* ignore */ }
+    return _viewPrefCache;
+}
+function _viewPrefsSave() {
+    if (!S.filename) return;
+    try {
+        const key = 'editorViewPref:' + S.filename;
+        if (Object.keys(_viewPrefCache || {}).length) {
+            localStorage.setItem(key, JSON.stringify(_viewPrefCache));
+        } else {
+            localStorage.removeItem(key);
+        }
+    } catch (_) { /* ignore */ }
+}
+function viewFor(arr) {
+    return _viewForPure(arr && arr.name, _viewPrefs()[_partViewKeyPure(arr)]);
+}
+
+// Keys-DATA predicate: the active arrangement's wire packing is pitch
+// (string*24 + fret) — a keys/piano/synth part. DATA-SEMANTICS sites key
+// off this: string-move helpers, chord-sibling grouping, anchors, MIDI
+// record. Split from isKeysMode() when the view became a per-part choice.
+function isKeysArr() {
     if (!S.arrangements.length) return false;
     const arr = S.arrangements[S.currentArr];
-    return arr && KEYS_PATTERN.test(arr.name || '');
+    return !!(arr && KEYS_PATTERN.test(arr.name || ''));
+}
+
+// Piano SURFACE predicate: the piano-roll view is active for the current
+// part — keys data (always), or a fretted part opted into the roll. Draw
+// geometry, hit-testing, and viewport paths key off this. The name is
+// historical; every legacy call site that meant "the piano surface is
+// showing" keeps working unchanged.
+function isKeysMode() {
+    if (!S.arrangements.length) return false;
+    return viewFor(S.arrangements[S.currentArr]) === 'piano';
+}
+
+// Read-only roll: a FRETTED part shown in the piano roll (V4). Editing
+// stays locked until the suggest-position write path exists — the roll
+// must never write string/fret by silent guess.
+function _rollReadOnly() { return isKeysMode() && !isKeysArr(); }
+
+function _rollLockNotice() {
+    setStatus('Piano roll is read-only for fretted parts — switch to String view to edit (suggest-position editing is coming)');
+}
+
+// Sounding-pitch context for showing a FRETTED part in the roll — hoisted
+// once per draw/hit-test pass, never per note. Null for keys parts (their
+// packing IS the roll pitch).
+function _rollPitchCtx() {
+    if (!S.arrangements.length) return null;
+    const arr = S.arrangements[S.currentArr];
+    if (!arr || KEYS_PATTERN.test(arr.name || '')) return null;
+    const laneCount = _stringCountFor(arr);
+    const tuning = (Array.isArray(arr.tuning) ? arr.tuning : []).slice(0, laneCount);
+    while (tuning.length < laneCount) tuning.push(0);
+    return {
+        openMidi: _openMidiForArr(arr, laneCount),
+        tuning,
+        capo: Number(arr.capo) || 0,
+    };
+}
+
+// Roll Y-axis MIDI for one note: keys packing, or sounding pitch (D4:
+// openMidi + tuning + capo + fret) for fretted. Null = unresolvable —
+// callers skip the note rather than paint it at a wrong pitch.
+function _rollMidiForNote(n, rctx) {
+    if (!rctx) return noteToMidi(n.string, n.fret);
+    return _soundingPitchPure(rctx.openMidi, rctx.tuning, rctx.capo, n.string, n.fret);
 }
 
 function pianoLaneCount() { return pianoRange.hi - pianoRange.lo + 1; }
@@ -910,10 +1013,14 @@ function yToMidi(y) {
 // without it so the viewport snaps cleanly to the new arrangement.
 function updatePianoRange(expandOnly = false) {
     const nn = notes();
-    // noteToMidi encodes up to string=5, fret=23 → max 143; match the drag-clamp ceiling.
+    // Fretted parts fit the range to SOUNDING pitch; keys keep the packing
+    // (noteToMidi encodes up to string=5, fret=23 → max 143, matching the
+    // drag-clamp ceiling). Unresolvable fretted notes are skipped.
+    const rctx = typeof _rollPitchCtx === 'function' ? _rollPitchCtx() : null;
     let lo = 143, hi = 0;
     for (const n of nn) {
-        const m = noteToMidi(n.string, n.fret);
+        const m = _rollMidiForNote(n, rctx);
+        if (m === null) continue;
         if (m < lo) lo = m;
         if (m > hi) hi = m;
     }
@@ -1851,6 +1958,76 @@ function _editorToggleKeyHighlight() {
 }
 window.editorToggleKeyHighlight = _editorToggleKeyHighlight;
 
+// ── Per-part view switcher (String · Piano roll) ─────────────────────
+let _viewSwitchState = '';
+function _refreshViewSwitch() {
+    const el = document.getElementById('editor-view-switch');
+    if (!el) return;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    const fretted = !!arr && !KEYS_PATTERN.test(arr.name || '');
+    // Only fretted parts get a choice (keys are piano-locked), and only
+    // when a focus editor is showing (not drum/tempo/parts modes).
+    const visible = fretted && !S.drumEditMode && !S.tempoMapMode && !S.partsViewMode;
+    const mode = arr ? viewFor(arr) : 'string';
+    const sig = `${visible}|${mode}`;
+    if (sig === _viewSwitchState) return;
+    _viewSwitchState = sig;
+    el.classList.toggle('hidden', !visible);
+    el.classList.toggle('flex', visible);
+    el.querySelectorAll('button[data-view]').forEach(b => {
+        const active = b.dataset.view === mode;
+        b.classList.toggle('bg-accent', active);
+        b.classList.toggle('text-white', active);
+        b.classList.toggle('text-gray-400', !active);
+        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    const pill = document.getElementById('editor-roll-lock-pill');
+    if (pill) pill.classList.toggle('hidden', !(visible && mode === 'piano'));
+}
+
+window.editorSetViewMode = (mode) => {
+    if (mode !== 'string' && mode !== 'piano') return;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    if (!arr) return;
+    if (KEYS_PATTERN.test(arr.name || '')) {
+        setStatus('Keys parts always use the piano roll');
+        return;
+    }
+    if (viewFor(arr) === mode) return;
+    const prefs = _viewPrefs();
+    const key = _partViewKeyPure(arr);
+    if (mode === 'piano') prefs[key] = 'piano';
+    else delete prefs[key];
+    _viewPrefsSave();
+    // V3: selection/interaction semantics are per-view — clear both, and
+    // close any note UI anchored to the old geometry.
+    S.sel.clear();
+    S.drag = null;
+    hideContextMenu();
+    hideAddNote();
+    if (mode === 'piano') updatePianoRange();
+    _refreshViewSwitch();
+    // Lane heights differ between views; recompute after the reflow the
+    // same way the string-count change path does.
+    if (typeof resizeCanvas === 'function') requestAnimationFrame(() => resizeCanvas());
+    draw();
+    updateStatus();
+    setStatus(mode === 'piano'
+        ? 'Piano roll — fretted notes shown at sounding pitch (read-only until suggest-position lands)'
+        : 'String view');
+};
+
+function _editorCycleViewMode() {
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    if (!arr) { setStatus('Load a song first'); return true; }
+    if (KEYS_PATTERN.test(arr.name || '')) {
+        setStatus('Keys parts always use the piano roll');
+        return true;
+    }
+    window.editorSetViewMode(viewFor(arr) === 'piano' ? 'string' : 'piano');
+    return true;
+}
+
 let _keyControlsPopulated = false;
 let _keyControlsState = '';
 function _refreshKeyControls() {
@@ -2211,11 +2388,15 @@ function drawNotes(w) {
             };
         }
     }
+    // Fretted-in-roll draws at SOUNDING pitch — one hoisted context, and
+    // the same mapping hit-testing/marquee use (they must never disagree).
+    const rctx = keysMode ? _rollPitchCtx() : null;
     for (let i = 0; i < nn.length; i++) {
         const n = nn[i];
         if (n.time + (n.sustain || 0) < st || n.time > et) continue;
         if (keysMode) {
-            _drawPianoNote(n, S.sel.has(i), hl);
+            const midi = _rollMidiForNote(n, rctx);
+            if (midi !== null) _drawPianoNote(n, S.sel.has(i), hl, midi);
         } else {
             _drawNote(n, S.sel.has(i), ghl);
         }
@@ -2300,8 +2481,10 @@ function _drawNote(n, selected, ghl) {
     }
 }
 
-function _drawPianoNote(n, selected, hl) {
-    const midi = noteToMidi(n.string, n.fret);
+function _drawPianoNote(n, selected, hl, midi) {
+    // `midi` is resolved by the caller through _rollMidiForNote — keys
+    // packing or fretted sounding pitch — so this renderer never guesses.
+    if (midi === undefined) midi = noteToMidi(n.string, n.fret);
     if (midi < pianoRange.lo || midi > pianoRange.hi) return;
 
     const x = timeToX(n.time);
@@ -2387,12 +2570,16 @@ const EDGE_GRAB = 8; // pixels from right edge to trigger resize
 function hitNote(mx, my) {
     const nn = notes();
     const keysMode = isKeysMode();
+    // Fretted-in-roll hit-testing must use the same sounding-pitch mapping
+    // the draw uses — hoisted once, not per note.
+    const rctx = keysMode ? _rollPitchCtx() : null;
     for (let i = nn.length - 1; i >= 0; i--) {
         const n = nn[i];
         const x = timeToX(n.time);
         let y, w, h;
         if (keysMode) {
-            const midi = noteToMidi(n.string, n.fret);
+            const midi = _rollMidiForNote(n, rctx);
+            if (midi === null) continue;
             y = midiToY(midi) + 1;
             w = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
             h = PIANO_LANE_H - 2;
@@ -2439,6 +2626,19 @@ class EditHistory {
     // song-level state (drum tab, tempo grid) opt out via `songScope = true`.
     // The `typeof` guards keep this block browser-free for the test harness.
     exec(cmd) {
+        // Read-only roll (V4): a FRETTED part shown in the piano roll is
+        // edit-locked until the suggest-position writer exists, so every
+        // NOTE-scope command entry point (keys, menus, inspector, dialogs)
+        // is inert here in one place. Song-scope commands (drum tab, tempo
+        // grid) edit song-level data, not the fretted chart, so they still
+        // pass through even while a fretted part is shown in the roll —
+        // otherwise switching an unrelated part to the roll would freeze
+        // tempo/drum editing. typeof-guarded so extracted-test envs without
+        // the view layer are unaffected.
+        if (cmd.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+            if (typeof _rollLockNotice === 'function') _rollLockNotice();
+            return;
+        }
         cmd._arrIdx = (cmd.songScope === true) ? -1
             : (typeof S !== 'undefined' ? (S.currentArr ?? -1) : -1);
         cmd.exec();
@@ -2455,6 +2655,18 @@ class EditHistory {
         // _historyEnsureArr switches to it (or refuses when it's gone) BEFORE
         // the command leaves the stack, so a refused undo loses nothing.
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
+        // Read-only roll (V4): rolling a NOTE-scope command back would write
+        // the fretted chart currently shown read-only in the piano roll, so
+        // undo would silently bypass the exec/drag lock. Refuse (peek only —
+        // the command stays on the stack, nothing is lost). _historyEnsureArr
+        // above has already switched to the command's arrangement, so this
+        // evaluates read-only against the part the rollback would touch.
+        // Song-scope commands (drum/tempo) don't touch the fretted chart and
+        // undo normally.
+        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+            if (typeof _rollLockNotice === 'function') _rollLockNotice();
+            return;
+        }
         this.undo.pop(); c.rollback(); this.redo.push(c);
         this._afterEdit(); this._ui(); draw(); updateStatus();
     }
@@ -2462,6 +2674,12 @@ class EditHistory {
         if (!this.redo.length) return;
         const c = this.redo[this.redo.length - 1];
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
+        // Read-only roll (V4): re-exec of a NOTE-scope command writes the
+        // fretted chart that is read-only in the roll — same lock as doUndo.
+        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+            if (typeof _rollLockNotice === 'function') _rollLockNotice();
+            return;
+        }
         this.redo.pop(); c.exec(); this.undo.push(c);
         // Re-apply the MAX_UNDO cap: a redo pushes back onto the undo stack, so
         // without this a redo-heavy session could grow it past the bound that
@@ -2960,7 +3178,7 @@ function _soundingPitchPure(openMidi, tuning, capo, stringIdx, fret) {
 // resulting fret would be out of range [0, 24] or the target string
 // doesn't exist.
 function _getMoveStringResult(noteIdx, direction) {
-    if (isKeysMode()) return null;          // keys mode: no string concept
+    if (isKeysArr()) return null;           // keys DATA: no string concept
     const arr = S.arrangements[S.currentArr];
     if (!arr) return null;
     const n = notes()[noteIdx];
@@ -2989,7 +3207,7 @@ function _getMoveStringResult(noteIdx, direction) {
 // string in `direction` without leaving the fret range [0, 24].
 function _canMoveString(direction) {
     if (!S.sel || S.sel.size === 0) return false;
-    if (isKeysMode()) return false;
+    if (isKeysArr()) return false;
     for (const idx of S.sel) {
         if (_getMoveStringResult(idx, direction) === null) return false;
     }
@@ -3019,7 +3237,7 @@ class MoveToStringCmd {
 
 // Build the MoveToStringCmd payload and execute it for all selected notes.
 function _getMoveStringSameFretResult(noteIdx, direction) {
-    if (isKeysMode()) return null;
+    if (isKeysArr()) return null;
     const arr = S.arrangements[S.currentArr];
     if (!arr) return null;
     const n = notes()[noteIdx];
@@ -3494,11 +3712,13 @@ function onMouseDown(e) {
     // silently overwritten by _recNotes when the take is finalized on Stop.
     if (_recState === 'recording') return;
 
-    // Check for sustain edge grab first
-    const edgeIdx = hitNoteEdge(x, y);
+    // Check for sustain edge grab first. Read-only roll (V4): resize
+    // mutates sustains LIVE during the drag (before any command), so the
+    // drag must not start at all — selection stays available below.
+    const edgeIdx = _rollReadOnly() ? -1 : hitNoteEdge(x, y);
     if (edgeIdx >= 0) {
         const nn = notes();
-        const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, !isKeysMode() && !e.altKey);
+        const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, !isKeysArr() && !e.altKey);
         const allResizeSelected = resizeIndices.every(i => S.sel.has(i));
         if (!allResizeSelected) {
             S.sel.clear();
@@ -3521,12 +3741,14 @@ function onMouseDown(e) {
 
     if (idx >= 0) {
         // Click on note — also select all chord siblings (same time).
-        // In keys mode same-timestamp notes are independent voices (not
-        // a strummed chord), so skip the sibling expansion.
+        // In keys DATA same-timestamp notes are independent voices (not
+        // a strummed chord), so skip the sibling expansion. Keyed on the
+        // data kind, not the surface: a fretted part in the roll still
+        // groups its chords.
         const nn = notes();
         const clickedTime = nn[idx].time;
         const chordSiblings = [idx];
-        if (!isKeysMode()) {
+        if (!isKeysArr()) {
             for (let i = 0; i < nn.length; i++) {
                 if (i !== idx && Math.abs(nn[i].time - clickedTime) < 0.001) chordSiblings.push(i);
             }
@@ -3543,7 +3765,14 @@ function onMouseDown(e) {
             for (const i of chordSiblings) S.sel.add(i);
         }
 
-        // Start drag
+        // Start drag — unless the roll is read-only (fretted part in piano
+        // view): move drags mutate notes LIVE before the commit command,
+        // so selection happens above but no drag begins.
+        if (_rollReadOnly()) {
+            _rollLockNotice();
+            draw();
+            return;
+        }
         const selArr = [...S.sel];
         S.drag = {
             type: 'move',
@@ -3828,11 +4057,13 @@ function onMouseUp(e) {
 
         const nn = notes();
         const keysMode = isKeysMode();
+        const rctx = keysMode ? _rollPitchCtx() : null;
         for (let i = 0; i < nn.length; i++) {
             const nx = timeToX(nn[i].time);
             let ny;
             if (keysMode) {
-                const midi = noteToMidi(nn[i].string, nn[i].fret);
+                const midi = _rollMidiForNote(nn[i], rctx);
+                if (midi === null) continue;
                 ny = midiToY(midi) + PIANO_LANE_H / 2;
             } else {
                 ny = strToY(nn[i].string) + LANE_H / 2;
@@ -3862,6 +4093,10 @@ function onDblClick(e) {
 
     const idx = hitNote(x, y);
     if (idx >= 0) return; // double-click on existing note = no-op
+
+    // Read-only roll (V4): adding by pitch would force a silent
+    // string/fret guess — refused until suggest-position exists.
+    if (_rollReadOnly()) { _rollLockNotice(); return; }
 
     // Show add-note dialog
     const t = snapTime(Math.max(0, xToTime(x)));
@@ -3922,6 +4157,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
     { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'cycleViewMode', label: 'Cycle part view (String / Piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -4594,7 +4830,7 @@ function _editorResnapSelection() {
 }
 
 function _editorSetAnchorAtCursor() {
-    if (!S.arrangements.length || isKeysMode()) { setStatus('Anchors are for guitar/bass arrangements'); return false; }
+    if (!S.arrangements.length || isKeysArr()) { setStatus('Anchors are for guitar/bass arrangements'); return false; }
     const idxs = _editorCurrentNoteIndices();
     const nn = notes();
     const atCursor = idxs.map(i => nn[i]).filter(Boolean);
@@ -4890,6 +5126,7 @@ function _editorRunEofCommand(cmd) {
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return _editorTogglePartsView();
     case 'toggleKeyHighlight': return _editorToggleKeyHighlight();
+    case 'cycleViewMode': return _editorCycleViewMode();
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -4994,6 +5231,9 @@ function _editorRightClickNoteEdit(e, x, y) {
     // reassigns arr.notes = _recNotes on Stop, so an add/remove here would be
     // silently overwritten and muddle undo history.
     if (_recState === 'recording') return false;
+    // Read-only roll (V4): the EOF-style right-click add/remove is a note
+    // edit — inert for a fretted part shown in the piano roll.
+    if (_rollReadOnly()) { _rollLockNotice(); return true; }
     const keysMode = isKeysMode();
     const laneBottom = keysMode
         ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
@@ -5702,6 +5942,10 @@ function _parseFretInput(val) {
 
 async function promptSlide(idx) {
     hideContextMenu();
+    // Read-only roll (V4): slide authoring mutates n.techniques directly
+    // (it bypasses EditHistory), so the exec lock can't catch it — guard
+    // the entry point like every other note-edit path in the roll.
+    if (_rollReadOnly()) { _rollLockNotice(); return; }
     const n = notes()[idx];
     const techs = n.techniques || {};
     const current = techs.slide_to >= 0 ? techs.slide_to : '';
@@ -5719,6 +5963,8 @@ async function promptSlide(idx) {
 
 async function promptSlideUnpitch(idx) {
     hideContextMenu();
+    // Read-only roll (V4): direct n.techniques mutation — guard like promptSlide.
+    if (_rollReadOnly()) { _rollLockNotice(); return; }
     const n = notes()[idx];
     const techs = n.techniques || {};
     const current = techs.slide_unpitch_to >= 0 ? techs.slide_unpitch_to : '';
@@ -7697,6 +7943,10 @@ window.editorInspectorSetField = (field, raw) => {
 window.editorInspectorSetTech = (key, raw) => {
     const sel = _selectedNotes();
     if (sel.length === 0) return;
+    // Read-only roll (V4): scalar technique edits mutate n.techniques in
+    // place (no EditHistory command), so the exec lock never sees them.
+    // Refuse and bounce the input back to the model value.
+    if (_rollReadOnly()) { _rollLockNotice(); _renderInspector(); return; }
     const bounds = _INSPECTOR_BOUNDS[key];
     if (!bounds) return;
     const v = _coerceInspectorNumber(raw, bounds);
@@ -7747,6 +7997,9 @@ window.editorOpenBendCurve = () => {
 window.editorInspectorSetFlag = (key, on) => {
     const sel = _selectedNotes();
     if (sel.length === 0) return;
+    // Read-only roll (V4): flag toggles mutate n.techniques directly — same
+    // bypass as editorInspectorSetTech. Refuse and re-render to reset the box.
+    if (_rollReadOnly()) { _rollLockNotice(); _renderInspector(); return; }
     for (const n of sel) {
         if (!n.techniques) n.techniques = {};
         n.techniques[key] = !!on;
@@ -8360,6 +8613,11 @@ window.editorSelectArrangement = (val) => {
     updateStatus();
 };
 window.editorToggleTech = (idx, tech) => {
+    // Read-only roll (V4): the context-menu technique toggle mutates
+    // n.techniques directly (no EditHistory), so it escapes the exec lock.
+    // The note context menu still opens in the roll (right-click selection is
+    // allowed), so guard the toggle itself.
+    if (_rollReadOnly()) { hideContextMenu(); _rollLockNotice(); return; }
     const n = notes()[idx];
     if (!n.techniques) n.techniques = {};
     n.techniques[tech] = !n.techniques[tech];
@@ -15911,6 +16169,7 @@ draw = function () {
     _refreshTempoSyncInspector();
     _refreshPartsViewButton();
     _refreshKeyControls();
+    _refreshViewSwitch();
     return _origDraw.apply(this, arguments);
 };
 
