@@ -32,6 +32,12 @@ function extractBlock(name) {
     }
     return m[0];
 }
+// ASSUMPTION: the extracted function's body contains no `{`/`}` inside a
+// string, regex, or comment — a naive brace count would miscount those.
+// Safe here because the only function extracted is `_absolutePitch`, a
+// three-line pure arithmetic helper with no such tokens. If that ever
+// changes, export the pure helpers from screen.js and import them instead
+// of parsing source text.
 function extractFn(name) {
     const start = src.indexOf('function ' + name);
     assert.ok(start >= 0, `function ${name} must exist`);

@@ -1381,6 +1381,30 @@ function buildHandshapeChordIdMap(handshapes, oldTemplates, templateMap, chordTe
     }
     return oldToNew;
 }
+// Drop handshapes whose span no longer covers any content they could be
+// framing. Deleting a chord's notes removes only the notes — without this
+// filter the covering handshape survives the save (and re-appends the deleted
+// chord's template via buildHandshapeChordIdMap), so the "removed" chord keeps
+// rendering as a handshape chord panel on the highway forever. A chord-shape
+// handshape (arp:false) needs a chord instance inside its span; an arpeggio
+// handshape (arp:true) frames single notes, so any note or chord in the span
+// keeps it. Pure: takes the reconstructChords() rebuild outputs (editor-shaped
+// {time,...} chords/notes) and returns the surviving subset, same objects.
+const HS_ORPHAN_EPS = 1e-4; // s — tolerate float drift between span and content times
+function dropOrphanedHandshapes(handshapes, chords, notes) {
+    if (!Array.isArray(handshapes) || !handshapes.length) return [];
+    const inSpan = (x, hs) => {
+        const t = x && Number(x.time);
+        return Number.isFinite(t)
+            && t >= hs.start_time - HS_ORPHAN_EPS
+            && t <= hs.end_time + HS_ORPHAN_EPS;
+    };
+    return handshapes.filter(hs => {
+        if (!hs) return false;
+        if ((chords || []).some(c => inSpan(c, hs))) return true;
+        return !!hs.arp && (notes || []).some(n => inSpan(n, hs));
+    });
+}
 // E2: apply an old->new chord_id remap to handshapes, dropping any whose old
 // `chord_id` has no mapping (its template no longer exists -> invalid; the
 // backend validator drops these too). Mutates each surviving handshape's
@@ -1599,10 +1623,18 @@ function reconstructChords() {
     // appended (so it survives); references with no template are dropped to
     // match the backend's `chord_id < len(chord_templates)` validator.
     if (Array.isArray(arr.handshapes) && arr.handshapes.length) {
-        const oldToNew = buildHandshapeChordIdMap(
-            arr.handshapes, oldTemplates, templateMap, chordTemplates, L);
         const _selWasHere = S.handshapeSel && arr.handshapes.includes(S.handshapeSel);
-        arr.handshapes = remapHandshapeChordIds(arr.handshapes, oldToNew);
+        // Drop handshapes orphaned by note edits FIRST (a deleted chord must
+        // not keep its handshape — or resurrect its template through the map
+        // builder's preserve-append below). Dropping counts as an authored
+        // change: bump the dirty counter so an all-dropped (now empty) list
+        // still ships to the backend as an explicit clear instead of falling
+        // into the absent→preserve-from-disk path.
+        const live = dropOrphanedHandshapes(arr.handshapes, newChords, newNotes);
+        if (live.length < arr.handshapes.length) _bumpHandshapesDirty(arr, +1);
+        const oldToNew = buildHandshapeChordIdMap(
+            live, oldTemplates, templateMap, chordTemplates, L);
+        arr.handshapes = remapHandshapeChordIds(live, oldToNew);
         // If the selected handshape was in THIS arrangement and the remap
         // dropped it (its template vanished), clear the now-dangling selection.
         if (_selWasHere && !arr.handshapes.includes(S.handshapeSel)) S.handshapeSel = null;
@@ -3234,6 +3266,7 @@ function _execMoveStringSameFret(direction) {
     }
     if (!moves.length) return true;
     S.history.exec(new MoveToStringCmd(moves));
+    _editBlipAt();
     draw();
     _renderInspector();
     return true;
@@ -3255,6 +3288,7 @@ function _execMoveString(direction) {
     }
     if (!moves.length) return;
     S.history.exec(new MoveToStringCmd(moves));
+    _editBlipAt();
     draw();
     _renderInspector();
 }
@@ -4011,6 +4045,7 @@ function onMouseUp(e) {
             if (dfrets) nn[S.drag.indices[i]].fret = S.drag.origFrets[i];
         }
         S.history.exec(new MoveNoteCmd(S.drag.indices, dtimes, dstrings, dfrets));
+        if (_mixDragChangedPitchPure(dstrings, dfrets)) _editBlipAt();
     }
 
     if (S.drag.type === 'select') {
@@ -4118,6 +4153,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
     { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', eof: 'C' } },
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'toggleMixer', label: 'Toggle audio mixer', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
     { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
@@ -4239,6 +4275,7 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (sig === 'F2') return 'save';
     if (sig === 'F5') return 'toggleWaveform';
     if (plain && key === 'c') return 'toggleGuideClap';
+    if (shift && key === 'c') return 'toggleMixer';
     if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === 'a') return 'togglePartsView';
     if (shift && key === '?') return 'showShortcutHelp';
@@ -4352,6 +4389,7 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (ctrl && key === 's') return 'save';
     if (plain && key === 'w') return 'toggleWaveform';
     if (plain && key === 'c') return 'toggleGuideClap';
+    if (shift && key === 'c') return 'toggleMixer';
     if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === 'a') return 'togglePartsView';
     if (shift && key === '?') return 'showShortcutHelp';
@@ -4557,6 +4595,7 @@ function _editorSetSelectedFret(fret) {
     if (!idxs.length) { setStatus('Select notes first'); return false; }
     const next = Math.max(0, Math.min(24, Number(fret) || 0));
     S.history.exec(new ChangeFretGroupCmd(idxs, next));
+    _editBlipAt();
     draw();
     updateStatus();
     setStatus(`Selected fret set to ${next}`);
@@ -4600,6 +4639,7 @@ function _editorAdjustSelectedFret(delta) {
         const next = Math.max(0, Math.min(24, (parseInt(nn[i].fret) || 0) + delta));
         S.history.exec(new ChangeFretCmd(i, next));
     }
+    _editBlipAt();
     draw();
     updateStatus();
     return true;
@@ -5082,6 +5122,7 @@ function _editorRunEofCommand(cmd) {
     case 'toggleWaveform': return _editorToggleWaveform();
     case 'toggleGuideClap': return _editorToggleGuideClap();
     case 'toggleMetronome': return _editorToggleMetronome();
+    case 'toggleMixer': return _editorToggleMixer();
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return _editorTogglePartsView();
     case 'toggleKeyHighlight': return _editorToggleKeyHighlight();
@@ -5222,6 +5263,7 @@ function _editorRightClickNoteEdit(e, x, y) {
     }
     const cmd = new AddNoteCmd(note);
     S.history.exec(cmd);
+    _editBlipAt();
     S.sel.clear();
     if (cmd.idx >= 0) S.sel.add(cmd.idx);
     draw();
@@ -5669,6 +5711,7 @@ async function promptFret(idx) {
     const parsed = _parseFretInput(val);
     const fret = Math.max(0, Math.min(24, parsed < 0 ? 0 : parsed));
     S.history.exec(new ChangeFretCmd(idx, fret));
+    _editBlipAt();
     draw();
     _renderInspector();
 }
@@ -5988,6 +6031,7 @@ window.editorConfirmAddNote = function() {
         techniques: {},
     };
     S.history.exec(new AddNoteCmd(note));
+    _editBlipAt();
     hideAddNote();
     draw();
     updateStatus();
@@ -6075,6 +6119,9 @@ async function loadAudio(url) {
         const buf = await resp.arrayBuffer();
         S.audioBuffer = await S.audioCtx.decodeAudioData(buf);
         S.duration = S.audioBuffer.duration;
+        // A new recording is loaded — re-arm the hearing-safety fade so it
+        // applies to this recording too, not just the session's first one.
+        _mixResetFirstPlay();
         _editorApplyScrollBounds();
         computeWaveform();
     } catch (e) {
@@ -6217,11 +6264,14 @@ _refreshOnsetBtn();
 function _startAudioSourceAtCursor() {
     S.audioSource = S.audioCtx.createBufferSource();
     S.audioSource.buffer = S.audioBuffer;
-    // Reference recording stays on a transparent path straight to destination
-    // (as it was before guide claps) — the guide-clap limiter must never
-    // color the recording, even when claps are off. Only the guide voices
-    // sum through the limiter (see _ensureMasterBus / _guideClapVoiceAt).
-    S.audioSource.connect(S.audioCtx.destination);
+    // Reference recording stays on a transparent path to destination — its
+    // mixer fader is a plain gain (unity by default): the guide-clap limiter
+    // must never color the recording, even when claps are off. Only the
+    // guide/click voices sum through the limiter (see _ensureMasterBus).
+    const refGain = _ensureRefGain();
+    if (refGain) S.audioSource.connect(refGain);
+    else S.audioSource.connect(S.audioCtx.destination);
+    _mixApplyFirstPlayFade();
     S.audioSource.start(0, S.cursorTime);
     S.playStartWall = S.audioCtx.currentTime;
     S.playStartTime = S.cursorTime;
@@ -6410,6 +6460,50 @@ function editorMetronomeEnabled() {
     catch (_) { return false; }
 }
 
+/* @pure:audio-mixer:start */
+// Mixer math for the 3-fader popover (recording / guide / click) and the
+// edit-preview blip gating. Fader percents live in editor prefs (never the
+// pack) and map linearly onto bus gain, so 100% = the bus's design ceiling
+// (unity) — nothing here can boost a bus past the shipped headroom.
+const MIX_DEFAULT_PCT = Object.freeze({ ref: 100, guide: 35, click: 25 });
+// Parse a stored fader percent: corrupted values clamp into [0, 100] and
+// non-numeric ones fall back, so a bad pref can never blast a bus.
+function _mixPctFromStoredPure(raw, fallbackPct) {
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n)) return fallbackPct;
+    return Math.max(0, Math.min(100, n));
+}
+function _mixGainForPctPure(pct) {
+    const p = Number(pct);
+    if (!Number.isFinite(p)) return 0;
+    return Math.max(0, Math.min(100, p)) / 100;
+}
+// First play of a session starts the recording below target and ramps up
+// (~0.35 s): an unexpectedly hot recording is reached, never jumped to.
+// Quiet targets keep a small audible floor so the fade is never mistaken
+// for a broken/silent load.
+function _mixFirstPlayStartGainPure(target) {
+    if (!(target > 0)) return 0;
+    return Math.min(target, Math.max(0.05, target * 0.3));
+}
+// Rate-limit for the edit-preview blip: a group edit (set fret on N notes)
+// must read as ONE cue, not a machine-gun transient.
+function _mixBlipAllowedPure(nowMs, lastMs, gapMs) {
+    if (!Number.isFinite(lastMs)) return true;
+    return (nowMs - lastMs) >= gapMs;
+}
+// A committed drag only previews when it changed PITCH — any string delta
+// (a note moved to another string sounds a different pitch) or any fret
+// delta (a moved keys/piano-roll pitch, or a fret-changing drag). Time-only
+// moves and marquee selects carry no string/fret delta, so they stay silent.
+function _mixDragChangedPitchPure(dstrings, dfrets) {
+    const ds = Array.isArray(dstrings) && dstrings.some(d => d !== 0);
+    const df = Array.isArray(dfrets) && dfrets.some(d => d !== 0);
+    return ds || df;
+}
+/* @pure:audio-mixer:end */
+
+/* @pure:audio-bus:start */
 // Guide-voice bus ONLY: the claps sum through their own gain into a limiter
 // so many simultaneous voices can never spike, then to the destination. The
 // reference recording deliberately does NOT pass through here — it stays on a
@@ -6421,11 +6515,12 @@ function _ensureMasterBus() {
     if (_masterBus || !S.audioCtx) return _masterBus;
     const ctx = S.audioCtx;
     const guideGain = ctx.createGain();
-    guideGain.gain.value = 0.35;
-    // Click sits well under the reference/guide (≈ -12 dB) — the metronome
-    // should be felt, not fought with.
+    guideGain.gain.value = _mixGainForPctPure(_mixLoadPct().guide);
+    // Click sits well under the reference/guide by default (≈ -12 dB) — the
+    // metronome should be felt, not fought with. Both levels come from the
+    // mixer prefs; the defaults preserve the shipped balance.
     const clickGain = ctx.createGain();
-    clickGain.gain.value = 0.25;
+    clickGain.gain.value = _mixGainForPctPure(_mixLoadPct().click);
     const limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -1;
     limiter.knee.value = 0;
@@ -6438,6 +6533,119 @@ function _ensureMasterBus() {
     _masterBus = { guideGain, clickGain, limiter };
     return _masterBus;
 }
+
+// Fader percents, cached so audio paths never read localStorage
+// synchronously mid-schedule; seeded once, kept in sync by _mixSetBusGain.
+let _mixPctCache = null;
+function _mixLoadPct() {
+    if (_mixPctCache) return _mixPctCache;
+    let ref = null, guide = null, click = null;
+    try {
+        ref = localStorage.getItem('editorMixRef');
+        guide = localStorage.getItem('editorMixGuide');
+        click = localStorage.getItem('editorMixClick');
+    } catch (_) {}
+    _mixPctCache = {
+        ref: _mixPctFromStoredPure(ref, MIX_DEFAULT_PCT.ref),
+        guide: _mixPctFromStoredPure(guide, MIX_DEFAULT_PCT.guide),
+        click: _mixPctFromStoredPure(click, MIX_DEFAULT_PCT.click),
+    };
+    return _mixPctCache;
+}
+
+// Recording volume node: a TRANSPARENT gain straight to destination — the
+// reference still never sums through the guide limiter (see the bus comment
+// above). This only adds user volume control; unity by default.
+let _refGain = null;
+function _ensureRefGain() {
+    if (_refGain || !S.audioCtx) return _refGain;
+    _refGain = S.audioCtx.createGain();
+    _refGain.gain.value = _mixGainForPctPure(_mixLoadPct().ref);
+    _refGain.connect(S.audioCtx.destination);
+    return _refGain;
+}
+
+// First-play fade (hearing safety): once per loaded recording, the
+// reference ramps from a reduced level up to its fader target as playback
+// starts. Re-armed by _mixResetFirstPlay() on every new/replaced recording
+// (see loadAudio()) — the ramp guards against an unexpectedly hot recording,
+// so it must not go stale after the very first song of a session.
+let _mixFirstPlayDone = false;
+function _mixApplyFirstPlayFade() {
+    if (_mixFirstPlayDone || !_refGain || !S.audioCtx) return;
+    _mixFirstPlayDone = true;
+    const target = _mixGainForPctPure(_mixLoadPct().ref);
+    const now = S.audioCtx.currentTime;
+    _refGain.gain.setValueAtTime(_mixFirstPlayStartGainPure(target), now);
+    _refGain.gain.linearRampToValueAtTime(target, now + 0.35);
+}
+
+// Re-arm the first-play fade: called whenever a new reference recording is
+// decoded (loadCDLC, create/import, and replace-audio all funnel through
+// loadAudio()) so each new recording gets the hearing-safety ramp, not just
+// the first one of the screen's lifetime.
+function _mixResetFirstPlay() {
+    _mixFirstPlayDone = false;
+}
+
+// Apply a fader move: persist the pref and ramp the live node (~20 ms
+// smoothing) — a gain change is never a stepped jump mid-audio.
+function _mixSetBusGain(bus, pct) {
+    const key = bus === 'ref' ? 'editorMixRef'
+        : bus === 'guide' ? 'editorMixGuide' : 'editorMixClick';
+    const p = _mixPctFromStoredPure(String(pct), MIX_DEFAULT_PCT[bus]);
+    _mixLoadPct()[bus] = p;
+    try { localStorage.setItem(key, String(p)); } catch (_) {}
+    const node = bus === 'ref' ? _refGain
+        : bus === 'guide' ? (_masterBus && _masterBus.guideGain)
+        : (_masterBus && _masterBus.clickGain);
+    if (node && S.audioCtx) {
+        node.gain.setTargetAtTime(_mixGainForPctPure(p), S.audioCtx.currentTime, 0.02);
+    }
+    return p;
+}
+
+function editorEditBlipEnabled() {
+    try { return localStorage.getItem('editorEditBlip') !== '0'; }
+    catch (_) { return true; }
+}
+
+// Edit-preview blip: a soft confirmation tick on note ADD and PITCH change
+// only (never marquee/time-only moves). It sums straight into the shared
+// limiter — NOT through the guide fader — so muting guide claps never also
+// silences the edit cue, while the limiter still tames it. It skips when the
+// context isn't running — an edit must never resume audio — and is pitched
+// apart from the 1750 Hz guide clap so the two read as different cues.
+let _mixLastBlipMs = null;
+function _editBlipAt() {
+    if (!editorEditBlipEnabled()) return;
+    if (!S.audioCtx || S.audioCtx.state !== 'running') return;
+    const bus = _ensureMasterBus();
+    if (!bus) return;
+    const nowMs = Date.now();
+    if (!_mixBlipAllowedPure(nowMs, _mixLastBlipMs, 60)) return;
+    _mixLastBlipMs = nowMs;
+    const ctx = S.audioCtx;
+    const when = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = 1320;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.5, when + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 0.04);
+    osc.connect(g);
+    g.connect(bus.limiter);
+    osc.start(when);
+    osc.stop(when + 0.05);
+    _guideVoices.push({ osc, gain: g, until: when + 0.05 });
+    // Same bounded-bookkeeping rule as the scheduler tick.
+    if (_guideVoices.length > 64) {
+        const nowCtx = ctx.currentTime;
+        _guideVoices = _guideVoices.filter(v => v.until > nowCtx);
+    }
+}
+/* @pure:audio-bus:end */
 
 // Event times for the active editing surface: the drum grid claps drum hits,
 // every other view claps the current arrangement's (time-sorted) notes.
@@ -6610,6 +6818,58 @@ function _editorToggleMetronome() {
 }
 window.editorToggleMetronome = _editorToggleMetronome;
 _refreshMetronomeBtn();
+
+// ── Audio mixer popover ──────────────────────────────────────────────
+function _refreshMixerBtn() {
+    const btn = document.getElementById('editor-mixer-btn');
+    if (!btn) return;
+    const panel = document.getElementById('editor-audio-mixer');
+    const open = !!(panel && !panel.classList.contains('hidden'));
+    btn.classList.toggle('bg-accent', open);
+    btn.classList.toggle('hover:bg-accent-light', open);
+    btn.classList.toggle('bg-dark-600', !open);
+    btn.classList.toggle('hover:bg-dark-500', !open);
+    btn.setAttribute('aria-pressed', open ? 'true' : 'false');
+}
+
+function _refreshMixerUI() {
+    const pcts = _mixLoadPct();
+    for (const [bus, id] of [['ref', 'editor-mix-ref'], ['guide', 'editor-mix-guide'], ['click', 'editor-mix-click']]) {
+        const slider = document.getElementById(id);
+        const label = document.getElementById(id + '-val');
+        if (slider) slider.value = String(pcts[bus]);
+        if (label) label.textContent = pcts[bus] + '%';
+    }
+    const blip = document.getElementById('editor-mix-blip');
+    if (blip) blip.checked = editorEditBlipEnabled();
+}
+
+function _editorToggleMixer(force) {
+    const panel = document.getElementById('editor-audio-mixer');
+    if (!panel) return false;
+    const show = force === undefined ? panel.classList.contains('hidden') : !!force;
+    panel.classList.toggle('hidden', !show);
+    if (show) _refreshMixerUI();
+    _refreshMixerBtn();
+    return true;
+}
+window.editorToggleMixer = _editorToggleMixer;
+
+window.editorSetMixLevel = (bus, val) => {
+    if (bus !== 'ref' && bus !== 'guide' && bus !== 'click') return;
+    const p = _mixSetBusGain(bus, val);
+    const label = document.getElementById(
+        (bus === 'ref' ? 'editor-mix-ref' : bus === 'guide' ? 'editor-mix-guide' : 'editor-mix-click') + '-val');
+    if (label) label.textContent = p + '%';
+};
+
+window.editorSetEditBlip = (on) => {
+    try { localStorage.setItem('editorEditBlip', on ? '1' : '0'); } catch (_) {}
+    setStatus(on
+        ? 'Edit blip on — a soft tick confirms note adds and pitch changes'
+        : 'Edit blip off');
+};
+_refreshMixerBtn();
 
 function updateMeasureDisplay() {
     const el = document.getElementById('editor-measure-display');
