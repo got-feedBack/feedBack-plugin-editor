@@ -1756,6 +1756,9 @@ function _loadEditorKeyIfNeeded() {
     if (_editorKeyLoadedFor === S.filename) return;
     _editorKeyLoadedFor = S.filename;
     S.editorKey = null;
+    // No filename yet (unsaved song): don't read a bare `editorKey:` slot —
+    // otherwise every unsaved song would share the same stored key.
+    if (!S.filename) return;
     try {
         const raw = localStorage.getItem('editorKey:' + (S.filename || ''));
         if (raw) {
@@ -1768,6 +1771,9 @@ function _loadEditorKeyIfNeeded() {
 }
 
 function _persistEditorKey() {
+    // No filename yet (unsaved song): don't write a bare `editorKey:` slot that
+    // every unsaved song would collide on; the in-memory key still applies.
+    if (!S.filename) return;
     try {
         const key = 'editorKey:' + (S.filename || '');
         if (S.editorKey) localStorage.setItem(key, JSON.stringify(S.editorKey));
@@ -2048,11 +2054,15 @@ function drawNotes(w) {
     const st = S.scrollX - 2;
     const et = S.scrollX + (w - LABEL_W) / S.zoom + 2;
     const keysMode = isKeysMode();
+    // Hoist the active-highlight lookup out of the per-note loop: it reads
+    // localStorage, so resolving it once per draw (not once per visible note)
+    // keeps drawNotes off the synchronous-storage path during playback/scroll.
+    const hl = keysMode ? _activeKeyHighlight() : null;
     for (let i = 0; i < nn.length; i++) {
         const n = nn[i];
         if (n.time + (n.sustain || 0) < st || n.time > et) continue;
         if (keysMode) {
-            _drawPianoNote(n, S.sel.has(i));
+            _drawPianoNote(n, S.sel.has(i), hl);
         } else {
             _drawNote(n, S.sel.has(i));
         }
@@ -2125,7 +2135,7 @@ function _drawNote(n, selected) {
     }
 }
 
-function _drawPianoNote(n, selected) {
+function _drawPianoNote(n, selected, hl) {
     const midi = noteToMidi(n.string, n.fret);
     if (midi < pianoRange.lo || midi > pianoRange.hi) return;
 
@@ -2138,7 +2148,8 @@ function _drawPianoNote(n, selected) {
 
     // In-key highlight: dim out-of-key notes (lower body alpha) so chromatic
     // notes read as chromatic without being hidden or flagged as wrong.
-    const hl = _activeKeyHighlight();
+    // `hl` is resolved once per draw in drawNotes (see hoist there) and passed
+    // in, so this path never reads localStorage per note.
     const outOfKey = !!hl && !_pcInScalePure(midi % 12, hl.tonic, hl.scale);
 
     // Body
