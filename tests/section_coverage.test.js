@@ -92,5 +92,55 @@ t('degenerate inputs never throw and no-op to []', () => {
     assert.deepStrictEqual(_sectionCoveragePure([sec(0)], [NaN, undefined], 10)[0].hasContent, false);
 });
 
+// ── boundary: the last span's upper edge is INCLUSIVE and covers trailing
+// content, so a note at/past a stale or short duration is never invisible.
+t('a note exactly at the duration counts in the last section (inclusive edge)', () => {
+    const cov = _sectionCoveragePure([sec(0), sec(4)], [8.0], 8);
+    assert.deepStrictEqual(cov.map(c => c.hasContent), [false, true], 't==dur is in the last span');
+    assert.strictEqual(cov[1].end, 8, 'last span still ends at the duration when no note is past it');
+});
+
+t('notes beyond a finite duration still count, and the last span extends to reach them', () => {
+    const cov = _sectionCoveragePure([sec(0), sec(6)], [15], 10);
+    assert.deepStrictEqual(cov.map(c => c.hasContent), [false, true], 'a note past dur is not invisible');
+    assert.strictEqual(cov[1].end, 15, 'last span end clamps up to the last note time (max(dur, lastNote))');
+});
+
+t('the inclusive last edge does NOT double-count an interior boundary note', () => {
+    // Note exactly on the interior boundary (secs[1]) belongs ONLY to the
+    // later (last) span — the previous span stays half-open.
+    const cov = _sectionCoveragePure([sec(0), sec(4), sec(8)], [4.0], 12);
+    assert.deepStrictEqual(cov.map(c => c.hasContent), [false, true, false]);
+});
+
+t('duplicate start_times make a harmless zero-width span (behavior lock)', () => {
+    const cov = _sectionCoveragePure([sec(0), sec(4), sec(4), sec(8)], [5], 12);
+    assert.deepStrictEqual(cov.map(c => [c.start, c.end]), [[0, 4], [4, 4], [4, 8], [8, 12]]);
+    // The [4,4) zero-width span can never hold a note; the note at 5 lands in [4,8).
+    assert.deepStrictEqual(cov.map(c => c.hasContent), [false, false, true, false]);
+});
+
+// ── memoization wiring. The cross-frame memo (`_sectionCoverage`) lives
+// outside the @pure block — it reads browser globals (S, notes(), the canvas)
+// so it can't be evaluated in isolation here. Assert on the source that the
+// per-frame recompute is gone and the edit-generation invalidation is wired,
+// which is what proves coverage updates after an edit without recomputing
+// every frame.
+t('drawSections uses the memo, not a per-frame recompute', () => {
+    assert.ok(/const cov = _sectionCoverage\(\);/.test(src),
+        'drawSections should call the memoized _sectionCoverage()');
+    assert.ok(!/drawSections[\s\S]*?_sectionCoveragePure\(/.test(
+        src.slice(src.indexOf('function drawSections'), src.indexOf('function drawSections') + 1200)),
+        'drawSections must not call the O(N) pure helper directly every frame');
+});
+
+t('the coverage memo is invalidated on edit via _afterEdit()', () => {
+    const body = src.slice(src.indexOf('_afterEdit() {'), src.indexOf('_afterEdit() {') + 400);
+    assert.ok(/_coverageEditGen\+\+/.test(body),
+        '_afterEdit() must bump _coverageEditGen so in-place note moves invalidate the memo');
+    assert.ok(/_coverageEditGen[\s\S]*?_covCache/.test(src),
+        'the memo must key on the edit generation counter');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -1458,11 +1458,13 @@ function drawGrid(w) {
 
 /* @pure:section-coverage:start */
 // Per-section spans with a hasContent flag: does any charted note-time fall
-// in the section's [start, nextStart) window (the last section runs to the
-// song end, or open-ended when duration is unknown)? A note exactly on a
-// boundary belongs to the LATER section (half-open). Sections are sorted
-// defensively and non-finite start_times dropped. Returns [] when there are
-// no sections. Ambient progress — never a score.
+// in the section's [start, nextStart) window? The last section runs to the
+// song end (open-ended when duration is unknown), and is INCLUSIVE of its
+// upper edge — extended to the final note time when notes sit at or past a
+// stale/short duration, so trailing content is never invisible. A note on an
+// INTERIOR boundary belongs to the LATER section (half-open). Sections are
+// sorted defensively and non-finite start_times dropped. Returns [] when
+// there are no sections. Ambient progress — never a score.
 function _sectionCoveragePure(sections, noteTimes, duration) {
     if (!Array.isArray(sections) || !sections.length) return [];
     const secs = sections
@@ -1474,13 +1476,23 @@ function _sectionCoveragePure(sections, noteTimes, duration) {
     const times = Array.isArray(noteTimes)
         ? noteTimes.map(Number).filter(Number.isFinite)
         : [];
+    // The final span has no later section to bound it, so it owns every
+    // trailing note: extend its end past `dur` to the last note time when a
+    // note sits at/after the (possibly stale/short) duration, and treat its
+    // upper edge as INCLUSIVE. Interior spans stay half-open [start, next) so
+    // a note on an interior boundary still belongs to the LATER section — the
+    // inclusive edge is only the outermost one, so there's no double-count.
+    let maxT = -Infinity;
+    for (const t of times) if (t > maxT) maxT = t;
+    const lastEnd = maxT > dur ? maxT : dur;   // may be Infinity
     const out = [];
     for (let i = 0; i < secs.length; i++) {
         const start = secs[i];
-        const end = (i + 1 < secs.length) ? secs[i + 1] : dur;   // may be Infinity
+        const isLast = (i + 1 >= secs.length);
+        const end = isLast ? lastEnd : secs[i + 1];   // may be Infinity (last)
         let hasContent = false;
         for (const t of times) {
-            if (t >= start && t < end) { hasContent = true; break; }
+            if (t >= start && (isLast ? t <= end : t < end)) { hasContent = true; break; }
         }
         out.push({ start, end, hasContent });
     }
@@ -1494,6 +1506,44 @@ function _currentNoteTimes() {
     return notes().map(n => n.time);
 }
 
+// Cross-frame memo for the section-coverage strip. drawSections runs on every
+// requestAnimationFrame during playback, but coverage only changes on
+// note/section/duration edits — never while the cursor moves. Recomputing the
+// pure helper (an O(N) note-time pass plus an O(sections×notes) scan) every
+// frame is the same per-frame O(N) trap the lanes()/laneLabels() caches in
+// draw() deliberately avoid, so memoize behind a cheap key. In-place note-time
+// moves keep the notes-array identity AND length, so they're caught by
+// `_coverageEditGen`, bumped by EditHistory._afterEdit() — the edit-contract
+// hook every mutation flows through (constitution IV). The section fingerprint
+// is O(sections) (a handful, negligible beside the O(notes) scan skipped) and
+// catches add/remove/retime/reorder without wiring every section mutation site.
+let _coverageEditGen = 0;
+let _covCache = { key: null, notesRef: null, value: [] };
+function _sectionCoverage() {
+    const secs = S.sections || [];
+    const ns = notes();
+    // A live note-move drag mutates note.time in place every mousemove and
+    // only commits to EditHistory on mouseUp, so `_coverageEditGen` hasn't
+    // bumped yet — bypass the memo for the drag's duration to keep the strip
+    // live (matching the pre-memo per-frame recompute). This is the ONE
+    // interactive path that changes note times without an edit-gen bump; the
+    // perf target (playback) has no active drag, so it still hits the cache.
+    if (S.drag && S.drag.type === 'move') {
+        return _sectionCoveragePure(secs, _currentNoteTimes(), S.duration || 0);
+    }
+    let secSig = secs.length + ':';
+    for (const s of secs) secSig += (s ? s.start_time : 'x') + ',';
+    const key = _coverageEditGen + '|' + S.currentArr + '|' + ns.length
+        + '|' + (S.duration || 0) + '|' + secSig;
+    if (key !== _covCache.key || _covCache.notesRef !== ns) {
+        _covCache = {
+            key, notesRef: ns,
+            value: _sectionCoveragePure(secs, _currentNoteTimes(), S.duration || 0),
+        };
+    }
+    return _covCache.value;
+}
+
 function drawSections(w) {
     const st = S.scrollX - 1;
     const et = S.scrollX + (w - LABEL_W) / S.zoom + 1;
@@ -1504,7 +1554,7 @@ function drawSections(w) {
     // each section by whether the active arrangement has notes in it — an
     // at-a-glance "where is this chart still empty", drawn under the section
     // labels/lines below. Neutral, no percentage, no red.
-    const cov = _sectionCoveragePure(S.sections, _currentNoteTimes(), S.duration || 0);
+    const cov = _sectionCoverage();
     for (const c of cov) {
         const x0 = Math.max(LABEL_W, timeToX(c.start));
         const x1 = Math.min(w, timeToX(c.end));
@@ -1860,6 +1910,10 @@ class EditHistory {
     // Not _afterEdit() — that nudges the piano viewport, which a clear shouldn't.
     reset() { this.undo = []; this.redo = []; this._ui(); }
     _afterEdit() {
+        // Invalidate the section-coverage memo: an in-place note-time move
+        // keeps the notes array's identity + length, so the cheap cache key
+        // can't see it — this generation bump is what forces a recompute.
+        _coverageEditGen++;
         // Keep the keys viewport in sync with the current note range so
         // multi-octave authoring works without manual range control.
         // expandOnly=true so adding a note outside the current viewport
