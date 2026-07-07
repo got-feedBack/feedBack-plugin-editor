@@ -6011,16 +6011,19 @@ function startPlayback() {
     if (S.loopEnabled && region && (S.cursorTime < region.startTime || S.cursorTime >= region.endTime)) {
         S.cursorTime = region.startTime;
     }
+    // Every (re)start — including seeks, which route through here — begins
+    // an A/B cycle on the RECORDING pass, so the user always hears the real
+    // thing first from a fresh position. Reset BEFORE the first tick /
+    // scheduler sync so _guideTick can never schedule a guide pass off a
+    // stale phase, and so the first-play fade (in _startAudioSourceAtCursor)
+    // is the last automation written to the ref gain, not clobbered by this.
+    _abPhase = 'recording';
+    _abApplyRefGain();
     _startAudioSourceAtCursor();
     S.playing = true;
     updatePlayIcon();
     playbackTick();
     _guideTimerSync();
-    // Every (re)start — including seeks, which route through here — begins
-    // an A/B cycle on the RECORDING pass, so the user always hears the
-    // real thing first from a fresh position.
-    _abPhase = 'recording';
-    _abApplyRefGain();
 }
 function stopPlayback() {
     if (S.audioSource) {
@@ -6785,9 +6788,15 @@ async function loadCDLC(filename) {
         S.tempoSel = -1;
         S.tempoHover = -1;
         // Drop loop A/B — session-only state; carrying a muted-reference
-        // phase into another song would read as a playback bug.
+        // phase into another song would read as a playback bug. Refresh the
+        // audio + UI too: clearing the flags alone would leave a guide-pass
+        // mute on the ref gain and stale A/B button styling until the next
+        // incidental control refresh.
         _abOn = false;
         _abPhase = 'recording';
+        _abApplyRefGain();
+        _guideTimerSync();
+        _updateLoopRegionControls();
         // Abandon any in-progress drag — the global mouse handlers act on
         // S.drag regardless of mode, so a stale drag would otherwise keep
         // mutating the newly-loaded song's data.
