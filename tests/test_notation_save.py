@@ -193,25 +193,60 @@ def test_gp_notation_kept_when_notes_unchanged(tmp_path):
     assert payload["_marker"] == "from-gp"
 
 
-def test_gp_notation_invalidated_when_notes_edited(tmp_path):
-    # gp_notation whose fingerprint no longer matches the wire (the user edited
-    # notes since import) must be ignored — the lift re-derives from the edits.
+def _two_measure_wire(m0_midi=60, m1_midi=64, sus=0.5) -> dict:
+    """A keys wire with exactly one note in each of two 4/4 measures (at t=0.0
+    and t=2.0 @ 120bpm), so every measure is non-empty — editing all of them
+    leaves nothing for the measure-granular merge to preserve."""
+    return {
+        "name": "Keys",
+        "notes": [_wire_note(0.0, m0_midi, sus), _wire_note(2.0, m1_midi, sus)],
+        "chords": [],
+    }
+
+
+def test_gp_notation_fully_invalidated_when_every_measure_edited(tmp_path):
+    # A GP payload that matches NO measure of the current wire (e.g. a
+    # transpose-all) preserves nothing: the measure-granular merge must fall
+    # back to the plain lift and NOT stamp GP provenance / stale top-level GP
+    # metadata onto a 100%-heuristic relift (that would freeze the lift as if
+    # it were ground-truth GP for the next preserve-on-edit save).
     beats = _beats_4_4(2)
-    gp = _valid_gp_payload(tmp_path, _keys_wire(), beats)
+    gp = _valid_gp_payload(tmp_path, _two_measure_wire(60, 64), beats)
     gp["source_notes_fp"] = "stale-fingerprint-000"
 
+    # Transpose every note up an octave — no measure's (t, midi) set survives.
+    edited = _two_measure_wire(72, 76)
     entry = {"id": "keys", "name": "Keys", "file": "arrangements/keys.json"}
-    nt = _write_keys_notation_sidecar(tmp_path, entry, _keys_wire(), beats, gp_notation=gp)
+    nt = _write_keys_notation_sidecar(tmp_path, entry, edited, beats, gp_notation=gp)
     assert nt == "notation_keys.json"
     payload = json.loads((tmp_path / "notation_keys.json").read_text())
-    assert payload.get("source") != "gp"      # lift output, not the frozen GP one
-    assert "_marker" not in payload
+    assert payload.get("source") != "gp"      # plain lift, not frozen GP
+    assert "_marker" not in payload           # no stale top-level GP metadata
+
+
+def test_gp_notation_measure_granular_preserved_on_single_edit(tmp_path):
+    # The core of the PR: editing one measure's notes relifts ONLY that
+    # measure; the untouched measure keeps its GP object, so the payload is
+    # still GP-sourced (top-level GP metadata rides along) rather than the
+    # whole sidecar being discarded (the old, data-destroying behavior).
+    beats = _beats_4_4(2)
+    gp = _valid_gp_payload(tmp_path, _two_measure_wire(60, 64), beats)
+    gp["source_notes_fp"] = "stale-fingerprint-000"
+
+    # Edit only measure 0 (t=0.0); measure 1 (t=2.0, midi 64) is untouched.
+    edited = _two_measure_wire(72, 64)
+    entry = {"id": "keys", "name": "Keys", "file": "arrangements/keys.json"}
+    nt = _write_keys_notation_sidecar(tmp_path, entry, edited, beats, gp_notation=gp)
+    assert nt == "notation_keys.json"
+    payload = json.loads((tmp_path / "notation_keys.json").read_text())
+    # Untouched measure preserved GP notation → still GP-sourced.
+    assert payload["source"] == "gp" and payload["_marker"] == "from-gp"
 
 
 def test_gp_notation_survives_reopen_via_on_disk_sidecar(tmp_path):
     # Reopen path: no gp_notation forwarded from the client, but an on-disk
     # source:"gp" sidecar exists. An untouched-notes save keeps it.
-    wire = _keys_wire()
+    wire = _two_measure_wire(60, 64)
     beats = _beats_4_4(2)
     gp = _valid_gp_payload(tmp_path, wire, beats)
     (tmp_path / "notation_keys.json").write_text(json.dumps(gp), encoding="utf-8")
@@ -221,9 +256,9 @@ def test_gp_notation_survives_reopen_via_on_disk_sidecar(tmp_path):
     payload = json.loads((tmp_path / "notation_keys.json").read_text())
     assert payload["source"] == "gp" and payload["_marker"] == "from-gp"
 
-    # ...but once the notes change, the on-disk GP sidecar is no longer kept.
-    edited = _keys_wire()
-    edited["notes"].append(_wire_note(1.0, 72, 0.25))
+    # ...and once EVERY measure's notes change (transpose-all), the on-disk GP
+    # sidecar is dropped in favor of the plain lift — no measure survived.
+    edited = _two_measure_wire(72, 76)
     _write_keys_notation_sidecar(tmp_path, entry, edited, beats, gp_notation=None)
     payload2 = json.loads((tmp_path / "notation_keys.json").read_text())
     assert payload2.get("source") != "gp" and "_marker" not in payload2
