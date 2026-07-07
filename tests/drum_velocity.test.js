@@ -43,7 +43,8 @@ function makeEnv() {
         '"use strict";'
         + historyBlock + '\n' + drumBlock + '\n'
         + 'return { EditHistory, SetDrumVelocityCmd, ToggleDrumArticulationCmd, '
-        + 'DRUM_GHOST_VELOCITY, _drumClampVelocityPure, _drumVelocityDragValuePure };'
+        + 'DRUM_GHOST_VELOCITY, _drumClampVelocityPure, _drumVelocityDragValuePure, '
+        + '_drumImportHitPure };'
     )(
         { getElementById: () => ({ disabled: false }) },
         S,
@@ -82,6 +83,26 @@ t('drag mapping: up = louder off the ORIGINAL value, missing v bases at 100', ()
     assert.strictEqual(_drumVelocityDragValuePure(20, 200), 1, 'clamps low');
 });
 
+// ── Import hit build (hand-mapped unmapped notes) ────────────────────
+
+t('import carries velocity through and derives ghost like the MIDI importer', () => {
+    const { _drumImportHitPure, DRUM_GHOST_VELOCITY } = makeEnv();
+    // Loud note: velocity kept, no ghost.
+    assert.deepStrictEqual(
+        _drumImportHitPure(1.5, 'snare', 100), { t: 1.5, p: 'snare', v: 100 });
+    // Quiet note: velocity kept AND ghost derived (g ⇐ v < 40), matching the
+    // normal importer — a hand-mapped quiet note must not render as a loud,
+    // full-size hit when the same note through the normal path is a ghost.
+    assert.deepStrictEqual(
+        _drumImportHitPure(2, 'kick', 30), { t: 2, p: 'kick', v: 30, g: true });
+    // Boundary: the ghost band is v < DRUM_GHOST_VELOCITY + 5 (i.e. < 40).
+    assert.ok('g' in _drumImportHitPure(0, 'snare', DRUM_GHOST_VELOCITY + 4));
+    assert.ok(!('g' in _drumImportHitPure(0, 'snare', DRUM_GHOST_VELOCITY + 5)));
+    // No captured velocity → default 100, no ghost.
+    assert.deepStrictEqual(
+        _drumImportHitPure(3, 'tom1', undefined), { t: 3, p: 'tom1', v: 100 });
+});
+
 // ── SetDrumVelocityCmd ───────────────────────────────────────────────
 
 t('velocity edit round-trips: exec applies, undo restores exact values', () => {
@@ -116,6 +137,40 @@ t('velocity input is clamped at the command boundary', () => {
     S.drumTab.hits = [a];
     history.exec(new SetDrumVelocityCmd([a], [999]));
     assert.strictEqual(a.v, 127);
+});
+
+t('raising a ghosted hit above the ghost band lifts g in the same edit', () => {
+    const { S, history, SetDrumVelocityCmd, DRUM_GHOST_VELOCITY } = makeEnv();
+    // A ghost is a quiet hit; Accent/↑/drag-up on it must not leave a
+    // contradictory loud ghost. (Pre-fix: v changes, g:true stays.)
+    const a = { t: 1, p: 'snare', g: true, v: DRUM_GHOST_VELOCITY };
+    S.drumTab.hits = [a];
+    history.exec(new SetDrumVelocityCmd([a], 115));
+    assert.strictEqual(a.v, 115);
+    assert.ok(!('g' in a), 'ghost flag lifted when velocity raised loud');
+    history.doUndo();
+    assert.strictEqual(a.v, DRUM_GHOST_VELOCITY, 'velocity restored');
+    assert.strictEqual(a.g, true, 'ghost flag restored on undo');
+    history.doRedo();
+    assert.ok(!('g' in a), 'redo re-lifts the ghost');
+});
+
+t('lowering/keeping a ghost quiet does NOT touch the g flag', () => {
+    const { S, history, SetDrumVelocityCmd } = makeEnv();
+    const a = { t: 1, p: 'snare', g: true, v: 35 };
+    S.drumTab.hits = [a];
+    history.exec(new SetDrumVelocityCmd([a], 30));  // still in the ghost band
+    assert.strictEqual(a.v, 30);
+    assert.strictEqual(a.g, true, 'quiet ghost stays a ghost');
+});
+
+t('velocity edit never AUTO-ghosts a quiet non-ghost hit', () => {
+    const { S, history, SetDrumVelocityCmd } = makeEnv();
+    const a = { t: 1, p: 'snare', v: 100 };  // no g
+    S.drumTab.hits = [a];
+    history.exec(new SetDrumVelocityCmd([a], 20));  // quiet, but not a ghost
+    assert.strictEqual(a.v, 20);
+    assert.ok(!('g' in a), 'a quiet non-ghost hit is legitimate — no auto-ghost');
 });
 
 // ── Ghost toggle velocity pull ───────────────────────────────────────

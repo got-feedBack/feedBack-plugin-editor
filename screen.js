@@ -13216,11 +13216,13 @@ function _showDrumImportUnmappedModal(unmapped) {
                 seen.add(key);
                 // Carry the source note's REAL velocity through when the
                 // server captured it (index-aligned with times) — hand-
-                // mapping a note must not flatten its dynamics to v:100.
+                // mapping a note must not flatten its dynamics to v:100 —
+                // and derive the ghost flag from that velocity exactly like
+                // the MIDI importer does, so a hand-mapped quiet note renders
+                // and round-trips as a ghost identically to the same note
+                // imported through the normal path.
                 const rawV = row.vels ? row.vels[ti] : undefined;
-                S.drumTab.hits.push({
-                    t: tRounded, p: pid, v: _drumClampVelocityPure(rawV === undefined ? 100 : rawV),
-                });
+                S.drumTab.hits.push(_drumImportHitPure(tRounded, pid, rawV));
                 added++;
             }
         }
@@ -15299,29 +15301,61 @@ function _drumVelocityDragValuePure(origV, dy) {
     return _drumClampVelocityPure(base - dy);
 }
 
+// Build a drum hit for a hand-mapped unmapped-notes import. Carries the
+// source velocity through (default 100 when the server didn't capture one)
+// and derives the ghost flag from it the SAME way the MIDI importer does
+// (g ⇐ v below the ghost band). `DRUM_GHOST_VELOCITY + 5` is the shared
+// ghost-band boundary (currently 40, matching the core importer's v < 40),
+// so all three velocity paths — this import, the ghost-pull, and
+// SetDrumVelocityCmd — agree on when a hit is a ghost.
+function _drumImportHitPure(t, pid, rawV) {
+    const v = _drumClampVelocityPure(rawV === undefined ? 100 : rawV);
+    const hit = { t, p: pid, v };
+    if (v < DRUM_GHOST_VELOCITY + 5) hit.g = true;
+    return hit;
+}
+
 class SetDrumVelocityCmd {
     // One velocity edit for a set of hits (Alt-drag, ±10 nudge keys, the
     // accent/normal quick sets). Holds refs + the exact old values so
     // rollback restores authored dynamics verbatim — a hit that had no
     // explicit v gets the field DELETED again, not set to 100.
+    //
+    // A ghost IS a quiet hit (the pull in ToggleDrumArticulationCmd and the
+    // importer's `g` ⇐ `v < 40` derivation both encode this), so raising a
+    // ghosted hit's velocity back above the ghost band (Accent / ↑ / drag
+    // up) must LIFT the ghost flag in the same edit — otherwise the edit
+    // authors a contradictory "loud ghost" that the renderer draws as a
+    // small-but-bright pip and re-import would flip back to a ghost. The old
+    // g-state is snapshotted so rollback restores the exact {g, v} pair.
     constructor(hitRefs, newVs) {
         this.hits = [...hitRefs];
         this.newVs = Array.isArray(newVs)
             ? newVs.map(_drumClampVelocityPure)
             : this.hits.map(() => _drumClampVelocityPure(newVs));
         this.oldVs = this.hits.map(h => h.v);
+        this.oldGs = this.hits.map(h => !!h.g);
         this.songScope = true;
     }
     exec() {
         for (let i = 0; i < this.hits.length; i++) {
-            this.hits[i].v = this.newVs[i];
+            const h = this.hits[i];
+            h.v = this.newVs[i];
+            // Only ever CLEAR the flag (never auto-ghost a quieted hit — a
+            // quiet non-ghost hit is legitimate); the threshold mirrors the
+            // ghost-pull boundary in ToggleDrumArticulationCmd's exec.
+            if (h.g && this.newVs[i] > DRUM_GHOST_VELOCITY + 5) delete h.g;
         }
         S.drumTabDirty = true;
     }
     rollback() {
         for (let i = 0; i < this.hits.length; i++) {
-            if (this.oldVs[i] === undefined) delete this.hits[i].v;
-            else this.hits[i].v = this.oldVs[i];
+            const h = this.hits[i];
+            if (this.oldVs[i] === undefined) delete h.v;
+            else h.v = this.oldVs[i];
+            // exec only clears g, so restoring the snapshot re-sets it where
+            // it was lifted and no-ops everywhere else.
+            if (this.oldGs[i]) h.g = true; else delete h.g;
         }
         S.drumTabDirty = true;
     }
