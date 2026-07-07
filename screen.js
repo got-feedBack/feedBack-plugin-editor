@@ -12968,6 +12968,10 @@ function _renderStringsModal() {
             input.min = '-36';
             input.max = '36';
             input.step = '1';
+            // The wrapping <label>'s only text is the "st" unit, so without
+            // this a screen reader announces the field as just "st spinbutton"
+            // with no indication of which string it retunes.
+            input.setAttribute('aria-label', `String ${i} (${lbl}) tuning offset in semitones`);
             input.value = String(off);
             input.className = 'w-14 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs text-gray-300 outline-none text-center';
             input.title = 'Semitones from this lane’s standard pitch (e.g. -2 = whole-step down; a re-entrant drone can sit far above)';
