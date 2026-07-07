@@ -194,6 +194,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silences the edit cue); time-only moves and marquee selects stay
   silent, group edits rate-limit to one cue, and the blip never fires when
   the audio context isn't running. Tests: `tests/audio_mixer.test.js`.
+- **Follow-playhead is toggleable (Shift+L).** The playback auto-scroll
+  (view jumps once the cursor crosses 80% of the window) was unconditional;
+  it is now a registry command in both shortcut profiles, default ON, so an
+  author can pin the view on one passage and edit while the song plays on.
+  Editor pref only. Tests: `tests/follow_toggle.test.js`.
 - **Drum velocity is authorable.** Velocity always rendered (brightness/
   height) and imported from MIDI, but authoring wrote a hardcoded `v:100`
   with no way to change it. Now: **Alt+vertical-drag** on selected hits
