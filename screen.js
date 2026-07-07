@@ -7103,12 +7103,12 @@ function updateArrangementSelector() {
     const recBtn = document.getElementById('editor-record-midi-btn');
     if (recBtn) {
         recBtn.classList.toggle('hidden', !S.sessionId || S.format !== 'sloppak');
-        if (!navigator.requestMIDIAccess) {
+        if (_recMidiBackend() === 'none') {
             recBtn.disabled = true;
-            recBtn.title = 'Web MIDI not available — use Chrome or Edge.';
+            recBtn.title = 'MIDI not available — needs the host MIDI input capability or Web MIDI (Chrome/Edge).';
         } else {
             recBtn.disabled = false;
-            recBtn.title = 'Record a Keys arrangement live from a MIDI keyboard (Chrome/Edge)';
+            recBtn.title = 'Record a Keys arrangement live from a MIDI keyboard';
         }
     }
 
@@ -12917,8 +12917,11 @@ window.editorDoImportGuitar = async () => {
 // Record Keys arrangement live from a MIDI keyboard (Web MIDI API)
 // ════════════════════════════════════════════════════════════════════
 
-let _recMidiAccess = null;
-let _recMidiInput = null;
+let _recMidiAccess = null;                 // legacy private Web-MIDI access (fallback path)
+let _recMidiInput = null;                  // legacy private Web-MIDI input (fallback path)
+let _recMidiHandle = null;                 // host midi-input domain live handle {addListener, removeListener}
+let _recMidiOpenKey = null;                // logicalSourceKey _recMidiHandle belongs to
+let _recMidiOpenGen = 0;                   // bumped on every open/teardown; stale async opens self-close
 let _recState = 'idle';                    // idle | recording | finalizing
 let _recChannel = -1;                      // -1 = all, else 0..15
 const _recHeld = new Map();                // pitch -> [{onTime, channel}, ...] FIFO
@@ -12937,9 +12940,58 @@ function chartTimeNow() {
     return S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
 }
 
+/* @pure:midi-adapter:start */
+// Which MIDI backend the record path uses. The host `midi-input`
+// capability domain is the org's ONE device-access boundary (one
+// permission prompt, one source list, PII-redacted diagnostics) — prefer
+// it whenever the host ships it; fall back to the editor's legacy private
+// Web-MIDI path on older hosts; 'none' when neither exists.
+function _recMidiBackendPure(domain, hasWebMidi) {
+    if (domain && domain.version === 1) return 'domain';
+    return hasWebMidi ? 'private' : 'none';
+}
+// Normalize a device list to the picker's one shape [{id, label}]:
+// domain sources carry {logicalSourceKey, label}; private Web-MIDI inputs
+// carry {id, name, manufacturer}.
+function _recMidiDeviceRowsPure(backend, list) {
+    if (backend === 'domain') {
+        return (list || []).map(s => ({
+            id: s.logicalSourceKey,
+            label: s.label || 'MIDI input',
+        }));
+    }
+    return (list || []).map(inp => ({
+        id: inp.id,
+        label: inp.name || inp.manufacturer || `MIDI Device (${inp.id})`,
+    }));
+}
+/* @pure:midi-adapter:end */
+
+function _recMidiDomain() {
+    const d = window.feedBack && window.feedBack.midiInput;
+    return (d && d.version === 1) ? d : null;
+}
+function _recMidiBackend() {
+    return _recMidiBackendPure(
+        _recMidiDomain(),
+        typeof navigator !== 'undefined' && !!navigator.requestMIDIAccess);
+}
+
 async function _recMidiInit() {
+    const backend = _recMidiBackend();
+    if (backend === 'domain') {
+        // `discover` is the domain's permission boundary (it gates the whole
+        // Web-MIDI input list) — the analog of requestMIDIAccess below.
+        try {
+            const r = await _recMidiDomain().discover();
+            return !(r && r.outcome === 'denied');
+        } catch (e) {
+            console.warn('[Editor] MIDI discover failed:', e);
+            return false;
+        }
+    }
+    if (backend !== 'private') return false;
     if (_recMidiAccess) return true;
-    if (!navigator.requestMIDIAccess) return false;
     try {
         _recMidiAccess = await navigator.requestMIDIAccess({ sysex: false });
         _recMidiAccess.onstatechange = () => _recMidiUpdateDeviceList();
@@ -12950,49 +13002,132 @@ async function _recMidiInit() {
     }
 }
 
+// Pre-open the domain session for `id` (modal-open / device-change time,
+// where async is fine). Start must stay SYNCHRONOUS — see the user-gesture
+// comment in editorStartRecordMidi — so the session is ready before the
+// Start click and _recMidiConnect only attaches the listener.
+async function _recMidiEnsureOpen(id) {
+    const d = _recMidiDomain();
+    if (!d || !id) return false;
+    if (_recMidiHandle && _recMidiOpenKey === id) return true;
+    _recMidiDisconnectDomain();          // bumps _recMidiOpenGen
+    // Snapshot the generation AFTER teardown. If a newer open — or a
+    // teardown (device change / modal close) — happens while we await, the
+    // generation moves on and this resolution is stale: we must NOT install
+    // its handle (that would leak the session opened by the newer request
+    // and resurrect a handle after teardown). Close the orphaned ref instead.
+    const gen = ++_recMidiOpenGen;
+    try {
+        d.select(id);
+        const r = await d.open({ requester: 'editor-record', logicalSourceKey: id });
+        if (!r || !r.handle) return false;
+        if (gen !== _recMidiOpenGen) {
+            try { d.close({ requester: 'editor-record', logicalSourceKey: id }); } catch (_) { /* best-effort */ }
+            return false;
+        }
+        _recMidiHandle = r.handle;
+        _recMidiOpenKey = id;
+        try { localStorage.setItem('editor.recordMidiDeviceId', id); } catch (_) {}
+        return true;
+    } catch (e) {
+        console.warn('[Editor] MIDI open failed:', e);
+        return false;
+    }
+}
+
+function _recMidiDisconnectDomain() {
+    const d = _recMidiDomain();
+    if (_recMidiHandle) {
+        try { _recMidiHandle.removeListener(_recMidiOnData); } catch (_) { /* best-effort */ }
+    }
+    if (d && _recMidiOpenKey) {
+        // Release our ref on the SHARED session (the domain refcounts across
+        // consumers — closing here never yanks the device from the drums
+        // plugin or the input wizard).
+        try { d.close({ requester: 'editor-record', logicalSourceKey: _recMidiOpenKey }); } catch (_) { /* best-effort */ }
+    }
+    _recMidiHandle = null;
+    _recMidiOpenKey = null;
+    // Invalidate any open() still in flight so its late resolution self-closes
+    // instead of resurrecting a handle onto this torn-down session.
+    _recMidiOpenGen++;
+}
+
+window.editorRecordMidiDeviceChanged = (id) => {
+    try { localStorage.setItem('editor.recordMidiDeviceId', id); } catch (_) {}
+    // Domain path: swap the pre-opened session to the new device now, so
+    // the Start click stays synchronous. Private path connects at Start.
+    if (_recMidiBackend() === 'domain') _recMidiEnsureOpen(id);
+};
+
 function _recMidiUpdateDeviceList() {
     const sel = document.getElementById('editor-record-midi-device');
     const noDevice = document.getElementById('editor-record-midi-no-device');
     const startBtn = document.getElementById('editor-record-midi-start');
     if (!sel) return;
-    const inputs = [];
-    if (_recMidiAccess) _recMidiAccess.inputs.forEach(inp => inputs.push(inp));
+    const backend = _recMidiBackend();
+    let raw = [];
+    if (backend === 'domain') {
+        raw = _recMidiDomain().listSources();
+    } else if (_recMidiAccess) {
+        _recMidiAccess.inputs.forEach(inp => raw.push(inp));
+    }
+    const rows = _recMidiDeviceRowsPure(backend, raw);
 
     const saved = localStorage.getItem('editor.recordMidiDeviceId') || '';
     // Build options with createElement so device-supplied id/name strings
     // can't break out into HTML — Web MIDI metadata comes from the OS/USB
     // descriptor and isn't safe to interpolate via innerHTML.
     sel.replaceChildren();
-    for (const inp of inputs) {
+    for (const row of rows) {
         const opt = document.createElement('option');
-        opt.value = inp.id;
-        const label = inp.name || inp.manufacturer || `MIDI Device (${inp.id})`;
-        opt.textContent = label;
-        if (inp.id === saved) opt.selected = true;
+        opt.value = row.id;
+        opt.textContent = row.label;
+        if (row.id === saved) opt.selected = true;
         sel.appendChild(opt);
     }
 
-    const empty = !inputs.length;
+    const empty = !rows.length;
     if (noDevice) noDevice.classList.toggle('hidden', !empty);
     if (startBtn) startBtn.disabled = empty;
 }
 
+// Arm the record path for `id`. Returns 'ok' | 'pending' | 'fail'.
+// Domain path: the session was pre-opened by the modal / device-change
+// handler, so this only (re)attaches the listener — synchronous, which
+// the Start click requires. 'pending' means the pre-open is still in
+// flight (we kick another and the user presses Start again).
 function _recMidiConnect(id) {
+    if (_recMidiBackend() === 'domain') {
+        if (!_recMidiHandle || _recMidiOpenKey !== id) {
+            _recMidiEnsureOpen(id);   // fire-and-forget; resolves for the retry
+            return 'pending';
+        }
+        try { _recMidiHandle.removeListener(_recMidiOnData); } catch (_) { /* idempotent re-arm */ }
+        _recMidiHandle.addListener(_recMidiOnData);
+        try { localStorage.setItem('editor.recordMidiDeviceId', id); } catch (_) {}
+        return 'ok';
+    }
+    // Legacy private Web-MIDI path (hosts without the midi-input domain).
     if (_recMidiInput) _recMidiInput.onmidimessage = null;
     _recMidiInput = null;
-    if (!_recMidiAccess) return;
+    if (!_recMidiAccess) return 'fail';
     _recMidiAccess.inputs.forEach(inp => {
         if (inp.id === id) {
             _recMidiInput = inp;
-            _recMidiInput.onmidimessage = _recMidiOnMessage;
+            // Both paths deliver RAW BYTES to _recMidiOnData — the domain
+            // handle calls listeners with e.data, so the private path
+            // unwraps the event here to keep one routing function.
+            _recMidiInput.onmidimessage = (e) => _recMidiOnData(e.data);
             localStorage.setItem('editor.recordMidiDeviceId', id);
         }
     });
+    return _recMidiInput ? 'ok' : 'fail';
 }
 
-function _recMidiOnMessage(e) {
+function _recMidiOnData(data) {
     if (_recState !== 'recording') return;
-    const [status, data1, velocity] = e.data;
+    const [status, data1, velocity] = data;
     const ch = status & 0x0F;
     if (_recChannel >= 0 && ch !== _recChannel) return;
     const cmd = status & 0xF0;
@@ -13089,7 +13224,8 @@ window.editorShowRecordMidiModal = async () => {
         }
     }
 
-    if (!navigator.requestMIDIAccess) {
+    const backend = _recMidiBackend();
+    if (backend === 'none') {
         if (noWebMidi) noWebMidi.classList.remove('hidden');
         if (startBtn) startBtn.disabled = true;
     } else {
@@ -13101,6 +13237,13 @@ window.editorShowRecordMidiModal = async () => {
         } else {
             status.textContent = '';
             _recMidiUpdateDeviceList();
+            // Domain path: pre-open the selected device's shared session
+            // NOW so the Start click can stay synchronous (user-gesture
+            // constraint in editorStartRecordMidi).
+            if (backend === 'domain') {
+                const devSel = document.getElementById('editor-record-midi-device');
+                if (devSel && devSel.value) _recMidiEnsureOpen(devSel.value);
+            }
         }
     }
 
@@ -13111,6 +13254,9 @@ window.editorHideRecordMidiModal = () => {
     // Refuse to close while a take is active — explicit Stop is required.
     if (_recState !== 'idle') return;
     document.getElementById('editor-record-midi-modal').classList.add('hidden');
+    // Release our ref on the shared domain session (refcounted — never
+    // yanks the device from other consumers). Re-opens on next modal show.
+    _recMidiDisconnectDomain();
 };
 
 window.editorStartRecordMidi = () => {
@@ -13132,8 +13278,14 @@ window.editorStartRecordMidi = () => {
         status.textContent = 'Select a MIDI device first.';
         return;
     }
-    _recMidiConnect(sel.value);
-    if (!_recMidiInput) {
+    const connected = _recMidiConnect(sel.value);
+    if (connected === 'pending') {
+        // Domain pre-open still in flight (rare — modal open kicks it);
+        // the retry click lands after it resolves.
+        status.textContent = 'Connecting to the MIDI device — press Start again in a moment.';
+        return;
+    }
+    if (connected !== 'ok') {
         status.textContent = 'Failed to connect to MIDI device.';
         return;
     }
@@ -13252,6 +13404,12 @@ window.editorStopRecordMidi = () => {
     _recSustainOn.clear();
 
     if (_recMidiInput) _recMidiInput.onmidimessage = null;
+    // Domain path: Stop hides the modal at the end of this function, so fully
+    // release our ref on the shared session here — otherwise the refcount is
+    // held open indefinitely (the modal-close teardown never runs on the Stop
+    // path). Refcounted, so this never yanks the device from other consumers;
+    // reopening the modal re-opens the session.
+    _recMidiDisconnectDomain();
 
     // Populate the target arrangement registered at Start time. No second
     // POST: the arrangement was already registered with the backend, so
