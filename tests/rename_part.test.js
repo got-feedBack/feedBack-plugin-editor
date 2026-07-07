@@ -51,7 +51,7 @@ function t(name, fn) {
 
 const P = new Function(
     '"use strict";' + KEYS_PATTERN_SRC + extractBlock('rename-arr')
-    + '\nreturn { _arrKindPure, _renameGuardPure };'
+    + '\nreturn { _arrKindPure, _arrSaveKindPure, _renameGuardPure };'
 )();
 
 t('kind inference mirrors the layout rules: keys > drums > bass > guitar', () => {
@@ -68,10 +68,42 @@ t('same-kind renames pass, trimmed', () => {
     assert.deepStrictEqual(g, { ok: true, reason: '', name: 'Solo Guitar' });
     assert.strictEqual(P._renameGuardPure('Bass', 'Fretless Bass', []).ok, true);
     assert.strictEqual(P._renameGuardPure('Piano', 'Piano 2', []).ok, true);
-    // KEYS_PATTERN is start-anchored (the layout rule): "Electric Piano"
-    // is NOT a keys name, so renaming a keys part to it must refuse —
-    // the guard mirrors what the lane/roll routing would actually do.
-    assert.strictEqual(P._renameGuardPure('Piano', 'Electric Piano', []).ok, false);
+});
+
+t('a name the editor and the save read differently is refused (both facets guarded)', () => {
+    // Regression for the guard-vs-persistence mismatch. A name feeds two
+    // interpreters that disagree:
+    //   • runtime lane/roll router — PREFIX KEYS_PATTERN (_arrKindPure)
+    //   • save-side type/notation — WORD-BOUNDARY \b(keys|…)\b (_arrSaveKindPure,
+    //     mirrors routes.py `_KEYS_NAME_RE`)
+    // "Electric Piano" is runtime-guitar but save-keys; a one-facet guard
+    // waved through renames that re-lane the chart under the OTHER facet.
+    assert.strictEqual(P._arrKindPure('Electric Piano'), 'guitar',
+        'runtime prefix rule misses "Electric Piano"');
+    assert.strictEqual(P._arrSaveKindPure('Electric Piano'), 'keys',
+        'save-side word-boundary rule catches "Electric Piano"');
+    assert.strictEqual(P._arrKindPure('keysolo'), 'keys',
+        'runtime prefix rule catches "keysolo"');
+    assert.strictEqual(P._arrSaveKindPure('keysolo'), 'other',
+        'save-side word-boundary rule misses "keysolo"');
+
+    // guitar (both facets) → "Electric Piano" (save flips to keys):
+    // pre-fix returned ok:true and let the save silently re-lane the chart.
+    const g = P._renameGuardPure('Lead', 'Electric Piano', []);
+    assert.strictEqual(g.ok, false, 'guitar → save-side-keys rename is refused');
+    assert.ok(/guitar → keys/.test(g.reason), 'names the kind change');
+
+    // keys ("Piano") → "Electric Piano": SAME display label (both keys) but
+    // the runtime facet moves keys → guitar, flipping the LIVE piano roll to
+    // guitar lanes until save. Pre-fix (and a naive union guard) allowed it.
+    const g2 = P._renameGuardPure('Piano', 'Electric Piano', []);
+    assert.strictEqual(g2.ok, false, 'keys → runtime-guitar rename is refused');
+    assert.ok(/read differently/.test(g2.reason), 'explains the interpreter disagreement');
+
+    // A stray save-side keys word on a guitar part is likewise blocked.
+    assert.strictEqual(P._renameGuardPure('Rhythm', 'Rhythm + Synth Pad', []).ok, false);
+    // A runtime-only keys prefix on a guitar part is blocked too.
+    assert.strictEqual(P._renameGuardPure('Rhythm', 'Synthwave Lead', []).ok, false);
 });
 
 t('cross-kind renames refuse and say why', () => {

@@ -11550,6 +11550,24 @@ function init() {
 // bass would strand notes on invisible strings.
 
 /* @pure:rename-arr:start */
+// A part name feeds TWO independent interpreters, and a rename must not shift
+// the chart under EITHER of them:
+//   • the runtime lane/roll router — prefix-anchored KEYS_PATTERN
+//     (/^(keys|piano|keyboard|synth)/i), then /^drums/i, then /bass/i. This
+//     is what the LIVE editor draws (piano roll vs 4/6 lanes vs drums).
+//   • the SAVE side (routes.py) — word-boundary \b(keys|piano|keyboard|
+//     synth)\b stamps manifest `type: piano` + a keys notation sidecar, and
+//     /bass/i stamps `type: bass`. This is what a reload re-lanes from.
+// The two KEYS rules disagree on real names: "Electric Piano" is save-keys
+// but runtime-guitar; "Synthwave" is runtime-keys but save-guitar. Collapsing
+// them into one "kind" hides exactly those disagreements — the ones that flip
+// a chart's layout on save (runtime-guitar → save-keys) or on the very next
+// draw (runtime-keys → save-guitar). So the guard compares BOTH facets and
+// refuses when either moves; a rename is safe only when every interpreter
+// still reads the same instrument.
+const _KEYS_NAME_WB = /\b(keys|piano|keyboard|synth)\b/i;
+// Runtime lane/roll kind — what the live editor shows (mirrors isKeysMode /
+// isBassArr / the /^drums/ routing, all name-driven and prefix-anchored).
 function _arrKindPure(name) {
     const n = String(name || '');
     if (KEYS_PATTERN.test(n)) return 'keys';
@@ -11557,9 +11575,27 @@ function _arrKindPure(name) {
     if (/bass/i.test(n)) return 'bass';
     return 'guitar';
 }
+// Persisted kind — the manifest `type` / notation-sidecar decision on save
+// (routes.py `_KEYS_NAME_RE` word-boundary keys, then `_TYPE_BASS_RE` /bass/).
+function _arrSaveKindPure(name) {
+    const n = String(name || '');
+    if (_KEYS_NAME_WB.test(n)) return 'keys';
+    if (/bass/i.test(n)) return 'bass';
+    return 'other';
+}
+// Display label for the refusal message: the instrument a human reads off the
+// name, keys-first so either rule surfaces it.
+function _arrKindLabelPure(name) {
+    const n = String(name || '');
+    if (KEYS_PATTERN.test(n) || _KEYS_NAME_WB.test(n)) return 'keys';
+    if (/^drums/i.test(n)) return 'drums';
+    if (/bass/i.test(n)) return 'bass';
+    return 'guitar';
+}
 // Validate a rename: trimmed non-empty, bounded, unique among the OTHER
 // parts (case-insensitive — the save-side name discipline), and never a
-// kind change. Returns {ok, reason, name} with the trimmed name.
+// kind change under EITHER interpreter. Returns {ok, reason, name} with the
+// trimmed name.
 function _renameGuardPure(oldName, rawNewName, otherNames) {
     const name = String(rawNewName || '').trim();
     if (!name) return { ok: false, reason: 'Name can’t be empty.', name };
@@ -11569,15 +11605,23 @@ function _renameGuardPure(oldName, rawNewName, otherNames) {
     if (taken.has(name.toLowerCase())) {
         return { ok: false, reason: `Another part is already named “${name}”.`, name };
     }
-    const oldKind = _arrKindPure(oldName);
-    const newKind = _arrKindPure(name);
-    if (oldKind !== newKind) {
-        return {
-            ok: false,
-            reason: `That name would change the part’s instrument (${oldKind} → ${newKind}) — `
-                + 'lane layout and notation still key off the name. Add a new part instead.',
-            name,
-        };
+    const runtimeMoved = _arrKindPure(oldName) !== _arrKindPure(name);
+    const saveMoved = _arrSaveKindPure(oldName) !== _arrSaveKindPure(name);
+    if (runtimeMoved || saveMoved) {
+        const oldLabel = _arrKindLabelPure(oldName);
+        const newLabel = _arrKindLabelPure(name);
+        const reason = (oldLabel !== newLabel)
+            // A clean instrument change (e.g. guitar → bass, guitar → keys).
+            ? `That name would change the part’s instrument (${oldLabel} → ${newLabel}) — `
+                + 'lane layout and notation still key off the name. Add a new part instead.'
+            // Same label, but the two interpreters disagree on this exact name
+            // (e.g. "Piano" → "Electric Piano": the editor keys off the first
+            // word and would drop to guitar lanes, while the save still writes
+            // keys). Re-laning either way strands notes, so refuse.
+            : 'That name is read differently by the editor and the saved file, so it would '
+                + 'change the part’s layout. The editor keys off the FIRST word, the save off '
+                + 'any keys word — pick a name both agree on.';
+        return { ok: false, reason, name };
     }
     return { ok: true, reason: '', name };
 }
