@@ -52,6 +52,14 @@ t('guard order: an empty session reads as "load a song", not "save first"', () =
     assert.ok(/Load/.test(_tabPreviewGuardPure('', '', false).reason));
 });
 
+t('guard order: an unsaved keys part reads as "fretted only", not "save first" (keys wins)', () => {
+    // Both the keys and the unsaved conditions hold; the non-fretted check
+    // runs first, so the honest reason is the modality one, not Save-first.
+    const r = _tabPreviewGuardPure('', 'Piano', true);
+    assert.strictEqual(r.ok, false);
+    assert.ok(/fretted/.test(r.reason) && !/Save/.test(r.reason));
+});
+
 t('guard: drums parts are non-fretted and refused (legacy guitar-encoded drums arrangements)', () => {
     const drums = _tabPreviewGuardPure('song.sloppak', 'Drums', true);
     assert.strictEqual(drums.ok, false, 'a drums arrangement has no fret/string tab');
