@@ -198,14 +198,14 @@ t('first-play fade ramps the reference up once, then never again', () => {
 
 // ── Stateful: edit blip ──────────────────────────────────────────────
 
-t('blip fires through the limited guide bus when enabled', () => {
+t('blip sums into the limiter, independent of the guide fader', () => {
     const env = makeEnv();
     env._editBlipAt();
     const osc = env.S.audioCtx.made.find(n => n.kind === 'osc');
     assert.ok(osc && osc.started, 'oscillator created and started');
     assert.strictEqual(osc.frequency.value, 1320, 'pitched apart from the 1750 Hz clap');
     const bus = env._ensureMasterBus();
-    assert.strictEqual(osc.to.to, bus.guideGain, 'osc → gain → guideGain (limited path)');
+    assert.strictEqual(osc.to.to, bus.limiter, 'osc → gain → limiter (limited, not scaled by the guide fader)');
     assert.strictEqual(env.voices().length, 1, 'voice tracked for cancel-on-stop');
 });
 

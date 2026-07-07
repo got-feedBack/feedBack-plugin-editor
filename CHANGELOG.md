@@ -46,7 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hosts the new **edit blip** (on by default, toggleable): a soft 1320 Hz
   tick — pitched apart from the 1750 Hz guide clap — confirms note **adds
   and pitch changes** (fret set/adjust, string moves, pitch-changing drags)
-  through the limited guide bus; time-only moves and marquee selects stay
+  summed straight into the shared limiter (so muting guide claps never also
+  silences the edit cue); time-only moves and marquee selects stay
   silent, group edits rate-limit to one cue, and the blip never fires when
   the audio context isn't running. Tests: `tests/audio_mixer.test.js`.
 - **Drum edits are undoable.** Click-add, drag-move (time and lane), Delete,

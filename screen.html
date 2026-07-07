@@ -161,18 +161,18 @@
                 <div class="p-3 space-y-2.5">
                     <label class="flex items-center gap-2" title="Recording volume — a transparent gain, never limited">
                         <span class="w-16 shrink-0 text-gray-400">Recording</span>
-                        <input id="editor-mix-ref" type="range" min="0" max="100" value="100" oninput="editorSetMixLevel('ref', this.value)" class="flex-1 accent-accent">
-                        <span id="editor-mix-ref-val" class="w-9 text-right font-mono text-gray-300">100%</span>
+                        <input id="editor-mix-ref" type="range" min="0" max="100" value="100" aria-label="Recording volume percent" oninput="editorSetMixLevel('ref', this.value)" class="flex-1 accent-accent">
+                        <span id="editor-mix-ref-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">100%</span>
                     </label>
                     <label class="flex items-center gap-2" title="Guide clap volume (behind the limiter)">
                         <span class="w-16 shrink-0 text-gray-400">Guide</span>
-                        <input id="editor-mix-guide" type="range" min="0" max="100" value="35" oninput="editorSetMixLevel('guide', this.value)" class="flex-1 accent-accent">
-                        <span id="editor-mix-guide-val" class="w-9 text-right font-mono text-gray-300">35%</span>
+                        <input id="editor-mix-guide" type="range" min="0" max="100" value="35" aria-label="Guide clap volume percent" oninput="editorSetMixLevel('guide', this.value)" class="flex-1 accent-accent">
+                        <span id="editor-mix-guide-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">35%</span>
                     </label>
                     <label class="flex items-center gap-2" title="Metronome click volume (behind the limiter)">
                         <span class="w-16 shrink-0 text-gray-400">Click</span>
-                        <input id="editor-mix-click" type="range" min="0" max="100" value="25" oninput="editorSetMixLevel('click', this.value)" class="flex-1 accent-accent">
-                        <span id="editor-mix-click-val" class="w-9 text-right font-mono text-gray-300">25%</span>
+                        <input id="editor-mix-click" type="range" min="0" max="100" value="25" aria-label="Metronome click volume percent" oninput="editorSetMixLevel('click', this.value)" class="flex-1 accent-accent">
+                        <span id="editor-mix-click-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">25%</span>
                     </label>
                     <label class="flex items-center gap-2 pt-1 border-t border-gray-700/70" title="Play a soft tick when a note is added or changes pitch">
                         <input id="editor-mix-blip" type="checkbox" checked onchange="editorSetEditBlip(this.checked)" class="accent-accent">

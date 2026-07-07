@@ -5692,9 +5692,10 @@ function _mixBlipAllowedPure(nowMs, lastMs, gapMs) {
     if (!Number.isFinite(lastMs)) return true;
     return (nowMs - lastMs) >= gapMs;
 }
-// A committed drag only previews when it changed PITCH (a string delta, or
-// a fret delta in keys mode) — time-only moves and marquee selects stay
-// silent by design.
+// A committed drag only previews when it changed PITCH — any string delta
+// (a note moved to another string sounds a different pitch) or any fret
+// delta (a moved keys/piano-roll pitch, or a fret-changing drag). Time-only
+// moves and marquee selects carry no string/fret delta, so they stay silent.
 function _mixDragChangedPitchPure(dstrings, dfrets) {
     const ds = Array.isArray(dstrings) && dstrings.some(d => d !== 0);
     const df = Array.isArray(dfrets) && dfrets.some(d => d !== 0);
@@ -5799,10 +5800,11 @@ function editorEditBlipEnabled() {
 }
 
 // Edit-preview blip: a soft confirmation tick on note ADD and PITCH change
-// only (never marquee/time-only moves), through the limited guide bus. It
-// skips when the context isn't running — an edit must never resume audio —
-// and is pitched apart from the 1750 Hz guide clap so the two read as
-// different cues.
+// only (never marquee/time-only moves). It sums straight into the shared
+// limiter — NOT through the guide fader — so muting guide claps never also
+// silences the edit cue, while the limiter still tames it. It skips when the
+// context isn't running — an edit must never resume audio — and is pitched
+// apart from the 1750 Hz guide clap so the two read as different cues.
 let _mixLastBlipMs = null;
 function _editBlipAt() {
     if (!editorEditBlipEnabled()) return;
@@ -5822,7 +5824,7 @@ function _editBlipAt() {
     g.gain.exponentialRampToValueAtTime(0.5, when + 0.002);
     g.gain.exponentialRampToValueAtTime(0.0001, when + 0.04);
     osc.connect(g);
-    g.connect(bus.guideGain);
+    g.connect(bus.limiter);
     osc.start(when);
     osc.stop(when + 0.05);
     _guideVoices.push({ osc, gain: g, until: when + 0.05 });
