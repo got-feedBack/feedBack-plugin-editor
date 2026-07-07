@@ -10,11 +10,16 @@
  * RemoveSectionCmd / RenameSectionCmd route those mutations through the undo
  * history.
  *
- * Every command is round-tripped: exec → rollback restores S.sections EXACTLY
+ * Every real edit is round-tripped: exec → rollback restores S.sections EXACTLY
  * (deep-equality of the whole array, sort order included), and exec → rollback
- * → redo reproduces. Adversarial inputs (equal start_times, unsorted insert,
- * delete-nonexistent) and the helper-uses-its-argument check are covered too.
- * These assertions fail on main (the command classes don't exist there).
+ * → redo reproduces. Adversarial inputs (equal start_times, unsorted insert)
+ * and the helper-uses-its-argument check are covered too, plus the
+ * plain-EditHistory invariant that a fresh exec() drops the redo stack. The one
+ * deliberate NON-round-trip is the delete-nonexistent case: exec is a no-op, so
+ * undo takes RemoveSectionCmd's idx<0 sorted-insert fallback (it re-inserts the
+ * absent section rather than restoring the pre-exec array — that branch's
+ * documented behavior is exactly what the test pins). These assertions fail on
+ * main (the command classes don't exist there).
  *
  * Run: node tests/section_undo.test.js
  */
@@ -133,6 +138,46 @@ t('interleaved edits undo in strict reverse order (LIFO), model exact at each st
     assert.deepStrictEqual(env.S.sections, snap1);
     env.S.history.doUndo();                       // undo add
     assert.deepStrictEqual(env.S.sections, snap0);
+});
+
+// ── adversarial: delete a section that isn't in the array ────────────────────
+t('delete-nonexistent: exec removes nothing; undo takes the idx<0 sorted-insert fallback', () => {
+    const a = { name: 'a', number: 1, start_time: 0 };
+    const c = { name: 'c', number: 1, start_time: 20 };
+    const env = makeEnv([a, c]);
+    const before = clone(env.S.sections);
+    // A section object that was never inserted into S.sections: exec's indexOf
+    // is -1, so nothing splices out and `idx` stays -1. `start_time` is placed
+    // AFTER every existing section so the sorted-insert fallback lands it last —
+    // a naive unguarded `splice(this.idx, 0, section)` with idx === -1 would
+    // instead splice before the last element (['a','ghost','c']), so this
+    // assertion genuinely distinguishes the fallback from that bug.
+    const ghost = { name: 'ghost', number: 1, start_time: 30 };
+    const cmd = new env.RemoveSectionCmd(ghost);
+    env.S.history.exec(cmd);
+    assert.strictEqual(cmd.idx, -1, 'exec found no matching section');
+    assert.deepStrictEqual(env.S.sections, before, 'exec removed nothing');
+    // rollback hits the `idx < 0` branch: a sorted insert, not splice-at-idx.
+    env.S.history.doUndo();
+    assert.deepStrictEqual(env.S.sections.map(s => s.name), ['a', 'c', 'ghost'],
+        'fallback re-inserts in sorted position (last, by start_time)');
+});
+
+// ── a fresh exec() drops the redo stack (section commands are ordinary
+//    EditHistory commands, with no bespoke redo handling) ─────────────────────
+t('exec clears redo: add → undo → (new) rename leaves nothing to redo', () => {
+    const env = makeEnv([{ name: 'intro', number: 1, start_time: 0 }]);
+    env.S.history.exec(new env.AddSectionCmd({ name: 'verse', number: 1, start_time: 4 }));
+    env.S.history.doUndo();                       // 'verse' is now redoable
+    assert.strictEqual(env.S.history.redo.length, 1, 'undo populated the redo stack');
+    const intro = env.S.sections.find(s => s.name === 'intro');
+    env.S.history.exec(new env.RenameSectionCmd(intro, 'intro2'));   // a fresh edit
+    assert.strictEqual(env.S.history.redo.length, 0, 'the new exec dropped the redo stack');
+    const after = clone(env.S.sections);
+    env.S.history.doRedo();                        // must be a no-op now
+    assert.deepStrictEqual(env.S.sections, after, 'redo does nothing — verse is not resurrected');
+    assert.ok(!env.S.sections.some(s => s.name === 'verse'),
+        'the abandoned redo never comes back');
 });
 
 // ── helper uses its arguments (not a global) ─────────────────────────────────
