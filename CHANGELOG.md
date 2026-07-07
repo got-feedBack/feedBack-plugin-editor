@@ -182,6 +182,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silences the edit cue); time-only moves and marquee selects stay
   silent, group edits rate-limit to one cue, and the blip never fires when
   the audio context isn't running. Tests: `tests/audio_mixer.test.js`.
+- **Drum velocity is authorable.** Velocity always rendered (brightness/
+  height) and imported from MIDI, but authoring wrote a hardcoded `v:100`
+  with no way to change it. Now: **Alt+vertical-drag** on selected hits
+  edits velocity live (piano-roll idiom — up is louder, 1 step/px, one undo
+  step per drag), **Shift+↑/↓** nudges the selection ±10, and **A / N**
+  quick-set accent (115) / normal (100), all through a new undoable
+  `SetDrumVelocityCmd` that restores authored dynamics verbatim on undo (a
+  hit that had no explicit `v` gets the field deleted again, not set to
+  100). The **G ghost toggle now pulls a normal-strength hit down to the
+  ghost velocity (35)** — a ghost is a quiet hit by definition (import
+  derives `g` from `v < 40`), so ghosting a `v:100` hit no longer authors a
+  contradiction; already-quiet hits keep their authored dynamics,
+  un-ghosting leaves velocity untouched, and undo restores the exact
+  flag+velocity pair. The unmapped-notes import dialog also stops
+  flattening dynamics: hand-mapped notes carry their source velocities
+  through when the server captured them (`velocities` index-aligned with
+  `times`; older cores simply omit it) instead of pushing `v:100`.
+  Tests: `tests/drum_velocity.test.js`.
 - **Drum edits are undoable.** Click-add, drag-move (time and lane), Delete,
   and the G/F/K ghost/flam/choke toggles now run through the editor's shared
   undo history via four new command classes (`AddDrumHitCmd`,
