@@ -13299,7 +13299,11 @@ function _renderTempoScopeParts(listEl) {
     };
     const commit = () => {
         S.tempoRideScope = 'custom';
-        _tempoScopeToggleState = '';  // force re-render with the new checks
+        // Don't tear down and rebuild the rows here: the browser already
+        // reflects this checkbox flip in the DOM, and the model was just
+        // updated to match, so a replaceChildren() would only drop keyboard
+        // focus off the box the user is toggling. Structural changes (mode,
+        // scope, roster) still rebuild via _refreshTempoScopeToggle's memo.
         _refreshTempoScopeToggle();
         _refreshTempoSyncInspector();
         draw();
@@ -13331,17 +13335,16 @@ let _tempoScopeToggleState = '';  // memo signature; runs every draw()
 function _refreshTempoScopeToggle() {
     const el = _ensureTempoScopeToggle();
     if (!el) return;
-    // Memoize on the only inputs that affect the control — _refreshTempo-
-    // ScopeToggle runs on every draw() (every animation frame during
-    // playback), so skip the DOM writes when nothing changed. The custom
-    // checklist and the arrangement roster are part of the signature so a
-    // checkbox flip or an added/renamed part re-renders the rows.
-    const c = S.tempoRideCustom;
-    const customSig = c
-        ? `${c.drum !== false}:${c.arrs instanceof Set ? [...c.arrs].sort((a, b) => a - b).join(',') : '*'}`
-        : '';
+    // Memoize on the STRUCTURAL inputs that change which rows exist —
+    // _refreshTempoScopeToggle runs on every draw() (every animation frame
+    // during playback), so skip the DOM writes when nothing changed. The
+    // per-part CHECK STATE is deliberately NOT in the signature: a checkbox
+    // flip is already reflected in the DOM and the model, so rebuilding the
+    // rows for it would only drop keyboard focus (see commit() above). A
+    // changed roster (add/remove/rename) or first-time custom seeding does
+    // change the signature and rebuilds the rows.
     const arrSig = (S.arrangements || []).map(a => (a && a.name) || '').join('|');
-    const sig = `${!!S.tempoMapMode}|${S.tempoRideScope}|${customSig}|${arrSig}`;
+    const sig = `${!!S.tempoMapMode}|${S.tempoRideScope}|${!!S.tempoRideCustom}|${arrSig}`;
     if (sig === _tempoScopeToggleState) return;
     _tempoScopeToggleState = sig;
     el.classList.toggle('hidden', !S.tempoMapMode);
