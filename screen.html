@@ -66,6 +66,7 @@
         <span id="editor-zoom-display" class="text-xs text-gray-400 w-8 text-center">100</span>
         <button onclick="editorZoom(1)" class="px-1.5 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs">+</button>
         <button id="editor-onset-btn" onclick="editorToggleOnsetStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Onset strip: amber blocks mark detected attacks in the recording (Shift+W). Display only — never places notes." aria-pressed="false">Onsets</button>
+        <button id="editor-tab-preview-btn" onclick="editorShowTabPreview()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Preview the current part as engraved tab (read-only — renders the pack as last saved; needs the Tab View plugin)">Tab…</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
 
@@ -675,6 +676,28 @@
 </div>
 
 <!-- Strings (tuning) editor modal -->
+<!-- Read-only Tab preview modal (VA.4): engraved tab of the current part
+     via the Tab View plugin's conversion + alphaTab. Renders the SAVED
+     pack; strictly no edit affordances (V8). -->
+<div id="editor-tab-preview-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-4xl flex flex-col mx-6" style="max-height:85vh">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+            <span id="editor-tab-preview-title" class="text-sm font-medium">Tab preview</span>
+            <div class="flex items-center gap-2">
+                <button onclick="editorRefreshTabPreview()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs" title="Re-convert from the saved pack (Save first to preview new edits)">Refresh</button>
+                <button onclick="editorHideTabPreview()" class="text-gray-500 hover:text-white">&times;</button>
+            </div>
+        </div>
+        <div class="px-4 py-1 text-[11px] text-gray-500 border-b border-gray-700/60">
+            Read-only — shows the pack as last saved. Save first to preview current edits.
+            <span id="editor-tab-preview-status" class="text-amber-300 ml-2"></span>
+        </div>
+        <div class="flex-1 overflow-auto p-2" style="background:#f7f6f2">
+            <div id="editor-tab-preview-mount"></div>
+        </div>
+    </div>
+</div>
+
 <div id="editor-strings-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
     <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-md flex flex-col">
         <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">

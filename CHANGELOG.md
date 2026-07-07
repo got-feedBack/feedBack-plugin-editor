@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Read-only Tab preview of the current part.** A new **Tab…** toolbar
+  button (registry command `showTabPreview`) opens a modal that renders
+  the active fretted part as engraved tab, reusing the Tab View plugin's
+  arrangement→GP conversion endpoint and the same pinned alphaTab CDN
+  render idiom (player disabled — no soundfont download; the engraving
+  lays out once per load, never per frame, and tears down on close).
+  Honest about its source: the endpoint reads the **saved** pack, so the
+  modal says "as last saved" and offers Refresh; unsaved edits need a
+  Save first. Degrades cleanly — a missing Tab View plugin, an old host,
+  keys parts (their packing has no tab), and unsaved sessions each get a
+  specific message instead of a blank panel. Strictly read-only: the
+  String view stays the fretted editor; this is a proofreading lens.
+  Tests: `tests/tab_preview.test.js`.
+
 ### Fixed
 - **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
   arrangement entries.** The full-snapshot save path rebuilt every manifest
