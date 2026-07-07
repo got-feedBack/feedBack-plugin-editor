@@ -4224,6 +4224,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'showTabPreview', label: 'Preview part as tab (read-only, saved pack)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleDrumDensity', label: 'Toggle drum row density (Full / Compact)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleFollow', label: 'Toggle follow playhead', group: 'View', status: 'ready', keys: { feedback: 'Shift+L', eof: 'Shift+L' } },
+    { id: 'renamePart', label: 'Rename current part', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -5516,6 +5517,7 @@ function _editorRunEofCommand(cmd) {
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return _editorTogglePartsView();
     case 'toggleKeyHighlight': return _editorToggleKeyHighlight();
+    case 'renamePart': window.editorRenameArrangement(); return true;
     case 'toggleFollow': return _editorToggleFollow();
     case 'toggleDrumDensity': return _editorToggleDrumDensity();
     case 'showTabPreview': return _editorShowTabPreview();
@@ -7710,6 +7712,13 @@ function updateArrangementSelector() {
     const removeBtn = document.getElementById('editor-remove-arr-btn');
     if (removeBtn) {
         removeBtn.classList.toggle('hidden', S.arrangements.length <= 1);
+    }
+
+    // Rename is available whenever an arrangement is active on a live
+    // session (rename persists through save; no session = nothing to save).
+    const renameBtn = document.getElementById('editor-rename-arr-btn');
+    if (renameBtn) {
+        renameBtn.classList.toggle('hidden', !S.arrangements.length || !S.sessionId);
     }
 }
 
@@ -12439,6 +12448,141 @@ function init() {
 // ════════════════════════════════════════════════════════════════════
 // Remove arrangement
 // ════════════════════════════════════════════════════════════════════
+
+// ── Part rename (EDITOR-VIEW-MODALITY / DAW-workspace 2.2b) ──────────
+// Unblocked by the manifest `type` stamping + merge-not-rebuild save
+// (#101): a rename no longer strips the entry's `type`/unknown keys, and
+// sloppak sessions carry a stable `id` the view prefs key off. One hard
+// limit stays, enforced honestly: the NAME still drives kind inference
+// (keys → piano roll + notation sidecar, /bass/i → 4-lane layout,
+// /^drums/i → drum routing), so a rename that would CHANGE the inferred
+// kind is refused — silently re-laning a 6-string chart as a 4-string
+// bass would strand notes on invisible strings.
+
+/* @pure:rename-arr:start */
+// A part name feeds TWO independent interpreters, and a rename must not shift
+// the chart under EITHER of them:
+//   • the runtime lane/roll router — prefix-anchored KEYS_PATTERN
+//     (/^(keys|piano|keyboard|synth)/i), then /^drums/i, then /bass/i. This
+//     is what the LIVE editor draws (piano roll vs 4/6 lanes vs drums).
+//   • the SAVE side (routes.py) — word-boundary \b(keys|piano|keyboard|
+//     synth)\b stamps manifest `type: piano` + a keys notation sidecar, and
+//     /bass/i stamps `type: bass`. This is what a reload re-lanes from.
+// The two KEYS rules disagree on real names: "Electric Piano" is save-keys
+// but runtime-guitar; "Synthwave" is runtime-keys but save-guitar. Collapsing
+// them into one "kind" hides exactly those disagreements — the ones that flip
+// a chart's layout on save (runtime-guitar → save-keys) or on the very next
+// draw (runtime-keys → save-guitar). So the guard compares BOTH facets and
+// refuses when either moves; a rename is safe only when every interpreter
+// still reads the same instrument.
+const _KEYS_NAME_WB = /\b(keys|piano|keyboard|synth)\b/i;
+// Runtime lane/roll kind — what the live editor shows (mirrors isKeysMode /
+// isBassArr / the /^drums/ routing, all name-driven and prefix-anchored).
+function _arrKindPure(name) {
+    const n = String(name || '');
+    if (KEYS_PATTERN.test(n)) return 'keys';
+    if (/^drums/i.test(n)) return 'drums';
+    if (/bass/i.test(n)) return 'bass';
+    return 'guitar';
+}
+// Persisted kind — the manifest `type` / notation-sidecar decision on save
+// (routes.py `_KEYS_NAME_RE` word-boundary keys, then `_TYPE_BASS_RE` /bass/).
+function _arrSaveKindPure(name) {
+    const n = String(name || '');
+    if (_KEYS_NAME_WB.test(n)) return 'keys';
+    if (/bass/i.test(n)) return 'bass';
+    return 'other';
+}
+// Display label for the refusal message: the instrument a human reads off the
+// name, keys-first so either rule surfaces it.
+function _arrKindLabelPure(name) {
+    const n = String(name || '');
+    if (KEYS_PATTERN.test(n) || _KEYS_NAME_WB.test(n)) return 'keys';
+    if (/^drums/i.test(n)) return 'drums';
+    if (/bass/i.test(n)) return 'bass';
+    return 'guitar';
+}
+// Validate a rename: trimmed non-empty, bounded, unique among the OTHER
+// parts (case-insensitive — the save-side name discipline), and never a
+// kind change under EITHER interpreter. Returns {ok, reason, name} with the
+// trimmed name.
+function _renameGuardPure(oldName, rawNewName, otherNames) {
+    const name = String(rawNewName || '').trim();
+    if (!name) return { ok: false, reason: 'Name can’t be empty.', name };
+    if (name.length > 60) return { ok: false, reason: 'Name too long (max 60 characters).', name };
+    if (name === String(oldName || '')) return { ok: false, reason: '', name };  // silent no-op
+    const taken = new Set((otherNames || []).map(n => String(n || '').trim().toLowerCase()));
+    if (taken.has(name.toLowerCase())) {
+        return { ok: false, reason: `Another part is already named “${name}”.`, name };
+    }
+    const runtimeMoved = _arrKindPure(oldName) !== _arrKindPure(name);
+    const saveMoved = _arrSaveKindPure(oldName) !== _arrSaveKindPure(name);
+    if (runtimeMoved || saveMoved) {
+        const oldLabel = _arrKindLabelPure(oldName);
+        const newLabel = _arrKindLabelPure(name);
+        const reason = (oldLabel !== newLabel)
+            // A clean instrument change (e.g. guitar → bass, guitar → keys).
+            ? `That name would change the part’s instrument (${oldLabel} → ${newLabel}) — `
+                + 'lane layout and notation still key off the name. Add a new part instead.'
+            // Same label, but the two interpreters disagree on this exact name
+            // (e.g. "Piano" → "Electric Piano": the editor keys off the first
+            // word and would drop to guitar lanes, while the save still writes
+            // keys). Re-laning either way strands notes, so refuse.
+            : 'That name is read differently by the editor and the saved file, so it would '
+                + 'change the part’s layout. The editor keys off the FIRST word, the save off '
+                + 'any keys word — pick a name both agree on.';
+        return { ok: false, reason, name };
+    }
+    return { ok: true, reason: '', name };
+}
+/* @pure:rename-arr:end */
+
+// Undoable rename. Holds the arrangement INDEX (undo can fire after a
+// switch; EditHistory's per-arrangement tagging routes back) plus both
+// names; exec/rollback refresh the selector so the dropdown text follows.
+class RenameArrangementCmd {
+    constructor(arrIdx, newName) {
+        this.arrIdx = arrIdx;
+        this.newName = newName;
+        const arr = S.arrangements[arrIdx];
+        this.oldName = arr ? (arr.name || '') : '';
+    }
+    _set(name) {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        arr.name = name;
+        if (typeof updateArrangementSelector === 'function') updateArrangementSelector();
+    }
+    exec() { this._set(this.newName); }
+    rollback() { this._set(this.oldName); }
+}
+
+window.editorRenameArrangement = async () => {
+    if (_recState !== 'idle') {
+        setStatus('Cannot rename while recording. Stop the take first.');
+        return;
+    }
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return;
+    const val = await _editorPromptText({
+        title: 'Rename Part',
+        label: 'Part name (display label — the instrument kind can’t change here)',
+        value: String(arr.name || ''),
+    });
+    if (val === null) return;
+    const others = S.arrangements
+        .filter((_, i) => i !== S.currentArr)
+        .map(a => a && a.name);
+    const guard = _renameGuardPure(arr.name, val, others);
+    if (!guard.ok) {
+        if (guard.reason) setStatus(guard.reason);
+        return;
+    }
+    S.history.exec(new RenameArrangementCmd(S.currentArr, guard.name));
+    draw();
+    updateStatus();
+    setStatus(`Renamed to “${guard.name}”`);
+};
 
 window.editorRemoveArrangement = async () => {
     if (_recState !== 'idle') {
