@@ -56,3 +56,35 @@ def test_backup_failure_never_raises(tmp_path: Path):
     bak = tmp_path / "song.sloppak.bak"
     bak.mkdir()
     _refresh_save_backup(out, bak)   # must not raise
+
+
+def test_failed_roll_preserves_prior_good_backup(tmp_path: Path, monkeypatch):
+    """A mid-copy failure must NOT destroy the previous good `.bak`.
+
+    Rolling the backup by copying straight onto `.bak` truncates it the
+    instant copy2 opens the destination — so a copy that dies mid-write
+    (disk full, interrupted) leaves the ONLY recovery point corrupt right
+    before the pack is overwritten. The roll must be atomic: stage to a
+    temp file, then rename over `.bak`. FAILS on the in-place version.
+    """
+    import routes
+
+    out = tmp_path / "song.sloppak"
+    bak = tmp_path / "song.sloppak.bak"
+    out.write_bytes(b"v2-current-pack")
+    bak.write_bytes(b"v1-prior-good-backup")   # existing recovery point
+
+    def exploding_copy2(src, dst):
+        # Simulate copy2 that has already opened/truncated the destination
+        # and written a partial payload before the volume fills up.
+        Path(dst).write_bytes(b"PARTIAL-CORRUPT")
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(routes.shutil, "copy2", exploding_copy2)
+
+    _refresh_save_backup(out, bak)   # best-effort: must not raise
+
+    # The prior good backup must survive a failed roll intact, and no
+    # partial temp file may be left lying around.
+    assert bak.read_bytes() == b"v1-prior-good-backup"
+    assert not (tmp_path / "song.sloppak.bak.tmp").exists()

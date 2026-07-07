@@ -233,12 +233,28 @@ def _refresh_save_backup(output_path, backup_path) -> None:
     written only once (``if not backup.exists()``), which meant a user
     editing a pack over weeks kept a first-ever-save recovery point that
     grew staler with every save. Best-effort on purpose: a failed backup
-    copy must never block the save itself."""
+    copy must never block the save itself.
+
+    The roll is atomic: copy to a sibling ``.tmp`` first, then
+    ``os.replace`` it over the ``.bak``. A mid-copy failure (disk full,
+    interrupted) therefore never truncates the existing ``.bak`` — the
+    previous good recovery point survives until a complete new one is
+    ready. (Copying straight onto ``.bak`` would destroy that recovery
+    point every save.)"""
+    tmp_backup = backup_path.with_suffix(backup_path.suffix + ".tmp")
     try:
         if output_path.exists() and output_path.is_file():
-            shutil.copy2(output_path, backup_path)
+            shutil.copy2(output_path, tmp_backup)
+            os.replace(tmp_backup, backup_path)
     except OSError:
         pass
+    finally:
+        # Never leave a partial temp copy behind (and never block the save).
+        try:
+            if tmp_backup.exists():
+                tmp_backup.unlink()
+        except OSError:
+            pass
 
 
 def _timeline_round_time(value) -> float:
