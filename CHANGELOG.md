@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Drum grid row density: Full / Compact.** A new toggle on the drum
+  editor (and registry command `toggleDrumDensity`) collapses the 18
+  per-piece rows into the community 7-row family shape — crash / hi-hat /
+  ride / toms / floor toms / snare / kick, mirroring core's `PRESET_RB4`
+  family boundaries — so the backbeat reads at a glance on small screens.
+  Strictly a render/selection grouping: hits keep their real piece-ids and
+  per-piece colors (a compact row shows its members distinctly), every
+  piece stays on exactly one row (collapsing can never hide data), adding
+  in a compact row writes the family's canonical piece, a time-only drag
+  keeps the hit's original piece, and crossing rows assigns the target
+  family's canonical. Full mode is byte-for-byte today's grid. Editor
+  pref, never pack data. Tests: `tests/drum_density.test.js`.
+
 ### Fixed
 - **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
   arrangement entries.** The full-snapshot save path rebuilt every manifest

@@ -3860,6 +3860,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
     { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight (piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'toggleDrumDensity', label: 'Toggle drum row density (Full / Compact)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -4823,6 +4824,7 @@ function _editorRunEofCommand(cmd) {
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return _editorTogglePartsView();
     case 'toggleKeyHighlight': return _editorToggleKeyHighlight();
+    case 'toggleDrumDensity': return _editorToggleDrumDensity();
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -12792,6 +12794,87 @@ const DRUM_PIECE_ORDER = [
     'kick',
 ];
 
+/* @pure:drum-density:start */
+// Compact row grouping — the community 7-row shape (mirrors core
+// lib/drums.py PRESET_RB4 family boundaries), physical-kit top→bottom to
+// match the Full order. RENDER/SELECTION grouping ONLY: hits keep their
+// real piece-ids (EDITOR-VIEW-MODALITY-DESIGN V6 — one grid, density
+// presets, never a second data path). `canonical` is the piece an ADD in
+// that row authors — each family's bread-and-butter voice.
+const DRUM_COMPACT_LANES = [
+    { pieces: ['china', 'splash', 'crash_l', 'crash_r', 'stack'], label: 'Crash', canonical: 'crash_l' },
+    { pieces: ['hh_open', 'hh_closed', 'hh_pedal'],               label: 'Hi-hat', canonical: 'hh_closed' },
+    { pieces: ['ride', 'ride_bell', 'bell'],                      label: 'Ride', canonical: 'ride' },
+    { pieces: ['tom_hi', 'tom_mid'],                              label: 'Toms', canonical: 'tom_hi' },
+    { pieces: ['tom_low', 'tom_floor'],                           label: 'Fl toms', canonical: 'tom_floor' },
+    { pieces: ['snare', 'snare_xstick'],                          label: 'Snare', canonical: 'snare' },
+    { pieces: ['kick'],                                           label: 'Kick', canonical: 'kick' },
+];
+
+// The lane table for a density mode: [{pieces, label, canonical}], one
+// entry per visual row. Full = one row per piece (today's grid, label
+// null → per-piece meta label). Unknown densities fall back to full so a
+// corrupted pref can never blank the grid.
+function _drumLaneTablePure(density, fullOrder, compactLanes) {
+    if (density !== 'compact') {
+        return fullOrder.map(p => ({ pieces: [p], label: null, canonical: p }));
+    }
+    return compactLanes.map(l => ({
+        pieces: l.pieces.slice(), label: l.label, canonical: l.canonical,
+    }));
+}
+
+// Which visual row a piece-id lives on (-1 for unknown pieces — the
+// renderer skips them, same as today's indexOf contract).
+function _drumLaneIdxForPiecePure(pieceId, laneTable) {
+    for (let i = 0; i < laneTable.length; i++) {
+        if (laneTable[i].pieces.includes(pieceId)) return i;
+    }
+    return -1;
+}
+/* @pure:drum-density:end */
+
+// Density pref (editor localStorage, never pack data) + a memoized lane
+// table so per-frame draw/hit paths never rebuild it.
+let _drumDensityCache = null;
+function _drumDensityMode() {
+    if (_drumDensityCache === null) {
+        try {
+            _drumDensityCache = localStorage.getItem('editorDrumDensity') === 'compact'
+                ? 'compact' : 'full';
+        } catch (_) { _drumDensityCache = 'full'; }
+    }
+    return _drumDensityCache;
+}
+let _drumLaneTableMemo = null;
+let _drumLaneTableMemoMode = null;
+function _drumLanes() {
+    const mode = _drumDensityMode();
+    if (_drumLaneTableMemoMode !== mode) {
+        _drumLaneTableMemo = _drumLaneTablePure(mode, DRUM_PIECE_ORDER, DRUM_COMPACT_LANES);
+        _drumLaneTableMemoMode = mode;
+    }
+    return _drumLaneTableMemo;
+}
+function _drumLaneIdxForPiece(pieceId) {
+    return _drumLaneIdxForPiecePure(pieceId, _drumLanes());
+}
+
+function _editorToggleDrumDensity() {
+    const next = _drumDensityMode() === 'compact' ? 'full' : 'compact';
+    _drumDensityCache = next;
+    try { localStorage.setItem('editorDrumDensity', next); } catch (_) {}
+    // Row count changed — drop selection (indices keep meaning, but the
+    // user's visual anchor doesn't) and repaint.
+    S.drumSel = new Set();
+    draw();
+    setStatus(next === 'compact'
+        ? 'Compact rows — families share a row (colors keep each piece distinct); adding writes the family’s main piece'
+        : 'Full rows — one row per drum piece');
+    return true;
+}
+window.editorToggleDrumDensity = _editorToggleDrumDensity;
+
 // GM Percussion (channel 10) names for the unmapped-notes import dialog
 // — gives users a hint of what was dropped instead of just a number.
 const _GM_PERC_NAMES = {
@@ -13000,7 +13083,11 @@ const DRUM_PIECE_META = {
 const DRUM_LANE_H = 22;
 const DRUM_HIT_RADIUS = 8;
 
-function _drumPieceCount()        { return DRUM_PIECE_ORDER.length; }
+// Lane-count/geometry helpers route through the density lane table:
+// Full = one row per piece (unchanged), Compact = family rows. "Piece at
+// Y" answers with the row's CANONICAL piece — the add-target; hit lookup
+// matches any member of the row (see _drumHitAtPoint).
+function _drumPieceCount()        { return _drumLanes().length; }
 function _drumLaneIdxToY(idx)     { return WAVEFORM_H + idx * DRUM_LANE_H; }
 function _drumYToLaneIdx(y) {
     const idx = Math.floor((y - WAVEFORM_H) / DRUM_LANE_H);
@@ -13009,17 +13096,21 @@ function _drumYToLaneIdx(y) {
 }
 function _drumPieceAtY(y) {
     const i = _drumYToLaneIdx(y);
-    return i >= 0 ? DRUM_PIECE_ORDER[i] : null;
+    return i >= 0 ? _drumLanes()[i].canonical : null;
 }
 
 // Hit lookup: which hit (if any) is under (x, y)? Returns the index into
 // S.drumTab.hits[], or -1. Tolerance is the hit's draw radius.
 function _drumHitAtPoint(x, y) {
     if (!S.drumTab) return -1;
-    const pieceUnder = _drumPieceAtY(y);
-    if (!pieceUnder) return -1;
+    const laneIdx = _drumYToLaneIdx(y);
+    if (laneIdx < 0) return -1;
+    // Match ANY piece that lives on this visual row — in Compact several
+    // family members share it; in Full the row has exactly one piece
+    // (today's behavior unchanged).
+    const lanePieces = _drumLanes()[laneIdx].pieces;
     const t = xToTime(x);
-    const yLane = _drumLaneIdxToY(DRUM_PIECE_ORDER.indexOf(pieceUnder)) + DRUM_LANE_H / 2;
+    const yLane = _drumLaneIdxToY(laneIdx) + DRUM_LANE_H / 2;
     const hits = S.drumTab.hits || [];  // guard against malformed tabs with no hits[]
     for (let i = 0; i < hits.length; i++) {
         const h = hits[i];
@@ -13027,7 +13118,7 @@ function _drumHitAtPoint(x, y) {
         // This check must run before the piece filter so hits on other lanes
         // don't prevent the early break from firing.
         if (h.t > t + 0.5) break;
-        if (h.p !== pieceUnder) continue;
+        if (!lanePieces.includes(h.p)) continue;
         const hx = timeToX(h.t);
         const dx = Math.abs(hx - x);
         const dy = Math.abs(yLane - y);
@@ -13044,9 +13135,10 @@ function _drumEditorDraw(w, h) {
     drawWaveform(w);
 
     // ── Lane grid ─────────────────────────────────────────────────────
-    for (let i = 0; i < _drumPieceCount(); i++) {
-        const piece = DRUM_PIECE_ORDER[i];
-        const meta = DRUM_PIECE_META[piece];
+    const laneTable = _drumLanes();
+    for (let i = 0; i < laneTable.length; i++) {
+        const lane = laneTable[i];
+        const meta = DRUM_PIECE_META[lane.canonical];
         const y = _drumLaneIdxToY(i);
         ctx.fillStyle = i % 2 === 0 ? '#0c0c1c' : '#0f0f24';
         ctx.fillRect(LABEL_W, y, w - LABEL_W, DRUM_LANE_H);
@@ -13057,12 +13149,13 @@ function _drumEditorDraw(w, h) {
         ctx.moveTo(LABEL_W, y + DRUM_LANE_H);
         ctx.lineTo(w, y + DRUM_LANE_H);
         ctx.stroke();
-        // Lane label (left margin)
+        // Lane label (left margin): family label in Compact, per-piece
+        // label in Full. Hits keep their own piece colors either way.
         ctx.fillStyle = meta.color;
         ctx.font = '10px sans-serif';
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
-        ctx.fillText(meta.label, LABEL_W - 4, y + DRUM_LANE_H / 2);
+        ctx.fillText(lane.label || meta.label, LABEL_W - 4, y + DRUM_LANE_H / 2);
     }
 
     // ── Beat grid (reuse the existing helper geometry) ────────────────
@@ -13084,7 +13177,7 @@ function _drumEditorDraw(w, h) {
     for (let i = 0; i < hits.length; i++) {
         const h = hits[i];
         if (h.t < visibleStart || h.t > visibleEnd) continue;
-        const pieceIdx = DRUM_PIECE_ORDER.indexOf(h.p);
+        const pieceIdx = _drumLaneIdxForPiece(h.p);
         if (pieceIdx < 0) continue;  // unknown piece-id; renderer skip
         const meta = DRUM_PIECE_META[h.p];
         const cx = timeToX(h.t);
@@ -13257,7 +13350,7 @@ function _tempoDrawReferenceNotes(w, gridBottom, visStart, visEnd) {
             if (typeof hit.t !== 'number' || hit.t < visStart || hit.t > visEnd) continue;
             const x = timeToX(hit.t);
             if (x < LABEL_W || x > w) continue;
-            const pi = DRUM_PIECE_ORDER.indexOf(hit.p);
+            const pi = _drumLaneIdxForPiece(hit.p);
             const frac = (pi >= 0 && pc > 1) ? pi / (pc - 1) : 0.5;
             dot(x, bandMid + REF_R + 4 + frac * (bandBot - bandMid - 2 * REF_R - 4));
         }
@@ -15099,16 +15192,23 @@ function _drumEditorOnDragMove(x, y) {
         const newT = Math.max(0, S.drag.origTimes[k] + snappedDt);
         h.t = Math.round(newT * 1000) / 1000;
 
-        // Lane (piece) movement — index into DRUM_PIECE_ORDER.
-        // Skip remap for unknown piece ids (indexOf returns -1) to avoid
-        // silently mapping the hit to lane 0 ("china") on the first drag.
-        const origPieceIdx = DRUM_PIECE_ORDER.indexOf(S.drag.origPieces[k]);
-        if (origPieceIdx >= 0) {
-            const newPieceIdx = Math.max(
+        // Lane (piece) movement — via the density lane table. Skip remap
+        // for unknown piece ids (-1) to avoid silently mapping the hit to
+        // lane 0 on the first drag. Staying on the SAME row keeps the
+        // hit's original piece (a time-only drag in Compact must never
+        // rewrite hh_open → hh_closed); crossing rows assigns the target
+        // row's canonical piece — in Full that's the row's only piece,
+        // exactly today's behavior.
+        const laneTable = _drumLanes();
+        const origLaneIdx = _drumLaneIdxForPiece(S.drag.origPieces[k]);
+        if (origLaneIdx >= 0) {
+            const newLaneIdx = Math.max(
                 0,
-                Math.min(DRUM_PIECE_ORDER.length - 1, origPieceIdx + dLanes),
+                Math.min(laneTable.length - 1, origLaneIdx + dLanes),
             );
-            h.p = DRUM_PIECE_ORDER[newPieceIdx];
+            h.p = newLaneIdx === origLaneIdx
+                ? S.drag.origPieces[k]
+                : laneTable[newLaneIdx].canonical;
         }
     }
 }
@@ -15186,7 +15286,7 @@ function _drumEditorOnSelectEnd() {
     const hits = Array.isArray(S.drumTab.hits) ? S.drumTab.hits : [];
     for (let i = 0; i < hits.length; i++) {
         const h = hits[i];
-        const laneIdx = DRUM_PIECE_ORDER.indexOf(h.p);
+        const laneIdx = _drumLaneIdxForPiece(h.p);
         if (laneIdx < 0) continue;  // unknown piece → not on the grid
         const hx = timeToX(h.t);
         const hy = _drumLaneIdxToY(laneIdx) + DRUM_LANE_H / 2;
@@ -15285,6 +15385,37 @@ function _refreshDrumEditButton() {
         btn.classList.remove('bg-amber-600', 'hover:bg-amber-500');
         btn.classList.add('bg-dark-600', 'hover:bg-dark-500');
     }
+}
+
+// ── Drum row-density toggle (Full / Compact) ─────────────────────────
+let _drumDensityBtnState = '';
+function _ensureDrumDensityButton() {
+    let btn = document.getElementById('editor-drum-density-btn');
+    if (!btn) {
+        const editBtn = document.getElementById('editor-drum-edit-btn');
+        if (!editBtn) return null;
+        btn = document.createElement('button');
+        btn.id = 'editor-drum-density-btn';
+        btn.type = 'button';
+        btn.className = 'px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden';
+        btn.title = 'Row density: Full = one row per drum piece; Compact = family rows '
+            + '(crash / hi-hat / ride / toms / floor toms / snare / kick — the community '
+            + '7-row shape). Hits keep their real pieces and colors either way; adding in '
+            + 'a Compact row writes the family’s main piece, and dragging onto another '
+            + 'row does too.';
+        btn.onclick = () => _editorToggleDrumDensity();
+        editBtn.insertAdjacentElement('afterend', btn);
+    }
+    return btn;
+}
+function _refreshDrumDensityButton() {
+    const btn = _ensureDrumDensityButton();
+    if (!btn) return;
+    const sig = `${!!S.drumEditMode}|${_drumDensityMode()}`;
+    if (sig === _drumDensityBtnState) return;
+    _drumDensityBtnState = sig;
+    btn.classList.toggle('hidden', !S.drumEditMode);
+    btn.textContent = _drumDensityMode() === 'compact' ? 'Rows: Compact' : 'Rows: Full';
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -15620,6 +15751,7 @@ const _checkBtnInterval = setInterval(() => {
 const _origDraw = draw;
 draw = function () {
     _refreshDrumEditButton();
+    _refreshDrumDensityButton();
     _refreshTempoMapButton();
     _refreshTempoScopeToggle();
     _refreshTempoSyncInspector();
