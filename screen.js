@@ -4318,11 +4318,33 @@ window.editorToggleShortcutPanel = (force) => {
     if (show) _editorRenderShortcutPanel();
 };
 
+/* @pure:shortcut-panel-hint:start */
+// Digit-RANGE commands (fret 0-9, bookmark 1-9) are keyboard-only: a single
+// panel-button click can't pick which digit, so _editorRunEofCommand only
+// knows the per-digit forms (setFretDigit:<n>, gotoBookmark:<n>, …). Clicking
+// the bare range row would otherwise be silently inert — return an
+// instructional hint for those ids so the click tells the user which keys to
+// press; null for every ordinary command (which the panel runs directly).
+function _editorShortcutPanelHintPure(id) {
+    switch (id) {
+    case 'gotoBookmarkDigit': return 'Press Alt+1 to Alt+9 to jump to a numbered bookmark';
+    case 'setBookmarkDigit': return 'Press Shift+Alt+1 to Shift+Alt+9 to set or clear a bookmark at the cursor';
+    case 'setFretDigit': return 'Press 0-9 to set the selected note fret';
+    default: return null;
+    }
+}
+/* @pure:shortcut-panel-hint:end */
+
 window.editorRunShortcutCommand = (id) => {
     const def = _editorCommandById(id);
     if (!def) return false;
     if (def.status !== 'ready') {
         setStatus(`${def.label} is planned but not wired yet.`);
+        return true;
+    }
+    const hint = _editorShortcutPanelHintPure(id);
+    if (hint) {
+        setStatus(hint);
         return true;
     }
     const handled = _editorRunEofCommand(id);

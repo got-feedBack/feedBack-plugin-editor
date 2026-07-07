@@ -34,6 +34,11 @@ const { _editorFeedbackCommandForKeyPure, _editorEofCommandForKeyPure } = new Fu
     + '\nreturn { _editorFeedbackCommandForKeyPure, _editorEofCommandForKeyPure };'
 )();
 
+const { _editorShortcutPanelHintPure } = new Function(
+    '"use strict";' + extract('shortcut-panel-hint')
+    + '\nreturn { _editorShortcutPanelHintPure };'
+)();
+
 let pass = 0, fail = 0;
 function t(name, fn) {
     try { fn(); pass++; console.log('  ok   ' + name); }
@@ -106,6 +111,29 @@ t('plain digits still set frets; Ctrl+Alt+digit stays unclaimed', () => {
         _editorFeedbackCommandForKeyPure(
             keyEvent({ code: 'Digit4', key: '4', altKey: true, ctrlKey: true }), 'note'),
         null);
+});
+
+// ── Shortcut-panel click routing (the digit-range dead-button fix) ───
+// The panel renders each `ready` command as an ENABLED clickable button, but
+// the bookmark rows carry ranges (Alt+1-9 / Shift+Alt+1-9) that a single
+// click can't disambiguate. Pre-fix, clicking them ran the bare id through
+// _editorRunEofCommand, which only knows `gotoBookmark:<n>`/`setBookmark:<n>`
+// — so the click fell through to `default: return false` and did nothing.
+// The hint router makes those clicks instructional instead of inert.
+
+t('bookmark digit-range panel rows return a keyboard hint (not inert)', () => {
+    const goHint = _editorShortcutPanelHintPure('gotoBookmarkDigit');
+    const setHint = _editorShortcutPanelHintPure('setBookmarkDigit');
+    assert.ok(goHint && /alt\+1/i.test(goHint), 'jump row hints Alt+1-9');
+    assert.ok(setHint && /shift\+alt\+1/i.test(setHint), 'set row hints Shift+Alt+1-9');
+    // The pre-existing fret digit-range shares the class.
+    assert.ok(_editorShortcutPanelHintPure('setFretDigit'), 'fret 0-9 row also hints');
+});
+
+t('ordinary commands get no hint, so the panel runs them directly', () => {
+    assert.strictEqual(_editorShortcutPanelHintPure('save'), null);
+    assert.strictEqual(_editorShortcutPanelHintPure('prevAnchor'), null);
+    assert.strictEqual(_editorShortcutPanelHintPure(''), null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
