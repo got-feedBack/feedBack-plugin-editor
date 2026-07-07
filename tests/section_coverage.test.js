@@ -129,8 +129,10 @@ t('duplicate start_times make a harmless zero-width span (behavior lock)', () =>
 t('drawSections uses the memo, not a per-frame recompute', () => {
     assert.ok(/const cov = _sectionCoverage\(\);/.test(src),
         'drawSections should call the memoized _sectionCoverage()');
-    assert.ok(!/drawSections[\s\S]*?_sectionCoveragePure\(/.test(
-        src.slice(src.indexOf('function drawSections'), src.indexOf('function drawSections') + 1200)),
+    const fnStart = src.indexOf('function drawSections');
+    const nextFnStart = src.indexOf('\nfunction ', fnStart + 1);
+    const fnBody = src.slice(fnStart, nextFnStart === -1 ? undefined : nextFnStart);
+    assert.ok(!/_sectionCoveragePure\(/.test(fnBody),
         'drawSections must not call the O(N) pure helper directly every frame');
 });
 
