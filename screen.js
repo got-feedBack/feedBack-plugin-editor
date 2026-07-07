@@ -1813,7 +1813,7 @@ function _editorToggleKeyHighlight() {
     _refreshKeyControls();
     draw();
     setStatus(next
-        ? 'In-key highlight on — out-of-key rows are shaded in the piano roll'
+        ? 'In-key highlight on — out-of-key notes dim (piano roll also shades out-of-key rows)'
         : 'In-key highlight off');
     return true;
 }
@@ -1837,9 +1837,12 @@ function _refreshKeyControls() {
             _keyControlsPopulated = true;
         }
     }
-    // The highlight applies to the piano roll, so only show the controls
-    // when a keys arrangement is active.
-    const visible = isKeysMode();
+    // The highlight applies to any pitched arrangement view — the piano
+    // roll AND the fretted lanes (notes resolve to sounding pitch via
+    // tuning + capo). The drum grid and Parts overview have no per-note
+    // pitch surface, so the controls hide there.
+    const visible = !!(S.arrangements && S.arrangements.length)
+        && !S.drumEditMode && !S.partsViewMode;
     const on = editorKeyHighlightEnabled();
     const tonic = S.editorKey ? S.editorKey.tonic : 0;
     const scale = S.editorKey ? S.editorKey.scale : 'major';
@@ -2157,27 +2160,57 @@ function drawNotes(w) {
     // Hoist the active-highlight lookup out of the per-note loop: it reads
     // localStorage, so resolving it once per draw (not once per visible note)
     // keeps drawNotes off the synchronous-storage path during playback/scroll.
-    const hl = keysMode ? _activeKeyHighlight() : null;
+    const hl = _activeKeyHighlight();
+    // Fretted lanes resolve notes to SOUNDING pitch (tuning + capo + fret) —
+    // the whole context is hoisted here so _drawNote does zero per-note
+    // arrangement work. `ghl` is null whenever the highlight can't apply.
+    let ghl = null;
+    if (hl && !keysMode) {
+        const arr = S.arrangements[S.currentArr];
+        if (arr) {
+            const laneCount = _stringCountFor(arr);
+            const tuning = (Array.isArray(arr.tuning) ? arr.tuning : []).slice(0, laneCount);
+            while (tuning.length < laneCount) tuning.push(0);
+            ghl = {
+                hl,
+                openMidi: _openMidiForArr(arr, laneCount),
+                tuning,
+                capo: Number(arr.capo) || 0,
+            };
+        }
+    }
     for (let i = 0; i < nn.length; i++) {
         const n = nn[i];
         if (n.time + (n.sustain || 0) < st || n.time > et) continue;
         if (keysMode) {
             _drawPianoNote(n, S.sel.has(i), hl);
         } else {
-            _drawNote(n, S.sel.has(i));
+            _drawNote(n, S.sel.has(i), ghl);
         }
     }
 }
 
-function _drawNote(n, selected) {
+function _drawNote(n, selected, ghl) {
     const x = timeToX(n.time);
     const y = strToY(n.string) + NOTE_PAD;
     const sw = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
     const h = LANE_H - NOTE_PAD * 2;
     const color = colorForLane(strToLane(n.string));
 
+    // In-key highlight (mirrors the piano roll's treatment): out-of-key
+    // notes dim, never redden — chromaticism is not an error. Membership
+    // uses the SOUNDING pitch (tuning + capo + fret); an unresolvable
+    // pitch stays fully lit rather than falsely flagged.
+    let outOfKey = false;
+    if (ghl) {
+        const midi = _soundingPitchPure(
+            ghl.openMidi, ghl.tuning, ghl.capo, n.string, n.fret);
+        outOfKey = midi !== null
+            && !_pcInScalePure(((midi % 12) + 12) % 12, ghl.hl.tonic, ghl.hl.scale);
+    }
+
     // Body
-    ctx.fillStyle = color + 'cc';
+    ctx.fillStyle = color + (outOfKey ? '55' : 'cc');
     ctx.beginPath();
     ctx.roundRect(x, y, sw, h, 3);
     ctx.fill();
@@ -2195,7 +2228,7 @@ function _drawNote(n, selected) {
     ctx.stroke();
 
     // Fret number
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = outOfKey ? 'rgba(255,255,255,0.6)' : '#fff';
     ctx.font = 'bold 13px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -2857,12 +2890,37 @@ function _openMidiForArr(arr, laneCount) {
 // tuning offsets.  `openMidi[s]` is the standard open-string pitch for
 // string `s`; `arr.tuning[s]` is the per-string semitone offset from
 // standard (e.g. −2 for Drop D on string 0, 0 for standard).
+// DELIBERATELY OMITS CAPO: string-moves compare two pitches on the same
+// arrangement, so the capo cancels on both sides. Anything that needs the
+// real SOUNDING pitch (in-key highlight, future guide synthesis) must use
+// _soundingPitchPure below, which adds the capo exactly once — adding it
+// here too would double-count it in code that composes the two.
 function _absolutePitch(openMidi, tuning, stringIdx, fret) {
     const offset = (Array.isArray(tuning) && tuning[stringIdx] !== undefined)
         ? (Number(tuning[stringIdx]) || 0)
         : 0;
     return openMidi[stringIdx] + offset + fret;
 }
+
+/* @pure:fret-pitch:start */
+// Sounding pitch (MIDI) of one fretted note:
+//     openMidi[string] + tuning offset + CAPO + fret
+// Chart frets are capo-relative (fret 0 = the capo), so the capo is added
+// exactly ONCE — verified against core's single source of the formula
+// (lib/song.py pitch_from_base, which the tuner/open-string labels and the
+// highway's scale-degree derivation share). Returns null for a string with
+// no open pitch or a non-finite fret, so callers skip rather than paint
+// garbage.
+function _soundingPitchPure(openMidi, tuning, capo, stringIdx, fret) {
+    if (!Array.isArray(openMidi) || openMidi[stringIdx] === undefined) return null;
+    const f = Number(fret);
+    if (!Number.isFinite(f)) return null;
+    const offset = (Array.isArray(tuning) && tuning[stringIdx] !== undefined)
+        ? (Number(tuning[stringIdx]) || 0)
+        : 0;
+    return openMidi[stringIdx] + offset + (Number(capo) || 0) + f;
+}
+/* @pure:fret-pitch:end */
 
 // Try to move a single note to an adjacent string while preserving its
 // absolute pitch.  `direction` is +1 (higher string index) or -1 (lower).
@@ -3827,7 +3885,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
-    { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight (piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
