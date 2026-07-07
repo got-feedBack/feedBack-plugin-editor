@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The in-key highlight now covers the fretted lanes.** The song key/scale
+  picker's highlight applied only to the piano roll; guitar/bass notes now
+  dim when out of key too, resolving each note to its **sounding pitch =
+  open string + tuning offset + capo + fret** via the new
+  `_soundingPitchPure` helper. The capo is added exactly **once** — chart
+  frets are capo-relative, matching core's single source of the formula
+  (`lib/song.py pitch_from_base`, shared by the tuner and the highway's
+  scale-degree derivation) — and `_absolutePitch` (string-moves) still
+  deliberately omits it, now documented as a pair so composing the two
+  can never double-count. Out-of-key notes dim (never redden —
+  chromaticism isn't an error) and unresolvable pitches stay fully lit;
+  the Key controls now show for any pitched arrangement, not just keys.
+  Tests: `tests/fret_key_highlight.test.js` (including the capo-flips-
+  membership case an uncapoed resolver gets wrong).
+
 ### Fixed
 - **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
   arrangement entries.** The full-snapshot save path rebuilt every manifest
