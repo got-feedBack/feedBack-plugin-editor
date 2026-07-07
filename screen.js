@@ -82,6 +82,50 @@ const DPR = window.devicePixelRatio || 1;
 
 // ── Piano roll constants ────────────────────────────────────────────
 const PIANO_NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+/* @pure:scale:start */
+// Scale/mode membership as tonic-relative pitch-class sets (semitones above
+// the tonic). Used by the piano-roll in-key highlight; the harmony charrette
+// seat's table. `chromatic` includes everything (so a chromatic/atonal region
+// shades nothing). Genre span: major/minor + modes cover pop→classical→prog;
+// harmonic/melodic minor + pentatonic/blues cover the rest.
+const SCALE_INTERVALS = {
+    major:            [0, 2, 4, 5, 7, 9, 11],
+    minor:            [0, 2, 3, 5, 7, 8, 10],   // natural minor / aeolian
+    dorian:           [0, 2, 3, 5, 7, 9, 10],
+    phrygian:         [0, 1, 3, 5, 7, 8, 10],
+    lydian:           [0, 2, 4, 6, 7, 9, 11],
+    mixolydian:       [0, 2, 4, 5, 7, 9, 10],
+    locrian:          [0, 1, 3, 5, 6, 8, 10],
+    harmonic_minor:   [0, 2, 3, 5, 7, 8, 11],
+    melodic_minor:    [0, 2, 3, 5, 7, 9, 11],
+    major_pentatonic: [0, 2, 4, 7, 9],
+    minor_pentatonic: [0, 3, 5, 7, 10],
+    blues:            [0, 3, 5, 6, 7, 10],
+    chromatic:        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+};
+
+// Is pitch-class `pc` (0–11) in `scaleName` rooted at `tonicPc` (0–11)?
+// Unknown scale or non-finite inputs → true (treat as in-key, i.e. no
+// shading) so a bad state never paints the whole roll out-of-key.
+function _pcInScalePure(pc, tonicPc, scaleName) {
+    const intervals = SCALE_INTERVALS[scaleName];
+    if (!intervals) return true;
+    const p = Number(pc), t = Number(tonicPc);
+    if (!Number.isFinite(p) || !Number.isFinite(t)) return true;
+    const rel = ((Math.round(p - t) % 12) + 12) % 12;
+    return intervals.includes(rel);
+}
+/* @pure:scale:end */
+
+// Human labels for the scale picker (keys are the SCALE_INTERVALS ids).
+const SCALE_LABELS = {
+    major: 'Major', minor: 'Minor', dorian: 'Dorian', phrygian: 'Phrygian',
+    lydian: 'Lydian', mixolydian: 'Mixolydian', locrian: 'Locrian',
+    harmonic_minor: 'Harmonic minor', melodic_minor: 'Melodic minor',
+    major_pentatonic: 'Major pentatonic', minor_pentatonic: 'Minor pentatonic',
+    blues: 'Blues', chromatic: 'Chromatic',
+};
 const PIANO_OCTAVE_COLORS = [
     '#ff4466', '#ff8844', '#ffcc33', '#66dd55', '#44ccaa',
     '#44aaff', '#7766ff', '#cc55ff', '#ff55aa', '#aaaaaa',
@@ -756,6 +800,14 @@ function _selectedLoopRegion() {
 function _updateLoopRegionControls() {
     const region = _selectedLoopRegion();
     if (!region && S.loopEnabled) S.loopEnabled = false;
+    // A/B rides the loop region — clearing the region disarms it (and
+    // restores the reference gain via the guarded apply).
+    if (!region && typeof _abOn !== 'undefined' && _abOn) {
+        _abOn = false;
+        _abPhase = 'recording';
+        if (typeof _abApplyRefGain === 'function') _abApplyRefGain();
+    }
+    if (typeof _refreshLoopABBtn === 'function') _refreshLoopABBtn();
     const loopBtn = document.getElementById('editor-loop-region-btn');
     if (loopBtn) {
         loopBtn.disabled = !region;
@@ -779,6 +831,11 @@ function _setLoopRegionEnabled(enabled) {
         _editorSeekToTime(region.startTime);
     }
     _updateLoopRegionControls();
+    // Toggling the loop off flips _abActive() false: restore the recording to
+    // its fader level so stopping the loop mid-guide-pass never leaves it
+    // silently muted. Toggle-only path (never the per-frame strip render), so
+    // scheduling the ~20 ms ramp here can't spam the audio param.
+    if (typeof _abApplyRefGain === 'function') _abApplyRefGain();
     draw();
     setStatus(S.loopEnabled ? 'Loop region enabled' : 'Loop region disabled');
 }
@@ -844,10 +901,113 @@ function _loopStripOnMouseUp() {
     draw();
     return true;
 }
-function isKeysMode() {
+/* @pure:view-pref:start */
+// Per-part editing-view choice (V2/V9 of EDITOR-VIEW-MODALITY-DESIGN):
+// 'string' (fretted lanes) or 'piano' (the roll). Keys-DATA arrangements
+// are piano-locked — their wire packing (string*24+fret) has no string
+// semantics for the lane view to show. Fretted parts default to 'string'
+// and may opt into the roll per part. The choice is EDITOR state
+// (localStorage per song), never pack data.
+function _partViewKeyPure(arr) {
+    if (!arr) return '';
+    const id = arr.id;
+    return (id !== undefined && id !== null && String(id) !== '')
+        ? String(id)
+        : (arr.name || '');
+}
+function _viewForPure(arrName, storedMode) {
+    if (KEYS_PATTERN.test(arrName || '')) return 'piano';
+    return storedMode === 'piano' ? 'piano' : 'string';
+}
+/* @pure:view-pref:end */
+
+// Per-song view prefs, cached so draw-path predicates never parse
+// localStorage per frame. Keyed song filename → { partKey: 'piano' }.
+let _viewPrefCache = null;
+let _viewPrefFor = null;
+function _viewPrefs() {
+    const key = 'editorViewPref:' + (S.filename || '');
+    if (_viewPrefFor === key && _viewPrefCache) return _viewPrefCache;
+    _viewPrefFor = key;
+    _viewPrefCache = {};
+    // Unsaved songs don't read a bare slot every unsaved song would share.
+    if (!S.filename) return _viewPrefCache;
+    try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+            const o = JSON.parse(raw);
+            if (o && typeof o === 'object' && !Array.isArray(o)) _viewPrefCache = o;
+        }
+    } catch (_) { /* ignore */ }
+    return _viewPrefCache;
+}
+function _viewPrefsSave() {
+    if (!S.filename) return;
+    try {
+        const key = 'editorViewPref:' + S.filename;
+        if (Object.keys(_viewPrefCache || {}).length) {
+            localStorage.setItem(key, JSON.stringify(_viewPrefCache));
+        } else {
+            localStorage.removeItem(key);
+        }
+    } catch (_) { /* ignore */ }
+}
+function viewFor(arr) {
+    return _viewForPure(arr && arr.name, _viewPrefs()[_partViewKeyPure(arr)]);
+}
+
+// Keys-DATA predicate: the active arrangement's wire packing is pitch
+// (string*24 + fret) — a keys/piano/synth part. DATA-SEMANTICS sites key
+// off this: string-move helpers, chord-sibling grouping, anchors, MIDI
+// record. Split from isKeysMode() when the view became a per-part choice.
+function isKeysArr() {
     if (!S.arrangements.length) return false;
     const arr = S.arrangements[S.currentArr];
-    return arr && KEYS_PATTERN.test(arr.name || '');
+    return !!(arr && KEYS_PATTERN.test(arr.name || ''));
+}
+
+// Piano SURFACE predicate: the piano-roll view is active for the current
+// part — keys data (always), or a fretted part opted into the roll. Draw
+// geometry, hit-testing, and viewport paths key off this. The name is
+// historical; every legacy call site that meant "the piano surface is
+// showing" keeps working unchanged.
+function isKeysMode() {
+    if (!S.arrangements.length) return false;
+    return viewFor(S.arrangements[S.currentArr]) === 'piano';
+}
+
+// Read-only roll: a FRETTED part shown in the piano roll (V4). Editing
+// stays locked until the suggest-position write path exists — the roll
+// must never write string/fret by silent guess.
+function _rollReadOnly() { return isKeysMode() && !isKeysArr(); }
+
+function _rollLockNotice() {
+    setStatus('Piano roll is read-only for fretted parts — switch to String view to edit (suggest-position editing is coming)');
+}
+
+// Sounding-pitch context for showing a FRETTED part in the roll — hoisted
+// once per draw/hit-test pass, never per note. Null for keys parts (their
+// packing IS the roll pitch).
+function _rollPitchCtx() {
+    if (!S.arrangements.length) return null;
+    const arr = S.arrangements[S.currentArr];
+    if (!arr || KEYS_PATTERN.test(arr.name || '')) return null;
+    const laneCount = _stringCountFor(arr);
+    const tuning = (Array.isArray(arr.tuning) ? arr.tuning : []).slice(0, laneCount);
+    while (tuning.length < laneCount) tuning.push(0);
+    return {
+        openMidi: _openMidiForArr(arr, laneCount),
+        tuning,
+        capo: Number(arr.capo) || 0,
+    };
+}
+
+// Roll Y-axis MIDI for one note: keys packing, or sounding pitch (D4:
+// openMidi + tuning + capo + fret) for fretted. Null = unresolvable —
+// callers skip the note rather than paint it at a wrong pitch.
+function _rollMidiForNote(n, rctx) {
+    if (!rctx) return noteToMidi(n.string, n.fret);
+    return _soundingPitchPure(rctx.openMidi, rctx.tuning, rctx.capo, n.string, n.fret);
 }
 
 function pianoLaneCount() { return pianoRange.hi - pianoRange.lo + 1; }
@@ -872,10 +1032,14 @@ function yToMidi(y) {
 // without it so the viewport snaps cleanly to the new arrangement.
 function updatePianoRange(expandOnly = false) {
     const nn = notes();
-    // noteToMidi encodes up to string=5, fret=23 → max 143; match the drag-clamp ceiling.
+    // Fretted parts fit the range to SOUNDING pitch; keys keep the packing
+    // (noteToMidi encodes up to string=5, fret=23 → max 143, matching the
+    // drag-clamp ceiling). Unresolvable fretted notes are skipped.
+    const rctx = typeof _rollPitchCtx === 'function' ? _rollPitchCtx() : null;
     let lo = 143, hi = 0;
     for (const n of nn) {
-        const m = noteToMidi(n.string, n.fret);
+        const m = _rollMidiForNote(n, rctx);
+        if (m === null) continue;
         if (m < lo) lo = m;
         if (m > hi) hi = m;
     }
@@ -1236,6 +1400,30 @@ function buildHandshapeChordIdMap(handshapes, oldTemplates, templateMap, chordTe
     }
     return oldToNew;
 }
+// Drop handshapes whose span no longer covers any content they could be
+// framing. Deleting a chord's notes removes only the notes — without this
+// filter the covering handshape survives the save (and re-appends the deleted
+// chord's template via buildHandshapeChordIdMap), so the "removed" chord keeps
+// rendering as a handshape chord panel on the highway forever. A chord-shape
+// handshape (arp:false) needs a chord instance inside its span; an arpeggio
+// handshape (arp:true) frames single notes, so any note or chord in the span
+// keeps it. Pure: takes the reconstructChords() rebuild outputs (editor-shaped
+// {time,...} chords/notes) and returns the surviving subset, same objects.
+const HS_ORPHAN_EPS = 1e-4; // s — tolerate float drift between span and content times
+function dropOrphanedHandshapes(handshapes, chords, notes) {
+    if (!Array.isArray(handshapes) || !handshapes.length) return [];
+    const inSpan = (x, hs) => {
+        const t = x && Number(x.time);
+        return Number.isFinite(t)
+            && t >= hs.start_time - HS_ORPHAN_EPS
+            && t <= hs.end_time + HS_ORPHAN_EPS;
+    };
+    return handshapes.filter(hs => {
+        if (!hs) return false;
+        if ((chords || []).some(c => inSpan(c, hs))) return true;
+        return !!hs.arp && (notes || []).some(n => inSpan(n, hs));
+    });
+}
 // E2: apply an old->new chord_id remap to handshapes, dropping any whose old
 // `chord_id` has no mapping (its template no longer exists -> invalid; the
 // backend validator drops these too). Mutates each surviving handshape's
@@ -1454,10 +1642,18 @@ function reconstructChords() {
     // appended (so it survives); references with no template are dropped to
     // match the backend's `chord_id < len(chord_templates)` validator.
     if (Array.isArray(arr.handshapes) && arr.handshapes.length) {
-        const oldToNew = buildHandshapeChordIdMap(
-            arr.handshapes, oldTemplates, templateMap, chordTemplates, L);
         const _selWasHere = S.handshapeSel && arr.handshapes.includes(S.handshapeSel);
-        arr.handshapes = remapHandshapeChordIds(arr.handshapes, oldToNew);
+        // Drop handshapes orphaned by note edits FIRST (a deleted chord must
+        // not keep its handshape — or resurrect its template through the map
+        // builder's preserve-append below). Dropping counts as an authored
+        // change: bump the dirty counter so an all-dropped (now empty) list
+        // still ships to the backend as an explicit clear instead of falling
+        // into the absent→preserve-from-disk path.
+        const live = dropOrphanedHandshapes(arr.handshapes, newChords, newNotes);
+        if (live.length < arr.handshapes.length) _bumpHandshapesDirty(arr, +1);
+        const oldToNew = buildHandshapeChordIdMap(
+            live, oldTemplates, templateMap, chordTemplates, L);
+        arr.handshapes = remapHandshapeChordIds(live, oldToNew);
         // If the selected handshape was in THIS arrangement and the remap
         // dropped it (its template vanished), clear the now-dangling selection.
         if (_selWasHere && !arr.handshapes.includes(S.handshapeSel)) S.handshapeSel = null;
@@ -1699,12 +1895,218 @@ function drawLanes(w) {
     }
 }
 
+// ── Song key / scale + in-key highlight (piano roll) ─────────────────
+// S.editorKey = { tonic: 0..11, scale: <SCALE_INTERVALS id> } | null. The
+// key is a per-song editor preference (localStorage keyed by S.filename,
+// never the feedpak — this is a view aid, not chart data). The highlight
+// on/off is a global editor preference. Neither is authoritative harmony
+// data; a later PR authors keys.json regions and this reads from them.
+let _editorKeyLoadedFor = null;
+
+function editorKeyHighlightEnabled() {
+    try { return localStorage.getItem('editorKeyHighlight') === '1'; }
+    catch (_) { return false; }
+}
+
+// Lazily load the saved key for the current song (called from the control
+// refresh, which runs every draw) so no song-load-path edit is needed.
+function _loadEditorKeyIfNeeded() {
+    if (_editorKeyLoadedFor === S.filename) return;
+    _editorKeyLoadedFor = S.filename;
+    S.editorKey = null;
+    // No filename yet (unsaved song): don't read a bare `editorKey:` slot —
+    // otherwise every unsaved song would share the same stored key.
+    if (!S.filename) return;
+    try {
+        const raw = localStorage.getItem('editorKey:' + (S.filename || ''));
+        if (raw) {
+            const k = JSON.parse(raw);
+            if (Number.isInteger(k.tonic) && SCALE_INTERVALS[k.scale]) {
+                S.editorKey = { tonic: k.tonic, scale: k.scale };
+            }
+        }
+    } catch (_) { /* ignore */ }
+}
+
+function _persistEditorKey() {
+    // No filename yet (unsaved song): don't write a bare `editorKey:` slot that
+    // every unsaved song would collide on; the in-memory key still applies.
+    if (!S.filename) return;
+    try {
+        const key = 'editorKey:' + (S.filename || '');
+        if (S.editorKey) localStorage.setItem(key, JSON.stringify(S.editorKey));
+        else localStorage.removeItem(key);
+    } catch (_) { /* ignore */ }
+}
+
+// The active highlight settings, or null when off / unset / invalid — the
+// single guard every render path consults, so a bad state can't paint.
+function _activeKeyHighlight() {
+    if (!editorKeyHighlightEnabled()) return null;
+    const k = S.editorKey;
+    if (!k || !Number.isInteger(k.tonic) || !SCALE_INTERVALS[k.scale]) return null;
+    return k;
+}
+
+window.editorSetKeyTonic = (v) => {
+    const tonic = parseInt(v, 10);
+    if (!(tonic >= 0 && tonic <= 11)) return;
+    S.editorKey = { tonic, scale: (S.editorKey && S.editorKey.scale) || 'major' };
+    _persistEditorKey();
+    _refreshKeyControls();
+    draw();
+};
+window.editorSetKeyScale = (v) => {
+    if (!SCALE_INTERVALS[v]) return;
+    S.editorKey = { tonic: (S.editorKey ? S.editorKey.tonic : 0), scale: v };
+    _persistEditorKey();
+    _refreshKeyControls();
+    draw();
+};
+function _editorToggleKeyHighlight() {
+    const next = !editorKeyHighlightEnabled();
+    try { localStorage.setItem('editorKeyHighlight', next ? '1' : '0'); } catch (_) {}
+    if (next && !S.editorKey) S.editorKey = { tonic: 0, scale: 'major' };
+    _persistEditorKey();
+    _refreshKeyControls();
+    draw();
+    setStatus(next
+        ? 'In-key highlight on — out-of-key notes dim (piano roll also shades out-of-key rows)'
+        : 'In-key highlight off');
+    return true;
+}
+window.editorToggleKeyHighlight = _editorToggleKeyHighlight;
+
+// ── Per-part view switcher (String · Piano roll) ─────────────────────
+let _viewSwitchState = '';
+function _refreshViewSwitch() {
+    const el = document.getElementById('editor-view-switch');
+    if (!el) return;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    const fretted = !!arr && !KEYS_PATTERN.test(arr.name || '');
+    // Only fretted parts get a choice (keys are piano-locked), and only
+    // when a focus editor is showing (not drum/tempo/parts modes).
+    const visible = fretted && !S.drumEditMode && !S.tempoMapMode && !S.partsViewMode;
+    const mode = arr ? viewFor(arr) : 'string';
+    const sig = `${visible}|${mode}`;
+    if (sig === _viewSwitchState) return;
+    _viewSwitchState = sig;
+    el.classList.toggle('hidden', !visible);
+    el.classList.toggle('flex', visible);
+    el.querySelectorAll('button[data-view]').forEach(b => {
+        const active = b.dataset.view === mode;
+        b.classList.toggle('bg-accent', active);
+        b.classList.toggle('text-white', active);
+        b.classList.toggle('text-gray-400', !active);
+        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    const pill = document.getElementById('editor-roll-lock-pill');
+    if (pill) pill.classList.toggle('hidden', !(visible && mode === 'piano'));
+}
+
+window.editorSetViewMode = (mode) => {
+    if (mode !== 'string' && mode !== 'piano') return;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    if (!arr) return;
+    if (KEYS_PATTERN.test(arr.name || '')) {
+        setStatus('Keys parts always use the piano roll');
+        return;
+    }
+    if (viewFor(arr) === mode) return;
+    const prefs = _viewPrefs();
+    const key = _partViewKeyPure(arr);
+    if (mode === 'piano') prefs[key] = 'piano';
+    else delete prefs[key];
+    _viewPrefsSave();
+    // V3: selection/interaction semantics are per-view — clear both, and
+    // close any note UI anchored to the old geometry.
+    S.sel.clear();
+    S.drag = null;
+    hideContextMenu();
+    hideAddNote();
+    if (mode === 'piano') updatePianoRange();
+    _refreshViewSwitch();
+    // Lane heights differ between views; recompute after the reflow the
+    // same way the string-count change path does.
+    if (typeof resizeCanvas === 'function') requestAnimationFrame(() => resizeCanvas());
+    draw();
+    updateStatus();
+    setStatus(mode === 'piano'
+        ? 'Piano roll — fretted notes shown at sounding pitch (read-only until suggest-position lands)'
+        : 'String view');
+};
+
+function _editorCycleViewMode() {
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    if (!arr) { setStatus('Load a song first'); return true; }
+    if (KEYS_PATTERN.test(arr.name || '')) {
+        setStatus('Keys parts always use the piano roll');
+        return true;
+    }
+    window.editorSetViewMode(viewFor(arr) === 'piano' ? 'string' : 'piano');
+    return true;
+}
+
+let _keyControlsPopulated = false;
+let _keyControlsState = '';
+function _refreshKeyControls() {
+    const group = document.getElementById('editor-key-group');
+    if (!group) return;
+    _loadEditorKeyIfNeeded();
+    // Populate the selects once.
+    if (!_keyControlsPopulated) {
+        const tonicSel = document.getElementById('editor-key-tonic');
+        const scaleSel = document.getElementById('editor-key-scale');
+        if (tonicSel && scaleSel) {
+            tonicSel.innerHTML = PIANO_NOTE_NAMES
+                .map((n, i) => `<option value="${i}">${n}</option>`).join('');
+            scaleSel.innerHTML = Object.keys(SCALE_INTERVALS)
+                .map(id => `<option value="${id}">${SCALE_LABELS[id] || id}</option>`).join('');
+            _keyControlsPopulated = true;
+        }
+    }
+    // The highlight applies to any pitched arrangement view — the piano
+    // roll AND the fretted lanes (notes resolve to sounding pitch via
+    // tuning + capo). The drum grid and Parts overview have no per-note
+    // pitch surface, so the controls hide there.
+    const visible = !!(S.arrangements && S.arrangements.length)
+        && !S.drumEditMode && !S.partsViewMode;
+    const on = editorKeyHighlightEnabled();
+    const tonic = S.editorKey ? S.editorKey.tonic : 0;
+    const scale = S.editorKey ? S.editorKey.scale : 'major';
+    const sig = `${visible}|${on}|${tonic}|${scale}`;
+    if (sig === _keyControlsState) return;
+    _keyControlsState = sig;
+    group.classList.toggle('hidden', !visible);
+    group.classList.toggle('flex', visible);
+    const tonicSel = document.getElementById('editor-key-tonic');
+    const scaleSel = document.getElementById('editor-key-scale');
+    if (tonicSel) tonicSel.value = String(tonic);
+    if (scaleSel) scaleSel.value = scale;
+    const btn = document.getElementById('editor-key-highlight-btn');
+    if (btn) {
+        btn.classList.toggle('bg-accent', on);
+        btn.classList.toggle('hover:bg-accent-light', on);
+        btn.classList.toggle('bg-dark-600', !on);
+        btn.classList.toggle('hover:bg-dark-500', !on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+}
+
 function drawPianoLanes(w) {
+    const hl = _activeKeyHighlight();
     for (let midi = pianoRange.lo; midi <= pianoRange.hi; midi++) {
         const y = midiToY(midi);
         const black = isBlackKey(midi);
         ctx.fillStyle = black ? '#0a0a1a' : '#0e0e22';
         ctx.fillRect(LABEL_W, y, w - LABEL_W, PIANO_LANE_H);
+
+        // Out-of-key rows get a neutral desaturating wash (never red —
+        // chromaticism isn't an error). In-key rows are left as drawn.
+        if (hl && !_pcInScalePure(midi % 12, hl.tonic, hl.scale)) {
+            ctx.fillStyle = 'rgba(20,20,34,0.55)';
+            ctx.fillRect(LABEL_W, y, w - LABEL_W, PIANO_LANE_H);
+        }
 
         // Octave boundary (C notes)
         if (midi % 12 === 0) {
@@ -1738,12 +2140,112 @@ function drawGrid(w) {
     }
 }
 
+/* @pure:section-coverage:start */
+// Per-section spans with a hasContent flag: does any charted note-time fall
+// in the section's [start, nextStart) window? The last section runs to the
+// song end (open-ended when duration is unknown), and is INCLUSIVE of its
+// upper edge — extended to the final note time when notes sit at or past a
+// stale/short duration, so trailing content is never invisible. A note on an
+// INTERIOR boundary belongs to the LATER section (half-open). Sections are
+// sorted defensively and non-finite start_times dropped. Returns [] when
+// there are no sections. Ambient progress — never a score.
+function _sectionCoveragePure(sections, noteTimes, duration) {
+    if (!Array.isArray(sections) || !sections.length) return [];
+    const secs = sections
+        .filter(s => s && Number.isFinite(Number(s.start_time)))
+        .map(s => Number(s.start_time))
+        .sort((a, b) => a - b);
+    if (!secs.length) return [];
+    const dur = (Number.isFinite(duration) && duration > 0) ? duration : Infinity;
+    const times = Array.isArray(noteTimes)
+        ? noteTimes.map(Number).filter(Number.isFinite)
+        : [];
+    // The final span has no later section to bound it, so it owns every
+    // trailing note: extend its end past `dur` to the last note time when a
+    // note sits at/after the (possibly stale/short) duration, and treat its
+    // upper edge as INCLUSIVE. Interior spans stay half-open [start, next) so
+    // a note on an interior boundary still belongs to the LATER section — the
+    // inclusive edge is only the outermost one, so there's no double-count.
+    let maxT = -Infinity;
+    for (const t of times) if (t > maxT) maxT = t;
+    const lastEnd = maxT > dur ? maxT : dur;   // may be Infinity
+    const out = [];
+    for (let i = 0; i < secs.length; i++) {
+        const start = secs[i];
+        const isLast = (i + 1 >= secs.length);
+        const end = isLast ? lastEnd : secs[i + 1];   // may be Infinity (last)
+        let hasContent = false;
+        for (const t of times) {
+            if (t >= start && (isLast ? t <= end : t < end)) { hasContent = true; break; }
+        }
+        out.push({ start, end, hasContent });
+    }
+    return out;
+}
+/* @pure:section-coverage:end */
+
+// Note times of the ACTIVE arrangement (flattened — chord notes already live
+// in notes() for the current arrangement).
+function _currentNoteTimes() {
+    return notes().map(n => n.time);
+}
+
+// Cross-frame memo for the section-coverage strip. drawSections runs on every
+// requestAnimationFrame during playback, but coverage only changes on
+// note/section/duration edits — never while the cursor moves. Recomputing the
+// pure helper (an O(N) note-time pass plus an O(sections×notes) scan) every
+// frame is the same per-frame O(N) trap the lanes()/laneLabels() caches in
+// draw() deliberately avoid, so memoize behind a cheap key. In-place note-time
+// moves keep the notes-array identity AND length, so they're caught by
+// `_coverageEditGen`, bumped by EditHistory._afterEdit() — the edit-contract
+// hook every mutation flows through (constitution IV). The section fingerprint
+// is O(sections) (a handful, negligible beside the O(notes) scan skipped) and
+// catches add/remove/retime/reorder without wiring every section mutation site.
+let _coverageEditGen = 0;
+let _covCache = { key: null, notesRef: null, value: [] };
+function _sectionCoverage() {
+    const secs = S.sections || [];
+    const ns = notes();
+    // A live note-move drag mutates note.time in place every mousemove and
+    // only commits to EditHistory on mouseUp, so `_coverageEditGen` hasn't
+    // bumped yet — bypass the memo for the drag's duration to keep the strip
+    // live (matching the pre-memo per-frame recompute). This is the ONE
+    // interactive path that changes note times without an edit-gen bump; the
+    // perf target (playback) has no active drag, so it still hits the cache.
+    if (S.drag && S.drag.type === 'move') {
+        return _sectionCoveragePure(secs, _currentNoteTimes(), S.duration || 0);
+    }
+    let secSig = secs.length + ':';
+    for (const s of secs) secSig += (s ? s.start_time : 'x') + ',';
+    const key = _coverageEditGen + '|' + S.currentArr + '|' + ns.length
+        + '|' + (S.duration || 0) + '|' + secSig;
+    if (key !== _covCache.key || _covCache.notesRef !== ns) {
+        _covCache = {
+            key, notesRef: ns,
+            value: _sectionCoveragePure(secs, _currentNoteTimes(), S.duration || 0),
+        };
+    }
+    return _covCache.value;
+}
+
 function drawSections(w) {
     const st = S.scrollX - 1;
     const et = S.scrollX + (w - LABEL_W) / S.zoom + 1;
     const laneBottom = isKeysMode()
         ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
         : WAVEFORM_H + lanes() * LANE_H;
+    // Completeness strip: a thin band at the top of the lane area tinting
+    // each section by whether the active arrangement has notes in it — an
+    // at-a-glance "where is this chart still empty", drawn under the section
+    // labels/lines below. Neutral, no percentage, no red.
+    const cov = _sectionCoverage();
+    for (const c of cov) {
+        const x0 = Math.max(LABEL_W, timeToX(c.start));
+        const x1 = Math.min(w, timeToX(c.end));
+        if (x1 <= x0) continue;
+        ctx.fillStyle = c.hasContent ? 'rgba(120,170,255,0.20)' : 'rgba(255,255,255,0.035)';
+        ctx.fillRect(x0, WAVEFORM_H, x1 - x0, 3);
+    }
     ctx.font = '9px monospace';
     ctx.textBaseline = 'top';
     for (const s of S.sections) {
@@ -1883,26 +2385,64 @@ function drawNotes(w) {
     const st = S.scrollX - 2;
     const et = S.scrollX + (w - LABEL_W) / S.zoom + 2;
     const keysMode = isKeysMode();
+    // Hoist the active-highlight lookup out of the per-note loop: it reads
+    // localStorage, so resolving it once per draw (not once per visible note)
+    // keeps drawNotes off the synchronous-storage path during playback/scroll.
+    const hl = _activeKeyHighlight();
+    // Fretted lanes resolve notes to SOUNDING pitch (tuning + capo + fret) —
+    // the whole context is hoisted here so _drawNote does zero per-note
+    // arrangement work. `ghl` is null whenever the highlight can't apply.
+    let ghl = null;
+    if (hl && !keysMode) {
+        const arr = S.arrangements[S.currentArr];
+        if (arr) {
+            const laneCount = _stringCountFor(arr);
+            const tuning = (Array.isArray(arr.tuning) ? arr.tuning : []).slice(0, laneCount);
+            while (tuning.length < laneCount) tuning.push(0);
+            ghl = {
+                hl,
+                openMidi: _openMidiForArr(arr, laneCount),
+                tuning,
+                capo: Number(arr.capo) || 0,
+            };
+        }
+    }
+    // Fretted-in-roll draws at SOUNDING pitch — one hoisted context, and
+    // the same mapping hit-testing/marquee use (they must never disagree).
+    const rctx = keysMode ? _rollPitchCtx() : null;
     for (let i = 0; i < nn.length; i++) {
         const n = nn[i];
         if (n.time + (n.sustain || 0) < st || n.time > et) continue;
         if (keysMode) {
-            _drawPianoNote(n, S.sel.has(i));
+            const midi = _rollMidiForNote(n, rctx);
+            if (midi !== null) _drawPianoNote(n, S.sel.has(i), hl, midi);
         } else {
-            _drawNote(n, S.sel.has(i));
+            _drawNote(n, S.sel.has(i), ghl);
         }
     }
 }
 
-function _drawNote(n, selected) {
+function _drawNote(n, selected, ghl) {
     const x = timeToX(n.time);
     const y = strToY(n.string) + NOTE_PAD;
     const sw = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
     const h = LANE_H - NOTE_PAD * 2;
     const color = colorForLane(strToLane(n.string));
 
+    // In-key highlight (mirrors the piano roll's treatment): out-of-key
+    // notes dim, never redden — chromaticism is not an error. Membership
+    // uses the SOUNDING pitch (tuning + capo + fret); an unresolvable
+    // pitch stays fully lit rather than falsely flagged.
+    let outOfKey = false;
+    if (ghl) {
+        const midi = _soundingPitchPure(
+            ghl.openMidi, ghl.tuning, ghl.capo, n.string, n.fret);
+        outOfKey = midi !== null
+            && !_pcInScalePure(((midi % 12) + 12) % 12, ghl.hl.tonic, ghl.hl.scale);
+    }
+
     // Body
-    ctx.fillStyle = color + 'cc';
+    ctx.fillStyle = color + (outOfKey ? '55' : 'cc');
     ctx.beginPath();
     ctx.roundRect(x, y, sw, h, 3);
     ctx.fill();
@@ -1920,7 +2460,7 @@ function _drawNote(n, selected) {
     ctx.stroke();
 
     // Fret number
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = outOfKey ? 'rgba(255,255,255,0.6)' : '#fff';
     ctx.font = 'bold 13px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -1960,8 +2500,10 @@ function _drawNote(n, selected) {
     }
 }
 
-function _drawPianoNote(n, selected) {
-    const midi = noteToMidi(n.string, n.fret);
+function _drawPianoNote(n, selected, hl, midi) {
+    // `midi` is resolved by the caller through _rollMidiForNote — keys
+    // packing or fretted sounding pitch — so this renderer never guesses.
+    if (midi === undefined) midi = noteToMidi(n.string, n.fret);
     if (midi < pianoRange.lo || midi > pianoRange.hi) return;
 
     const x = timeToX(n.time);
@@ -1971,8 +2513,14 @@ function _drawPianoNote(n, selected) {
     const octave = Math.floor(midi / 12);
     const color = PIANO_OCTAVE_COLORS[Math.min(octave, PIANO_OCTAVE_COLORS.length - 1)];
 
+    // In-key highlight: dim out-of-key notes (lower body alpha) so chromatic
+    // notes read as chromatic without being hidden or flagged as wrong.
+    // `hl` is resolved once per draw in drawNotes (see hoist there) and passed
+    // in, so this path never reads localStorage per note.
+    const outOfKey = !!hl && !_pcInScalePure(midi % 12, hl.tonic, hl.scale);
+
     // Body
-    ctx.fillStyle = color + 'cc';
+    ctx.fillStyle = color + (outOfKey ? '55' : 'cc');
     ctx.beginPath();
     ctx.roundRect(x, y, sw, h, 2);
     ctx.fill();
@@ -2041,12 +2589,16 @@ const EDGE_GRAB = 8; // pixels from right edge to trigger resize
 function hitNote(mx, my) {
     const nn = notes();
     const keysMode = isKeysMode();
+    // Fretted-in-roll hit-testing must use the same sounding-pitch mapping
+    // the draw uses — hoisted once, not per note.
+    const rctx = keysMode ? _rollPitchCtx() : null;
     for (let i = nn.length - 1; i >= 0; i--) {
         const n = nn[i];
         const x = timeToX(n.time);
         let y, w, h;
         if (keysMode) {
-            const midi = noteToMidi(n.string, n.fret);
+            const midi = _rollMidiForNote(n, rctx);
+            if (midi === null) continue;
             y = midiToY(midi) + 1;
             w = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
             h = PIANO_LANE_H - 2;
@@ -2093,6 +2645,19 @@ class EditHistory {
     // song-level state (drum tab, tempo grid) opt out via `songScope = true`.
     // The `typeof` guards keep this block browser-free for the test harness.
     exec(cmd) {
+        // Read-only roll (V4): a FRETTED part shown in the piano roll is
+        // edit-locked until the suggest-position writer exists, so every
+        // NOTE-scope command entry point (keys, menus, inspector, dialogs)
+        // is inert here in one place. Song-scope commands (drum tab, tempo
+        // grid) edit song-level data, not the fretted chart, so they still
+        // pass through even while a fretted part is shown in the roll —
+        // otherwise switching an unrelated part to the roll would freeze
+        // tempo/drum editing. typeof-guarded so extracted-test envs without
+        // the view layer are unaffected.
+        if (cmd.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+            if (typeof _rollLockNotice === 'function') _rollLockNotice();
+            return;
+        }
         cmd._arrIdx = (cmd.songScope === true) ? -1
             : (typeof S !== 'undefined' ? (S.currentArr ?? -1) : -1);
         cmd.exec();
@@ -2109,6 +2674,18 @@ class EditHistory {
         // _historyEnsureArr switches to it (or refuses when it's gone) BEFORE
         // the command leaves the stack, so a refused undo loses nothing.
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
+        // Read-only roll (V4): rolling a NOTE-scope command back would write
+        // the fretted chart currently shown read-only in the piano roll, so
+        // undo would silently bypass the exec/drag lock. Refuse (peek only —
+        // the command stays on the stack, nothing is lost). _historyEnsureArr
+        // above has already switched to the command's arrangement, so this
+        // evaluates read-only against the part the rollback would touch.
+        // Song-scope commands (drum/tempo) don't touch the fretted chart and
+        // undo normally.
+        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+            if (typeof _rollLockNotice === 'function') _rollLockNotice();
+            return;
+        }
         this.undo.pop(); c.rollback(); this.redo.push(c);
         this._afterEdit(); this._ui(); draw(); updateStatus();
     }
@@ -2116,6 +2693,12 @@ class EditHistory {
         if (!this.redo.length) return;
         const c = this.redo[this.redo.length - 1];
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
+        // Read-only roll (V4): re-exec of a NOTE-scope command writes the
+        // fretted chart that is read-only in the roll — same lock as doUndo.
+        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+            if (typeof _rollLockNotice === 'function') _rollLockNotice();
+            return;
+        }
         this.redo.pop(); c.exec(); this.undo.push(c);
         // Re-apply the MAX_UNDO cap: a redo pushes back onto the undo stack, so
         // without this a redo-heavy session could grow it past the bound that
@@ -2130,6 +2713,11 @@ class EditHistory {
     // Not _afterEdit() — that nudges the piano viewport, which a clear shouldn't.
     reset() { this.undo = []; this.redo = []; this._ui(); }
     _afterEdit() {
+        // Invalidate the section-coverage memo: an in-place note-time move
+        // keeps the notes array's identity + length, so the cheap cache key
+        // can't see it — this generation bump is what forces a recompute.
+        // typeof-guarded (like isKeysMode below): declared outside this @pure block.
+        if (typeof _coverageEditGen === 'number') _coverageEditGen++;
         // Keep the keys viewport in sync with the current note range so
         // multi-octave authoring works without manual range control.
         // expandOnly=true so adding a note outside the current viewport
@@ -2571,6 +3159,11 @@ function _openMidiForArr(arr, laneCount) {
 // tuning offsets.  `openMidi[s]` is the standard open-string pitch for
 // string `s`; `arr.tuning[s]` is the per-string semitone offset from
 // standard (e.g. −2 for Drop D on string 0, 0 for standard).
+// DELIBERATELY OMITS CAPO: string-moves compare two pitches on the same
+// arrangement, so the capo cancels on both sides. Anything that needs the
+// real SOUNDING pitch (in-key highlight, future guide synthesis) must use
+// _soundingPitchPure below, which adds the capo exactly once — adding it
+// here too would double-count it in code that composes the two.
 function _absolutePitch(openMidi, tuning, stringIdx, fret) {
     const offset = (Array.isArray(tuning) && tuning[stringIdx] !== undefined)
         ? (Number(tuning[stringIdx]) || 0)
@@ -2578,13 +3171,33 @@ function _absolutePitch(openMidi, tuning, stringIdx, fret) {
     return openMidi[stringIdx] + offset + fret;
 }
 
+/* @pure:fret-pitch:start */
+// Sounding pitch (MIDI) of one fretted note:
+//     openMidi[string] + tuning offset + CAPO + fret
+// Chart frets are capo-relative (fret 0 = the capo), so the capo is added
+// exactly ONCE — verified against core's single source of the formula
+// (lib/song.py pitch_from_base, which the tuner/open-string labels and the
+// highway's scale-degree derivation share). Returns null for a string with
+// no open pitch or a non-finite fret, so callers skip rather than paint
+// garbage.
+function _soundingPitchPure(openMidi, tuning, capo, stringIdx, fret) {
+    if (!Array.isArray(openMidi) || openMidi[stringIdx] === undefined) return null;
+    const f = Number(fret);
+    if (!Number.isFinite(f)) return null;
+    const offset = (Array.isArray(tuning) && tuning[stringIdx] !== undefined)
+        ? (Number(tuning[stringIdx]) || 0)
+        : 0;
+    return openMidi[stringIdx] + offset + (Number(capo) || 0) + f;
+}
+/* @pure:fret-pitch:end */
+
 // Try to move a single note to an adjacent string while preserving its
 // absolute pitch.  `direction` is +1 (higher string index) or -1 (lower).
 // Returns { targetString, targetFret } when valid, or null when the
 // resulting fret would be out of range [0, 24] or the target string
 // doesn't exist.
 function _getMoveStringResult(noteIdx, direction) {
-    if (isKeysMode()) return null;          // keys mode: no string concept
+    if (isKeysArr()) return null;           // keys DATA: no string concept
     const arr = S.arrangements[S.currentArr];
     if (!arr) return null;
     const n = notes()[noteIdx];
@@ -2613,7 +3226,7 @@ function _getMoveStringResult(noteIdx, direction) {
 // string in `direction` without leaving the fret range [0, 24].
 function _canMoveString(direction) {
     if (!S.sel || S.sel.size === 0) return false;
-    if (isKeysMode()) return false;
+    if (isKeysArr()) return false;
     for (const idx of S.sel) {
         if (_getMoveStringResult(idx, direction) === null) return false;
     }
@@ -2643,7 +3256,7 @@ class MoveToStringCmd {
 
 // Build the MoveToStringCmd payload and execute it for all selected notes.
 function _getMoveStringSameFretResult(noteIdx, direction) {
-    if (isKeysMode()) return null;
+    if (isKeysArr()) return null;
     const arr = S.arrangements[S.currentArr];
     if (!arr) return null;
     const n = notes()[noteIdx];
@@ -2672,6 +3285,7 @@ function _execMoveStringSameFret(direction) {
     }
     if (!moves.length) return true;
     S.history.exec(new MoveToStringCmd(moves));
+    _editBlipAt();
     draw();
     _renderInspector();
     return true;
@@ -2693,6 +3307,7 @@ function _execMoveString(direction) {
     }
     if (!moves.length) return;
     S.history.exec(new MoveToStringCmd(moves));
+    _editBlipAt();
     draw();
     _renderInspector();
 }
@@ -3116,11 +3731,13 @@ function onMouseDown(e) {
     // silently overwritten by _recNotes when the take is finalized on Stop.
     if (_recState === 'recording') return;
 
-    // Check for sustain edge grab first
-    const edgeIdx = hitNoteEdge(x, y);
+    // Check for sustain edge grab first. Read-only roll (V4): resize
+    // mutates sustains LIVE during the drag (before any command), so the
+    // drag must not start at all — selection stays available below.
+    const edgeIdx = _rollReadOnly() ? -1 : hitNoteEdge(x, y);
     if (edgeIdx >= 0) {
         const nn = notes();
-        const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, !isKeysMode() && !e.altKey);
+        const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, !isKeysArr() && !e.altKey);
         const allResizeSelected = resizeIndices.every(i => S.sel.has(i));
         if (!allResizeSelected) {
             S.sel.clear();
@@ -3143,12 +3760,14 @@ function onMouseDown(e) {
 
     if (idx >= 0) {
         // Click on note — also select all chord siblings (same time).
-        // In keys mode same-timestamp notes are independent voices (not
-        // a strummed chord), so skip the sibling expansion.
+        // In keys DATA same-timestamp notes are independent voices (not
+        // a strummed chord), so skip the sibling expansion. Keyed on the
+        // data kind, not the surface: a fretted part in the roll still
+        // groups its chords.
         const nn = notes();
         const clickedTime = nn[idx].time;
         const chordSiblings = [idx];
-        if (!isKeysMode()) {
+        if (!isKeysArr()) {
             for (let i = 0; i < nn.length; i++) {
                 if (i !== idx && Math.abs(nn[i].time - clickedTime) < 0.001) chordSiblings.push(i);
             }
@@ -3165,7 +3784,14 @@ function onMouseDown(e) {
             for (const i of chordSiblings) S.sel.add(i);
         }
 
-        // Start drag
+        // Start drag — unless the roll is read-only (fretted part in piano
+        // view): move drags mutate notes LIVE before the commit command,
+        // so selection happens above but no drag begins.
+        if (_rollReadOnly()) {
+            _rollLockNotice();
+            draw();
+            return;
+        }
         const selArr = [...S.sel];
         S.drag = {
             type: 'move',
@@ -3438,6 +4064,7 @@ function onMouseUp(e) {
             if (dfrets) nn[S.drag.indices[i]].fret = S.drag.origFrets[i];
         }
         S.history.exec(new MoveNoteCmd(S.drag.indices, dtimes, dstrings, dfrets));
+        if (_mixDragChangedPitchPure(dstrings, dfrets)) _editBlipAt();
     }
 
     if (S.drag.type === 'select') {
@@ -3449,11 +4076,13 @@ function onMouseUp(e) {
 
         const nn = notes();
         const keysMode = isKeysMode();
+        const rctx = keysMode ? _rollPitchCtx() : null;
         for (let i = 0; i < nn.length; i++) {
             const nx = timeToX(nn[i].time);
             let ny;
             if (keysMode) {
-                const midi = noteToMidi(nn[i].string, nn[i].fret);
+                const midi = _rollMidiForNote(nn[i], rctx);
+                if (midi === null) continue;
                 ny = midiToY(midi) + PIANO_LANE_H / 2;
             } else {
                 ny = strToY(nn[i].string) + LANE_H / 2;
@@ -3483,6 +4112,10 @@ function onDblClick(e) {
 
     const idx = hitNote(x, y);
     if (idx >= 0) return; // double-click on existing note = no-op
+
+    // Read-only roll (V4): adding by pitch would force a silent
+    // string/fret guess — refused until suggest-position exists.
+    if (_rollReadOnly()) { _rollLockNotice(); return; }
 
     // Show add-note dialog
     const t = snapTime(Math.max(0, xToTime(x)));
@@ -3539,8 +4172,13 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
     { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', eof: 'C' } },
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'toggleMixer', label: 'Toggle audio mixer', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
+    { id: 'toggleLoopAB', label: 'Toggle loop A/B compare (recording ↔ guide)', group: 'Preview', status: 'ready', keys: { feedback: 'Alt+B', eof: 'Alt+B' } },
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
+    { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'cycleViewMode', label: 'Cycle part view (String / Piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'showTabPreview', label: 'Preview part as tab (read-only, saved pack)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -3592,6 +4230,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+-' } },
     { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
     { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', eof: 'Ctrl+L' } },
+    { id: 'duplicateSelection', label: 'Duplicate selection to next position', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+D', eof: 'Ctrl+D' } },
     { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+R', eof: 'Shift+R' } },
     { id: 'addSection', label: 'Add section at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+M', eof: 'Shift+S' } },
     { id: 'addPhrase', label: 'Add phrase at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+P', eof: 'Shift+P' } },
@@ -3657,6 +4296,8 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (sig === 'F2') return 'save';
     if (sig === 'F5') return 'toggleWaveform';
     if (plain && key === 'c') return 'toggleGuideClap';
+    if (shift && key === 'c') return 'toggleMixer';
+    if (alt && key === 'b') return 'toggleLoopAB';
     if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === 'a') return 'togglePartsView';
     if (shift && key === '?') return 'showShortcutHelp';
@@ -3770,6 +4411,8 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (ctrl && key === 's') return 'save';
     if (plain && key === 'w') return 'toggleWaveform';
     if (plain && key === 'c') return 'toggleGuideClap';
+    if (shift && key === 'c') return 'toggleMixer';
+    if (alt && key === 'b') return 'toggleLoopAB';
     if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === 'a') return 'togglePartsView';
     if (shift && key === '?') return 'showShortcutHelp';
@@ -3936,6 +4579,195 @@ function _editorRenderShortcutPanel() {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// Read-only Tab preview (EDITOR-VIEW-MODALITY-DESIGN VA.4, V8/V12) —
+// render the CURRENT part as engraved tab by reusing the Tab View
+// plugin's arrangement→GP conversion endpoint + the same pinned alphaTab
+// CDN render idiom. Strictly read-only, refresh-on-open only (alphaTab
+// lays out once per load — never per frame), and honest about its source:
+// the endpoint reads the SAVED pack, so unsaved edits need a Save first.
+// Degrades cleanly when the Tab View plugin isn't installed.
+// ════════════════════════════════════════════════════════════════════
+
+/* @pure:tab-preview:start */
+// Guard: which parts can preview, with the exact user-facing reason when
+// one can't. NON-FRETTED parts (keys AND drums) are excluded — their wire
+// packing isn't fret/string, so a GP conversion of it would engrave
+// nonsense tab. The non-fretted test mirrors the editor-wide one
+// (KEYS_PATTERN /^(keys|piano|keyboard|synth)/i plus /^drums/i, e.g. the
+// Strings modal's gate) but is INLINED so this @pure block stays
+// self-contained and extractable — no reference to the outer KEYS_PATTERN
+// global, matching the parts-view block's "regexes inlined" convention.
+function _tabPreviewGuardPure(filename, arrName, hasArrangements) {
+    if (!hasArrangements) return { ok: false, reason: 'Load a song first.' };
+    const nm = String(arrName || '');
+    if (/^(keys|piano|keyboard|synth)/i.test(nm) || /^drums/i.test(nm)) {
+        return { ok: false, reason: 'Tab preview is for fretted parts — keys and drums parts have no tab.' };
+    }
+    if (!filename) {
+        return { ok: false, reason: 'Save the song first — the preview reads the saved pack.' };
+    }
+    return { ok: true, reason: '' };
+}
+// Keyboard policy while the read-only preview modal is open. It is a modal
+// proofreading lens, so NO editor shortcut may reach the chart behind it
+// (mirrors the partsViewMode read-only gate, which blocks note edits from
+// mutating the arrangement hidden behind an overview). Escape closes it;
+// every other key is swallowed. Returns 'close' | 'swallow' | 'ignore'
+// ('ignore' only when the preview isn't open, so onKeyDown proceeds).
+function _tabPreviewKeyPolicyPure(previewOpen, key) {
+    if (!previewOpen) return 'ignore';
+    if (key === 'Escape') return 'close';
+    return 'swallow';
+}
+// The Tab View conversion URL for one saved part. `ts` busts any
+// intermediate cache so Refresh after a Save always re-converts.
+function _tabPreviewUrlPure(filename, arrIdx, ts) {
+    return '/api/plugins/tabview/gp5/' + encodeURIComponent(filename || '')
+        + '?arrangement=' + (Number(arrIdx) || 0)
+        + '&t=' + (Number(ts) || 0);
+}
+// Map a failed conversion response to the honest user-facing message.
+function _tabPreviewHttpMessagePure(status, bodyText) {
+    if (status === 404) {
+        return 'Tab preview needs the Tab View plugin installed — or the song has no saved pack yet.';
+    }
+    if (status === 501) {
+        return 'The host is too old for pack conversion — update feedBack.';
+    }
+    const body = String(bodyText || '').slice(0, 140);
+    return 'Preview failed (' + status + ')' + (body ? ': ' + body : '');
+}
+/* @pure:tab-preview:end */
+
+// Same pinned version + memoized loader idiom as the Tab View plugin —
+// pinning insulates the preview from CDN latest-tag churn (V12: alphaTab
+// is MPL-2.0, render-only, CDN-loaded; never vendored).
+const _TAB_PREVIEW_AT_VERSION = '1.8.2';
+const _TAB_PREVIEW_CDN = 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@'
+    + _TAB_PREVIEW_AT_VERSION + '/dist';
+let _tabPreviewLoadPromise = null;
+function _tabPreviewLoadScript() {
+    if (window.alphaTab) return Promise.resolve();
+    if (_tabPreviewLoadPromise) return _tabPreviewLoadPromise;
+    _tabPreviewLoadPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = _TAB_PREVIEW_CDN + '/alphaTab.min.js';
+        s.onload = resolve;
+        s.onerror = () => {
+            _tabPreviewLoadPromise = null;   // allow retry on next open
+            reject(new Error('Failed to load the tab renderer (offline?)'));
+        };
+        document.head.appendChild(s);
+    });
+    return _tabPreviewLoadPromise;
+}
+
+let _tabPreviewApi = null;
+let _tabPreviewSeq = 0;   // stale-render guard across rapid refreshes
+
+function _tabPreviewStatus(msg) {
+    const el = document.getElementById('editor-tab-preview-status');
+    if (el) el.textContent = msg || '';
+}
+
+function _tabPreviewDestroyApi() {
+    if (_tabPreviewApi) {
+        try { _tabPreviewApi.destroy(); } catch (_) { /* best-effort */ }
+        _tabPreviewApi = null;
+    }
+    const mount = document.getElementById('editor-tab-preview-mount');
+    if (mount) mount.innerHTML = '';
+}
+
+async function _tabPreviewRender() {
+    const seq = ++_tabPreviewSeq;
+    const mount = document.getElementById('editor-tab-preview-mount');
+    if (!mount) return;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    const guard = _tabPreviewGuardPure(
+        S.filename, arr && arr.name, !!S.arrangements.length);
+    if (!guard.ok) {
+        _tabPreviewDestroyApi();
+        _tabPreviewStatus(guard.reason);
+        return;
+    }
+    _tabPreviewStatus('Converting…');
+    try {
+        await _tabPreviewLoadScript();
+        const url = _tabPreviewUrlPure(S.filename, S.currentArr, Date.now());
+        const resp = await fetch(url);
+        if (seq !== _tabPreviewSeq) return;   // superseded by a newer refresh
+        if (!resp.ok) {
+            let body = '';
+            try { body = await resp.text(); } catch (_) { /* keep '' */ }
+            // Re-check after the body read — reading it is another await, so a
+            // newer refresh may have superseded us; without this a stale error
+            // would destroy the newer render and stomp its status (symmetric
+            // with the arrayBuffer() checkpoint on the success path below).
+            if (seq !== _tabPreviewSeq) return;
+            _tabPreviewDestroyApi();
+            _tabPreviewStatus(_tabPreviewHttpMessagePure(resp.status, body));
+            return;
+        }
+        const buf = await resp.arrayBuffer();
+        if (seq !== _tabPreviewSeq) return;
+        _tabPreviewDestroyApi();
+        _tabPreviewApi = new alphaTab.AlphaTabApi(mount, {
+            core: { fontDirectory: _TAB_PREVIEW_CDN + '/font/' },
+            display: { layoutMode: alphaTab.LayoutMode.Page, scale: 0.9 },
+            // No alphaTab synth — the editor owns audio (same rationale as
+            // the Tab View plugin: drops the soundfont download entirely).
+            player: { enablePlayer: false },
+        });
+        if (_tabPreviewApi.renderFinished && _tabPreviewApi.renderFinished.on) {
+            _tabPreviewApi.renderFinished.on(() => {
+                if (seq === _tabPreviewSeq) _tabPreviewStatus('');
+            });
+        }
+        if (_tabPreviewApi.error && _tabPreviewApi.error.on) {
+            _tabPreviewApi.error.on((e) => {
+                if (seq === _tabPreviewSeq) {
+                    _tabPreviewStatus('Render failed: ' + ((e && e.message) || 'unknown error'));
+                }
+            });
+        }
+        _tabPreviewStatus('Engraving…');
+        _tabPreviewApi.load(new Uint8Array(buf));
+    } catch (e) {
+        if (seq === _tabPreviewSeq) {
+            _tabPreviewDestroyApi();
+            _tabPreviewStatus('Preview failed: ' + (e && e.message ? e.message : e));
+        }
+    }
+}
+
+function _editorShowTabPreview() {
+    const modal = document.getElementById('editor-tab-preview-modal');
+    if (!modal) return false;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    const title = document.getElementById('editor-tab-preview-title');
+    if (title) {
+        title.textContent = 'Tab preview — ' + ((arr && arr.name) || 'part') + ' (as last saved)';
+    }
+    modal.classList.remove('hidden');
+    _tabPreviewRender();
+    return true;
+}
+window.editorShowTabPreview = _editorShowTabPreview;
+
+window.editorRefreshTabPreview = () => { _tabPreviewRender(); };
+
+window.editorHideTabPreview = () => {
+    const modal = document.getElementById('editor-tab-preview-modal');
+    if (modal) modal.classList.add('hidden');
+    // Free the engraving resources — the modal is refresh-on-open, so
+    // nothing may keep laying out behind a hidden panel.
+    _tabPreviewSeq++;
+    _tabPreviewDestroyApi();
+    _tabPreviewStatus('');
+};
+
 window.editorToggleShortcutPanel = (force) => {
     const panel = document.getElementById('editor-shortcut-panel');
     if (!panel) return;
@@ -3975,6 +4807,7 @@ function _editorSetSelectedFret(fret) {
     if (!idxs.length) { setStatus('Select notes first'); return false; }
     const next = Math.max(0, Math.min(24, Number(fret) || 0));
     S.history.exec(new ChangeFretGroupCmd(idxs, next));
+    _editBlipAt();
     draw();
     updateStatus();
     setStatus(`Selected fret set to ${next}`);
@@ -4018,6 +4851,7 @@ function _editorAdjustSelectedFret(delta) {
         const next = Math.max(0, Math.min(24, (parseInt(nn[i].fret) || 0) + delta));
         S.history.exec(new ChangeFretCmd(i, next));
     }
+    _editBlipAt();
     draw();
     updateStatus();
     return true;
@@ -4096,6 +4930,88 @@ function _editorJumpAnchor(dir) {
     if (next !== undefined) _editorSeekToTime(next);
 }
 
+/* @pure:duplicate:start */
+// Time shift for a duplicate: place the copy immediately after the
+// selection so a repeated Ctrl+D tiles a phrase. Multi-time selections
+// shift by their span PLUS one grid step, so the copy's first onset lands
+// one step past the original's last onset — the copies ABUT the source
+// instead of stacking a doubled note on the seam. A single note or a chord
+// (all one time) shifts by one grid step. Returns 0 for an empty / all-
+// non-finite selection so the caller no-ops. Interior timing is preserved
+// (the whole selection shifts by one offset — never re-quantized), so a
+// swung or syncopated phrase duplicates with its feel intact.
+function _duplicateShiftPure(times, snapStep) {
+    if (!Array.isArray(times) || !times.length) return 0;
+    let lo = Infinity, hi = -Infinity;
+    for (const t of times) {
+        const v = Number(t);
+        if (!Number.isFinite(v)) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+    }
+    if (!Number.isFinite(lo)) return 0;
+    const span = hi - lo;
+    const step = (Number.isFinite(snapStep) && snapStep > 0) ? snapStep : 0.25;
+    return span > 1e-9 ? span + step : step;
+}
+
+// Batch-add `newNotes` to the note array `list`, keeping it time-sorted;
+// rollback removes exactly those refs (indexOf, not stored indices — the
+// sort reshuffles). `onChange(fn)` wraps the mutation so a caller can keep
+// its selection bound across the sort/splice; it defaults to just running
+// `fn`, which is what the tests use to drive the command in isolation.
+class AddNotesCmd {
+    constructor(list, newNotes, onChange) {
+        this.list = list;
+        this.newNotes = newNotes;
+        this.onChange = (typeof onChange === 'function') ? onChange : ((fn) => fn());
+    }
+    exec() {
+        this.onChange(() => {
+            for (const n of this.newNotes) this.list.push(n);
+            this.list.sort((a, b) => a.time - b.time);
+        });
+    }
+    rollback() {
+        this.onChange(() => {
+            for (const n of this.newNotes) {
+                const i = this.list.indexOf(n);
+                if (i >= 0) this.list.splice(i, 1);
+            }
+        });
+    }
+}
+/* @pure:duplicate:end */
+
+// Ctrl+D — copy the selection to the next position (one selection-length
+// later) as one undoable command, leaving the copies selected so a repeat
+// tiles the phrase. Mirrors the paste command's stable-selection handling.
+function _editorDuplicateSelection() {
+    if (S.drumEditMode || S.tempoMapMode || !S.sel.size) return false;
+    const nn = notes();
+    const selNotes = [...S.sel].map(i => nn[i]).filter(Boolean);
+    if (!selNotes.length) return false;
+    const shift = _duplicateShiftPure(
+        selNotes.map(n => n.time), _editorSnapStepSeconds());
+    if (shift <= 0) return false;
+    const newNotes = selNotes.map(n => ({
+        time: n.time + shift,
+        string: n.string,
+        fret: n.fret,
+        sustain: n.sustain || 0,
+        techniques: { ...(n.techniques || {}) },
+    }));
+    S.history.exec(new AddNotesCmd(nn, newNotes, _withStableSelection));
+    // Reselect the copies so a repeated Ctrl+D keeps tiling forward.
+    S.sel.clear();
+    const added = new Set(newNotes);
+    for (let i = 0; i < nn.length; i++) if (added.has(nn[i])) S.sel.add(i);
+    draw();
+    updateStatus();
+    setStatus(`Duplicated ${newNotes.length} note${newNotes.length === 1 ? '' : 's'}`);
+    return true;
+}
+
 function _editorSelectLike() {
     const idxs = _editorCurrentNoteIndices();
     if (!idxs.length) { setStatus('Select a note first'); return false; }
@@ -4126,7 +5042,7 @@ function _editorResnapSelection() {
 }
 
 function _editorSetAnchorAtCursor() {
-    if (!S.arrangements.length || isKeysMode()) { setStatus('Anchors are for guitar/bass arrangements'); return false; }
+    if (!S.arrangements.length || isKeysArr()) { setStatus('Anchors are for guitar/bass arrangements'); return false; }
     const idxs = _editorCurrentNoteIndices();
     const nn = notes();
     const atCursor = idxs.map(i => nn[i]).filter(Boolean);
@@ -4138,11 +5054,81 @@ function _editorSetAnchorAtCursor() {
     return true;
 }
 
+/* @pure:section-cmds:start */
+// Sections (S.sections = [{name, number, start_time}]) are kept sorted by
+// start_time; add/rename/delete used to mutate the array raw (push/splice/
+// direct assignment) with no undo — a stray Delete on a section was
+// unrecoverable, and Ctrl+Z after adding one rolled back the last NOTE
+// edit instead. These three command classes route those mutations through
+// EditHistory. They hold the section OBJECT by reference (the array is
+// re-sorted, so indices go stale but refs survive), so exec↔rollback and
+// redo restore S.sections exactly, sort order included. Stable sort keeps
+// equal-start_time siblings in insertion order, so ref removal is
+// unambiguous even when two sections share a time.
+
+// Insert `section` and re-sort in place; returns it.
+function _sectionsInsertSorted(section) {
+    S.sections.push(section);
+    S.sections.sort((a, b) => a.start_time - b.start_time);
+    return section;
+}
+// Index of the first section within `tol` seconds of `time`, else -1 —
+// keyed off the ARGUMENTS, never a global cursor (the section context menu
+// tests a click time against each section here).
+function _sectionNearestIndexPure(sections, time, tol) {
+    if (!Array.isArray(sections)) return -1;
+    const t = Number(time);
+    const w = Number.isFinite(tol) ? tol : 1.0;
+    for (let i = 0; i < sections.length; i++) {
+        if (Math.abs(Number(sections[i].start_time) - t) <= w) return i;
+    }
+    return -1;
+}
+
+class AddSectionCmd {
+    constructor(section) { this.section = section; }
+    exec() { _sectionsInsertSorted(this.section); }
+    rollback() {
+        const i = S.sections.indexOf(this.section);
+        if (i >= 0) S.sections.splice(i, 1);
+    }
+}
+
+class RemoveSectionCmd {
+    constructor(section) { this.section = section; this.idx = -1; }
+    exec() {
+        this.idx = S.sections.indexOf(this.section);
+        if (this.idx >= 0) S.sections.splice(this.idx, 1);
+    }
+    rollback() {
+        // Restore at the EXACT original index (splice, not push+sort), so a
+        // section restored beside an equal-start_time sibling lands back in
+        // its original order — undo LIFO guarantees the array here matches
+        // the state exec left. Fall back to a sorted insert if the section
+        // wasn't found at exec time.
+        if (this.idx >= 0) S.sections.splice(this.idx, 0, this.section);
+        else _sectionsInsertSorted(this.section);
+    }
+}
+
+class RenameSectionCmd {
+    // Name-only, matching the prior rename behavior (the stale `number`
+    // field is left as-is, not recomputed — that's unchanged, just undoable).
+    constructor(section, newName) {
+        this.section = section;
+        this.oldName = section.name;
+        this.newName = newName;
+    }
+    exec() { this.section.name = this.newName; }
+    rollback() { this.section.name = this.oldName; }
+}
+/* @pure:section-cmds:end */
+
 function _editorAddSectionAtCursor() {
     const name = 'section';
     const num = S.sections.filter(s => s.name === name).length + 1;
-    S.sections.push({ name, number: num, start_time: snapTime(S.cursorTime || 0) });
-    S.sections.sort((a, b) => a.start_time - b.start_time);
+    S.history.exec(new AddSectionCmd(
+        { name, number: num, start_time: snapTime(S.cursorTime || 0) }));
     draw();
     setStatus('Section added');
     return true;
@@ -4351,8 +5337,13 @@ function _editorRunEofCommand(cmd) {
     case 'toggleWaveform': return _editorToggleWaveform();
     case 'toggleGuideClap': return _editorToggleGuideClap();
     case 'toggleMetronome': return _editorToggleMetronome();
+    case 'toggleMixer': return _editorToggleMixer();
+    case 'toggleLoopAB': return _editorToggleLoopAB();
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return _editorTogglePartsView();
+    case 'toggleKeyHighlight': return _editorToggleKeyHighlight();
+    case 'showTabPreview': return _editorShowTabPreview();
+    case 'cycleViewMode': return _editorCycleViewMode();
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -4404,6 +5395,7 @@ function _editorRunEofCommand(cmd) {
     case 'fretDown': return _editorAdjustSelectedFret(-1);
     case 'setAnchor': return _editorSetAnchorAtCursor();
     case 'selectLike': return _editorSelectLike();
+    case 'duplicateSelection': return _editorDuplicateSelection();
     case 'resnapSelection': return _editorResnapSelection();
     case 'addSection': return _editorAddSectionAtCursor();
     case 'addPhrase': return _editorAddPhraseAtCursor();
@@ -4456,6 +5448,9 @@ function _editorRightClickNoteEdit(e, x, y) {
     // reassigns arr.notes = _recNotes on Stop, so an add/remove here would be
     // silently overwritten and muddle undo history.
     if (_recState === 'recording') return false;
+    // Read-only roll (V4): the EOF-style right-click add/remove is a note
+    // edit — inert for a fretted part shown in the piano roll.
+    if (_rollReadOnly()) { _rollLockNotice(); return true; }
     const keysMode = isKeysMode();
     const laneBottom = keysMode
         ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
@@ -4485,6 +5480,7 @@ function _editorRightClickNoteEdit(e, x, y) {
     }
     const cmd = new AddNoteCmd(note);
     S.history.exec(cmd);
+    _editBlipAt();
     S.sel.clear();
     if (cmd.idx >= 0) S.sel.add(cmd.idx);
     draw();
@@ -4548,11 +5544,10 @@ function onContextMenu(e) {
 
 function showSectionMenu(cx, cy, time) {
     const menu = document.getElementById('editor-context-menu');
-    // Check if clicking near an existing section
-    let nearSection = null;
-    for (const s of S.sections) {
-        if (Math.abs(s.start_time - time) < 1.0) { nearSection = s; break; }
-    }
+    // Section within 1 s of the click, if any (shared helper — same match
+    // the commands' tests exercise).
+    const nearIdx = _sectionNearestIndexPure(S.sections, time, 1.0);
+    const nearSection = nearIdx >= 0 ? S.sections[nearIdx] : null;
 
     let html = '';
     html += `<button class="w-full text-left px-3 py-1 text-xs hover:bg-dark-500" data-action="add">Add Section Here</button>`;
@@ -4570,17 +5565,20 @@ function showSectionMenu(cx, cy, time) {
                 });
                 if (!name) return;
                 const num = S.sections.filter(s => s.name === name).length + 1;
-                S.sections.push({ name, number: num, start_time: snapTime(time) });
-                S.sections.sort((a, b) => a.start_time - b.start_time);
+                S.history.exec(new AddSectionCmd(
+                    { name, number: num, start_time: snapTime(time) }));
                 draw();
             } else if (btn.dataset.action === 'rename' && nearSection) {
                 const name = await _editorPromptText({
                     title: 'Rename Section', label: 'New name', value: nearSection.name,
                 });
-                if (name) { nearSection.name = name; draw(); }
+                if (name && name !== nearSection.name) {
+                    S.history.exec(new RenameSectionCmd(nearSection, name));
+                    draw();
+                }
             } else if (btn.dataset.action === 'delete' && nearSection) {
-                const i = S.sections.indexOf(nearSection);
-                if (i >= 0) { S.sections.splice(i, 1); draw(); }
+                S.history.exec(new RemoveSectionCmd(nearSection));
+                draw();
             }
         };
     });
@@ -4593,6 +5591,25 @@ function onKeyDown(e) {
     // Only handle when editor screen is visible
     const screen = document.getElementById('plugin-editor');
     if (!screen || !screen.classList.contains('active')) return;
+
+    // Read-only Tab preview is a modal proofreading lens — while it's open
+    // NO editor shortcut (fret digits, f, arrows, Delete, transport …) may
+    // reach the chart hidden behind it, or the "read-only" preview would
+    // silently mutate the arrangement and pollute undo/redo. Escape closes
+    // it; every other key is swallowed. Mirrors the partsViewMode gate and
+    // must sit before the spacebar/transport handler below.
+    const _tabPreviewModal = document.getElementById('editor-tab-preview-modal');
+    const _tabPreviewOpen = !!(_tabPreviewModal && !_tabPreviewModal.classList.contains('hidden'));
+    const _tabPreviewAction = _tabPreviewKeyPolicyPure(_tabPreviewOpen, e.key);
+    if (_tabPreviewAction === 'close') {
+        e.preventDefault();
+        window.editorHideTabPreview();
+        return;
+    }
+    if (_tabPreviewAction === 'swallow') {
+        e.preventDefault();
+        return;
+    }
 
     if (e.key === ' ' && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
@@ -4764,6 +5781,17 @@ function onKeyDown(e) {
             return;
         }
     }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+        // Duplicate the selection to the next position. Same mode/focus
+        // gate as copy/paste below; preventDefault so the browser's
+        // bookmark shortcut doesn't fire.
+        if (!S.drumEditMode && !S.tempoMapMode && S.sel.size
+                && !e.target.matches('input, select, textarea')) {
+            e.preventDefault();
+            _editorDuplicateSelection();
+            return;
+        }
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
         // Copy/paste act on the guitar/keys arrangement's S.sel. In
         // drum-edit mode the canvas shows the drum grid, so a paste here
@@ -4919,6 +5947,7 @@ async function promptFret(idx) {
     const parsed = _parseFretInput(val);
     const fret = Math.max(0, Math.min(24, parsed < 0 ? 0 : parsed));
     S.history.exec(new ChangeFretCmd(idx, fret));
+    _editBlipAt();
     draw();
     _renderInspector();
 }
@@ -5149,6 +6178,10 @@ function _parseFretInput(val) {
 
 async function promptSlide(idx) {
     hideContextMenu();
+    // Read-only roll (V4): slide authoring mutates n.techniques directly
+    // (it bypasses EditHistory), so the exec lock can't catch it — guard
+    // the entry point like every other note-edit path in the roll.
+    if (_rollReadOnly()) { _rollLockNotice(); return; }
     const n = notes()[idx];
     const techs = n.techniques || {};
     const current = techs.slide_to >= 0 ? techs.slide_to : '';
@@ -5166,6 +6199,8 @@ async function promptSlide(idx) {
 
 async function promptSlideUnpitch(idx) {
     hideContextMenu();
+    // Read-only roll (V4): direct n.techniques mutation — guard like promptSlide.
+    if (_rollReadOnly()) { _rollLockNotice(); return; }
     const n = notes()[idx];
     const techs = n.techniques || {};
     const current = techs.slide_unpitch_to >= 0 ? techs.slide_unpitch_to : '';
@@ -5232,6 +6267,7 @@ window.editorConfirmAddNote = function() {
         techniques: {},
     };
     S.history.exec(new AddNoteCmd(note));
+    _editBlipAt();
     hideAddNote();
     draw();
     updateStatus();
@@ -5319,6 +6355,9 @@ async function loadAudio(url) {
         const buf = await resp.arrayBuffer();
         S.audioBuffer = await S.audioCtx.decodeAudioData(buf);
         S.duration = S.audioBuffer.duration;
+        // A new recording is loaded — re-arm the hearing-safety fade so it
+        // applies to this recording too, not just the session's first one.
+        _mixResetFirstPlay();
         _editorApplyScrollBounds();
         computeWaveform();
     } catch (e) {
@@ -5461,11 +6500,14 @@ _refreshOnsetBtn();
 function _startAudioSourceAtCursor() {
     S.audioSource = S.audioCtx.createBufferSource();
     S.audioSource.buffer = S.audioBuffer;
-    // Reference recording stays on a transparent path straight to destination
-    // (as it was before guide claps) — the guide-clap limiter must never
-    // color the recording, even when claps are off. Only the guide voices
-    // sum through the limiter (see _ensureMasterBus / _guideClapVoiceAt).
-    S.audioSource.connect(S.audioCtx.destination);
+    // Reference recording stays on a transparent path to destination — its
+    // mixer fader is a plain gain (unity by default): the guide-clap limiter
+    // must never color the recording, even when claps are off. Only the
+    // guide/click voices sum through the limiter (see _ensureMasterBus).
+    const refGain = _ensureRefGain();
+    if (refGain) S.audioSource.connect(refGain);
+    else S.audioSource.connect(S.audioCtx.destination);
+    _mixApplyFirstPlayFade();
     S.audioSource.start(0, S.cursorTime);
     S.playStartWall = S.audioCtx.currentTime;
     S.playStartTime = S.cursorTime;
@@ -5492,6 +6534,14 @@ function startPlayback() {
     if (S.loopEnabled && region && (S.cursorTime < region.startTime || S.cursorTime >= region.endTime)) {
         S.cursorTime = region.startTime;
     }
+    // Every (re)start — including seeks, which route through here — begins
+    // an A/B cycle on the RECORDING pass, so the user always hears the real
+    // thing first from a fresh position. Reset BEFORE the first tick /
+    // scheduler sync so _guideTick can never schedule a guide pass off a
+    // stale phase, and so the first-play fade (in _startAudioSourceAtCursor)
+    // is the last automation written to the ref gain, not clobbered by this.
+    _abPhase = 'recording';
+    _abApplyRefGain();
     _startAudioSourceAtCursor();
     S.playing = true;
     updatePlayIcon();
@@ -5508,6 +6558,9 @@ function stopPlayback() {
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     _guideTimerSync();
     _guideCancelVoices();
+    // Restore the reference to its fader level (a stop mid-guide-pass must
+    // never leave the recording silently muted).
+    _abApplyRefGain();
 }
 
 function playbackTick() {
@@ -5517,6 +6570,9 @@ function playbackTick() {
         ? null
         : _loopPlaybackRestartTimePure(S.cursorTime, S.barSel, S.loopEnabled, S.duration);
     if (loopRestart !== null) {
+        // A/B compare flips its pass BEFORE the restart so the ramped
+        // reference mute/unmute lands with the wrap, not a frame late.
+        _abOnLoopWrap();
         _restartPlaybackAt(loopRestart);
         updateTimeDisplay();
         // playbackTick already runs once per animation frame — paint
@@ -5654,6 +6710,50 @@ function editorMetronomeEnabled() {
     catch (_) { return false; }
 }
 
+/* @pure:audio-mixer:start */
+// Mixer math for the 3-fader popover (recording / guide / click) and the
+// edit-preview blip gating. Fader percents live in editor prefs (never the
+// pack) and map linearly onto bus gain, so 100% = the bus's design ceiling
+// (unity) — nothing here can boost a bus past the shipped headroom.
+const MIX_DEFAULT_PCT = Object.freeze({ ref: 100, guide: 35, click: 25 });
+// Parse a stored fader percent: corrupted values clamp into [0, 100] and
+// non-numeric ones fall back, so a bad pref can never blast a bus.
+function _mixPctFromStoredPure(raw, fallbackPct) {
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n)) return fallbackPct;
+    return Math.max(0, Math.min(100, n));
+}
+function _mixGainForPctPure(pct) {
+    const p = Number(pct);
+    if (!Number.isFinite(p)) return 0;
+    return Math.max(0, Math.min(100, p)) / 100;
+}
+// First play of a session starts the recording below target and ramps up
+// (~0.35 s): an unexpectedly hot recording is reached, never jumped to.
+// Quiet targets keep a small audible floor so the fade is never mistaken
+// for a broken/silent load.
+function _mixFirstPlayStartGainPure(target) {
+    if (!(target > 0)) return 0;
+    return Math.min(target, Math.max(0.05, target * 0.3));
+}
+// Rate-limit for the edit-preview blip: a group edit (set fret on N notes)
+// must read as ONE cue, not a machine-gun transient.
+function _mixBlipAllowedPure(nowMs, lastMs, gapMs) {
+    if (!Number.isFinite(lastMs)) return true;
+    return (nowMs - lastMs) >= gapMs;
+}
+// A committed drag only previews when it changed PITCH — any string delta
+// (a note moved to another string sounds a different pitch) or any fret
+// delta (a moved keys/piano-roll pitch, or a fret-changing drag). Time-only
+// moves and marquee selects carry no string/fret delta, so they stay silent.
+function _mixDragChangedPitchPure(dstrings, dfrets) {
+    const ds = Array.isArray(dstrings) && dstrings.some(d => d !== 0);
+    const df = Array.isArray(dfrets) && dfrets.some(d => d !== 0);
+    return ds || df;
+}
+/* @pure:audio-mixer:end */
+
+/* @pure:audio-bus:start */
 // Guide-voice bus ONLY: the claps sum through their own gain into a limiter
 // so many simultaneous voices can never spike, then to the destination. The
 // reference recording deliberately does NOT pass through here — it stays on a
@@ -5665,11 +6765,12 @@ function _ensureMasterBus() {
     if (_masterBus || !S.audioCtx) return _masterBus;
     const ctx = S.audioCtx;
     const guideGain = ctx.createGain();
-    guideGain.gain.value = 0.35;
-    // Click sits well under the reference/guide (≈ -12 dB) — the metronome
-    // should be felt, not fought with.
+    guideGain.gain.value = _mixGainForPctPure(_mixLoadPct().guide);
+    // Click sits well under the reference/guide by default (≈ -12 dB) — the
+    // metronome should be felt, not fought with. Both levels come from the
+    // mixer prefs; the defaults preserve the shipped balance.
     const clickGain = ctx.createGain();
-    clickGain.gain.value = 0.25;
+    clickGain.gain.value = _mixGainForPctPure(_mixLoadPct().click);
     const limiter = ctx.createDynamicsCompressor();
     limiter.threshold.value = -1;
     limiter.knee.value = 0;
@@ -5682,6 +6783,128 @@ function _ensureMasterBus() {
     _masterBus = { guideGain, clickGain, limiter };
     return _masterBus;
 }
+
+// Fader percents, cached so audio paths never read localStorage
+// synchronously mid-schedule; seeded once, kept in sync by _mixSetBusGain.
+let _mixPctCache = null;
+function _mixLoadPct() {
+    if (_mixPctCache) return _mixPctCache;
+    let ref = null, guide = null, click = null;
+    try {
+        ref = localStorage.getItem('editorMixRef');
+        guide = localStorage.getItem('editorMixGuide');
+        click = localStorage.getItem('editorMixClick');
+    } catch (_) {}
+    _mixPctCache = {
+        ref: _mixPctFromStoredPure(ref, MIX_DEFAULT_PCT.ref),
+        guide: _mixPctFromStoredPure(guide, MIX_DEFAULT_PCT.guide),
+        click: _mixPctFromStoredPure(click, MIX_DEFAULT_PCT.click),
+    };
+    return _mixPctCache;
+}
+
+// Recording volume node: a TRANSPARENT gain straight to destination — the
+// reference still never sums through the guide limiter (see the bus comment
+// above). This only adds user volume control; unity by default.
+let _refGain = null;
+function _ensureRefGain() {
+    if (_refGain || !S.audioCtx) return _refGain;
+    _refGain = S.audioCtx.createGain();
+    _refGain.gain.value = _mixGainForPctPure(_mixLoadPct().ref);
+    _refGain.connect(S.audioCtx.destination);
+    return _refGain;
+}
+
+// First-play fade (hearing safety): once per loaded recording, the
+// reference ramps from a reduced level up to its fader target as playback
+// starts. Re-armed by _mixResetFirstPlay() on every new/replaced recording
+// (see loadAudio()) — the ramp guards against an unexpectedly hot recording,
+// so it must not go stale after the very first song of a session.
+let _mixFirstPlayDone = false;
+function _mixApplyFirstPlayFade() {
+    if (_mixFirstPlayDone || !_refGain || !S.audioCtx) return;
+    _mixFirstPlayDone = true;
+    const target = _mixGainForPctPure(_mixLoadPct().ref);
+    const now = S.audioCtx.currentTime;
+    _refGain.gain.setValueAtTime(_mixFirstPlayStartGainPure(target), now);
+    _refGain.gain.linearRampToValueAtTime(target, now + 0.35);
+}
+
+// Re-arm the first-play fade: called whenever a new reference recording is
+// decoded (loadCDLC, create/import, and replace-audio all funnel through
+// loadAudio()) so each new recording gets the hearing-safety ramp, not just
+// the first one of the screen's lifetime.
+function _mixResetFirstPlay() {
+    _mixFirstPlayDone = false;
+}
+
+// Apply a fader move: persist the pref and ramp the live node (~20 ms
+// smoothing) — a gain change is never a stepped jump mid-audio.
+function _mixSetBusGain(bus, pct) {
+    const key = bus === 'ref' ? 'editorMixRef'
+        : bus === 'guide' ? 'editorMixGuide' : 'editorMixClick';
+    const p = _mixPctFromStoredPure(String(pct), MIX_DEFAULT_PCT[bus]);
+    _mixLoadPct()[bus] = p;
+    try { localStorage.setItem(key, String(p)); } catch (_) {}
+    const node = bus === 'ref' ? _refGain
+        : bus === 'guide' ? (_masterBus && _masterBus.guideGain)
+        : (_masterBus && _masterBus.clickGain);
+    if (node && S.audioCtx) {
+        // The recording fader must never un-mute an active A/B guide pass:
+        // route ref moves through the A/B-aware target so a nudge ramps to
+        // the fresh level on a recording pass but stays muted on a guide
+        // pass. Guarded — the @pure:audio-bus test sandbox has no
+        // _abApplyRefGain, where this falls back to the plain fader ramp.
+        if (bus === 'ref' && typeof _abApplyRefGain === 'function') {
+            _abApplyRefGain();
+        } else {
+            node.gain.setTargetAtTime(_mixGainForPctPure(p), S.audioCtx.currentTime, 0.02);
+        }
+    }
+    return p;
+}
+
+function editorEditBlipEnabled() {
+    try { return localStorage.getItem('editorEditBlip') !== '0'; }
+    catch (_) { return true; }
+}
+
+// Edit-preview blip: a soft confirmation tick on note ADD and PITCH change
+// only (never marquee/time-only moves). It sums straight into the shared
+// limiter — NOT through the guide fader — so muting guide claps never also
+// silences the edit cue, while the limiter still tames it. It skips when the
+// context isn't running — an edit must never resume audio — and is pitched
+// apart from the 1750 Hz guide clap so the two read as different cues.
+let _mixLastBlipMs = null;
+function _editBlipAt() {
+    if (!editorEditBlipEnabled()) return;
+    if (!S.audioCtx || S.audioCtx.state !== 'running') return;
+    const bus = _ensureMasterBus();
+    if (!bus) return;
+    const nowMs = Date.now();
+    if (!_mixBlipAllowedPure(nowMs, _mixLastBlipMs, 60)) return;
+    _mixLastBlipMs = nowMs;
+    const ctx = S.audioCtx;
+    const when = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = 1320;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.5, when + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 0.04);
+    osc.connect(g);
+    g.connect(bus.limiter);
+    osc.start(when);
+    osc.stop(when + 0.05);
+    _guideVoices.push({ osc, gain: g, until: when + 0.05 });
+    // Same bounded-bookkeeping rule as the scheduler tick.
+    if (_guideVoices.length > 64) {
+        const nowCtx = ctx.currentTime;
+        _guideVoices = _guideVoices.filter(v => v.until > nowCtx);
+    }
+}
+/* @pure:audio-bus:end */
 
 // Event times for the active editing surface: the drum grid claps drum hits,
 // every other view claps the current arrangement's (time-sorted) notes.
@@ -5752,7 +6975,9 @@ function _guideResetSchedule() {
 }
 
 function _guideTick() {
-    const claps = editorGuideClapEnabled();
+    // A/B overrides the claps pref while active: guide passes clap even
+    // with the pref off; recording passes stay clean even with it on.
+    const claps = _abClapsEnabledPure(_abActive(), _abPhase, editorGuideClapEnabled());
     const metro = editorMetronomeEnabled();
     if (!S.playing || !S.audioCtx || (!claps && !metro)) return;
     const nowChart = S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
@@ -5792,10 +7017,98 @@ function _guideTick() {
     }
 }
 
+// ── Loop A/B compare — the ear-training loop ─────────────────────────
+// While looping, alternate each pass between the RECORDING (reference
+// audible, claps off) and the GUIDE (reference muted via the mixer's
+// transparent ref gain, claps on) so a charter can hear what they charted
+// against what the artist played, one pass apart. Session-only state —
+// deliberately not persisted: silently muting the recording on a later
+// session would read as a playback bug.
+
+/* @pure:loop-ab:start */
+// Do claps schedule this tick? A/B overrides the claps pref while active:
+// guide passes clap even with the pref off, recording passes stay clean
+// even with it on.
+function _abClapsEnabledPure(abActive, phase, clapsPref) {
+    return abActive ? phase === 'guide' : clapsPref;
+}
+function _abNextPhasePure(phase) {
+    return phase === 'guide' ? 'recording' : 'guide';
+}
+// The reference gain target: muted only during an ACTIVE A/B guide pass
+// while playing; every other state restores the mixer fader's value.
+function _abRefTargetPure(abActive, playing, phase, faderGain) {
+    return (abActive && playing && phase === 'guide') ? 0 : faderGain;
+}
+/* @pure:loop-ab:end */
+
+let _abOn = false;
+let _abPhase = 'recording';   // every play starts by hearing the real thing
+
+function _abActive() { return _abOn && !!S.loopEnabled; }
+
+function _abApplyRefGain() {
+    const rg = _ensureRefGain();
+    if (!rg || !S.audioCtx) return;
+    const target = _abRefTargetPure(
+        _abActive(), !!S.playing, _abPhase,
+        _mixGainForPctPure(_mixLoadPct().ref));
+    // Same ~20 ms ramp as every mixer move — a phase flip is never a pop.
+    rg.gain.setTargetAtTime(target, S.audioCtx.currentTime, 0.02);
+}
+
+function _abOnLoopWrap() {
+    if (!_abActive()) return;
+    _abPhase = _abNextPhasePure(_abPhase);
+    _abApplyRefGain();
+    setStatus(_abPhase === 'guide'
+        ? 'A/B: guide pass (recording muted)'
+        : 'A/B: recording pass');
+}
+
+function _refreshLoopABBtn() {
+    const btn = document.getElementById('editor-loop-ab-btn');
+    if (!btn) return;
+    const region = _selectedLoopRegion();
+    btn.disabled = !region;
+    btn.classList.toggle('bg-accent', _abOn);
+    btn.classList.toggle('hover:bg-accent-light', _abOn);
+    btn.classList.toggle('bg-dark-600', !_abOn);
+    btn.classList.toggle('hover:bg-dark-500', !_abOn);
+    btn.setAttribute('aria-pressed', _abOn ? 'true' : 'false');
+    btn.title = region
+        ? 'A/B compare: each loop pass alternates — recording, then guide claps only (Alt+B)'
+        : 'Set a loop region first — A/B alternates recording and guide per pass';
+}
+
+function _editorToggleLoopAB() {
+    if (!_abOn && !_selectedLoopRegion()) {
+        setStatus('Set a loop region first — A/B alternates recording and guide per pass');
+        return true;
+    }
+    _abOn = !_abOn;
+    _abPhase = 'recording';
+    if (_abOn && !S.loopEnabled && _selectedLoopRegion()) {
+        // A/B is meaningless without looping — arm the loop exactly like the
+        // Loop button, including the seek into the region when the cursor
+        // sits outside it, so A/B never rides a pre-loop stretch of audio.
+        _setLoopRegionEnabled(true);
+    }
+    _abApplyRefGain();
+    _refreshLoopABBtn();
+    _guideTimerSync();   // guide passes need the scheduler even with claps off
+    setStatus(_abOn
+        ? 'Loop A/B on — first pass plays the recording, the next plays only the guide claps'
+        : 'Loop A/B off');
+    return true;
+}
+window.editorToggleLoopAB = _editorToggleLoopAB;
+
 // Start/stop the scheduler to match "playing AND enabled". Called from
 // startPlayback/stopPlayback and from the toggle (mid-play enable works).
 function _guideTimerSync() {
-    const want = S.playing && (editorGuideClapEnabled() || editorMetronomeEnabled());
+    const want = S.playing
+        && (editorGuideClapEnabled() || editorMetronomeEnabled() || _abActive());
     if (want && !_guideTimer) {
         _guideScheduledUntil = S.playStartTime
             + (S.audioCtx.currentTime - S.playStartWall);
@@ -5854,6 +7167,58 @@ function _editorToggleMetronome() {
 }
 window.editorToggleMetronome = _editorToggleMetronome;
 _refreshMetronomeBtn();
+
+// ── Audio mixer popover ──────────────────────────────────────────────
+function _refreshMixerBtn() {
+    const btn = document.getElementById('editor-mixer-btn');
+    if (!btn) return;
+    const panel = document.getElementById('editor-audio-mixer');
+    const open = !!(panel && !panel.classList.contains('hidden'));
+    btn.classList.toggle('bg-accent', open);
+    btn.classList.toggle('hover:bg-accent-light', open);
+    btn.classList.toggle('bg-dark-600', !open);
+    btn.classList.toggle('hover:bg-dark-500', !open);
+    btn.setAttribute('aria-pressed', open ? 'true' : 'false');
+}
+
+function _refreshMixerUI() {
+    const pcts = _mixLoadPct();
+    for (const [bus, id] of [['ref', 'editor-mix-ref'], ['guide', 'editor-mix-guide'], ['click', 'editor-mix-click']]) {
+        const slider = document.getElementById(id);
+        const label = document.getElementById(id + '-val');
+        if (slider) slider.value = String(pcts[bus]);
+        if (label) label.textContent = pcts[bus] + '%';
+    }
+    const blip = document.getElementById('editor-mix-blip');
+    if (blip) blip.checked = editorEditBlipEnabled();
+}
+
+function _editorToggleMixer(force) {
+    const panel = document.getElementById('editor-audio-mixer');
+    if (!panel) return false;
+    const show = force === undefined ? panel.classList.contains('hidden') : !!force;
+    panel.classList.toggle('hidden', !show);
+    if (show) _refreshMixerUI();
+    _refreshMixerBtn();
+    return true;
+}
+window.editorToggleMixer = _editorToggleMixer;
+
+window.editorSetMixLevel = (bus, val) => {
+    if (bus !== 'ref' && bus !== 'guide' && bus !== 'click') return;
+    const p = _mixSetBusGain(bus, val);
+    const label = document.getElementById(
+        (bus === 'ref' ? 'editor-mix-ref' : bus === 'guide' ? 'editor-mix-guide' : 'editor-mix-click') + '-val');
+    if (label) label.textContent = p + '%';
+};
+
+window.editorSetEditBlip = (on) => {
+    try { localStorage.setItem('editorEditBlip', on ? '1' : '0'); } catch (_) {}
+    setStatus(on
+        ? 'Edit blip on — a soft tick confirms note adds and pitch changes'
+        : 'Edit blip off');
+};
+_refreshMixerBtn();
 
 function updateMeasureDisplay() {
     const el = document.getElementById('editor-measure-display');
@@ -5950,6 +7315,16 @@ async function loadCDLC(filename) {
         // silently riding a different song's parts would be corrupting.
         S.tempoRideCustom = null;
         if (S.tempoRideScope === 'custom') S.tempoRideScope = 'drum';
+        // Drop loop A/B — session-only state; carrying a muted-reference
+        // phase into another song would read as a playback bug. Refresh the
+        // audio + UI too: clearing the flags alone would leave a guide-pass
+        // mute on the ref gain and stale A/B button styling until the next
+        // incidental control refresh.
+        _abOn = false;
+        _abPhase = 'recording';
+        _abApplyRefGain();
+        _guideTimerSync();
+        _updateLoopRegionControls();
         // Abandon any in-progress drag — the global mouse handlers act on
         // S.drag regardless of mode, so a stale drag would otherwise keep
         // mutating the newly-loaded song's data.
@@ -6092,12 +7467,12 @@ function updateArrangementSelector() {
     const recBtn = document.getElementById('editor-record-midi-btn');
     if (recBtn) {
         recBtn.classList.toggle('hidden', !S.sessionId || S.format !== 'sloppak');
-        if (!navigator.requestMIDIAccess) {
+        if (_recMidiBackend() === 'none') {
             recBtn.disabled = true;
-            recBtn.title = 'Web MIDI not available — use Chrome or Edge.';
+            recBtn.title = 'MIDI not available — needs the host MIDI input capability or Web MIDI (Chrome/Edge).';
         } else {
             recBtn.disabled = false;
-            recBtn.title = 'Record a Keys arrangement live from a MIDI keyboard (Chrome/Edge)';
+            recBtn.title = 'Record a Keys arrangement live from a MIDI keyboard';
         }
     }
 
@@ -6739,6 +8114,14 @@ function _renderInspector() {
         ${chordHtml}
         <div class="space-y-2 border-t border-gray-700 pt-3">
             <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Time (s)</span>
+                <input type="number" min="0" step="0.01" value="${inputVal(sharedTime)}"
+                    placeholder="${sharedTime === null ? 'mixed' : ''}"
+                    onchange="editorInspectorSetField('time', this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs"
+                    title="Set the note's start time in seconds (for aligning to the recording)">
+            </label>
+            <label class="flex items-center gap-2">
                 <span class="w-24 text-gray-400">Sustain</span>
                 <input type="number" min="0" step="0.05" value="${inputVal(sharedSustain)}"
                     placeholder="${sharedSustain === null ? 'mixed' : ''}"
@@ -6843,6 +8226,10 @@ function _renderInspector() {
 // enforce — `type="number" min/max` on the inputs is only a UI hint;
 // users can paste / type out-of-range values, so we clamp here too.
 const _INSPECTOR_BOUNDS = {
+    // Time (start position, seconds): non-negative, no upper clamp (a note
+    // can't sit before the song start; the duration bound is soft). Lets an
+    // author type a precise onset to align a note to the recording.
+    time: { min: 0, max: Infinity, integer: false },
     // Sustain has no hard upper bound elsewhere (drag-resize / add-note
     // dialog leave it unconstrained), so the inspector matches — only
     // the lower clamp matters for input sanity.
@@ -6885,8 +8272,8 @@ function _coerceInspectorNumber(rawValue, bounds) {
 }
 
 window.editorInspectorSetField = (field, raw) => {
-    const sel = _selectedNotes();
-    if (sel.length === 0) return;
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) return;
     const bounds = _INSPECTOR_BOUNDS[field];
     if (!bounds) return;
     const v = _coerceInspectorNumber(raw, bounds);
@@ -6897,8 +8284,21 @@ window.editorInspectorSetField = (field, raw) => {
         _renderInspector();
         return;
     }
+    // Route through the undo history: the sustain edit used to mutate
+    // notes in place with no undo, and Time is new. Both apply to every
+    // selected note (matching the field's "set all" semantics) as one
+    // command, so a numeric edit is a single Ctrl+Z.
+    const nn = notes();
     if (field === 'sustain') {
-        for (const n of sel) n.sustain = v;
+        S.history.exec(new ResizeSustainGroupCmd(idxs, idxs.map(() => v)));
+    } else if (field === 'time') {
+        // MoveNoteCmd applies per-note deltas; convert the absolute target
+        // time to a delta per note (no re-sort — same as _editorResnapSelection,
+        // and hitNote is a linear scan, so order isn't load-bearing).
+        const dtimes = idxs.map(i => v - (nn[i] ? nn[i].time : 0));
+        S.history.exec(new MoveNoteCmd(idxs, dtimes, idxs.map(() => 0), null));
+    } else {
+        return;
     }
     draw();
     updateStatus();
@@ -6907,6 +8307,10 @@ window.editorInspectorSetField = (field, raw) => {
 window.editorInspectorSetTech = (key, raw) => {
     const sel = _selectedNotes();
     if (sel.length === 0) return;
+    // Read-only roll (V4): scalar technique edits mutate n.techniques in
+    // place (no EditHistory command), so the exec lock never sees them.
+    // Refuse and bounce the input back to the model value.
+    if (_rollReadOnly()) { _rollLockNotice(); _renderInspector(); return; }
     const bounds = _INSPECTOR_BOUNDS[key];
     if (!bounds) return;
     const v = _coerceInspectorNumber(raw, bounds);
@@ -6957,6 +8361,9 @@ window.editorOpenBendCurve = () => {
 window.editorInspectorSetFlag = (key, on) => {
     const sel = _selectedNotes();
     if (sel.length === 0) return;
+    // Read-only roll (V4): flag toggles mutate n.techniques directly — same
+    // bypass as editorInspectorSetTech. Refuse and re-render to reset the box.
+    if (_rollReadOnly()) { _rollLockNotice(); _renderInspector(); return; }
     for (const n of sel) {
         if (!n.techniques) n.techniques = {};
         n.techniques[key] = !!on;
@@ -7570,6 +8977,11 @@ window.editorSelectArrangement = (val) => {
     updateStatus();
 };
 window.editorToggleTech = (idx, tech) => {
+    // Read-only roll (V4): the context-menu technique toggle mutates
+    // n.techniques directly (no EditHistory), so it escapes the exec lock.
+    // The note context menu still opens in the roll (right-click selection is
+    // allowed), so guard the toggle itself.
+    if (_rollReadOnly()) { hideContextMenu(); _rollLockNotice(); return; }
     const n = notes()[idx];
     if (!n.techniques) n.techniques = {};
     n.techniques[tech] = !n.techniques[tech];
@@ -11873,8 +13285,11 @@ window.editorDoImportGuitar = async () => {
 // Record Keys arrangement live from a MIDI keyboard (Web MIDI API)
 // ════════════════════════════════════════════════════════════════════
 
-let _recMidiAccess = null;
-let _recMidiInput = null;
+let _recMidiAccess = null;                 // legacy private Web-MIDI access (fallback path)
+let _recMidiInput = null;                  // legacy private Web-MIDI input (fallback path)
+let _recMidiHandle = null;                 // host midi-input domain live handle {addListener, removeListener}
+let _recMidiOpenKey = null;                // logicalSourceKey _recMidiHandle belongs to
+let _recMidiOpenGen = 0;                   // bumped on every open/teardown; stale async opens self-close
 let _recState = 'idle';                    // idle | recording | finalizing
 let _recChannel = -1;                      // -1 = all, else 0..15
 const _recHeld = new Map();                // pitch -> [{onTime, channel}, ...] FIFO
@@ -11893,9 +13308,58 @@ function chartTimeNow() {
     return S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
 }
 
+/* @pure:midi-adapter:start */
+// Which MIDI backend the record path uses. The host `midi-input`
+// capability domain is the org's ONE device-access boundary (one
+// permission prompt, one source list, PII-redacted diagnostics) — prefer
+// it whenever the host ships it; fall back to the editor's legacy private
+// Web-MIDI path on older hosts; 'none' when neither exists.
+function _recMidiBackendPure(domain, hasWebMidi) {
+    if (domain && domain.version === 1) return 'domain';
+    return hasWebMidi ? 'private' : 'none';
+}
+// Normalize a device list to the picker's one shape [{id, label}]:
+// domain sources carry {logicalSourceKey, label}; private Web-MIDI inputs
+// carry {id, name, manufacturer}.
+function _recMidiDeviceRowsPure(backend, list) {
+    if (backend === 'domain') {
+        return (list || []).map(s => ({
+            id: s.logicalSourceKey,
+            label: s.label || 'MIDI input',
+        }));
+    }
+    return (list || []).map(inp => ({
+        id: inp.id,
+        label: inp.name || inp.manufacturer || `MIDI Device (${inp.id})`,
+    }));
+}
+/* @pure:midi-adapter:end */
+
+function _recMidiDomain() {
+    const d = window.feedBack && window.feedBack.midiInput;
+    return (d && d.version === 1) ? d : null;
+}
+function _recMidiBackend() {
+    return _recMidiBackendPure(
+        _recMidiDomain(),
+        typeof navigator !== 'undefined' && !!navigator.requestMIDIAccess);
+}
+
 async function _recMidiInit() {
+    const backend = _recMidiBackend();
+    if (backend === 'domain') {
+        // `discover` is the domain's permission boundary (it gates the whole
+        // Web-MIDI input list) — the analog of requestMIDIAccess below.
+        try {
+            const r = await _recMidiDomain().discover();
+            return !(r && r.outcome === 'denied');
+        } catch (e) {
+            console.warn('[Editor] MIDI discover failed:', e);
+            return false;
+        }
+    }
+    if (backend !== 'private') return false;
     if (_recMidiAccess) return true;
-    if (!navigator.requestMIDIAccess) return false;
     try {
         _recMidiAccess = await navigator.requestMIDIAccess({ sysex: false });
         _recMidiAccess.onstatechange = () => _recMidiUpdateDeviceList();
@@ -11906,49 +13370,132 @@ async function _recMidiInit() {
     }
 }
 
+// Pre-open the domain session for `id` (modal-open / device-change time,
+// where async is fine). Start must stay SYNCHRONOUS — see the user-gesture
+// comment in editorStartRecordMidi — so the session is ready before the
+// Start click and _recMidiConnect only attaches the listener.
+async function _recMidiEnsureOpen(id) {
+    const d = _recMidiDomain();
+    if (!d || !id) return false;
+    if (_recMidiHandle && _recMidiOpenKey === id) return true;
+    _recMidiDisconnectDomain();          // bumps _recMidiOpenGen
+    // Snapshot the generation AFTER teardown. If a newer open — or a
+    // teardown (device change / modal close) — happens while we await, the
+    // generation moves on and this resolution is stale: we must NOT install
+    // its handle (that would leak the session opened by the newer request
+    // and resurrect a handle after teardown). Close the orphaned ref instead.
+    const gen = ++_recMidiOpenGen;
+    try {
+        d.select(id);
+        const r = await d.open({ requester: 'editor-record', logicalSourceKey: id });
+        if (!r || !r.handle) return false;
+        if (gen !== _recMidiOpenGen) {
+            try { d.close({ requester: 'editor-record', logicalSourceKey: id }); } catch (_) { /* best-effort */ }
+            return false;
+        }
+        _recMidiHandle = r.handle;
+        _recMidiOpenKey = id;
+        try { localStorage.setItem('editor.recordMidiDeviceId', id); } catch (_) {}
+        return true;
+    } catch (e) {
+        console.warn('[Editor] MIDI open failed:', e);
+        return false;
+    }
+}
+
+function _recMidiDisconnectDomain() {
+    const d = _recMidiDomain();
+    if (_recMidiHandle) {
+        try { _recMidiHandle.removeListener(_recMidiOnData); } catch (_) { /* best-effort */ }
+    }
+    if (d && _recMidiOpenKey) {
+        // Release our ref on the SHARED session (the domain refcounts across
+        // consumers — closing here never yanks the device from the drums
+        // plugin or the input wizard).
+        try { d.close({ requester: 'editor-record', logicalSourceKey: _recMidiOpenKey }); } catch (_) { /* best-effort */ }
+    }
+    _recMidiHandle = null;
+    _recMidiOpenKey = null;
+    // Invalidate any open() still in flight so its late resolution self-closes
+    // instead of resurrecting a handle onto this torn-down session.
+    _recMidiOpenGen++;
+}
+
+window.editorRecordMidiDeviceChanged = (id) => {
+    try { localStorage.setItem('editor.recordMidiDeviceId', id); } catch (_) {}
+    // Domain path: swap the pre-opened session to the new device now, so
+    // the Start click stays synchronous. Private path connects at Start.
+    if (_recMidiBackend() === 'domain') _recMidiEnsureOpen(id);
+};
+
 function _recMidiUpdateDeviceList() {
     const sel = document.getElementById('editor-record-midi-device');
     const noDevice = document.getElementById('editor-record-midi-no-device');
     const startBtn = document.getElementById('editor-record-midi-start');
     if (!sel) return;
-    const inputs = [];
-    if (_recMidiAccess) _recMidiAccess.inputs.forEach(inp => inputs.push(inp));
+    const backend = _recMidiBackend();
+    let raw = [];
+    if (backend === 'domain') {
+        raw = _recMidiDomain().listSources();
+    } else if (_recMidiAccess) {
+        _recMidiAccess.inputs.forEach(inp => raw.push(inp));
+    }
+    const rows = _recMidiDeviceRowsPure(backend, raw);
 
     const saved = localStorage.getItem('editor.recordMidiDeviceId') || '';
     // Build options with createElement so device-supplied id/name strings
     // can't break out into HTML — Web MIDI metadata comes from the OS/USB
     // descriptor and isn't safe to interpolate via innerHTML.
     sel.replaceChildren();
-    for (const inp of inputs) {
+    for (const row of rows) {
         const opt = document.createElement('option');
-        opt.value = inp.id;
-        const label = inp.name || inp.manufacturer || `MIDI Device (${inp.id})`;
-        opt.textContent = label;
-        if (inp.id === saved) opt.selected = true;
+        opt.value = row.id;
+        opt.textContent = row.label;
+        if (row.id === saved) opt.selected = true;
         sel.appendChild(opt);
     }
 
-    const empty = !inputs.length;
+    const empty = !rows.length;
     if (noDevice) noDevice.classList.toggle('hidden', !empty);
     if (startBtn) startBtn.disabled = empty;
 }
 
+// Arm the record path for `id`. Returns 'ok' | 'pending' | 'fail'.
+// Domain path: the session was pre-opened by the modal / device-change
+// handler, so this only (re)attaches the listener — synchronous, which
+// the Start click requires. 'pending' means the pre-open is still in
+// flight (we kick another and the user presses Start again).
 function _recMidiConnect(id) {
+    if (_recMidiBackend() === 'domain') {
+        if (!_recMidiHandle || _recMidiOpenKey !== id) {
+            _recMidiEnsureOpen(id);   // fire-and-forget; resolves for the retry
+            return 'pending';
+        }
+        try { _recMidiHandle.removeListener(_recMidiOnData); } catch (_) { /* idempotent re-arm */ }
+        _recMidiHandle.addListener(_recMidiOnData);
+        try { localStorage.setItem('editor.recordMidiDeviceId', id); } catch (_) {}
+        return 'ok';
+    }
+    // Legacy private Web-MIDI path (hosts without the midi-input domain).
     if (_recMidiInput) _recMidiInput.onmidimessage = null;
     _recMidiInput = null;
-    if (!_recMidiAccess) return;
+    if (!_recMidiAccess) return 'fail';
     _recMidiAccess.inputs.forEach(inp => {
         if (inp.id === id) {
             _recMidiInput = inp;
-            _recMidiInput.onmidimessage = _recMidiOnMessage;
+            // Both paths deliver RAW BYTES to _recMidiOnData — the domain
+            // handle calls listeners with e.data, so the private path
+            // unwraps the event here to keep one routing function.
+            _recMidiInput.onmidimessage = (e) => _recMidiOnData(e.data);
             localStorage.setItem('editor.recordMidiDeviceId', id);
         }
     });
+    return _recMidiInput ? 'ok' : 'fail';
 }
 
-function _recMidiOnMessage(e) {
+function _recMidiOnData(data) {
     if (_recState !== 'recording') return;
-    const [status, data1, velocity] = e.data;
+    const [status, data1, velocity] = data;
     const ch = status & 0x0F;
     if (_recChannel >= 0 && ch !== _recChannel) return;
     const cmd = status & 0xF0;
@@ -12045,7 +13592,8 @@ window.editorShowRecordMidiModal = async () => {
         }
     }
 
-    if (!navigator.requestMIDIAccess) {
+    const backend = _recMidiBackend();
+    if (backend === 'none') {
         if (noWebMidi) noWebMidi.classList.remove('hidden');
         if (startBtn) startBtn.disabled = true;
     } else {
@@ -12057,6 +13605,13 @@ window.editorShowRecordMidiModal = async () => {
         } else {
             status.textContent = '';
             _recMidiUpdateDeviceList();
+            // Domain path: pre-open the selected device's shared session
+            // NOW so the Start click can stay synchronous (user-gesture
+            // constraint in editorStartRecordMidi).
+            if (backend === 'domain') {
+                const devSel = document.getElementById('editor-record-midi-device');
+                if (devSel && devSel.value) _recMidiEnsureOpen(devSel.value);
+            }
         }
     }
 
@@ -12067,6 +13622,9 @@ window.editorHideRecordMidiModal = () => {
     // Refuse to close while a take is active — explicit Stop is required.
     if (_recState !== 'idle') return;
     document.getElementById('editor-record-midi-modal').classList.add('hidden');
+    // Release our ref on the shared domain session (refcounted — never
+    // yanks the device from other consumers). Re-opens on next modal show.
+    _recMidiDisconnectDomain();
 };
 
 window.editorStartRecordMidi = () => {
@@ -12088,8 +13646,14 @@ window.editorStartRecordMidi = () => {
         status.textContent = 'Select a MIDI device first.';
         return;
     }
-    _recMidiConnect(sel.value);
-    if (!_recMidiInput) {
+    const connected = _recMidiConnect(sel.value);
+    if (connected === 'pending') {
+        // Domain pre-open still in flight (rare — modal open kicks it);
+        // the retry click lands after it resolves.
+        status.textContent = 'Connecting to the MIDI device — press Start again in a moment.';
+        return;
+    }
+    if (connected !== 'ok') {
         status.textContent = 'Failed to connect to MIDI device.';
         return;
     }
@@ -12208,6 +13772,12 @@ window.editorStopRecordMidi = () => {
     _recSustainOn.clear();
 
     if (_recMidiInput) _recMidiInput.onmidimessage = null;
+    // Domain path: Stop hides the modal at the end of this function, so fully
+    // release our ref on the shared session here — otherwise the refcount is
+    // held open indefinitely (the modal-close teardown never runs on the Stop
+    // path). Refcounted, so this never yanks the device from other consumers;
+    // reopening the modal re-opens the session.
+    _recMidiDisconnectDomain();
 
     // Populate the target arrangement registered at Start time. No second
     // POST: the arrangement was already registered with the backend, so
@@ -15261,6 +16831,8 @@ draw = function () {
     _refreshTempoScopeToggle();
     _refreshTempoSyncInspector();
     _refreshPartsViewButton();
+    _refreshKeyControls();
+    _refreshViewSwitch();
     return _origDraw.apply(this, arguments);
 };
 

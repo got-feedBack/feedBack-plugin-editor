@@ -7,6 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Read-only Tab preview of the current part.** A new **Tab…** toolbar
+  button (registry command `showTabPreview`) opens a modal that renders
+  the active fretted part as engraved tab, reusing the Tab View plugin's
+  arrangement→GP conversion endpoint and the same pinned alphaTab CDN
+  render idiom (player disabled — no soundfont download; the engraving
+  lays out once per load, never per frame, and tears down on close).
+  Honest about its source: the endpoint reads the **saved** pack, so the
+  modal says "as last saved" and offers Refresh; unsaved edits need a
+  Save first. Degrades cleanly — a missing Tab View plugin, an old host,
+  keys parts (their packing has no tab), and unsaved sessions each get a
+  specific message instead of a blank panel. Strictly read-only: the
+  String view stays the fretted editor; this is a proofreading lens.
+  Tests: `tests/tab_preview.test.js`.
+- **Loop A/B compare — the ear-training loop.** A new **A/B** transport
+  toggle (Alt+B, both profiles) alternates each loop pass between the
+  RECORDING (reference audible, claps off) and the GUIDE (reference muted
+  through the mixer's transparent gain, claps on — even if the claps pref
+  is off), so a charter hears what they charted against what the artist
+  played, one pass apart. Every (re)start begins on the recording pass;
+  phase flips ride the loop wrap with the mixer's ~20 ms ramp (never a
+  pop); stopping mid-guide-pass always restores the reference to its
+  fader level; clearing the loop region disarms A/B; session-only state
+  that resets on song load — a persisted mute would read as a playback
+  bug later. Arming A/B with a region set but looping off also arms the
+  loop. Tests: `tests/loop_ab.test.js`.
+### Changed
+- **Live MIDI record now uses the host's `midi-input` capability domain.**
+  The record path called private `navigator.requestMIDIAccess` while the
+  rest of the org converged on `window.feedBack.midiInput` (one permission
+  prompt, one shared source list, refcounted device sessions, PII-redacted
+  diagnostics) — a flagged compat drift, now closed. The domain is
+  preferred whenever the host ships it; older hosts fall back to the
+  private Web-MIDI path unchanged, and both deliver raw bytes into ONE
+  routing function so capture behavior is byte-identical. The domain
+  session pre-opens when the record modal opens (and on device change) so
+  the Start click stays synchronous — the user-gesture constraint that
+  keeps the transport anchor honest — and the shared session is
+  ref-released on modal close, never yanked from other consumers. Tests:
+  `tests/midi_domain.test.js` (backend selection, picker normalization,
+  and on/off/velocity-0/channel-filter/sustain-pedal routing equivalence).
+### Added
+- **Per-part view switcher: any fretted part can open in the piano roll
+  (read-first).** The editing view was derived from the arrangement NAME —
+  keys parts got the roll, everything else the lanes, no choice. A new
+  String · Piano roll switcher makes it a per-part preference (editor
+  localStorage keyed by song + stable part id — reorder/rename safe; never
+  pack data; keys parts stay piano-locked since their wire packing has no
+  string semantics to show). A fretted part in the roll renders at
+  **sounding pitch** (open string + tuning + capo + fret) with the same
+  mapping across draw, hit-testing, marquee select, and the viewport
+  auto-fit, and the in-key row shading applies automatically. Fretted
+  parts in the roll are **read-only for now** (a visible notice says so):
+  every command entry point is gated centrally in the undo history plus
+  the live-mutating drag paths, because adding or moving by pitch would
+  force a silent string/fret guess — editing arrives with the
+  suggest-position resolver. Under the hood the historical `isKeysMode()`
+  split into a piano-SURFACE predicate and a keys-DATA predicate
+  (`isKeysArr`), and data-semantics sites (string moves, chord-sibling
+  grouping, anchors) were re-pointed — a fretted part in the roll still
+  groups its chords and keeps its string-move machinery. Registry command
+  `cycleViewMode`. Tests: `tests/view_switcher.test.js`.
+- **The in-key highlight now covers the fretted lanes.** The song key/scale
+  picker's highlight applied only to the piano roll; guitar/bass notes now
+  dim when out of key too, resolving each note to its **sounding pitch =
+  open string + tuning offset + capo + fret** via the new
+  `_soundingPitchPure` helper. The capo is added exactly **once** — chart
+  frets are capo-relative, matching core's single source of the formula
+  (`lib/song.py pitch_from_base`, shared by the tuner and the highway's
+  scale-degree derivation) — and `_absolutePitch` (string-moves) still
+  deliberately omits it, now documented as a pair so composing the two
+  can never double-count. Out-of-key notes dim (never redden —
+  chromaticism isn't an error) and unresolvable pitches stay fully lit;
+  the Key controls now show for any pitched arrangement, not just keys.
+  Tests: `tests/fret_key_highlight.test.js` (including the capo-flips-
+  membership case an uncapoed resolver gets wrong).
+
+### Fixed
+- **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
+  arrangement entries.** The full-snapshot save path rebuilt every manifest
+  arrangement entry from scratch (`{id, name, file, tuning, capo}`), silently
+  dropping spec fields the editor doesn't author — `type` (§5.2), `centOffset`,
+  and any future additive key — on every save, violating the format's
+  unknown-key preservation rule (§1.2). Rebuilt entries now merge onto the
+  existing entry for the same id, with editor-owned keys taking the fresh
+  values. Tests: `tests/test_manifest_type_preserve.py`.
+- **Editing one keys note no longer discards GP notation for the whole
+  arrangement.** GP-sourced notation (exact per-stave hand assignments,
+  dynamics, pedal events, fingering, grace notes) was kept only while a
+  fingerprint of ALL notes matched — so a single piano-roll edit invalidated
+  the entire sidecar and the save fell back to the heuristic lift, silently
+  re-guessing the hand split and dropping every GP-only attribute in every
+  measure. The save now performs a **measure-granular merge**: measures whose
+  `(time, midi)` note content still matches the current wire keep their GP
+  measure objects verbatim; only edited measures take the freshly lifted
+  measure. The merged payload is schema-validated and re-stamped; any grid
+  misalignment — or a merge that preserves zero measures (e.g. a
+  transpose-all) — falls back to the full lift (the old behavior), so a
+  100%-heuristic relift is never stamped as GP-sourced. Tests:
+  `tests/test_notation_preserve_merge.py`, `tests/test_notation_save.py`.
+- **The `.bak` safety copy now rolls with every save.** It was written only once
+  (the first time a pack was overwritten), so a user editing a pack over weeks
+  kept a first-ever-save recovery point that grew staler with every save. Both
+  overwrite sites (the editor save and the build/save-as path) now refresh the
+  `.bak` to the current on-disk pack before overwriting, so the backup is always
+  the previous save, one step back. Best-effort: a failed backup copy never
+  blocks the save. Tests: `tests/test_rolling_backup.py`.
+
+### Added
+- **Infer-once arrangement `type` stamping.** On save, an arrangement entry with
+  no `type` gets one inferred from its display name (keys-family → `piano`, bass
+  names → `bass`, classic guitar roles → `guitar`) — conservative on purpose:
+  vocals/drums/ambiguous names stay untyped, and an authored `type` is never
+  clobbered. `type` is the queryable instrument facet the spec defines; display
+  names stay free labels — groundwork for safe track renaming in the Parts view.
+
 ### Changed
 - **Tempo-ride scope is now a per-part checklist.** The Tempo Map's binary
   "Drum tab / All instruments" ride toggle gains a third **Per part…** mode:
@@ -47,6 +163,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tests: `tests/boot_teardown.test.js`.
 
 ### Added
+- **Audio mixer popover with recording / guide / click faders, first-play
+  fade, and an edit-preview blip.** A new **Mix** toolbar button (Shift+C,
+  both shortcut profiles) opens a small popover with three level faders:
+  the reference recording (a new transparent gain node — still never routed
+  through the guide limiter), guide claps, and the metronome click (both
+  already behind the limiter). Levels persist as editor prefs, apply with a
+  ~20 ms `setTargetAtTime` ramp (never a stepped jump mid-audio), and the
+  defaults preserve the shipped balance exactly. Hearing safety: the first
+  play of each loaded recording fades it in from ~30% over 0.35 s, so an
+  unexpectedly hot recording is reached, never jumped to — the guard re-arms
+  on every new load (`loadCDLC`, create/import, and replace-audio all funnel
+  through `loadAudio()`), not just the session's first song. The popover also
+  hosts the new **edit blip** (on by default, toggleable): a soft 1320 Hz
+  tick — pitched apart from the 1750 Hz guide clap — confirms note **adds
+  and pitch changes** (fret set/adjust, string moves, pitch-changing drags)
+  summed straight into the shared limiter (so muting guide claps never also
+  silences the edit cue); time-only moves and marquee selects stay
+  silent, group edits rate-limit to one cue, and the blip never fires when
+  the audio context isn't running. Tests: `tests/audio_mixer.test.js`.
 - **Drum edits are undoable.** Click-add, drag-move (time and lane), Delete,
   and the G/F/K ghost/flam/choke toggles now run through the editor's shared
   undo history via four new command classes (`AddDrumHitCmd`,
@@ -169,6 +304,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drum grid). Navigational by design — technique editing stays in the
   focus editors. Mutually exclusive with drum-edit and Tempo Map modes,
   like they are with each other. Tests: `tests/parts_view.test.js`.
+### Added
+- **Song key/scale + in-key highlight for the piano roll.** A Key control
+  (tonic + scale/mode) and an **In-key** toggle appear in the toolbar when a
+  keys arrangement is active. With the highlight on, out-of-key rows get a
+  neutral desaturating wash and out-of-key notes are dimmed in the piano roll
+  — so you can see at a glance what sits inside the key while transcribing,
+  with nothing hidden or flagged as wrong (no red; chromatic notes stay fully
+  visible and editable). Thirteen scales/modes ship: major, the seven diatonic
+  modes, harmonic/melodic minor, major/minor pentatonic, blues, and chromatic
+  (which shades nothing, for atonal passages). The key is a per-song editor
+  preference (localStorage, never the feedpak) and the highlight a global one;
+  both are view aids, not chart data. Groundwork for reading authored key
+  regions (keys.json) in a later pass. Tests: `tests/scale_membership.test.js`.
+- **Section edits are undoable.** Adding (Shift+M or the beat-bar right-click
+  menu), renaming, and deleting a section mutated `S.sections` directly with
+  no undo — a stray Delete on a section was unrecoverable, and Ctrl+Z after
+  adding one rolled back the last *note* edit instead. Add/rename/delete now
+  run through the editor's undo history via three command classes
+  (`AddSectionCmd`, `RemoveSectionCmd`, `RenameSectionCmd`) that hold the
+  section by reference and restore `S.sections` exactly on undo/redo — a
+  deleted section returns to its original position even when another section
+  shares its start time. The section context menu's "near a section" lookup
+  now shares one pure helper with the command tests. Tests:
+  `tests/section_undo.test.js`.
+### Added
+- **Duplicate selection (Ctrl+D).** Copies the selected notes to the next
+  position — one selection-length later, so a chord or single note moves one
+  grid step and a multi-note phrase moves by its own span — and leaves the
+  copies selected, so repeating Ctrl+D tiles a riff forward. Interior timing
+  is preserved (the whole selection shifts by one offset, never re-quantized),
+  so a swung or syncopated phrase duplicates with its feel intact. Runs as one
+  undoable command; gated to note-edit mode (skipped in drum-edit / Tempo Map
+  and while typing in a field), and preventDefault keeps the browser's bookmark
+  shortcut from firing. Joins the command registry (findable in the shortcut
+  panel + command palette). Tests: `tests/duplicate_selection.test.js`.
+### Added
+- **Edit a note's start time from the inspector.** The selection inspector now
+  has a **Time (s)** field alongside Sustain, so you can type a precise onset
+  to align a note to the recording (down to the millisecond) instead of only
+  dragging. Applies to every selected note as one undoable command.
+
+### Fixed
+- **Inspector sustain edits are undoable.** Setting Sustain from the inspector
+  mutated the notes in place with no undo entry — a mistyped value couldn't be
+  taken back with Ctrl+Z. Both inspector numeric edits (Sustain and the new
+  Time) now route through the editor's undo history (`ResizeSustainGroupCmd` /
+  `MoveNoteCmd`). Tests: `tests/inspector_time.test.js`.
+### Added
+- **Section completeness strip.** A thin band along the top of the lane area
+  tints each section by whether the active arrangement has any notes in it —
+  an at-a-glance "where is this chart still empty" while working through a
+  long song. Ambient and neutral by design: a gentle blue where there's
+  content, a faint wash where there isn't — no percentage, no red, nothing
+  to click. Drawn under the existing section lines/labels. Tests:
+  `tests/section_coverage.test.js`.
 ### Added
 - **Import GoPlayAlong projects (`.gp` + audio + a GoPlayAlong `.xml`).** A GoPlayAlong export is a `<track>` **sync sidecar** — it points at a Guitar Pro score and an audio file and stores the bar→audio sync points, but carries **no chart** — so feeding it to the arrangement importer failed with "not a recognised EOF arrangement XML". Now, in the New-dialog Content Import, drop the Guitar Pro tab + the audio + the GoPlayAlong `.xml` together: the `.xml` is content-sniffed and staged as a **GoPlayAlong sync source** (not mistaken for an EOF arrangement, and it prefills title/artist), and on Import the editor applies GoPlayAlong's **authored** per-bar sync instead of re-deriving it via onset detection. Under the hood: new `goplayalong.py` parser + `/api/plugins/editor/parse-goplayalong-sync` endpoint emit the same `sync_points` / `audio_offset` shape `autosync-gp` / `extract-gp-sync` return, which the existing `convert-gp` warp path consumes (`sync_applied: "warp"`). All GoPlayAlong UI logic is gated on a staged sidecar, so normal GP/EOF/audio imports are byte-for-byte unchanged. Tests: `tests/test_goplayalong.py` (10 cases vs a real export). Verified end-to-end against a real GoPlayAlong project ("Would?" — Alice in Chains): 73 sync points → the referenced `.gp` (87 bars, 7 tracks) → 73 warp anchors → a monotonic per-bar warp.
 - **GP import with auto-sync now applies the full per-bar sync map (Songsterr-style), and the auto-sync audio can come from a YouTube URL.** Previously the auto-sync flow computed per-bar sync points but `convert-gp` applied only the scalar bar-1 offset, so recordings that drift from the tab's authored tempo went audibly out of sync over the song. Now: `convert-gp` accepts the `sync_points` payload back from the client and warps the whole converted chart (notes, sustains, beats, sections, handshapes, phrase levels, keys notation sidecars) onto the recording's timeline via core's new `lib.gp_autosync` warp helpers, responding with `sync_applied: "warp"`; it falls back to the scalar offset (`sync_applied: "offset"`) for GP3/4/5 files that use repeats/voltas/directions (their playback expansion can't be mapped from as-written sync points), when anchors degenerate, or when core lacks the new helpers. The create flow auto-runs the refine pass (onset phase sweep — requires the new core `refine_sync`, which this endpoint always imported but which never existed until now) right after the coarse DTW sync, and both refine calls send `gp_path` so refinement uses exact per-bar score times instead of a 4/4 approximation. The auto-sync section gains a YouTube URL input (reusing `/youtube-audio`) beside the file upload; the fetched audio becomes both the alignment target and the imported song audio.

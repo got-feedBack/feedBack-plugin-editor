@@ -175,6 +175,105 @@ def _load_arrangement_json(path) -> dict:
     return json.loads(raw)
 
 
+# Keys-family arrangement names (piano/keyboard/synth). The SAME matcher — a
+# word-boundary search over the SAME keyword set — decides both the manifest
+# ``type`` facet (below) and the keys notation sidecar (see the sidecar detector
+# further down, which reuses this regex). Keeping them identical guarantees a
+# name that earns a keys sidecar also infers a keys/piano type, so the two never
+# disagree (e.g. "Electric Piano", "Grand Piano", "Lead Synth").
+_KEYS_NAME_RE = re.compile(r"\b(keys|piano|keyboard|synth)\b", re.IGNORECASE)
+_TYPE_BASS_RE = re.compile(r"bass", re.I)
+_TYPE_SKIP_RE = re.compile(r"vocal|voice|sing|drum", re.I)
+_TYPE_GUITAR_RE = re.compile(r"guitar|lead|rhythm|combo|acoustic|electric", re.I)
+
+
+def _infer_arrangement_type(name) -> str:
+    """Manifest ``type`` (feedpak-spec §5.2) inferred from a display name.
+
+    The infer-once migration: callers write this only when an entry carries
+    no ``type`` yet, never clobbering an authored value. Conservative on
+    purpose — a name that doesn't clearly identify an instrument returns ""
+    and the entry stays untyped, because writing a WRONG type is worse than
+    writing none. Vocals/drums names also return "": per the spec those are
+    side-file mechanisms, not arrangement types.
+    """
+    n = (name or "").strip()
+    if not n:
+        return ""
+    # keys checked before bass so "Synth Bass" resolves to piano (intentional:
+    # a keys arrangement that happens to sit in the bass register still wants
+    # keys notation). Word-boundary search shared with the sidecar detector.
+    if _KEYS_NAME_RE.search(n):
+        return "piano"
+    if _TYPE_BASS_RE.search(n):
+        return "bass"
+    if _TYPE_SKIP_RE.search(n):
+        return ""
+    if _TYPE_GUITAR_RE.search(n):
+        return "guitar"
+    return ""
+
+
+def _merge_manifest_entry(old_entry, rebuilt: dict) -> dict:
+    """Merge a rebuilt manifest arrangement entry ONTO the existing entry
+    with the same id, so spec fields the editor doesn't author (``type``,
+    ``centOffset``, future additive keys) survive a full-snapshot save —
+    the format's unknown-key preservation rule (feedpak-spec §1.2). The
+    editor-owned keys (id/name/file/tuning/capo) always take the rebuilt
+    value. Previously the full-snapshot save path rebuilt every entry from
+    scratch and silently dropped everything else."""
+    out = dict(old_entry) if isinstance(old_entry, dict) else {}
+    out.update(rebuilt)
+    return out
+
+
+def _refresh_save_backup(output_path, backup_path) -> None:
+    """Roll the ``.bak`` to the CURRENT on-disk pack before overwriting it,
+    so the backup is always the previous save — one step back. It used to be
+    written only once (``if not backup.exists()``), which meant a user
+    editing a pack over weeks kept a first-ever-save recovery point that
+    grew staler with every save. Best-effort on purpose: a failed backup
+    copy must never block the save itself.
+
+    The roll is atomic: stage the copy to a private, unique temp file in
+    the same directory, then ``os.replace`` it over the ``.bak``. A
+    mid-copy failure (disk full, interrupted) therefore never truncates
+    the existing ``.bak`` — the previous good recovery point survives
+    until a complete new one is ready. (Copying straight onto ``.bak``
+    would destroy that recovery point every save.) The temp name comes
+    from ``mkstemp`` so a stray ``.bak.tmp`` (file OR directory) can't be
+    clobbered and two concurrent saves can't race on the same temp
+    path."""
+    tmp_backup = None
+    try:
+        if not (output_path.exists() and output_path.is_file()):
+            return
+        # A directory sitting at the backup path is not a rolling `.bak`;
+        # renaming onto it can't succeed and copying would drop the pack
+        # *inside* it, so leave it alone rather than silently mangle it.
+        if backup_path.exists() and not backup_path.is_file():
+            return
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(backup_path.parent),
+            prefix=backup_path.name + ".",
+            suffix=".tmp",
+        )
+        os.close(fd)
+        tmp_backup = Path(tmp_name)
+        shutil.copy2(output_path, tmp_backup)
+        os.replace(tmp_backup, backup_path)
+        tmp_backup = None  # consumed by the rename
+    except OSError:
+        pass
+    finally:
+        # Never leave a partial temp copy behind (and never block the save).
+        if tmp_backup is not None:
+            try:
+                tmp_backup.unlink()
+            except OSError:
+                pass
+
+
 def _timeline_round_time(value) -> float:
     try:
         return round(float(value), 3)
@@ -1724,7 +1823,9 @@ def _arr_dict_to_wire(
 # shared core in slopsmith `lib/notation_lift.py` (factored out of the one-time
 # scripts/lift_keys_notation.py lifter), reached here the same way the rest of
 # this module reaches core helpers — `lib/` is on the host app's import path.
-_KEYS_NAME_RE = re.compile(r"\b(keys|piano|keyboard|synth)\b", re.IGNORECASE)
+# The keys-family name matcher (``_KEYS_NAME_RE``) is defined up by the manifest
+# type-inference helpers and shared here, so the sidecar and the ``type`` facet
+# always agree on what counts as a keys arrangement.
 _NOTATION_SAFE_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
@@ -1853,6 +1954,129 @@ def _warp_notation_sidecar(xml_path, warp) -> None:
             "could not rewrite warped notation sidecar %s", sidecar)
 
 
+def _notation_measure_note_counts(payload):
+    """Per-measure multiset of ``(t_10ms, midi)`` note identities from a
+    notation payload — the comparison key for the measure-granular merge.
+    Times bucket to 10 ms so independently-rounded pipelines (the GP sidecar
+    warp vs the wire writer, both 1 ms grids) can't produce false diffs.
+    Returns a list of Counters, one per measure, or ``None`` when the payload
+    isn't measure-shaped."""
+    from collections import Counter
+    measures = payload.get("measures") if isinstance(payload, dict) else None
+    if not isinstance(measures, list):
+        return None
+    out = []
+    for m in measures:
+        c = Counter()
+        staves = m.get("staves") if isinstance(m, dict) else None
+        if isinstance(staves, dict):
+            for staff in staves.values():
+                if not isinstance(staff, dict):
+                    continue
+                for voice in staff.get("voices") or []:
+                    if not isinstance(voice, dict):
+                        continue
+                    for beat in voice.get("beats") or []:
+                        if not isinstance(beat, dict):
+                            continue
+                        bt = beat.get("t")
+                        if not isinstance(bt, (int, float)):
+                            continue
+                        for note in beat.get("notes") or []:
+                            if isinstance(note, dict) and isinstance(
+                                    note.get("midi"), (int, float)):
+                                c[(round(float(bt), 2), int(note["midi"]))] += 1
+        out.append(c)
+    return out
+
+
+def _wire_measure_note_counts(wire, measure_ts):
+    """Per-measure multiset of ``(t_10ms, midi)`` from the current wire —
+    loose notes plus chord notes (chord notes fall back to the chord's own
+    time when they carry none). ``measure_ts`` are the measure start times;
+    notes before the first measure or after the last window land in the
+    nearest edge measure."""
+    from collections import Counter
+    import bisect
+    counts = [Counter() for _ in measure_ts]
+    if not counts:
+        return counts
+
+    def _add(t, s, f):
+        try:
+            tt = float(t or 0)
+            midi = int(s or 0) * 24 + int(f or 0)
+        except (TypeError, ValueError):
+            return
+        i = bisect.bisect_right(measure_ts, tt + 1e-9) - 1
+        i = max(0, min(len(counts) - 1, i))
+        counts[i][(round(tt, 2), midi)] += 1
+
+    for n in (wire.get("notes") or []):
+        if isinstance(n, dict):
+            _add(n.get("t"), n.get("s"), n.get("f"))
+    for c in (wire.get("chords") or []):
+        if not isinstance(c, dict):
+            continue
+        for cn in (c.get("notes") or []):
+            if isinstance(cn, dict):
+                _add(cn.get("t", c.get("t")), cn.get("s"), cn.get("f"))
+    return counts
+
+
+def _merge_gp_notation_after_edit(gp_payload, lifted_payload, wire):
+    """Measure-granular preserve-on-edit merge (workspace design 0.4).
+
+    A single note edit used to invalidate the WHOLE GP notation sidecar: the
+    save fell through to the heuristic ``notation_lift``, silently discarding
+    the GP payload's exact per-stave hand assignments, dynamics, pedal
+    events, fingering, and grace notes for every measure of the arrangement.
+
+    Instead: measures whose ``(time, midi)`` note multiset still matches the
+    current wire keep their GP measure objects VERBATIM (hand split + attrs
+    intact — staves live per measure, so the splice is structurally clean);
+    only edited measures take the freshly lifted measure. Returns
+    ``(merged_payload, preserved_count, total)`` or ``None`` whenever the
+    two payloads don't align on the same measure grid — the caller then
+    falls back to the full lift, exactly today's behavior. Known honest
+    limit: a sustain-only edit doesn't change ``(t, midi)``, so that
+    measure keeps GP notation and its notational duration may lag the wire.
+    """
+    gm = gp_payload.get("measures") if isinstance(gp_payload, dict) else None
+    lm = lifted_payload.get("measures") if isinstance(lifted_payload, dict) else None
+    if not isinstance(gm, list) or not isinstance(lm, list):
+        return None
+    if not gm or len(gm) != len(lm):
+        return None
+    measure_ts = []
+    for a, b in zip(gm, lm, strict=True):
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            return None
+        ta, tb = a.get("t"), b.get("t")
+        if not isinstance(ta, (int, float)) or not isinstance(tb, (int, float)):
+            return None
+        # Both payloads must sit on the same beat grid or measures can't
+        # be spliced 1:1.
+        if abs(float(ta) - float(tb)) > 0.002:
+            return None
+        measure_ts.append(float(ta))
+    gp_counts = _notation_measure_note_counts(gp_payload)
+    if gp_counts is None:
+        return None
+    wire_counts = _wire_measure_note_counts(wire or {}, measure_ts)
+    merged = []
+    preserved = 0
+    for i in range(len(gm)):
+        if gp_counts[i] == wire_counts[i]:
+            merged.append(gm[i])
+            preserved += 1
+        else:
+            merged.append(lm[i])
+    out = dict(gp_payload)
+    out["measures"] = merged
+    return out, preserved, len(gm)
+
+
 def _attach_gp_notation(arr, xml_path):
     """Attach the GP-emitted notation sidecar for ``xml_path`` to ``arr`` as
     ``_gp_notation``, stamped ``source:"gp"`` plus a fingerprint of ``arr``'s
@@ -1934,8 +2158,15 @@ def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4),
     # re-stamped so provenance + fingerprint persist for the next save.
     gp_candidate = gp_notation if isinstance(gp_notation, dict) \
         else _read_gp_sidecar(nt_path)
+    # A GP payload whose fingerprint no longer matches is NOT discarded any
+    # more: it feeds the measure-granular merge after the lift below, so an
+    # edit in one measure no longer costs the hand-split/dynamics/pedal/
+    # fingering of every other measure.
+    gp_stale = None
     if isinstance(gp_candidate, dict) and gp_candidate.get("source") == "gp":
         fp_now = _notes_fingerprint(wire.get("notes"), wire.get("chords"))
+        if gp_candidate.get("source_notes_fp") != fp_now:
+            gp_stale = gp_candidate
         if gp_candidate.get("source_notes_fp") == fp_now:
             payload = dict(gp_candidate)
             payload["source"] = "gp"
@@ -1987,6 +2218,44 @@ def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4),
             aid)
         _drop_stale()
         return None
+
+    # Measure-granular preserve-on-edit: splice unchanged measures back in
+    # from the stale GP payload so only the edited measures pay the
+    # heuristic relift. Validated before use; any misalignment or validation
+    # failure falls back to the plain lift (exactly the old behavior).
+    if gp_stale is not None:
+        merged = _merge_gp_notation_after_edit(gp_stale, payload, wire or {})
+        if merged is not None:
+            merged_payload, preserved, total = merged
+            if preserved <= 0:
+                # Nothing survived the edit (e.g. a transpose-all): every
+                # measure was relifted, so the merged payload is a 100%
+                # heuristic lift still wearing the stale GP payload's
+                # top-level metadata. Stamping it source:"gp" would both
+                # freeze the heuristic lift as if it were ground-truth GP
+                # (a later reopen would preserve-on-edit against it) and
+                # persist top-level GP keys that no longer describe any
+                # surviving measure. Use the plain lift instead — exactly
+                # the old full-invalidation behavior.
+                _log.info(
+                    "keys arrangement %r: GP merge preserved 0/%d measures "
+                    "— using the full lift", aid, total)
+            else:
+                merged_payload["source"] = "gp"
+                # `fp_now` was computed above in the same gp_stale branch —
+                # reuse it so the fingerprint is hashed once and can't drift.
+                merged_payload["source_notes_fp"] = fp_now
+                ok, reason = _validate_notation(merged_payload)
+                if ok:
+                    payload = merged_payload
+                    _log.info(
+                        "keys arrangement %r: merged GP notation — %d/%d "
+                        "measures preserved, %d relifted", aid, preserved,
+                        total, total - preserved)
+                else:
+                    _log.warning(
+                        "keys arrangement %r: GP merge failed validation "
+                        "(%s) — using the full lift", aid, reason)
 
     nt_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
     entry["notation"] = nt_name
@@ -3471,6 +3740,13 @@ def setup(app, context):
                 # removed or for safety on every save.
                 used_ids: set = set()
                 merged_arrangements = []
+                # Existing manifest entries by id: rebuilt entries merge onto
+                # these (see _merge_manifest_entry) so `type`/`centOffset`/
+                # unknown additive keys survive the full-snapshot save.
+                _old_by_id = {
+                    e.get("id"): e for e in old_entries
+                    if isinstance(e, dict) and e.get("id")
+                }
                 for i, ad in enumerate(all_arrangements):
                     raw_id = ad.get("id") or ""
                     if raw_id and raw_id not in used_ids:
@@ -3479,13 +3755,13 @@ def setup(app, context):
                         aid = _arrangement_id(ad.get("name", "arr"), used_ids)
                     used_ids.add(aid)
                     wire = _build_wire(ad, i == 0)
-                    _entry = {
+                    _entry = _merge_manifest_entry(_old_by_id.get(aid), {
                         "id": aid,
                         "name": ad.get("name", "arr"),
                         "file": f"arrangements/{aid}.json",
                         "tuning": list(ad.get("tuning", [0]*6)),
                         "capo": int(ad.get("capo", 0)),
-                    }
+                    })
                     # Carry any GP-import notation alongside the entry (NOT on
                     # it — keeping it off the manifest entry means it can never
                     # leak into manifest.yaml); the sidecar writer consumes it.
@@ -3502,6 +3778,13 @@ def setup(app, context):
             for item in merged_arrangements:
                 entry = item["entry"]
                 wire = item["wire"]
+                # Infer-once `type` stamping (both save paths flow through
+                # here): only when the entry has no type yet — an authored
+                # value is never clobbered, and ambiguous names stay untyped.
+                if isinstance(entry, dict) and not entry.get("type"):
+                    _t = _infer_arrangement_type(entry.get("name", ""))
+                    if _t:
+                        entry["type"] = _t
                 if wire is not None:
                     rel = entry.get("file") or f"arrangements/{entry.get('id', 'arr')}.json"
                     arr_path = (source_dir / rel).resolve()
@@ -3689,11 +3972,9 @@ def setup(app, context):
             if sloppak_form == "dir":
                 return str(output_path)
 
-            # Zip-form: back up the original and re-zip the source dir.
-            if output_path.exists() and output_path.is_file():
-                backup = dlc_dir / (filename + ".bak")
-                if not backup.exists():
-                    shutil.copy2(output_path, backup)
+            # Zip-form: roll the .bak to the current pack (the backup is
+            # always the PREVIOUS save), then re-zip the source dir.
+            _refresh_save_backup(output_path, dlc_dir / (filename + ".bak"))
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_zip = output_path.with_suffix(output_path.suffix + ".tmp")
@@ -6889,14 +7170,14 @@ def setup(app, context):
                     raise FileExistsError(
                         f"{output_path.name} already exists; refusing to overwrite"
                     )
-            # Match the existing /save paths: keep a one-time .bak when
-            # we're about to overwrite an existing sloppak so the user
-            # has a recovery point. Skipped on `fail_if_exists` since
-            # we just atomically created a placeholder there.
+            # Match the /save path: roll the .bak to the current pack (the
+            # backup is always the PREVIOUS save) before overwriting.
+            # Skipped on `fail_if_exists` since we just atomically created
+            # a placeholder there.
             elif output_path.exists() and output_path.is_file():
-                backup = output_path.with_suffix(output_path.suffix + ".bak")
-                if not backup.exists():
-                    shutil.copy2(output_path, backup)
+                _refresh_save_backup(
+                    output_path,
+                    output_path.with_suffix(output_path.suffix + ".bak"))
             tmp_zip = output_path.with_suffix(output_path.suffix + ".tmp")
             try:
                 with zipfile.ZipFile(str(tmp_zip), "w", zipfile.ZIP_DEFLATED) as zf:
