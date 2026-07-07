@@ -2180,20 +2180,34 @@ def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4),
         merged = _merge_gp_notation_after_edit(gp_stale, payload, wire or {})
         if merged is not None:
             merged_payload, preserved, total = merged
-            merged_payload["source"] = "gp"
-            merged_payload["source_notes_fp"] = _notes_fingerprint(
-                wire.get("notes"), wire.get("chords"))
-            ok, reason = _validate_notation(merged_payload)
-            if ok:
-                payload = merged_payload
+            if preserved <= 0:
+                # Nothing survived the edit (e.g. a transpose-all): every
+                # measure was relifted, so the merged payload is a 100%
+                # heuristic lift still wearing the stale GP payload's
+                # top-level metadata. Stamping it source:"gp" would both
+                # freeze the heuristic lift as if it were ground-truth GP
+                # (a later reopen would preserve-on-edit against it) and
+                # persist top-level GP keys that no longer describe any
+                # surviving measure. Use the plain lift instead — exactly
+                # the old full-invalidation behavior.
                 _log.info(
-                    "keys arrangement %r: merged GP notation — %d/%d measures "
-                    "preserved, %d relifted", aid, preserved, total,
-                    total - preserved)
+                    "keys arrangement %r: GP merge preserved 0/%d measures "
+                    "— using the full lift", aid, total)
             else:
-                _log.warning(
-                    "keys arrangement %r: GP merge failed validation (%s) — "
-                    "using the full lift", aid, reason)
+                merged_payload["source"] = "gp"
+                merged_payload["source_notes_fp"] = _notes_fingerprint(
+                    wire.get("notes"), wire.get("chords"))
+                ok, reason = _validate_notation(merged_payload)
+                if ok:
+                    payload = merged_payload
+                    _log.info(
+                        "keys arrangement %r: merged GP notation — %d/%d "
+                        "measures preserved, %d relifted", aid, preserved,
+                        total, total - preserved)
+                else:
+                    _log.warning(
+                        "keys arrangement %r: GP merge failed validation "
+                        "(%s) — using the full lift", aid, reason)
 
     nt_path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
     entry["notation"] = nt_name

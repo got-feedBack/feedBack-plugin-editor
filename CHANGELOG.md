@@ -26,8 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `(time, midi)` note content still matches the current wire keep their GP
   measure objects verbatim; only edited measures take the freshly lifted
   measure. The merged payload is schema-validated and re-stamped; any grid
-  misalignment falls back to the full lift (the old behavior). Tests:
-  `tests/test_notation_preserve_merge.py`.
+  misalignment — or a merge that preserves zero measures (e.g. a
+  transpose-all) — falls back to the full lift (the old behavior), so a
+  100%-heuristic relift is never stamped as GP-sourced. Tests:
+  `tests/test_notation_preserve_merge.py`, `tests/test_notation_save.py`.
 
 ### Added
 - **Infer-once arrangement `type` stamping.** On save, an arrangement entry with
