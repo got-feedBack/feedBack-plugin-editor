@@ -124,6 +124,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names stay free labels — groundwork for safe track renaming in the Parts view.
 
 ### Changed
+- **Tempo-ride scope is now a per-part checklist.** The Tempo Map's binary
+  "Drum tab / All instruments" ride toggle gains a third **Per part…** mode:
+  a checklist with one row per arrangement plus the drum tab itself, so a
+  hand-verified part can sit out a grid re-warp while everything else rides
+  (the prerequisite for multitrack import, where the binary switch becomes
+  corrupting). Presets behave exactly as before and still persist; the
+  checklist is session-only (its indices are song-shaped) and resets to the
+  conservative drum-only preset on song load. Ctrl+T still cycles the two
+  presets. Under the hood `TempoMapCmd` now freezes the full ride set —
+  drum flag + exact arrangement objects — at construction, so flipping the
+  checklist between an edit and its undo can never desync capture / remap /
+  restore; sections continue to ride in every scope, and archive saves are
+  still limited to the active arrangement. Tests:
+  `tests/tempo_ride_parts.test.js`.
 - **Canvas repaints are coalesced to one per animation frame.** `draw()` was
   called imperatively from ~150 sites and each call repainted the whole
   canvas immediately — a single mousemove that touched several pieces of
