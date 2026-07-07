@@ -222,5 +222,122 @@ t('lock lifts live: the same history accepts commands once unlocked', () => {
     assert.strictEqual(applied, 1);
 });
 
+// ── Read-only roll must not freeze song-scope edits, and undo/redo of
+//    note-scope commands must respect the lock (regressions for #119) ──
+
+t('read-only roll: SONG-scope command (drum/tempo) still executes', () => {
+    // A fretted part shown in the roll locks NOTE edits only. Song-level
+    // commands (drum tab, tempo grid) target song data, not the fretted
+    // chart, so they must pass through — otherwise viewing an unrelated
+    // part in the roll would freeze tempo/drum editing entirely.
+    const locked = { value: true };
+    const { history, notices } = makeHistory(locked);
+    let applied = 0;
+    history.exec({ songScope: true, exec() { applied++; }, rollback() { applied--; } });
+    assert.strictEqual(applied, 1, 'song-scope command must run despite the roll lock');
+    assert.strictEqual(history.undo.length, 1, 'song-scope command lands on the undo stack');
+    assert.strictEqual(notices.count, 0, 'no read-only notice for a song-scope edit');
+});
+
+t('read-only roll: undo/redo of a NOTE-scope command is inert (no chart write)', () => {
+    // Author a note-scope edit in String view (unlocked), then switch the
+    // part into the read-only roll. undo/redo must NOT roll the fretted
+    // chart back/forward — that would bypass the exec/drag lock and mutate
+    // read-only data.
+    const locked = { value: false };
+    const { history, notices } = makeHistory(locked);
+    let applied = 0;
+    const cmd = { exec() { applied++; }, rollback() { applied--; } };
+    history.exec(cmd);
+    assert.strictEqual(applied, 1);
+    locked.value = true;            // user switches this part into the roll
+    const noticesBefore = notices.count;
+    history.doUndo();
+    assert.strictEqual(applied, 1, 'undo must not roll back a read-only fretted chart');
+    assert.strictEqual(history.undo.length, 1, 'the command stays on the undo stack');
+    assert.ok(notices.count > noticesBefore, 'the user is told why undo is blocked');
+    history.doRedo();               // redo stack is empty here, but assert no crash
+    assert.strictEqual(applied, 1, 'nothing re-executed');
+});
+
+t('read-only roll: SONG-scope undo still works (drum edit reverts)', () => {
+    // Song-scope commands are exempt from the note lock on the way in AND
+    // on the way out, so a drum/tempo edit can still be undone while a
+    // fretted part is shown read-only in the roll.
+    const locked = { value: false };
+    const { history } = makeHistory(locked);
+    let applied = 0;
+    history.exec({ songScope: true, exec() { applied++; }, rollback() { applied--; } });
+    assert.strictEqual(applied, 1);
+    locked.value = true;            // an unrelated fretted part is in the roll
+    history.doUndo();
+    assert.strictEqual(applied, 0, 'song-scope undo is unaffected by the roll lock');
+    assert.strictEqual(history.redo.length, 1, 'and it moves to the redo stack');
+});
+
+// ── Direct-mutation note-edit paths must respect the read-only roll ──
+//    (regressions for #119: these bypass EditHistory, so the exec lock
+//     alone can't stop them — each entry point is guarded at its source).
+
+// Extract a `window.NAME = (...) => { ... };` arrow assignment and rebuild
+// it as a callable with the named globals stubbed in.
+function extractWinFn(name, globals) {
+    const marker = 'window.' + name + ' = ';
+    const start = src.indexOf(marker);
+    assert.ok(start >= 0, `window.${name} must exist`);
+    const open = src.indexOf('{', src.indexOf('=>', start));
+    let depth = 0, end = -1;
+    for (let i = open; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}' && --depth === 0) { end = i; break; }
+    }
+    assert.ok(end > 0, `unbalanced braces extracting ${name}`);
+    const arrowSrc = src.slice(start + marker.length, end + 1); // "(args) => {...}"
+    const names = Object.keys(globals);
+    const fn = new Function(...names, '"use strict"; return (' + arrowSrc + ');');
+    return fn(...names.map(k => globals[k]));
+}
+
+t('read-only roll: context-menu editorToggleTech does not mutate the fretted chart', () => {
+    const note = { string: 0, fret: 3, techniques: {} };
+    const locked = { value: true };
+    let notices = 0;
+    const toggle = extractWinFn('editorToggleTech', {
+        notes: () => [note],
+        _rollReadOnly: () => locked.value,
+        _rollLockNotice: () => { notices++; },
+        hideContextMenu: () => {},
+        draw: () => {},
+        _renderInspector: () => {},
+    });
+    toggle(0, 'palm_mute');
+    assert.strictEqual(note.techniques.palm_mute, undefined, 'no write while read-only');
+    assert.strictEqual(notices, 1, 'the user is told why');
+    locked.value = false;   // switch back to String view
+    toggle(0, 'palm_mute');
+    assert.strictEqual(note.techniques.palm_mute, true, 'writes once editable');
+});
+
+t('read-only roll: inspector editorInspectorSetFlag does not mutate the fretted chart', () => {
+    const note = { string: 0, fret: 3, techniques: {} };
+    const locked = { value: true };
+    let notices = 0, renders = 0;
+    const setFlag = extractWinFn('editorInspectorSetFlag', {
+        _selectedNotes: () => [note],
+        _rollReadOnly: () => locked.value,
+        _rollLockNotice: () => { notices++; },
+        _renderInspector: () => { renders++; },
+        draw: () => {},
+        updateStatus: () => {},
+    });
+    setFlag('accent', true);
+    assert.strictEqual(note.techniques.accent, undefined, 'no write while read-only');
+    assert.strictEqual(notices, 1, 'the user is told why');
+    assert.ok(renders >= 1, 'the checkbox is bounced back to the model');
+    locked.value = false;
+    setFlag('accent', true);
+    assert.strictEqual(note.techniques.accent, true, 'writes once editable');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

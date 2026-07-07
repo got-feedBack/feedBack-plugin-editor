@@ -2596,10 +2596,14 @@ class EditHistory {
     exec(cmd) {
         // Read-only roll (V4): a FRETTED part shown in the piano roll is
         // edit-locked until the suggest-position writer exists, so every
-        // command entry point (keys, menus, inspector, dialogs) is inert
-        // here in one place. typeof-guarded so extracted-test envs without
+        // NOTE-scope command entry point (keys, menus, inspector, dialogs)
+        // is inert here in one place. Song-scope commands (drum tab, tempo
+        // grid) edit song-level data, not the fretted chart, so they still
+        // pass through even while a fretted part is shown in the roll —
+        // otherwise switching an unrelated part to the roll would freeze
+        // tempo/drum editing. typeof-guarded so extracted-test envs without
         // the view layer are unaffected.
-        if (typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+        if (cmd.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
             if (typeof _rollLockNotice === 'function') _rollLockNotice();
             return;
         }
@@ -2619,6 +2623,18 @@ class EditHistory {
         // _historyEnsureArr switches to it (or refuses when it's gone) BEFORE
         // the command leaves the stack, so a refused undo loses nothing.
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
+        // Read-only roll (V4): rolling a NOTE-scope command back would write
+        // the fretted chart currently shown read-only in the piano roll, so
+        // undo would silently bypass the exec/drag lock. Refuse (peek only —
+        // the command stays on the stack, nothing is lost). _historyEnsureArr
+        // above has already switched to the command's arrangement, so this
+        // evaluates read-only against the part the rollback would touch.
+        // Song-scope commands (drum/tempo) don't touch the fretted chart and
+        // undo normally.
+        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+            if (typeof _rollLockNotice === 'function') _rollLockNotice();
+            return;
+        }
         this.undo.pop(); c.rollback(); this.redo.push(c);
         this._afterEdit(); this._ui(); draw(); updateStatus();
     }
@@ -2626,6 +2642,12 @@ class EditHistory {
         if (!this.redo.length) return;
         const c = this.redo[this.redo.length - 1];
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
+        // Read-only roll (V4): re-exec of a NOTE-scope command writes the
+        // fretted chart that is read-only in the roll — same lock as doUndo.
+        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+            if (typeof _rollLockNotice === 'function') _rollLockNotice();
+            return;
+        }
         this.redo.pop(); c.exec(); this.undo.push(c);
         // Re-apply the MAX_UNDO cap: a redo pushes back onto the undo stack, so
         // without this a redo-heavy session could grow it past the bound that
@@ -5877,6 +5899,10 @@ function _parseFretInput(val) {
 
 async function promptSlide(idx) {
     hideContextMenu();
+    // Read-only roll (V4): slide authoring mutates n.techniques directly
+    // (it bypasses EditHistory), so the exec lock can't catch it — guard
+    // the entry point like every other note-edit path in the roll.
+    if (_rollReadOnly()) { _rollLockNotice(); return; }
     const n = notes()[idx];
     const techs = n.techniques || {};
     const current = techs.slide_to >= 0 ? techs.slide_to : '';
@@ -5894,6 +5920,8 @@ async function promptSlide(idx) {
 
 async function promptSlideUnpitch(idx) {
     hideContextMenu();
+    // Read-only roll (V4): direct n.techniques mutation — guard like promptSlide.
+    if (_rollReadOnly()) { _rollLockNotice(); return; }
     const n = notes()[idx];
     const techs = n.techniques || {};
     const current = techs.slide_unpitch_to >= 0 ? techs.slide_unpitch_to : '';
@@ -7655,6 +7683,10 @@ window.editorInspectorSetField = (field, raw) => {
 window.editorInspectorSetTech = (key, raw) => {
     const sel = _selectedNotes();
     if (sel.length === 0) return;
+    // Read-only roll (V4): scalar technique edits mutate n.techniques in
+    // place (no EditHistory command), so the exec lock never sees them.
+    // Refuse and bounce the input back to the model value.
+    if (_rollReadOnly()) { _rollLockNotice(); _renderInspector(); return; }
     const bounds = _INSPECTOR_BOUNDS[key];
     if (!bounds) return;
     const v = _coerceInspectorNumber(raw, bounds);
@@ -7705,6 +7737,9 @@ window.editorOpenBendCurve = () => {
 window.editorInspectorSetFlag = (key, on) => {
     const sel = _selectedNotes();
     if (sel.length === 0) return;
+    // Read-only roll (V4): flag toggles mutate n.techniques directly — same
+    // bypass as editorInspectorSetTech. Refuse and re-render to reset the box.
+    if (_rollReadOnly()) { _rollLockNotice(); _renderInspector(); return; }
     for (const n of sel) {
         if (!n.techniques) n.techniques = {};
         n.techniques[key] = !!on;
@@ -8318,6 +8353,11 @@ window.editorSelectArrangement = (val) => {
     updateStatus();
 };
 window.editorToggleTech = (idx, tech) => {
+    // Read-only roll (V4): the context-menu technique toggle mutates
+    // n.techniques directly (no EditHistory), so it escapes the exec lock.
+    // The note context menu still opens in the roll (right-click selection is
+    // allowed), so guard the toggle itself.
+    if (_rollReadOnly()) { hideContextMenu(); _rollLockNotice(); return; }
     const n = notes()[idx];
     if (!n.techniques) n.techniques = {};
     n.techniques[tech] = !n.techniques[tech];
