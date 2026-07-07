@@ -124,7 +124,7 @@ def test_unchanged_measures_keep_gp_objects_edited_measure_takes_lift():
 def test_fully_matching_wire_preserves_everything():
     wire = _wire(mid_note=("2.0", 2, 16))  # 2*24+16 = 64: matches GP
     out = _merge_gp_notation_after_edit(_gp_payload(), _lifted_payload(64), wire)
-    merged, preserved, total = out
+    _merged, preserved, total = out
     assert (preserved, total) == (3, 3)
 
 
@@ -153,7 +153,7 @@ def test_wire_chord_notes_fall_back_to_the_chord_time():
         "chords": [{"t": 4.0, "notes": [{"s": 2, "f": 19}]}],
     }
     out = _merge_gp_notation_after_edit(_gp_payload(), _lifted_payload(64), wire)
-    merged, preserved, total = out
+    _merged, preserved, total = out
     assert (preserved, total) == (3, 3)
 
 

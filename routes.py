@@ -2002,7 +2002,7 @@ def _merge_gp_notation_after_edit(gp_payload, lifted_payload, wire):
     if not gm or len(gm) != len(lm):
         return None
     measure_ts = []
-    for a, b in zip(gm, lm):
+    for a, b in zip(gm, lm, strict=True):
         if not isinstance(a, dict) or not isinstance(b, dict):
             return None
         ta, tb = a.get("t"), b.get("t")
@@ -2195,8 +2195,9 @@ def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4),
                     "— using the full lift", aid, total)
             else:
                 merged_payload["source"] = "gp"
-                merged_payload["source_notes_fp"] = _notes_fingerprint(
-                    wire.get("notes"), wire.get("chords"))
+                # `fp_now` was computed above in the same gp_stale branch —
+                # reuse it so the fingerprint is hashed once and can't drift.
+                merged_payload["source_notes_fp"] = fp_now
                 ok, reason = _validate_notation(merged_payload)
                 if ok:
                     payload = merged_payload
