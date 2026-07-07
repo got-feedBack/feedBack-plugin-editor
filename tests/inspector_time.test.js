@@ -128,5 +128,119 @@ t('time: a note already at the target gets a zero delta (no-op move)', () => {
     assert.deepStrictEqual(CURRENT, before);
 });
 
+// ── Drive the REAL dispatcher window.editorInspectorSetField ─────────────────
+// The cases above call the command classes directly, RECONSTRUCTING in the test
+// the delta math the dispatcher performs (target - note.time). That leaves the
+// function the PR actually adds — window.editorInspectorSetField — unexercised:
+// its field routing (sustain→ResizeSustainGroupCmd vs time→MoveNoteCmd), the
+// absolute→delta conversion `v - nn[i].time`, the `v === null` reject/re-render
+// branch, the empty-selection early return, and the "exactly ONE history entry
+// per commit" guarantee. A regression there (wrong delta sign, wrong routing,
+// double-exec) would pass every test above. So extract and run the real
+// dispatcher with a minimal stubbed S/notes/window/_renderInspector. Uses the
+// same brace-match/@pure extraction — no re-implementation of the subject.
+let DISPATCH_NOTES = [];
+const dispatchS = { sel: new Set(), drumEditMode: false, tempoMapMode: false, history: null };
+let renderCount = 0;                 // # of _renderInspector() calls (reject branch)
+const win = {};                      // captures `window.editorInspectorSetField = …`
+const dispatch = new Function(
+    'notes', 'S', 'document', 'draw', 'updateStatus', '_renderInspector', 'window',
+    '"use strict";'
+    + extractPure('edit-history') + '\n'
+    + extractNamed('class MoveNoteCmd') + '\n'
+    + extractNamed('class ResizeSustainGroupCmd') + '\n'
+    + extractNamed('const _INSPECTOR_BOUNDS =') + '\n'
+    + extractNamed('function _coerceInspectorNumber') + '\n'
+    + extractNamed('function _editorCurrentNoteIndices') + '\n'
+    + extractNamed('window.editorInspectorSetField =') + '\n'
+    + 'return { EditHistory };'
+)(
+    () => DISPATCH_NOTES,
+    dispatchS,
+    { getElementById: () => ({ disabled: false }) },
+    () => {}, () => {},
+    () => { renderCount++; },
+    win,
+);
+const setField = win.editorInspectorSetField;
+
+// Fresh notes + selection + history per case. History built with the dispatcher
+// scope's own EditHistory so exec/undo share the injected notes()/draw stubs.
+function resetDispatch(arr, sel) {
+    DISPATCH_NOTES = arr;
+    dispatchS.sel = new Set(sel);
+    dispatchS.history = new dispatch.EditHistory();
+    renderCount = 0;
+}
+
+t('dispatcher time: moves the note to the exact absolute value; +1 history entry', () => {
+    resetDispatch([n(1.0, 0.5)], [0]);
+    setField('time', '2.0');
+    assert.strictEqual(DISPATCH_NOTES[0].time, 2.0, 'moved to absolute target');
+    assert.strictEqual(DISPATCH_NOTES[0].sustain, 0.5, 'only time changed');
+    assert.strictEqual(dispatchS.history.undo.length, 1, 'exactly one commit');
+    assert.strictEqual(renderCount, 0, 'no reject re-render on a valid edit');
+    dispatchS.history.doUndo();
+    assert.strictEqual(DISPATCH_NOTES[0].time, 1.0, 'undo restores the onset');
+    assert.strictEqual(dispatchS.history.undo.length, 0);
+});
+
+t('dispatcher time: multi-select sets every note to the same absolute value (one commit)', () => {
+    resetDispatch([n(1.0, 0), n(3.0, 0)], [0, 1]);
+    const before = clone(DISPATCH_NOTES);
+    setField('time', '2.0');
+    assert.deepStrictEqual(DISPATCH_NOTES.map(x => x.time), [2.0, 2.0], 'both moved via v - note.time deltas');
+    assert.strictEqual(dispatchS.history.undo.length, 1, 'set-all is a single Ctrl+Z');
+    dispatchS.history.doUndo();
+    assert.deepStrictEqual(DISPATCH_NOTES, before, 'both original times restored');
+});
+
+t('dispatcher sustain: routes to ResizeSustainGroupCmd, not MoveNoteCmd (time untouched)', () => {
+    resetDispatch([n(0, 0.5), n(4, 1.0)], [0, 1]);
+    setField('sustain', '2');
+    assert.deepStrictEqual(DISPATCH_NOTES.map(x => x.sustain), [2, 2], 'sustain set-all');
+    assert.deepStrictEqual(DISPATCH_NOTES.map(x => x.time), [0, 4], 'time left alone (correct field routed)');
+    assert.strictEqual(dispatchS.history.undo.length, 1);
+    dispatchS.history.doUndo();
+    assert.deepStrictEqual(DISPATCH_NOTES.map(x => x.sustain), [0.5, 1.0], 'undo restores sustains');
+});
+
+t('dispatcher reject: junk ("2.5x") and empty are no-op edits that re-render, no history push', () => {
+    resetDispatch([n(1.0, 0.5)], [0]);
+    setField('time', '2.5x');                 // Number('2.5x') → NaN → coerce null
+    assert.strictEqual(DISPATCH_NOTES[0].time, 1.0, 'junk-tail rejected, note unchanged');
+    assert.strictEqual(dispatchS.history.undo.length, 0, 'no commit on reject');
+    assert.strictEqual(renderCount, 1, 're-render snaps the input back');
+    setField('time', '');                     // no emptyAs for `time` → null
+    assert.strictEqual(DISPATCH_NOTES[0].time, 1.0, 'empty rejected');
+    assert.strictEqual(dispatchS.history.undo.length, 0);
+    assert.strictEqual(renderCount, 2, 'second reject re-renders again');
+});
+
+t('dispatcher empty selection: early-returns before bounds/history/render', () => {
+    resetDispatch([n(1.0, 0.5)], []);         // nothing selected
+    setField('time', '2.0');
+    assert.strictEqual(DISPATCH_NOTES[0].time, 1.0, 'no note moved');
+    assert.strictEqual(dispatchS.history.undo.length, 0, 'no commit');
+    assert.strictEqual(renderCount, 0, 'early return is before the reject re-render branch');
+});
+
+t('dispatcher float round-trip: move is exact, but undo carries sub-ULP drift (documents the PR claim)', () => {
+    // The PR body says the undo "restores the exact array". That is exact only
+    // for values where the float arithmetic is exact (e.g. 1.0/3.0 → 2.0 above
+    // round-trip bit-for-bit). Here the onset 0.1 is not exactly representable:
+    // moving to 2.0 lands on 2.0 exactly, but the undo (time -= (2.0 - 0.1))
+    // leaves 0.10000000000000009 — a sub-ULP residue (~8.3e-17). Asserted with a
+    // tolerance and documented so the "exact restore" claim isn't read as
+    // holding for ALL values.
+    resetDispatch([n(0.1, 0)], [0]);
+    setField('time', '2.0');
+    assert.strictEqual(DISPATCH_NOTES[0].time, 2.0, 'the move itself lands exactly on the target');
+    dispatchS.history.doUndo();
+    const restored = DISPATCH_NOTES[0].time;
+    assert.notStrictEqual(restored, 0.1, 'undo does NOT bit-for-bit restore this onset (float drift)');
+    assert.ok(Math.abs(restored - 0.1) < 1e-9, `undo lands within tolerance of the onset (got ${restored})`);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
