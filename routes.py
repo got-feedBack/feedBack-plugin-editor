@@ -227,6 +227,53 @@ def _merge_manifest_entry(old_entry, rebuilt: dict) -> dict:
     return out
 
 
+def _refresh_save_backup(output_path, backup_path) -> None:
+    """Roll the ``.bak`` to the CURRENT on-disk pack before overwriting it,
+    so the backup is always the previous save — one step back. It used to be
+    written only once (``if not backup.exists()``), which meant a user
+    editing a pack over weeks kept a first-ever-save recovery point that
+    grew staler with every save. Best-effort on purpose: a failed backup
+    copy must never block the save itself.
+
+    The roll is atomic: stage the copy to a private, unique temp file in
+    the same directory, then ``os.replace`` it over the ``.bak``. A
+    mid-copy failure (disk full, interrupted) therefore never truncates
+    the existing ``.bak`` — the previous good recovery point survives
+    until a complete new one is ready. (Copying straight onto ``.bak``
+    would destroy that recovery point every save.) The temp name comes
+    from ``mkstemp`` so a stray ``.bak.tmp`` (file OR directory) can't be
+    clobbered and two concurrent saves can't race on the same temp
+    path."""
+    tmp_backup = None
+    try:
+        if not (output_path.exists() and output_path.is_file()):
+            return
+        # A directory sitting at the backup path is not a rolling `.bak`;
+        # renaming onto it can't succeed and copying would drop the pack
+        # *inside* it, so leave it alone rather than silently mangle it.
+        if backup_path.exists() and not backup_path.is_file():
+            return
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(backup_path.parent),
+            prefix=backup_path.name + ".",
+            suffix=".tmp",
+        )
+        os.close(fd)
+        tmp_backup = Path(tmp_name)
+        shutil.copy2(output_path, tmp_backup)
+        os.replace(tmp_backup, backup_path)
+        tmp_backup = None  # consumed by the rename
+    except OSError:
+        pass
+    finally:
+        # Never leave a partial temp copy behind (and never block the save).
+        if tmp_backup is not None:
+            try:
+                tmp_backup.unlink()
+            except OSError:
+                pass
+
+
 def _timeline_round_time(value) -> float:
     try:
         return round(float(value), 3)
@@ -3757,11 +3804,9 @@ def setup(app, context):
             if sloppak_form == "dir":
                 return str(output_path)
 
-            # Zip-form: back up the original and re-zip the source dir.
-            if output_path.exists() and output_path.is_file():
-                backup = dlc_dir / (filename + ".bak")
-                if not backup.exists():
-                    shutil.copy2(output_path, backup)
+            # Zip-form: roll the .bak to the current pack (the backup is
+            # always the PREVIOUS save), then re-zip the source dir.
+            _refresh_save_backup(output_path, dlc_dir / (filename + ".bak"))
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_zip = output_path.with_suffix(output_path.suffix + ".tmp")
@@ -6957,14 +7002,14 @@ def setup(app, context):
                     raise FileExistsError(
                         f"{output_path.name} already exists; refusing to overwrite"
                     )
-            # Match the existing /save paths: keep a one-time .bak when
-            # we're about to overwrite an existing sloppak so the user
-            # has a recovery point. Skipped on `fail_if_exists` since
-            # we just atomically created a placeholder there.
+            # Match the /save path: roll the .bak to the current pack (the
+            # backup is always the PREVIOUS save) before overwriting.
+            # Skipped on `fail_if_exists` since we just atomically created
+            # a placeholder there.
             elif output_path.exists() and output_path.is_file():
-                backup = output_path.with_suffix(output_path.suffix + ".bak")
-                if not backup.exists():
-                    shutil.copy2(output_path, backup)
+                _refresh_save_backup(
+                    output_path,
+                    output_path.with_suffix(output_path.suffix + ".bak"))
             tmp_zip = output_path.with_suffix(output_path.suffix + ".tmp")
             try:
                 with zipfile.ZipFile(str(tmp_zip), "w", zipfile.ZIP_DEFLATED) as zf:

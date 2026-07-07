@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unknown-key preservation rule (§1.2). Rebuilt entries now merge onto the
   existing entry for the same id, with editor-owned keys taking the fresh
   values. Tests: `tests/test_manifest_type_preserve.py`.
+- **The `.bak` safety copy now rolls with every save.** It was written only once
+  (the first time a pack was overwritten), so a user editing a pack over weeks
+  kept a first-ever-save recovery point that grew staler with every save. Both
+  overwrite sites (the editor save and the build/save-as path) now refresh the
+  `.bak` to the current on-disk pack before overwriting, so the backup is always
+  the previous save, one step back. Best-effort: a failed backup copy never
+  blocks the save. Tests: `tests/test_rolling_backup.py`.
 
 ### Added
 - **Infer-once arrangement `type` stamping.** On save, an arrangement entry with
