@@ -10838,6 +10838,10 @@ window.editorRemoveArrangement = async () => {
     // reconstructChords() reset (#18): drop the stack when the model shifts
     // under it.
     if (S.history) S.history.reset();
+    // The splice renumbers arrangements, so rebase the per-part tempo-ride
+    // checklist too — its stored indices would otherwise ride the wrong
+    // (out-of-scope) arrangement on the next tempo edit.
+    S.tempoRideCustom = _rebaseTempoRideForRemoval(S.tempoRideCustom, removeIdx);
     S.currentArr = Math.min(removeIdx, S.arrangements.length - 1);
     S.sel.clear();
     flattenChords();
@@ -14262,6 +14266,25 @@ function _tempoRideResolvePure(scope, custom, candidateIdxs) {
         drum: custom.drum !== false,
         idxs: set ? idxs.filter(i => set.has(i)) : idxs,
     };
+}
+
+// Rebase the per-part ride checklist when the arrangement at `removeIdx`
+// is spliced out of S.arrangements. The checklist stores arrangement
+// INDICES, and a splice renumbers every part after removeIdx, so without
+// this the checked set would slide onto its neighbours — riding a part the
+// user explicitly unchecked (or dropping one they checked). That is exactly
+// the out-of-scope corruption the per-part scope exists to prevent. Indices
+// below removeIdx are unaffected, the removed index is dropped, and indices
+// above it shift down by one. Pure: returns a fresh Set, never mutates.
+function _rebaseTempoRideForRemoval(custom, removeIdx) {
+    if (!custom || !(custom.arrs instanceof Set)) return custom;
+    const rebased = new Set();
+    for (const idx of custom.arrs) {
+        if (idx < removeIdx) rebased.add(idx);
+        else if (idx > removeIdx) rebased.add(idx - 1);
+        // idx === removeIdx → the removed part, dropped.
+    }
+    return { drum: custom.drum, arrs: rebased };
 }
 /* @pure:tempo-ride:end */
 

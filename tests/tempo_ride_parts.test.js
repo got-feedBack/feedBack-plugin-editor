@@ -80,7 +80,8 @@ function makeEnv(S) {
     return new Function(
         'S', '_loopRelockAfterGridChange', '_renderLoopStrip', '_updateLoopIn3DBtn',
         '"use strict";' + pipelineSrc
-        + '\nreturn { _tempoRideResolvePure, _tempoRideSet, TempoMapCmd };'
+        + '\nreturn { _tempoRideResolvePure, _rebaseTempoRideForRemoval,'
+        + ' _tempoRideSet, TempoMapCmd };'
     )(S, () => {}, () => {}, () => {});
 }
 
@@ -237,6 +238,63 @@ t("archive format limits an 'all' ride to the active arrangement", () => {
     new env.TempoMapCmd(OLD_BEATS, NEW_BEATS, 'tempo').exec();
     assert.strictEqual(S.arrangements[1].notes[0].time, 1.5, 'active arrangement rides');
     assert.strictEqual(S.arrangements[0].notes[0].time, 1, 'non-persisted arrangement protected');
+});
+
+// ── Removing an arrangement rebases the checklist (regression) ───────
+//
+// The checklist stores arrangement INDICES. editorRemoveArrangement splices
+// S.arrangements, renumbering every part after the removed one. Without a
+// matching rebase of tempoRideCustom.arrs the checked set slides onto its
+// neighbour, so a hand-unchecked part rides the next tempo edit — the exact
+// out-of-scope corruption this scope exists to prevent. FAILS on pre-fix
+// code, which leaves the stale indices in place.
+
+function makeThreeArrSong() {
+    return {
+        format: 'sloppak',
+        currentArr: 0,
+        arrangements: [
+            { name: 'Lead',   notes: [{ time: 1, sustain: 0 }], chords: [], anchors: [], anchors_user: [], handshapes: [], phrases: [] },
+            { name: 'Rhythm', notes: [{ time: 1, sustain: 0 }], chords: [], anchors: [], anchors_user: [], handshapes: [], phrases: [] },
+            { name: 'Bass',   notes: [{ time: 1, sustain: 0 }], chords: [], anchors: [], anchors_user: [], handshapes: [], phrases: [] },
+        ],
+        drumTab: { hits: [{ t: 1 }] },
+        drumTabDirty: false,
+        sections: [{ start_time: 1 }],
+        beats: [{ time: 0, measure: 1 }, { time: 2, measure: 2 }],
+        barSel: null,
+        duration: 10,
+        tempoRideScope: 'custom',
+        tempoRideCustom: null,
+    };
+}
+
+t('rebase: pure helper drops the removed index and shifts the higher ones down', () => {
+    const env = makeEnv(makeSong());
+    const out = env._rebaseTempoRideForRemoval(
+        { drum: false, arrs: new Set([0, 2, 3]) }, 1);
+    assert.strictEqual(out.drum, false, 'drum flag preserved');
+    assert.deepStrictEqual([...out.arrs].sort((a, b) => a - b), [0, 1, 2],
+        '0 stays, 1 (removed) dropped, 2→1, 3→2');
+    // pure — input Set untouched
+});
+
+t('removing a checked part leaves an unchecked neighbour unchecked (no ride leak)', () => {
+    const S = makeThreeArrSong();
+    // Lead + Rhythm ride; Bass (idx 2) hand-unchecked.
+    S.tempoRideCustom = { drum: false, arrs: new Set([0, 1]) };
+    const env = makeEnv(S);
+
+    // Reproduce editorRemoveArrangement's two coupled mutations: rebase then
+    // splice out Rhythm (idx 1). After this Bass is idx 1.
+    S.tempoRideCustom = env._rebaseTempoRideForRemoval(S.tempoRideCustom, 1);
+    S.arrangements.splice(1, 1);
+    assert.deepStrictEqual([...S.tempoRideCustom.arrs], [0], 'only Lead stays checked');
+
+    new env.TempoMapCmd(OLD_BEATS, NEW_BEATS, 'tempo').exec();
+    assert.strictEqual(S.arrangements[0].notes[0].time, 1.5, 'Lead (still checked) rides');
+    assert.strictEqual(S.arrangements[1].notes[0].time, 1,
+        'Bass (unchecked, shifted into old Rhythm slot) must NOT ride');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
