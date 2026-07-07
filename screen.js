@@ -3599,6 +3599,14 @@ function _onMouseMoveBody(e, x, y, L) {
         return;
     }
 
+    // Drum velocity drag (Alt+drag): vertical drift edits the selection's
+    // velocity live — the render brightness/height tracks it as feedback.
+    if (S.drag.type === 'drum-velocity') {
+        _drumEditorOnVelocityDragMove(y);
+        draw();
+        return;
+    }
+
     // Drum-edit marquee: track the rubber-band rect; flip `moved` once the
     // pointer has left the click threshold so mouseup knows it's a box
     // select rather than an add-hit click.
@@ -3701,6 +3709,11 @@ function onMouseUp(e) {
     // remap, so drum moves undo/redo like note moves.
     if (S.drag.type === 'drum-move') {
         _drumEditorOnDragEnd();
+        return;
+    }
+
+    if (S.drag.type === 'drum-velocity') {
+        _drumEditorOnVelocityDragEnd();
         return;
     }
 
@@ -5118,6 +5131,29 @@ function onKeyDown(e) {
             draw();
             return;
         }
+        // Velocity quick-sets: A = accent, N = normal. In drum mode these
+        // would otherwise fall through to note commands (toggleAccent /
+        // noteMenu) that no-op on an empty note selection.
+        if (dk === 'a' || dk === 'n') {
+            e.preventDefault();
+            if (dk === 'a') _drumEditorSetVelocity(115, 'Accent');
+            else _drumEditorSetVelocity(100, 'Normal');
+            draw();
+            return;
+        }
+    }
+
+    // Drum velocity nudge: Shift+↑/↓ = ±10 on the selection. Claimed here
+    // (before the profile dispatch) because in drum mode the note-transpose
+    // commands those keys map to only no-op against the empty note selection.
+    if (S.drumEditMode && S.drumSel.size && S.drumTab
+        && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key === 'ArrowUp' || e.key === 'ArrowDown')
+        && !e.target.matches('input, select, textarea')) {
+        e.preventDefault();
+        _drumEditorNudgeVelocity(e.key === 'ArrowUp' ? 10 : -10);
+        draw();
+        return;
     }
 
     // A pending tap-tempo run owns Enter/Escape until resolved — checked
@@ -13087,16 +13123,21 @@ function _showDrumImportUnmappedModal(unmapped) {
         + '<th class="text-left p-2">Map to</th></tr>';
     table.appendChild(thead);
 
-    // Keep the times arrays in a JS Map keyed by the row element rather
-    // than round-tripping through JSON.stringify/JSON.parse on a dataset
-    // attribute — avoids extra CPU + DOM payload for large unmapped sets.
+    // Keep the times/velocities arrays in a JS Map keyed by the row element
+    // rather than round-tripping through JSON.stringify/JSON.parse on a
+    // dataset attribute — avoids extra CPU + DOM payload for large sets.
     const rowTimes = new Map();
     const tbody = document.createElement('tbody');
     for (const u of unmapped) {
         const tr = document.createElement('tr');
         tr.className = 'border-t border-gray-800';
         tr.dataset.midi = String(u.midi);
-        rowTimes.set(tr, Array.isArray(u.times) ? u.times : []);
+        rowTimes.set(tr, {
+            times: Array.isArray(u.times) ? u.times : [],
+            // Optional, index-aligned with times when the server captured
+            // them — the source notes' REAL velocities.
+            vels: Array.isArray(u.velocities) ? u.velocities : null,
+        });
         const tdMidi = document.createElement('td');
         tdMidi.className = 'p-2 font-mono';
         tdMidi.textContent = u.midi;
@@ -13161,8 +13202,9 @@ function _showDrumImportUnmappedModal(unmapped) {
             const sel = tr.querySelector('select');
             if (!sel || !sel.value) continue;
             const pid = sel.value;
-            const times = rowTimes.get(tr) || [];
-            for (const t of times) {
+            const row = rowTimes.get(tr) || { times: [], vels: null };
+            for (let ti = 0; ti < row.times.length; ti++) {
+                const t = row.times[ti];
                 // Guard against malformed payload: skip NaN / Infinity /
                 // negative times rather than push invalid hit objects
                 // that break sort/draw and would be dropped by the
@@ -13172,7 +13214,13 @@ function _showDrumImportUnmappedModal(unmapped) {
                 const key = `${Math.round(t * 1000)}|${pid}`;
                 if (seen.has(key)) { skipped++; continue; }
                 seen.add(key);
-                S.drumTab.hits.push({ t: tRounded, p: pid, v: 100 });
+                // Carry the source note's REAL velocity through when the
+                // server captured it (index-aligned with times) — hand-
+                // mapping a note must not flatten its dynamics to v:100.
+                const rawV = row.vels ? row.vels[ti] : undefined;
+                S.drumTab.hits.push({
+                    t: tRounded, p: pid, v: _drumClampVelocityPure(rawV === undefined ? 100 : rawV),
+                });
                 added++;
             }
         }
@@ -13432,7 +13480,7 @@ function _drumEditorDraw(w, h) {
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    const hud = `Drum editor — ${hits.length} hits, ${S.drumSel.size} selected. Click empty: add. Drag empty: select box. Click hit: select. Del: remove. G/F/K: ghost/flam/choke.`;
+    const hud = `Drum editor — ${hits.length} hits, ${S.drumSel.size} selected. Click empty: add. Drag empty: select box. Click hit: select. Del: remove. G/F/K: ghost/flam/choke. A/N: accent/normal. Alt+drag or Shift+↑/↓: velocity.`;
     ctx.fillText(hud, LABEL_W + 6, WAVEFORM_H + _drumPieceCount() * DRUM_LANE_H + 6);
 }
 
@@ -14846,6 +14894,7 @@ function _finalizeActiveDrag() {
     if (!S.drag) return;
     if (S.drag.type === 'tempo-sync' || S.drag.type === 'tempo-beat') _tempoMapOnDragEnd();
     else if (S.drag.type === 'drum-move') _drumEditorOnDragEnd();
+    else if (S.drag.type === 'drum-velocity') _drumEditorOnVelocityDragEnd();
     // Commit an in-flight handshape create/move/resize through its own mouseup
     // so the edit lands as a history command (instead of being silently
     // dropped when a mode toggle interrupts the drag).
@@ -15171,14 +15220,23 @@ class MoveDrumHitsCmd {
 }
 
 class ToggleDrumArticulationCmd {
-    // g/f/k toggles are involutive per hit, so rollback = exec and mixed
-    // initial states round-trip exactly. The choke cymbal-only gate is applied
-    // at CONSTRUCTION (callers pass only the refs the toggle really touches),
-    // keeping exec/rollback perfectly symmetric.
+    // f/k toggles are involutive per hit, so rollback = exec and mixed
+    // initial states round-trip exactly. The GHOST toggle additionally pulls
+    // a normal-strength hit's velocity down to the ghost level — a ghost IS
+    // a quiet hit (import derives g from v < 40, and both the renderer and
+    // guide audio scale with v), so ghosting a v:100 hit without quieting it
+    // would author a contradiction. That makes 'g' asymmetric: it snapshots
+    // {had, v} per hit at construction and restores both exactly on
+    // rollback (including deleting a v that wasn't there). The choke
+    // cymbal-only gate is applied at CONSTRUCTION (callers pass only the
+    // refs the toggle really touches).
     constructor(hitRefs, field) {
         this.hits = [...hitRefs];
         this.field = field;
         this.songScope = true;
+        if (field === 'g') {
+            this.before = this.hits.map(h => ({ had: !!h.g, v: h.v }));
+        }
     }
     _toggle() {
         for (const h of this.hits) {
@@ -15192,8 +15250,81 @@ class ToggleDrumArticulationCmd {
         }
         S.drumTabDirty = true;
     }
-    exec() { this._toggle(); }
-    rollback() { this._toggle(); }
+    exec() {
+        if (this.field !== 'g') { this._toggle(); return; }
+        for (let i = 0; i < this.hits.length; i++) {
+            const h = this.hits[i];
+            if (this.before[i].had) {
+                // Un-ghost: the flag lifts, authored dynamics stay put.
+                delete h.g;
+            } else {
+                h.g = true;
+                // Pull a normal-strength hit down to ghost level; a hit
+                // that is already quiet keeps its authored velocity.
+                const v = typeof h.v === 'number' ? h.v : 100;
+                if (v > DRUM_GHOST_VELOCITY + 5) h.v = DRUM_GHOST_VELOCITY;
+            }
+        }
+        S.drumTabDirty = true;
+    }
+    rollback() {
+        if (this.field !== 'g') { this._toggle(); return; }
+        for (let i = 0; i < this.hits.length; i++) {
+            const h = this.hits[i];
+            if (this.before[i].had) h.g = true; else delete h.g;
+            if (this.before[i].v === undefined) delete h.v;
+            else h.v = this.before[i].v;
+        }
+        S.drumTabDirty = true;
+    }
+}
+
+// The velocity a ghosted hit pulls down to. The MIDI importer derives
+// g from v < 40, so 35 round-trips as a ghost on re-import.
+const DRUM_GHOST_VELOCITY = 35;
+
+// Clamp any velocity input to MIDI 1..127; non-numeric falls back to the
+// import default (100) so a malformed value can't author v:NaN.
+function _drumClampVelocityPure(v) {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return 100;
+    return Math.max(1, Math.min(127, n));
+}
+
+// Alt-drag velocity mapping (the piano-roll idiom): dragging UP makes the
+// hit louder — 1 velocity step per pixel of vertical drift off the
+// hit's original value.
+function _drumVelocityDragValuePure(origV, dy) {
+    const base = typeof origV === 'number' ? origV : 100;
+    return _drumClampVelocityPure(base - dy);
+}
+
+class SetDrumVelocityCmd {
+    // One velocity edit for a set of hits (Alt-drag, ±10 nudge keys, the
+    // accent/normal quick sets). Holds refs + the exact old values so
+    // rollback restores authored dynamics verbatim — a hit that had no
+    // explicit v gets the field DELETED again, not set to 100.
+    constructor(hitRefs, newVs) {
+        this.hits = [...hitRefs];
+        this.newVs = Array.isArray(newVs)
+            ? newVs.map(_drumClampVelocityPure)
+            : this.hits.map(() => _drumClampVelocityPure(newVs));
+        this.oldVs = this.hits.map(h => h.v);
+        this.songScope = true;
+    }
+    exec() {
+        for (let i = 0; i < this.hits.length; i++) {
+            this.hits[i].v = this.newVs[i];
+        }
+        S.drumTabDirty = true;
+    }
+    rollback() {
+        for (let i = 0; i < this.hits.length; i++) {
+            if (this.oldVs[i] === undefined) delete this.hits[i].v;
+            else this.hits[i].v = this.oldVs[i];
+        }
+        S.drumTabDirty = true;
+    }
 }
 /* @pure:drum-cmds:end */
 
@@ -15233,10 +15364,28 @@ function _drumEditorOnMouseDown(e, x, y) {
 
     const idx = _drumHitAtPoint(x, y);
     if (idx >= 0) {
-        // Clicked on an existing hit. Two paths from here:
+        // Clicked on an existing hit. Three paths from here:
         //   - plain click → ensure that hit is in the selection, then start
         //     a drag that moves every selected hit together.
+        //   - Alt+click → start a VELOCITY drag on the selection (vertical,
+        //     piano-roll idiom: up = louder, 1 step/px).
         //   - Shift+click → toggle the hit in/out of the selection (no drag).
+        if (e.altKey) {
+            if (!S.drumSel.has(idx)) {
+                S.drumSel.clear();
+                S.drumSel.add(idx);
+            }
+            const indices = [...S.drumSel];
+            S.drag = {
+                type: 'drum-velocity',
+                startY: y,
+                indices,
+                origVs: indices.map(i => S.drumTab.hits[i].v),
+                moved: false,
+            };
+            draw();
+            return;
+        }
         if (e.shiftKey) {
             if (S.drumSel.has(idx)) S.drumSel.delete(idx);
             else S.drumSel.add(idx);
@@ -15376,6 +15525,77 @@ function _drumEditorOnDragEnd() {
     }
     S.drag = null;
     draw();
+}
+
+// Apply an in-progress velocity drag — vertical drift maps 1 velocity step
+// per pixel off each hit's ORIGINAL value (not the live one, so the drag
+// never accumulates). Live-preview only; the commit happens on drag end.
+function _drumEditorOnVelocityDragMove(y) {
+    if (!S.drag || S.drag.type !== 'drum-velocity' || !S.drumTab) return;
+    if (!Array.isArray(S.drumTab.hits)) return;
+    const dy = y - S.drag.startY;
+    if (Math.abs(dy) > 2) S.drag.moved = true;
+    if (!S.drag.moved) return;
+    let shown = null;
+    for (let k = 0; k < S.drag.indices.length; k++) {
+        const h = S.drumTab.hits[S.drag.indices[k]];
+        if (!h) continue;
+        h.v = _drumVelocityDragValuePure(S.drag.origVs[k], dy);
+        if (shown === null) shown = h.v;
+    }
+    if (shown !== null) {
+        setStatus(`Velocity ${shown}${S.drag.indices.length > 1 ? ` (${S.drag.indices.length} hits)` : ''}`);
+    }
+}
+
+// Finalise a velocity drag — revert to the originals and let the command's
+// exec() re-apply, so undo/redo replay the exact result (the MoveDrumHitsCmd
+// finalize pattern).
+function _drumEditorOnVelocityDragEnd() {
+    if (!S.drag || S.drag.type !== 'drum-velocity' || !S.drumTab) {
+        S.drag = null;
+        draw();
+        return;
+    }
+    if (S.drag.moved && Array.isArray(S.drumTab.hits)) {
+        const refs = [], newVs = [];
+        let changed = false;
+        for (let k = 0; k < S.drag.indices.length; k++) {
+            const h = S.drumTab.hits[S.drag.indices[k]];
+            if (!h) continue;
+            refs.push(h);
+            newVs.push(h.v);
+            if (h.v !== S.drag.origVs[k]) changed = true;
+            // Revert to the original (including "no v" hits, so a no-op
+            // drag leaves the wire data untouched).
+            if (S.drag.origVs[k] === undefined) delete h.v;
+            else h.v = S.drag.origVs[k];
+        }
+        if (refs.length && changed) {
+            S.history.exec(new SetDrumVelocityCmd(refs, newVs));
+        }
+    }
+    S.drag = null;
+    draw();
+}
+
+// Nudge / set the selection's velocity from the keyboard (Shift+↑/↓ = ±10,
+// A = accent, N = normal). One undoable command per keypress.
+function _drumEditorNudgeVelocity(delta) {
+    if (!S.drumTab || !Array.isArray(S.drumTab.hits)) return;
+    const refs = _drumSelectedRefs();
+    if (!refs.length) return;
+    const newVs = refs.map(h =>
+        _drumClampVelocityPure((typeof h.v === 'number' ? h.v : 100) + delta));
+    S.history.exec(new SetDrumVelocityCmd(refs, newVs));
+    setStatus(`Velocity ${newVs[0]}${refs.length > 1 ? ` (${refs.length} hits)` : ''}`);
+}
+function _drumEditorSetVelocity(value, label) {
+    if (!S.drumTab || !Array.isArray(S.drumTab.hits)) return;
+    const refs = _drumSelectedRefs();
+    if (!refs.length) return;
+    S.history.exec(new SetDrumVelocityCmd(refs, value));
+    setStatus(`${label} (velocity ${_drumClampVelocityPure(value)}, ${refs.length} hit${refs.length === 1 ? '' : 's'})`);
 }
 
 // Finalise a drum marquee drag. The selection is cleared lazily here (not

@@ -2706,13 +2706,20 @@ def setup(app, context):
         return ok
 
     def _safe_unmapped_entry(midi, rec) -> dict:
-        """Coerce one out_unmapped entry to {midi, count, times} safely.
+        """Coerce one out_unmapped entry to {midi, count, times[, velocities]}.
 
         The converter (in slopsmith core) controls this shape today, but
         any non-int count or non-list times in a future shape change
         shouldn't 500 the import on response shaping. midi/count default
         to 0; times to []. Non-finite / non-numeric / negative time
         entries are dropped (the frontend would skip them anyway).
+
+        `velocities`, when the converter captured it, is index-aligned
+        with `times` — so a dropped bad time drops its velocity too, and
+        a bad velocity coerces to the 100 default rather than shifting
+        the alignment. Omitted entirely when the converter didn't send it
+        (older cores), so the client can distinguish "no data" from
+        "all default".
         """
         try:
             midi_int = int(midi)
@@ -2725,17 +2732,30 @@ def setup(app, context):
         except (TypeError, ValueError):
             count = 0
         raw_times = rec.get("times")
+        raw_vels = rec.get("velocities")
+        has_vels = isinstance(raw_vels, (list, tuple))
         times: list = []
+        vels: list = []
         if isinstance(raw_times, (list, tuple)):
             import math as _m
-            for t in raw_times:
+            for i, t in enumerate(raw_times):
                 try:
                     tf = float(t)
                 except (TypeError, ValueError):
                     continue
-                if _m.isfinite(tf) and tf >= 0:
-                    times.append(tf)
-        return {"midi": midi_int, "count": count, "times": times}
+                if not (_m.isfinite(tf) and tf >= 0):
+                    continue
+                times.append(tf)
+                if has_vels:
+                    try:
+                        vf = int(raw_vels[i])
+                    except (TypeError, ValueError, IndexError):
+                        vf = 100
+                    vels.append(max(1, min(127, vf)) if vf else 100)
+        out = {"midi": midi_int, "count": count, "times": times}
+        if has_vels:
+            out["velocities"] = vels
+        return out
 
     def _arrangement_id(name: str, used: set) -> str:
         """Map an arrangement name to a stable filesystem-safe id, avoiding
