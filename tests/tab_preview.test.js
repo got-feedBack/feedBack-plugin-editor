@@ -19,12 +19,15 @@ if (!m) {
     console.error('FAIL: @pure:tab-preview block not found in screen.js');
     process.exit(1);
 }
-const KEYS_PATTERN_SRC = (src.match(/const KEYS_PATTERN = [^\n]+\n/) || [null])[0];
-assert.ok(KEYS_PATTERN_SRC, 'KEYS_PATTERN must exist');
-
-const { _tabPreviewGuardPure, _tabPreviewUrlPure, _tabPreviewHttpMessagePure } = new Function(
-    '"use strict";' + KEYS_PATTERN_SRC + m[0]
-    + '\nreturn { _tabPreviewGuardPure, _tabPreviewUrlPure, _tabPreviewHttpMessagePure };'
+// Extract the @pure block ALONE — no outer globals prepended. This is the
+// self-containment contract (@pure convention): the block must reference no
+// global declared outside it, or the extracted sandbox throws
+// "X is not defined". Pre-fix this block referenced the outer KEYS_PATTERN,
+// so building it in isolation and calling the guard on a keys part threw;
+// the guard now inlines its regexes.
+const { _tabPreviewGuardPure, _tabPreviewUrlPure, _tabPreviewHttpMessagePure, _tabPreviewKeyPolicyPure } = new Function(
+    '"use strict";' + m[0]
+    + '\nreturn { _tabPreviewGuardPure, _tabPreviewUrlPure, _tabPreviewHttpMessagePure, _tabPreviewKeyPolicyPure };'
 )();
 
 let pass = 0, fail = 0;
@@ -47,6 +50,35 @@ t('guard: fretted saved parts preview; every refusal names its reason', () => {
 
 t('guard order: an empty session reads as "load a song", not "save first"', () => {
     assert.ok(/Load/.test(_tabPreviewGuardPure('', '', false).reason));
+});
+
+t('guard: drums parts are non-fretted and refused (legacy guitar-encoded drums arrangements)', () => {
+    const drums = _tabPreviewGuardPure('song.sloppak', 'Drums', true);
+    assert.strictEqual(drums.ok, false, 'a drums arrangement has no fret/string tab');
+    assert.ok(/fretted/.test(drums.reason), 'drums refusal explains itself');
+    // Case-insensitive, prefix-anchored — matches the editor-wide /^drums/i gate.
+    assert.strictEqual(_tabPreviewGuardPure('s', 'drums (EOF)', true).ok, false);
+});
+
+t('guard is self-contained: extracting the @pure block alone still classifies keys/drums (no outer KEYS_PATTERN ref)', () => {
+    // These calls execute the inlined regexes inside the isolated block; a
+    // reference to an outer KEYS_PATTERN would have thrown before we got here.
+    assert.strictEqual(_tabPreviewGuardPure('s', 'Piano', true).ok, false);
+    assert.strictEqual(_tabPreviewGuardPure('s', 'Keyboard', true).ok, false);
+    assert.strictEqual(_tabPreviewGuardPure('s', 'Synth Lead', true).ok, false);
+    assert.strictEqual(_tabPreviewGuardPure('s.sloppak', 'Rhythm', true).ok, true);
+});
+
+t('key policy: preview modal is a read-only lens — only Escape acts (closes), every other key is swallowed', () => {
+    // Open modal: mutating shortcuts must never reach the chart behind it.
+    assert.strictEqual(_tabPreviewKeyPolicyPure(true, '2'), 'swallow', 'fret digit swallowed');
+    assert.strictEqual(_tabPreviewKeyPolicyPure(true, 'f'), 'swallow', 'technique toggle swallowed');
+    assert.strictEqual(_tabPreviewKeyPolicyPure(true, 'Delete'), 'swallow', 'delete swallowed');
+    assert.strictEqual(_tabPreviewKeyPolicyPure(true, ' '), 'swallow', 'transport swallowed');
+    assert.strictEqual(_tabPreviewKeyPolicyPure(true, 'Escape'), 'close', 'Escape closes');
+    // Closed modal: onKeyDown must proceed normally.
+    assert.strictEqual(_tabPreviewKeyPolicyPure(false, '2'), 'ignore');
+    assert.strictEqual(_tabPreviewKeyPolicyPure(false, 'Escape'), 'ignore');
 });
 
 t('URL: encodes the filename, carries arrangement + cache buster', () => {

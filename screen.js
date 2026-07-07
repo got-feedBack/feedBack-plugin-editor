@@ -4275,17 +4275,34 @@ function _editorRenderShortcutPanel() {
 
 /* @pure:tab-preview:start */
 // Guard: which parts can preview, with the exact user-facing reason when
-// one can't. Keys parts are excluded — their wire packing is pitch, and a
-// GP conversion of it would engrave nonsense tab.
+// one can't. NON-FRETTED parts (keys AND drums) are excluded — their wire
+// packing isn't fret/string, so a GP conversion of it would engrave
+// nonsense tab. The non-fretted test mirrors the editor-wide one
+// (KEYS_PATTERN /^(keys|piano|keyboard|synth)/i plus /^drums/i, e.g. the
+// Strings modal's gate) but is INLINED so this @pure block stays
+// self-contained and extractable — no reference to the outer KEYS_PATTERN
+// global, matching the parts-view block's "regexes inlined" convention.
 function _tabPreviewGuardPure(filename, arrName, hasArrangements) {
     if (!hasArrangements) return { ok: false, reason: 'Load a song first.' };
-    if (KEYS_PATTERN.test(arrName || '')) {
-        return { ok: false, reason: 'Tab preview is for fretted parts — keys parts have no tab.' };
+    const nm = String(arrName || '');
+    if (/^(keys|piano|keyboard|synth)/i.test(nm) || /^drums/i.test(nm)) {
+        return { ok: false, reason: 'Tab preview is for fretted parts — keys and drums parts have no tab.' };
     }
     if (!filename) {
         return { ok: false, reason: 'Save the song first — the preview reads the saved pack.' };
     }
     return { ok: true, reason: '' };
+}
+// Keyboard policy while the read-only preview modal is open. It is a modal
+// proofreading lens, so NO editor shortcut may reach the chart behind it
+// (mirrors the partsViewMode read-only gate, which blocks note edits from
+// mutating the arrangement hidden behind an overview). Escape closes it;
+// every other key is swallowed. Returns 'close' | 'swallow' | 'ignore'
+// ('ignore' only when the preview isn't open, so onKeyDown proceeds).
+function _tabPreviewKeyPolicyPure(previewOpen, key) {
+    if (!previewOpen) return 'ignore';
+    if (key === 'Escape') return 'close';
+    return 'swallow';
 }
 // The Tab View conversion URL for one saved part. `ts` busts any
 // intermediate cache so Refresh after a Save always re-converts.
@@ -4368,6 +4385,11 @@ async function _tabPreviewRender() {
         if (!resp.ok) {
             let body = '';
             try { body = await resp.text(); } catch (_) { /* keep '' */ }
+            // Re-check after the body read — reading it is another await, so a
+            // newer refresh may have superseded us; without this a stale error
+            // would destroy the newer render and stomp its status (symmetric
+            // with the arrayBuffer() checkpoint on the success path below).
+            if (seq !== _tabPreviewSeq) return;
             _tabPreviewDestroyApi();
             _tabPreviewStatus(_tabPreviewHttpMessagePure(resp.status, body));
             return;
@@ -5245,6 +5267,25 @@ function onKeyDown(e) {
     // Only handle when editor screen is visible
     const screen = document.getElementById('plugin-editor');
     if (!screen || !screen.classList.contains('active')) return;
+
+    // Read-only Tab preview is a modal proofreading lens — while it's open
+    // NO editor shortcut (fret digits, f, arrows, Delete, transport …) may
+    // reach the chart hidden behind it, or the "read-only" preview would
+    // silently mutate the arrangement and pollute undo/redo. Escape closes
+    // it; every other key is swallowed. Mirrors the partsViewMode gate and
+    // must sit before the spacebar/transport handler below.
+    const _tabPreviewModal = document.getElementById('editor-tab-preview-modal');
+    const _tabPreviewOpen = !!(_tabPreviewModal && !_tabPreviewModal.classList.contains('hidden'));
+    const _tabPreviewAction = _tabPreviewKeyPolicyPure(_tabPreviewOpen, e.key);
+    if (_tabPreviewAction === 'close') {
+        e.preventDefault();
+        window.editorHideTabPreview();
+        return;
+    }
+    if (_tabPreviewAction === 'swallow') {
+        e.preventDefault();
+        return;
+    }
 
     if (e.key === ' ' && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
