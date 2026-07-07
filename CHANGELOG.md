@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Per-part view switcher: any fretted part can open in the piano roll
+  (read-first).** The editing view was derived from the arrangement NAME —
+  keys parts got the roll, everything else the lanes, no choice. A new
+  String · Piano roll switcher makes it a per-part preference (editor
+  localStorage keyed by song + stable part id — reorder/rename safe; never
+  pack data; keys parts stay piano-locked since their wire packing has no
+  string semantics to show). A fretted part in the roll renders at
+  **sounding pitch** (open string + tuning + capo + fret) with the same
+  mapping across draw, hit-testing, marquee select, and the viewport
+  auto-fit, and the in-key row shading applies automatically. Fretted
+  parts in the roll are **read-only for now** (a visible notice says so):
+  every command entry point is gated centrally in the undo history plus
+  the live-mutating drag paths, because adding or moving by pitch would
+  force a silent string/fret guess — editing arrives with the
+  suggest-position resolver. Under the hood the historical `isKeysMode()`
+  split into a piano-SURFACE predicate and a keys-DATA predicate
+  (`isKeysArr`), and data-semantics sites (string moves, chord-sibling
+  grouping, anchors) were re-pointed — a fretted part in the roll still
+  groups its chords and keeps its string-move machinery. Registry command
+  `cycleViewMode`. Tests: `tests/view_switcher.test.js`.
 - **The in-key highlight now covers the fretted lanes.** The song key/scale
   picker's highlight applied only to the piano roll; guitar/bass notes now
   dim when out of key too, resolving each note to its **sounding pitch =
