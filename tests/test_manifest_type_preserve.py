@@ -24,14 +24,23 @@ def test_infer_keys_family_maps_to_piano():
         assert _infer_arrangement_type(name) == "piano", name
 
 
+def test_infer_keys_family_matches_mid_name_like_the_sidecar_detector():
+    # Regression: type inference must use the SAME word-boundary matcher as the
+    # keys notation-sidecar detector (`_KEYS_NAME_RE`), not a prefix-anchored
+    # one. Names where the keys keyword isn't the first word still earn a keys
+    # sidecar, so they must infer a keys/piano `type` too — otherwise the
+    # manifest facet and the notation renderer disagree for the same entry.
+    for name in ("Electric Piano", "Grand Piano", "Lead Synth", "Rhodes Keys"):
+        assert _infer_arrangement_type(name) == "piano", name
+
+
 def test_infer_bass_anywhere_in_the_name():
-    for name in ("Bass", "5-string Bass", "bass (DI)", "Synth Bass"):
-        # NB: "Synth Bass" hits the keys prefix first — see next assert.
-        pass
     assert _infer_arrangement_type("Bass") == "bass"
     assert _infer_arrangement_type("5-string Bass") == "bass"
     assert _infer_arrangement_type("bass (DI)") == "bass"
-    # Keys prefix wins for synth-family names (the piano-roll pathway).
+    # Keys is checked before bass, so synth-family names take the piano-roll
+    # pathway even when they also read as bass (intentional, unchanged by the
+    # prefix→word-boundary switch: "synth" still matches at a word boundary).
     assert _infer_arrangement_type("Synth Bass") == "piano"
 
 
@@ -78,6 +87,21 @@ def test_merge_preserves_spec_and_unknown_keys():
     assert out["centOffset"] == -6
     assert out["notation"] == "notation_lead.json"
     assert out["x_future_key"] == {"nested": True}
+
+
+def test_merge_preserves_zero_cent_offset():
+    # Guard against a truthiness regression: a deliberate `centOffset: 0`
+    # (retuned back to concert pitch) must survive the merge exactly like a
+    # non-zero offset. The merge keeps it because the rebuilt entry never
+    # carries centOffset, so `out.update(rebuilt)` can't clobber it — but a
+    # future "only copy truthy fields" shortcut would silently drop the 0.
+    old = {"id": "lead", "name": "Old", "centOffset": 0, "type": "guitar"}
+    rebuilt = {"id": "lead", "name": "Lead", "file": "arrangements/lead.json",
+               "tuning": [0] * 6, "capo": 0}
+    out = _merge_manifest_entry(old, rebuilt)
+    assert "centOffset" in out
+    assert out["centOffset"] == 0
+    assert out["type"] == "guitar"
 
 
 def test_merge_with_no_old_entry_is_just_the_rebuilt_entry():

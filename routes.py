@@ -175,7 +175,13 @@ def _load_arrangement_json(path) -> dict:
     return json.loads(raw)
 
 
-_TYPE_KEYS_RE = re.compile(r"^(keys|piano|keyboard|synth)", re.I)
+# Keys-family arrangement names (piano/keyboard/synth). The SAME matcher — a
+# word-boundary search over the SAME keyword set — decides both the manifest
+# ``type`` facet (below) and the keys notation sidecar (see the sidecar detector
+# further down, which reuses this regex). Keeping them identical guarantees a
+# name that earns a keys sidecar also infers a keys/piano type, so the two never
+# disagree (e.g. "Electric Piano", "Grand Piano", "Lead Synth").
+_KEYS_NAME_RE = re.compile(r"\b(keys|piano|keyboard|synth)\b", re.IGNORECASE)
 _TYPE_BASS_RE = re.compile(r"bass", re.I)
 _TYPE_SKIP_RE = re.compile(r"vocal|voice|sing|drum", re.I)
 _TYPE_GUITAR_RE = re.compile(r"guitar|lead|rhythm|combo|acoustic|electric", re.I)
@@ -194,7 +200,10 @@ def _infer_arrangement_type(name) -> str:
     n = (name or "").strip()
     if not n:
         return ""
-    if _TYPE_KEYS_RE.match(n):
+    # keys checked before bass so "Synth Bass" resolves to piano (intentional:
+    # a keys arrangement that happens to sit in the bass register still wants
+    # keys notation). Word-boundary search shared with the sidecar detector.
+    if _KEYS_NAME_RE.search(n):
         return "piano"
     if _TYPE_BASS_RE.search(n):
         return "bass"
@@ -1767,7 +1776,9 @@ def _arr_dict_to_wire(
 # shared core in slopsmith `lib/notation_lift.py` (factored out of the one-time
 # scripts/lift_keys_notation.py lifter), reached here the same way the rest of
 # this module reaches core helpers — `lib/` is on the host app's import path.
-_KEYS_NAME_RE = re.compile(r"\b(keys|piano|keyboard|synth)\b", re.IGNORECASE)
+# The keys-family name matcher (``_KEYS_NAME_RE``) is defined up by the manifest
+# type-inference helpers and shared here, so the sidecar and the ``type`` facet
+# always agree on what counts as a keys arrangement.
 _NOTATION_SAFE_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
