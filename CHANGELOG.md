@@ -194,6 +194,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silences the edit cue); time-only moves and marquee selects stay
   silent, group edits rate-limit to one cue, and the blip never fires when
   the audio context isn't running. Tests: `tests/audio_mixer.test.js`.
+- **Numbered bookmarks (Alt+1–9).** Nine per-song time markers for hopping
+  between working spots in a long chart: **Shift+Alt+1–9** sets/clears a
+  bookmark at the cursor (setting one at its own spot clears it), **Alt+1–9**
+  jumps to it, and numbered green flags render over the waveform band.
+  Matching is on the physical key (`e.code`) so the shifted digit row works
+  on any layout; plain digits still set frets. Bookmarks are editor
+  authoring state — one localStorage entry per song, never pack data.
+  Tests: `tests/bookmarks.test.js`.
 - **Follow-playhead is toggleable (Shift+L).** The playback auto-scroll
   (view jumps once the cursor crosses 80% of the window) was unconditional;
   it is now a registry command in both shortcut profiles, default ON, so an

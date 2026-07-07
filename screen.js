@@ -1777,11 +1777,13 @@ function drawNow() {
 function drawWaveform(w) {
     ctx.fillStyle = '#08081a';
     ctx.fillRect(0, 0, w, WAVEFORM_H);
-    // The onset strip is independent of the waveform toggle: waveform off +
-    // onsets on = the pure "blocky" detection view; both on = an overlay.
+    // The onset strip and bookmark flags are independent of the waveform
+    // toggle: waveform off + onsets on = the pure "blocky" detection view;
+    // both on = an overlay; bookmarks always show over the band.
     // (typeof guards keep drawWaveform extractable by the render test.)
     const drawOnsets = () => {
         if (typeof _drawOnsetStrip === 'function') _drawOnsetStrip(w);
+        if (typeof _drawBookmarks === 'function') _drawBookmarks(w);
     };
     if (typeof editorWaveformVisible !== 'undefined' && !editorWaveformVisible) {
         drawOnsets();
@@ -1876,6 +1878,34 @@ function _drawOnsetStrip(w) {
         const h = Math.round((WAVEFORM_H - 6) * (0.55 + 0.45 * o.s));
         ctx.fillRect(px - 1, WAVEFORM_H - 3 - h, 3, h);
     }
+}
+
+// Numbered bookmark flags over the waveform band. Bookmarks are EDITOR
+// authoring state (localStorage per song — never pack data, §6): nine
+// numbered time markers, Shift+Alt+1-9 sets/clears at the cursor,
+// Alt+1-9 jumps.
+function _drawBookmarks(w) {
+    const marks = _bookmarks();
+    let drew = false;
+    for (let n = 1; n <= 9; n++) {
+        const t = marks[n];
+        if (t === undefined) continue;
+        const px = Math.round(timeToX(t));
+        if (px < LABEL_W || px > w) continue;
+        if (!drew) {
+            ctx.save();
+            ctx.font = 'bold 9px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            drew = true;
+        }
+        ctx.fillStyle = 'rgba(120,220,160,0.9)';
+        ctx.fillRect(px, 2, 1, WAVEFORM_H - 4);
+        ctx.fillRect(px, 2, 11, 11);
+        ctx.fillStyle = '#0b1512';
+        ctx.fillText(String(n), px + 6, 8);
+    }
+    if (drew) ctx.restore();
 }
 
 function drawLanes(w) {
@@ -4207,6 +4237,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'nextGrid', label: 'Jump to next grid line', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Page Down', eof: 'Ctrl+Shift+Page Down' } },
     { id: 'prevAnchor', label: 'Jump to previous anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Left', eof: 'Alt+Page Up' } },
     { id: 'nextAnchor', label: 'Jump to next anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Right', eof: 'Alt+Page Down' } },
+    { id: 'gotoBookmarkDigit', label: 'Jump to bookmark 1-9', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+1-9', eof: 'Alt+1-9' } },
+    { id: 'setBookmarkDigit', label: 'Set / clear bookmark 1-9 at cursor', group: 'Timeline', status: 'ready', keys: { feedback: 'Shift+Alt+1-9', eof: 'Shift+Alt+1-9' } },
     { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: '[' } },
     { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: ']' } },
     { id: 'toggleSnap', label: 'Toggle snap on/off', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'G', eof: '' } },
@@ -4382,6 +4414,14 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (ctrl && e.key === 'ArrowUp') return 'slideUp';
     if (ctrl && e.key === 'ArrowDown') return 'slideDown';
     if (alt && (e.key === 'PageUp' || e.key === 'PageDown')) return e.key === 'PageUp' ? 'prevAnchor' : 'nextAnchor';
+    // Bookmarks match on e.code — with Shift held, e.key for the digit row
+    // is '!','@',… on most layouts, so the physical key is the stable signal.
+    {
+        const digit = /^Digit([1-9])$/.exec(e.code || '');
+        const shiftAlt = e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey;
+        if (digit && alt) return 'gotoBookmark:' + digit[1];
+        if (digit && shiftAlt) return 'setBookmark:' + digit[1];
+    }
     return null;
 }
 
@@ -4482,6 +4522,14 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (shift && key === 'p') return 'addPhrase';
     if (ctrl && e.key === 'ArrowUp') return 'slideUp';
     if (ctrl && e.key === 'ArrowDown') return 'slideDown';
+    // Bookmarks match on e.code — with Shift held, e.key for the digit row
+    // is '!','@',… on most layouts, so the physical key is the stable signal.
+    {
+        const digit = /^Digit([1-9])$/.exec(e.code || '');
+        const shiftAlt = e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey;
+        if (digit && alt) return 'gotoBookmark:' + digit[1];
+        if (digit && shiftAlt) return 'setBookmark:' + digit[1];
+    }
     return null;
 }
 /* @pure:shortcut-profile:end */
@@ -4793,11 +4841,33 @@ window.editorToggleShortcutPanel = (force) => {
     if (show) _editorRenderShortcutPanel();
 };
 
+/* @pure:shortcut-panel-hint:start */
+// Digit-RANGE commands (fret 0-9, bookmark 1-9) are keyboard-only: a single
+// panel-button click can't pick which digit, so _editorRunEofCommand only
+// knows the per-digit forms (setFretDigit:<n>, gotoBookmark:<n>, …). Clicking
+// the bare range row would otherwise be silently inert — return an
+// instructional hint for those ids so the click tells the user which keys to
+// press; null for every ordinary command (which the panel runs directly).
+function _editorShortcutPanelHintPure(id) {
+    switch (id) {
+    case 'gotoBookmarkDigit': return 'Press Alt+1 to Alt+9 to jump to a numbered bookmark';
+    case 'setBookmarkDigit': return 'Press Shift+Alt+1 to Shift+Alt+9 to set or clear a bookmark at the cursor';
+    case 'setFretDigit': return 'Press 0-9 to set the selected note fret';
+    default: return null;
+    }
+}
+/* @pure:shortcut-panel-hint:end */
+
 window.editorRunShortcutCommand = (id) => {
     const def = _editorCommandById(id);
     if (!def) return false;
     if (def.status !== 'ready') {
         setStatus(`${def.label} is planned but not wired yet.`);
+        return true;
+    }
+    const hint = _editorShortcutPanelHintPure(id);
+    if (hint) {
+        setStatus(hint);
         return true;
     }
     const handled = _editorRunEofCommand(id);
@@ -4919,6 +4989,87 @@ function _editorSeekToTime(t) {
     if (S.playing) { stopPlayback(); startPlayback(); }
     draw();
     updateTimeDisplay();
+}
+
+/* @pure:bookmarks:start */
+// Numbered bookmarks: up to nine time markers per song, EDITOR-side
+// authoring state (one localStorage entry keyed by filename — never pack
+// data, §6). Slots are 1-9; times are seconds, 3 dp.
+function _bookmarkStorageKeyPure(filename) {
+    return 'editorBookmarks:' + (filename || '');
+}
+// Parse a stored map defensively: junk JSON, arrays, out-of-range slots,
+// and non-finite/negative times all drop out rather than poisoning the
+// draw/jump paths.
+function _bookmarksParsePure(raw) {
+    let obj = null;
+    try { obj = JSON.parse(raw); } catch (_) { return {}; }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+    const out = {};
+    for (let n = 1; n <= 9; n++) {
+        const v = Number(obj[n]);
+        if (Number.isFinite(v) && v >= 0) out[n] = v;
+    }
+    return out;
+}
+// Toggle-set semantics on a slot: setting it at (about) its existing time
+// clears it, anywhere else (re)places it. Returns a NEW map, or the same
+// object for invalid input (callers use identity to skip persisting).
+function _bookmarkTogglePure(map, n, t) {
+    if (!(n >= 1 && n <= 9) || !Number.isFinite(t) || t < 0) return map;
+    const out = { ...map };
+    if (out[n] !== undefined && Math.abs(out[n] - t) < 0.01) delete out[n];
+    else out[n] = Math.round(t * 1000) / 1000;
+    return out;
+}
+/* @pure:bookmarks:end */
+
+// Per-song cache so the draw path never parses localStorage per frame;
+// keyed by filename, so a song switch invalidates it naturally.
+let _bookmarksCache = null;
+let _bookmarksCacheKey = null;
+function _bookmarks() {
+    const key = _bookmarkStorageKeyPure(S.filename);
+    if (_bookmarksCacheKey === key && _bookmarksCache) return _bookmarksCache;
+    let raw = null;
+    try { raw = localStorage.getItem(key); } catch (_) {}
+    _bookmarksCache = _bookmarksParsePure(raw);
+    _bookmarksCacheKey = key;
+    return _bookmarksCache;
+}
+function _bookmarksSave(map) {
+    const key = _bookmarkStorageKeyPure(S.filename);
+    _bookmarksCache = map;
+    _bookmarksCacheKey = key;
+    try {
+        if (Object.keys(map).length) localStorage.setItem(key, JSON.stringify(map));
+        else localStorage.removeItem(key);
+    } catch (_) {}
+}
+
+function _editorSetBookmark(n) {
+    if (!S.filename) { setStatus('Load a song first'); return true; }
+    const before = _bookmarks();
+    const after = _bookmarkTogglePure(before, n, S.cursorTime || 0);
+    if (after === before) return true;
+    const removed = after[n] === undefined;
+    _bookmarksSave(after);
+    draw();
+    setStatus(removed
+        ? `Bookmark ${n} cleared`
+        : `Bookmark ${n} set at ${(S.cursorTime || 0).toFixed(2)} s — Alt+${n} jumps here`);
+    return true;
+}
+
+function _editorGotoBookmark(n) {
+    const t = _bookmarks()[n];
+    if (t === undefined) {
+        setStatus(`Bookmark ${n} isn't set — Shift+Alt+${n} sets it at the cursor`);
+        return true;
+    }
+    _editorSeekToTime(t);
+    setStatus(`Bookmark ${n}`);
+    return true;
 }
 
 function _editorJumpBeat(dir) {
@@ -5348,6 +5499,12 @@ function _editorPromptTempoBeatUnitAtSelection() {
 function _editorRunEofCommand(cmd) {
     if (typeof cmd === 'string' && cmd.startsWith('setFretDigit:')) {
         return _editorSetSelectedFret(parseInt(cmd.slice('setFretDigit:'.length), 10));
+    }
+    if (typeof cmd === 'string' && cmd.startsWith('gotoBookmark:')) {
+        return _editorGotoBookmark(parseInt(cmd.slice('gotoBookmark:'.length), 10));
+    }
+    if (typeof cmd === 'string' && cmd.startsWith('setBookmark:')) {
+        return _editorSetBookmark(parseInt(cmd.slice('setBookmark:'.length), 10));
     }
     switch (cmd) {
     case 'save': editorSave(); return true;
