@@ -12827,14 +12827,48 @@ window.editorDoAddDrums = async () => {
 // ════════════════════════════════════════════════════════════════════
 
 /* @pure:string-tuning:start */
-// Range per role. Bass 4–6 (low B, then high C). Guitar-role arrangements
-// allow 4–8: the floor dropped from 6 so 5-lane charts (banjo-family —
-// gDGBD with its re-entrant drone 5th) are constructible. Which END an
-// add/remove touches is now the user's choice in the modal, not a
-// hardcoded policy — the high-C 6-string bass and high-side guitar adds
-// are one click each.
+// Range per role. Bass 4–6 (add low B, then high C). Guitar 6–8 (add low
+// B, then low F#). These floors/ceilings are NOT free policy: the pitch
+// and label model (`_openMidiForArr` / `laneLabels`) can only represent a
+// FIXED set of extended shapes — guitar strings are prepended at the low
+// end, bass adds low B at the 5th then high C at the 6th. A guitar below
+// 6 or a string added at the "wrong" end has no consistent open-pitch or
+// label, so `_stringCountFor` would re-snap the count and silently
+// re-interpret every note index. The modal therefore offers each add/
+// remove only at the end the model supports (see `_addPositionPure` /
+// `_removePositionPure`); direct per-string tuning entry below covers the
+// exotic tunings (drop/open/re-entrant) that changing the COUNT cannot.
 function _stringsRangePure(isBass) {
-    return isBass ? { min: 4, max: 6 } : { min: 4, max: 8 };
+    return isBass ? { min: 4, max: 6 } : { min: 6, max: 8 };
+}
+
+// The only END an add may touch for a given role + current count, or null
+// when the arrangement is at its ceiling. Mirrors the fixed extension
+// order baked into `_openMidiForArr`/`laneLabels`: bass grows low (4→5)
+// then high (5→6); guitar grows low (6→7→8). Adding at any other end
+// yields a count/label/pitch shape the renderer can't represent, so the
+// modal never offers it. Pure — role + count in, position out.
+function _addPositionPure(isBass, cur) {
+    if (isBass) {
+        if (cur === 4) return 'low';   // 4→5 adds low B
+        if (cur === 5) return 'high';  // 5→6 adds high C
+        return null;                   // 6-string bass is the ceiling
+    }
+    if (cur === 6 || cur === 7) return 'low';  // 6→7 low B, 7→8 low F#
+    return null;                               // 8-string guitar is the ceiling
+}
+
+// The only END a remove may touch — the inverse of `_addPositionPure`, so
+// removing always peels the string the last add appended and the count
+// collapses back to a shape the model can represent. null at the floor.
+function _removePositionPure(isBass, cur) {
+    if (isBass) {
+        if (cur === 6) return 'high';  // 6→5 peels high C
+        if (cur === 5) return 'low';   // 5→4 peels low B
+        return null;                   // 4-string bass is the floor
+    }
+    if (cur === 7 || cur === 8) return 'low';  // 8→7, 7→6 peel the low ext
+    return null;                               // 6-string guitar is the floor
 }
 
 // Clamp a per-string tuning offset (semitones from that lane's standard
@@ -12950,29 +12984,30 @@ function _renderStringsModal() {
 
     const curCount = labels.length;  // === lanes()
     const warn = document.getElementById('editor-strings-warning');
-    const atCeil = curCount >= max;
-    const atFloor = curCount <= min;
+    // Enable each end ONLY where the pitch/label model can represent the
+    // resulting shape (see `_addPositionPure`/`_removePositionPure`). A
+    // guitar has no valid high string and a 4/5-string guitar has no valid
+    // low removal, so offering those ends would silently corrupt note
+    // indices — hence a hard per-end gate, not a blanket ceiling/floor.
+    const addPos = _addPositionPure(!!isBass, curCount);
+    const removePos = _removePositionPure(!!isBass, curCount);
     const addLow = document.getElementById('editor-strings-add-low');
     const addHigh = document.getElementById('editor-strings-add-high');
-    if (addLow) addLow.disabled = atCeil;
-    if (addHigh) addHigh.disabled = atCeil;
-    // Either END is removable — but only when no notes live on it, so
-    // removal can never silently drop chart content.
-    const lowBlockers = _notesOnString(arr, 0);
-    const highBlockers = _notesOnString(arr, curCount - 1);
+    if (addLow) addLow.disabled = addPos !== 'low';
+    if (addHigh) addHigh.disabled = addPos !== 'high';
+    // The removable end still refuses to drop a string that carries notes,
+    // so removal can never silently discard chart content.
+    const removableIdx = removePos === 'low' ? 0 : (removePos === 'high' ? curCount - 1 : -1);
+    const blockers = removableIdx >= 0 ? _notesOnString(arr, removableIdx) : 0;
     const removeLow = document.getElementById('editor-strings-remove-low');
     const removeHigh = document.getElementById('editor-strings-remove-high');
-    if (removeLow) removeLow.disabled = atFloor || lowBlockers > 0;
-    if (removeHigh) removeHigh.disabled = atFloor || highBlockers > 0;
+    if (removeLow) removeLow.disabled = removePos !== 'low' || blockers > 0;
+    if (removeHigh) removeHigh.disabled = removePos !== 'high' || blockers > 0;
     if (warn) {
-        if (atFloor) {
+        if (!removePos) {
             warn.textContent = `Already at the minimum ${min} strings.`;
-        } else if (lowBlockers > 0 && highBlockers > 0) {
-            warn.textContent = 'Notes live on both end strings — delete or move them before removing.';
-        } else if (lowBlockers > 0) {
-            warn.textContent = `${lowBlockers} note${lowBlockers === 1 ? '' : 's'} on the low string — the high end is still removable.`;
-        } else if (highBlockers > 0) {
-            warn.textContent = `${highBlockers} note${highBlockers === 1 ? '' : 's'} on the high string — the low end is still removable.`;
+        } else if (blockers > 0) {
+            warn.textContent = `${blockers} note${blockers === 1 ? '' : 's'} on the ${removePos} string — delete or move them before removing.`;
         } else {
             warn.textContent = '';
         }
@@ -12994,16 +13029,21 @@ window.editorHideStringsModal = () => {
 window.editorAddString = (pos) => {
     const arr = S.arrangements[S.currentArr];
     if (!arr) return;
-    if (pos !== 'low' && pos !== 'high') pos = 'low';
-    const { max } = _stringsRangeForActive();
+    const isBass = /bass/i.test(arr.name || '');
     // Compute the count directly from the active arrangement rather
     // than going through `lanes()` — the latter consults a per-draw
     // cache and our intent here is explicitly "what is this
     // arrangement's current string count?", independent of draw state.
-    if (_stringCountFor(arr) >= max) return;
+    const cur = _stringCountFor(arr);
+    // Only ever add at the END the pitch/label model supports for this
+    // role + count. A mismatched request (guitar high, bass low at 5, …)
+    // is rejected outright rather than silently coerced, because adding
+    // at the unsupported end re-snaps the count and re-labels every note.
+    const valid = _addPositionPure(isBass, cur);
+    if (!valid || pos !== valid) return;
     // The command's exec() calls _resizeForLaneChange() itself, which
     // covers undo/redo too — no need to duplicate the resize here.
-    S.history.exec(new AddStringCmd(S.currentArr, pos));
+    S.history.exec(new AddStringCmd(S.currentArr, valid));
     _renderStringsModal();
     draw();
     updateStatus();
@@ -13012,17 +13052,20 @@ window.editorAddString = (pos) => {
 window.editorRemoveString = (pos) => {
     const arr = S.arrangements[S.currentArr];
     if (!arr) return;
-    if (pos !== 'low' && pos !== 'high') pos = 'low';
-    const { min } = _stringsRangeForActive();
+    const isBass = /bass/i.test(arr.name || '');
     // Same reasoning as editorAddString — anchor on `arr` directly
     // rather than the cached `lanes()`.
     const cur = _stringCountFor(arr);
-    if (cur <= min) return;
-    const targetIdx = pos === 'low' ? 0 : cur - 1;
+    // Only remove the END the model can collapse back to a representable
+    // shape (the inverse of the add order). Any other end would leave the
+    // count at a value the labels/pitches no longer match.
+    const valid = _removePositionPure(isBass, cur);
+    if (!valid || pos !== valid) return;
+    const targetIdx = valid === 'low' ? 0 : cur - 1;
     if (_notesOnString(arr, targetIdx) > 0) return;  // UI button is disabled too
     // The command's exec() handles the resize internally (covers
     // undo/redo too); see editorAddString.
-    S.history.exec(new RemoveStringCmd(S.currentArr, pos));
+    S.history.exec(new RemoveStringCmd(S.currentArr, valid));
     _renderStringsModal();
     draw();
     updateStatus();
