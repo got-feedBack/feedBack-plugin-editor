@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Drum grid row density: Full / Compact.** A new toggle on the drum
+  editor (and registry command `toggleDrumDensity`) collapses the 18
+  per-piece rows into the community 7-row family shape — crash / hi-hat /
+  ride / toms / floor toms / snare / kick, mirroring core's `PRESET_RB4`
+  family boundaries — so the backbeat reads at a glance on small screens.
+  Strictly a render/selection grouping: hits keep their real piece-ids and
+  per-piece colors (a compact row shows its members distinctly), every
+  piece stays on exactly one row (collapsing can never hide data), adding
+  in a compact row writes the family's canonical piece, a time-only drag
+  keeps the hit's original piece, and crossing rows assigns the target
+  family's canonical. Full mode is byte-for-byte today's grid. Editor
+  pref, never pack data. Tests: `tests/drum_density.test.js`.
+- **Read-only Tab preview of the current part.** A new **Tab…** toolbar
+  button (registry command `showTabPreview`) opens a modal that renders
+  the active fretted part as engraved tab, reusing the Tab View plugin's
+  arrangement→GP conversion endpoint and the same pinned alphaTab CDN
+  render idiom (player disabled — no soundfont download; the engraving
+  lays out once per load, never per frame, and tears down on close).
+  Honest about its source: the endpoint reads the **saved** pack, so the
+  modal says "as last saved" and offers Refresh; unsaved edits need a
+  Save first. Degrades cleanly — a missing Tab View plugin, an old host,
+  keys parts (their packing has no tab), and unsaved sessions each get a
+  specific message instead of a blank panel. Strictly read-only: the
+  String view stays the fretted editor; this is a proofreading lens.
+  Tests: `tests/tab_preview.test.js`.
+- **Loop A/B compare — the ear-training loop.** A new **A/B** transport
+  toggle (Alt+B, both profiles) alternates each loop pass between the
+  RECORDING (reference audible, claps off) and the GUIDE (reference muted
+  through the mixer's transparent gain, claps on — even if the claps pref
+  is off), so a charter hears what they charted against what the artist
+  played, one pass apart. Every (re)start begins on the recording pass;
+  phase flips ride the loop wrap with the mixer's ~20 ms ramp (never a
+  pop); stopping mid-guide-pass always restores the reference to its
+  fader level; clearing the loop region disarms A/B; session-only state
+  that resets on song load — a persisted mute would read as a playback
+  bug later. Arming A/B with a region set but looping off also arms the
+  loop. Tests: `tests/loop_ab.test.js`.
+### Changed
+- **Live MIDI record now uses the host's `midi-input` capability domain.**
+  The record path called private `navigator.requestMIDIAccess` while the
+  rest of the org converged on `window.feedBack.midiInput` (one permission
+  prompt, one shared source list, refcounted device sessions, PII-redacted
+  diagnostics) — a flagged compat drift, now closed. The domain is
+  preferred whenever the host ships it; older hosts fall back to the
+  private Web-MIDI path unchanged, and both deliver raw bytes into ONE
+  routing function so capture behavior is byte-identical. The domain
+  session pre-opens when the record modal opens (and on device change) so
+  the Start click stays synchronous — the user-gesture constraint that
+  keeps the transport anchor honest — and the shared session is
+  ref-released on modal close, never yanked from other consumers. Tests:
+  `tests/midi_domain.test.js` (backend selection, picker normalization,
+  and on/off/velocity-0/channel-filter/sustain-pedal routing equivalence).
+### Added
+- **Per-part view switcher: any fretted part can open in the piano roll
+  (read-first).** The editing view was derived from the arrangement NAME —
+  keys parts got the roll, everything else the lanes, no choice. A new
+  String · Piano roll switcher makes it a per-part preference (editor
+  localStorage keyed by song + stable part id — reorder/rename safe; never
+  pack data; keys parts stay piano-locked since their wire packing has no
+  string semantics to show). A fretted part in the roll renders at
+  **sounding pitch** (open string + tuning + capo + fret) with the same
+  mapping across draw, hit-testing, marquee select, and the viewport
+  auto-fit, and the in-key row shading applies automatically. Fretted
+  parts in the roll are **read-only for now** (a visible notice says so):
+  every command entry point is gated centrally in the undo history plus
+  the live-mutating drag paths, because adding or moving by pitch would
+  force a silent string/fret guess — editing arrives with the
+  suggest-position resolver. Under the hood the historical `isKeysMode()`
+  split into a piano-SURFACE predicate and a keys-DATA predicate
+  (`isKeysArr`), and data-semantics sites (string moves, chord-sibling
+  grouping, anchors) were re-pointed — a fretted part in the roll still
+  groups its chords and keeps its string-move machinery. Registry command
+  `cycleViewMode`. Tests: `tests/view_switcher.test.js`.
+- **The in-key highlight now covers the fretted lanes.** The song key/scale
+  picker's highlight applied only to the piano roll; guitar/bass notes now
+  dim when out of key too, resolving each note to its **sounding pitch =
+  open string + tuning offset + capo + fret** via the new
+  `_soundingPitchPure` helper. The capo is added exactly **once** — chart
+  frets are capo-relative, matching core's single source of the formula
+  (`lib/song.py pitch_from_base`, shared by the tuner and the highway's
+  scale-degree derivation) — and `_absolutePitch` (string-moves) still
+  deliberately omits it, now documented as a pair so composing the two
+  can never double-count. Out-of-key notes dim (never redden —
+  chromaticism isn't an error) and unresolvable pitches stay fully lit;
+  the Key controls now show for any pitched arrangement, not just keys.
+  Tests: `tests/fret_key_highlight.test.js` (including the capo-flips-
+  membership case an uncapoed resolver gets wrong).
+
 ### Fixed
 - **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
   arrangement entries.** The full-snapshot save path rebuilt every manifest
@@ -16,6 +105,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unknown-key preservation rule (§1.2). Rebuilt entries now merge onto the
   existing entry for the same id, with editor-owned keys taking the fresh
   values. Tests: `tests/test_manifest_type_preserve.py`.
+- **Editing one keys note no longer discards GP notation for the whole
+  arrangement.** GP-sourced notation (exact per-stave hand assignments,
+  dynamics, pedal events, fingering, grace notes) was kept only while a
+  fingerprint of ALL notes matched — so a single piano-roll edit invalidated
+  the entire sidecar and the save fell back to the heuristic lift, silently
+  re-guessing the hand split and dropping every GP-only attribute in every
+  measure. The save now performs a **measure-granular merge**: measures whose
+  `(time, midi)` note content still matches the current wire keep their GP
+  measure objects verbatim; only edited measures take the freshly lifted
+  measure. The merged payload is schema-validated and re-stamped; any grid
+  misalignment — or a merge that preserves zero measures (e.g. a
+  transpose-all) — falls back to the full lift (the old behavior), so a
+  100%-heuristic relift is never stamped as GP-sourced. Tests:
+  `tests/test_notation_preserve_merge.py`, `tests/test_notation_save.py`.
+- **The `.bak` safety copy now rolls with every save.** It was written only once
+  (the first time a pack was overwritten), so a user editing a pack over weeks
+  kept a first-ever-save recovery point that grew staler with every save. Both
+  overwrite sites (the editor save and the build/save-as path) now refresh the
+  `.bak` to the current on-disk pack before overwriting, so the backup is always
+  the previous save, one step back. Best-effort: a failed backup copy never
+  blocks the save. Tests: `tests/test_rolling_backup.py`.
 
 ### Added
 - **Infer-once arrangement `type` stamping.** On save, an arrangement entry with
@@ -26,6 +136,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names stay free labels — groundwork for safe track renaming in the Parts view.
 
 ### Changed
+- **Tempo-ride scope is now a per-part checklist.** The Tempo Map's binary
+  "Drum tab / All instruments" ride toggle gains a third **Per part…** mode:
+  a checklist with one row per arrangement plus the drum tab itself, so a
+  hand-verified part can sit out a grid re-warp while everything else rides
+  (the prerequisite for multitrack import, where the binary switch becomes
+  corrupting). Presets behave exactly as before and still persist; the
+  checklist is session-only (its indices are song-shaped) and resets to the
+  conservative drum-only preset on song load. Ctrl+T still cycles the two
+  presets. Under the hood `TempoMapCmd` now freezes the full ride set —
+  drum flag + exact arrangement objects — at construction, so flipping the
+  checklist between an edit and its undo can never desync capture / remap /
+  restore; sections continue to ride in every scope, and archive saves are
+  still limited to the active arrangement. Tests:
+  `tests/tempo_ride_parts.test.js`.
 - **Canvas repaints are coalesced to one per animation frame.** `draw()` was
   called imperatively from ~150 sites and each call repainted the whole
   canvas immediately — a single mousemove that touched several pieces of
@@ -75,6 +199,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it is now a registry command in both shortcut profiles, default ON, so an
   author can pin the view on one passage and edit while the song plays on.
   Editor pref only. Tests: `tests/follow_toggle.test.js`.
+- **Drum velocity is authorable.** Velocity always rendered (brightness/
+  height) and imported from MIDI, but authoring wrote a hardcoded `v:100`
+  with no way to change it. Now: **Alt+vertical-drag** on selected hits
+  edits velocity live (piano-roll idiom — up is louder, 1 step/px, one undo
+  step per drag), **Shift+↑/↓** nudges the selection ±10, and **A / N**
+  quick-set accent (115) / normal (100), all through a new undoable
+  `SetDrumVelocityCmd` that restores authored dynamics verbatim on undo (a
+  hit that had no explicit `v` gets the field deleted again, not set to
+  100). The **G ghost toggle now pulls a normal-strength hit down to the
+  ghost velocity (35)** — a ghost is a quiet hit by definition (import
+  derives `g` from `v < 40`), so ghosting a `v:100` hit no longer authors a
+  contradiction; already-quiet hits keep their authored dynamics,
+  un-ghosting leaves velocity untouched, and undo restores the exact
+  flag+velocity pair. The unmapped-notes import dialog also stops
+  flattening dynamics: hand-mapped notes carry their source velocities
+  through when the server captured them (`velocities` index-aligned with
+  `times`; older cores simply omit it) instead of pushing `v:100`.
+  Tests: `tests/drum_velocity.test.js`.
 - **Drum edits are undoable.** Click-add, drag-move (time and lane), Delete,
   and the G/F/K ghost/flam/choke toggles now run through the editor's shared
   undo history via four new command classes (`AddDrumHitCmd`,
