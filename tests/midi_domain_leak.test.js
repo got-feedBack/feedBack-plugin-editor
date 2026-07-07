@@ -79,6 +79,55 @@ function makeEnv() {
     )();
 }
 
+// Harness that runs the REAL editorStopRecordMidi against a stubbed DOM /
+// transport and a fake domain with an already-open handle, so the teardown
+// is exercised for real (not pattern-matched).
+function makeStopEnv() {
+    const preamble =
+        'let _recState = "recording";\n'
+        + 'let _recMidiHandle = null;\n'
+        + 'let _recMidiOpenKey = null;\n'
+        + 'let _recMidiOpenGen = 0;\n'
+        + 'let _recMidiInput = null;\n'
+        + 'let _recNotes = [];\n'
+        + 'let _recArrIdx = 0;\n'
+        + 'let _recCountLastMs = 0;\n'
+        + 'let ghostNotes = null;\n'
+        + 'const _recHeld = new Map();\n'
+        + 'const _recPending = new Map();\n'
+        + 'const _recSustainOn = new Set();\n'
+        + 'const __state = { domain: null };\n'
+        + 'const window = { feedBack: { get midiInput() { return __state.domain; } } };\n'
+        + 'const localStorage = { setItem() {}, getItem() { return null; } };\n'
+        + 'const S = { audioSource: null, duration: 0, cursorTime: 0, sessionId: "s", arrangements: [{ notes: [] }], currentArr: 0 };\n'
+        + 'function chartTimeNow() { return 1; }\n'
+        + 'function stopPlayback() {}\n'
+        + 'function updateTimeDisplay() {}\n'
+        + 'function _recFinalizeNote() {}\n'
+        + 'function _recCount() {}\n'
+        + 'function _recMidiOnData() {}\n'
+        + 'function flattenChords() {}\n'
+        + 'function updatePianoRange() {}\n'
+        + 'function updateArrangementSelector() {}\n'
+        + 'function updateStatus() {}\n'
+        + 'function draw() {}\n'
+        + 'function setStatus() {}\n'
+        + 'const __el = { classList: { add() {}, remove() {}, toggle() {} }, value: "", disabled: false };\n'
+        + 'const document = { getElementById() { return __el; } };\n';
+    return new Function(
+        '"use strict";' + preamble
+        + extractFn('_recMidiDomain') + '\n'
+        + extractFn('_recMidiDisconnectDomain') + '\n'
+        + extractArrow('editorStopRecordMidi') + ';\n'
+        + 'return {'
+        + '  setDomain: (d) => { __state.domain = d; },'
+        + '  openHandle: (key) => { _recMidiHandle = { removeListener() {}, addListener() {} }; _recMidiOpenKey = key; },'
+        + '  stop: () => window.editorStopRecordMidi(),'
+        + '  snap: () => ({ handle: _recMidiHandle, key: _recMidiOpenKey }),'
+        + '};'
+    )();
+}
+
 // Fake host midi-input domain (version 1) with test-controlled open() timing.
 function makeDomain() {
     const calls = { select: [], open: [], close: [] };
@@ -135,10 +184,15 @@ await t('an open resolving after teardown self-closes instead of resurrecting a 
     assert.deepStrictEqual(dom._calls.close, ['A'], 'the orphaned ref self-closes');
 });
 
-await t('editorStopRecordMidi releases the domain session (it hides the modal)', () => {
-    const stopBody = extractArrow('editorStopRecordMidi');
-    assert.ok(/_recMidiDisconnectDomain\(\)/.test(stopBody),
-        'Stop hides the modal, so it must call _recMidiDisconnectDomain() to release the refcounted session');
+await t('editorStopRecordMidi releases the domain session (Stop hides the modal)', () => {
+    const env = makeStopEnv();
+    const dom = makeDomain();
+    env.setDomain(dom);
+    env.openHandle('A');              // a live recording take holds an open session
+    env.stop();                       // Stop hides the modal at the end
+    assert.strictEqual(env.snap().handle, null, 'the domain handle is released on Stop');
+    assert.deepStrictEqual(dom._calls.close, ['A'],
+        'the refcounted session ref is closed on Stop, not held open indefinitely');
 });
 
     console.log(`\n${pass} passed, ${fail} failed`);
