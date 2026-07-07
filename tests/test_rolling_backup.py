@@ -48,14 +48,21 @@ def test_directory_output_is_skipped(tmp_path: Path):
     assert not bak.exists()
 
 
-def test_backup_failure_never_raises(tmp_path: Path):
+def test_directory_backup_target_is_left_alone(tmp_path: Path):
+    """A directory sitting at the `.bak` path must not swallow the pack.
+
+    Copying straight onto it (`shutil.copy2`) would drop `song.sloppak`
+    *inside* `song.sloppak.bak/`, silently turning the backup into a
+    junk directory. The helper must skip a non-file backup target, leave
+    it untouched, and never raise. FAILS on the in-place copy version.
+    """
     out = tmp_path / "song.sloppak"
     out.write_bytes(b"v1")
-    # A directory at the backup path makes copy2 fail with OSError —
-    # the save must proceed anyway.
     bak = tmp_path / "song.sloppak.bak"
     bak.mkdir()
-    _refresh_save_backup(out, bak)   # must not raise
+    _refresh_save_backup(out, bak)                 # must not raise
+    assert bak.is_dir()                            # left untouched
+    assert not (bak / "song.sloppak").exists()     # pack NOT dropped inside
 
 
 def test_failed_roll_preserves_prior_good_backup(tmp_path: Path, monkeypatch):
@@ -87,4 +94,4 @@ def test_failed_roll_preserves_prior_good_backup(tmp_path: Path, monkeypatch):
     # The prior good backup must survive a failed roll intact, and no
     # partial temp file may be left lying around.
     assert bak.read_bytes() == b"v1-prior-good-backup"
-    assert not (tmp_path / "song.sloppak.bak.tmp").exists()
+    assert not list(tmp_path.glob("*.tmp")), "partial temp copy left behind"

@@ -235,26 +235,43 @@ def _refresh_save_backup(output_path, backup_path) -> None:
     grew staler with every save. Best-effort on purpose: a failed backup
     copy must never block the save itself.
 
-    The roll is atomic: copy to a sibling ``.tmp`` first, then
-    ``os.replace`` it over the ``.bak``. A mid-copy failure (disk full,
-    interrupted) therefore never truncates the existing ``.bak`` — the
-    previous good recovery point survives until a complete new one is
-    ready. (Copying straight onto ``.bak`` would destroy that recovery
-    point every save.)"""
-    tmp_backup = backup_path.with_suffix(backup_path.suffix + ".tmp")
+    The roll is atomic: stage the copy to a private, unique temp file in
+    the same directory, then ``os.replace`` it over the ``.bak``. A
+    mid-copy failure (disk full, interrupted) therefore never truncates
+    the existing ``.bak`` — the previous good recovery point survives
+    until a complete new one is ready. (Copying straight onto ``.bak``
+    would destroy that recovery point every save.) The temp name comes
+    from ``mkstemp`` so a stray ``.bak.tmp`` (file OR directory) can't be
+    clobbered and two concurrent saves can't race on the same temp
+    path."""
+    tmp_backup = None
     try:
-        if output_path.exists() and output_path.is_file():
-            shutil.copy2(output_path, tmp_backup)
-            os.replace(tmp_backup, backup_path)
+        if not (output_path.exists() and output_path.is_file()):
+            return
+        # A directory sitting at the backup path is not a rolling `.bak`;
+        # renaming onto it can't succeed and copying would drop the pack
+        # *inside* it, so leave it alone rather than silently mangle it.
+        if backup_path.exists() and not backup_path.is_file():
+            return
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(backup_path.parent),
+            prefix=backup_path.name + ".",
+            suffix=".tmp",
+        )
+        os.close(fd)
+        tmp_backup = Path(tmp_name)
+        shutil.copy2(output_path, tmp_backup)
+        os.replace(tmp_backup, backup_path)
+        tmp_backup = None  # consumed by the rename
     except OSError:
         pass
     finally:
         # Never leave a partial temp copy behind (and never block the save).
-        try:
-            if tmp_backup.exists():
+        if tmp_backup is not None:
+            try:
                 tmp_backup.unlink()
-        except OSError:
-            pass
+            except OSError:
+                pass
 
 
 def _timeline_round_time(value) -> float:
