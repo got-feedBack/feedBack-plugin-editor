@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Loop A/B compare — the ear-training loop.** A new **A/B** transport
+  toggle (Alt+B, both profiles) alternates each loop pass between the
+  RECORDING (reference audible, claps off) and the GUIDE (reference muted
+  through the mixer's transparent gain, claps on — even if the claps pref
+  is off), so a charter hears what they charted against what the artist
+  played, one pass apart. Every (re)start begins on the recording pass;
+  phase flips ride the loop wrap with the mixer's ~20 ms ramp (never a
+  pop); stopping mid-guide-pass always restores the reference to its
+  fader level; clearing the loop region disarms A/B; session-only state
+  that resets on song load — a persisted mute would read as a playback
+  bug later. Arming A/B with a region set but looping off also arms the
+  loop. Tests: `tests/loop_ab.test.js`.
+
 ### Fixed
 - **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
   arrangement entries.** The full-snapshot save path rebuilt every manifest

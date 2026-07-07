@@ -794,6 +794,14 @@ function _selectedLoopRegion() {
 function _updateLoopRegionControls() {
     const region = _selectedLoopRegion();
     if (!region && S.loopEnabled) S.loopEnabled = false;
+    // A/B rides the loop region — clearing the region disarms it (and
+    // restores the reference gain via the guarded apply).
+    if (!region && typeof _abOn !== 'undefined' && _abOn) {
+        _abOn = false;
+        _abPhase = 'recording';
+        if (typeof _abApplyRefGain === 'function') _abApplyRefGain();
+    }
+    if (typeof _refreshLoopABBtn === 'function') _refreshLoopABBtn();
     const loopBtn = document.getElementById('editor-loop-region-btn');
     if (loopBtn) {
         loopBtn.disabled = !region;
@@ -3861,6 +3869,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', eof: 'C' } },
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleMixer', label: 'Toggle audio mixer', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
+    { id: 'toggleLoopAB', label: 'Toggle loop A/B compare (recording ↔ guide)', group: 'Preview', status: 'ready', keys: { feedback: 'Alt+B', eof: 'Alt+B' } },
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
     { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight (piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
@@ -3982,6 +3991,7 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (sig === 'F5') return 'toggleWaveform';
     if (plain && key === 'c') return 'toggleGuideClap';
     if (shift && key === 'c') return 'toggleMixer';
+    if (alt && key === 'b') return 'toggleLoopAB';
     if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === 'a') return 'togglePartsView';
     if (shift && key === '?') return 'showShortcutHelp';
@@ -4096,6 +4106,7 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (plain && key === 'w') return 'toggleWaveform';
     if (plain && key === 'c') return 'toggleGuideClap';
     if (shift && key === 'c') return 'toggleMixer';
+    if (alt && key === 'b') return 'toggleLoopAB';
     if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === 'a') return 'togglePartsView';
     if (shift && key === '?') return 'showShortcutHelp';
@@ -4829,6 +4840,7 @@ function _editorRunEofCommand(cmd) {
     case 'toggleGuideClap': return _editorToggleGuideClap();
     case 'toggleMetronome': return _editorToggleMetronome();
     case 'toggleMixer': return _editorToggleMixer();
+    case 'toggleLoopAB': return _editorToggleLoopAB();
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return _editorTogglePartsView();
     case 'toggleKeyHighlight': return _editorToggleKeyHighlight();
@@ -5999,6 +6011,11 @@ function startPlayback() {
     updatePlayIcon();
     playbackTick();
     _guideTimerSync();
+    // Every (re)start — including seeks, which route through here — begins
+    // an A/B cycle on the RECORDING pass, so the user always hears the
+    // real thing first from a fresh position.
+    _abPhase = 'recording';
+    _abApplyRefGain();
 }
 function stopPlayback() {
     if (S.audioSource) {
@@ -6010,6 +6027,9 @@ function stopPlayback() {
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     _guideTimerSync();
     _guideCancelVoices();
+    // Restore the reference to its fader level (a stop mid-guide-pass must
+    // never leave the recording silently muted).
+    _abApplyRefGain();
 }
 
 function playbackTick() {
@@ -6019,6 +6039,9 @@ function playbackTick() {
         ? null
         : _loopPlaybackRestartTimePure(S.cursorTime, S.barSel, S.loopEnabled, S.duration);
     if (loopRestart !== null) {
+        // A/B compare flips its pass BEFORE the restart so the ramped
+        // reference mute/unmute lands with the wrap, not a frame late.
+        _abOnLoopWrap();
         _restartPlaybackAt(loopRestart);
         updateTimeDisplay();
         // playbackTick already runs once per animation frame — paint
@@ -6412,7 +6435,9 @@ function _guideResetSchedule() {
 }
 
 function _guideTick() {
-    const claps = editorGuideClapEnabled();
+    // A/B overrides the claps pref while active: guide passes clap even
+    // with the pref off; recording passes stay clean even with it on.
+    const claps = _abClapsEnabledPure(_abActive(), _abPhase, editorGuideClapEnabled());
     const metro = editorMetronomeEnabled();
     if (!S.playing || !S.audioCtx || (!claps && !metro)) return;
     const nowChart = S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
@@ -6452,10 +6477,98 @@ function _guideTick() {
     }
 }
 
+// ── Loop A/B compare — the ear-training loop ─────────────────────────
+// While looping, alternate each pass between the RECORDING (reference
+// audible, claps off) and the GUIDE (reference muted via the mixer's
+// transparent ref gain, claps on) so a charter can hear what they charted
+// against what the artist played, one pass apart. Session-only state —
+// deliberately not persisted: silently muting the recording on a later
+// session would read as a playback bug.
+
+/* @pure:loop-ab:start */
+// Do claps schedule this tick? A/B overrides the claps pref while active:
+// guide passes clap even with the pref off, recording passes stay clean
+// even with it on.
+function _abClapsEnabledPure(abActive, phase, clapsPref) {
+    return abActive ? phase === 'guide' : clapsPref;
+}
+function _abNextPhasePure(phase) {
+    return phase === 'guide' ? 'recording' : 'guide';
+}
+// The reference gain target: muted only during an ACTIVE A/B guide pass
+// while playing; every other state restores the mixer fader's value.
+function _abRefTargetPure(abActive, playing, phase, faderGain) {
+    return (abActive && playing && phase === 'guide') ? 0 : faderGain;
+}
+/* @pure:loop-ab:end */
+
+let _abOn = false;
+let _abPhase = 'recording';   // every play starts by hearing the real thing
+
+function _abActive() { return _abOn && !!S.loopEnabled; }
+
+function _abApplyRefGain() {
+    const rg = _ensureRefGain();
+    if (!rg || !S.audioCtx) return;
+    const target = _abRefTargetPure(
+        _abActive(), !!S.playing, _abPhase,
+        _mixGainForPctPure(_mixLoadPct().ref));
+    // Same ~20 ms ramp as every mixer move — a phase flip is never a pop.
+    rg.gain.setTargetAtTime(target, S.audioCtx.currentTime, 0.02);
+}
+
+function _abOnLoopWrap() {
+    if (!_abActive()) return;
+    _abPhase = _abNextPhasePure(_abPhase);
+    _abApplyRefGain();
+    setStatus(_abPhase === 'guide'
+        ? 'A/B: guide pass (recording muted)'
+        : 'A/B: recording pass');
+}
+
+function _refreshLoopABBtn() {
+    const btn = document.getElementById('editor-loop-ab-btn');
+    if (!btn) return;
+    const region = _selectedLoopRegion();
+    btn.disabled = !region;
+    btn.classList.toggle('bg-accent', _abOn);
+    btn.classList.toggle('hover:bg-accent-light', _abOn);
+    btn.classList.toggle('bg-dark-600', !_abOn);
+    btn.classList.toggle('hover:bg-dark-500', !_abOn);
+    btn.setAttribute('aria-pressed', _abOn ? 'true' : 'false');
+    btn.title = region
+        ? 'A/B compare: each loop pass alternates — recording, then guide claps only (Alt+B)'
+        : 'Set a loop region first — A/B alternates recording and guide per pass';
+}
+
+function _editorToggleLoopAB() {
+    if (!_abOn && !_selectedLoopRegion()) {
+        setStatus('Set a loop region first — A/B alternates recording and guide per pass');
+        return true;
+    }
+    _abOn = !_abOn;
+    _abPhase = 'recording';
+    if (_abOn && !S.loopEnabled && _selectedLoopRegion()) {
+        // A/B is meaningless without looping — arm the loop like the user
+        // pressing Loop would (the existing toggle owns the button state).
+        S.loopEnabled = true;
+        _updateLoopRegionControls();
+    }
+    _abApplyRefGain();
+    _refreshLoopABBtn();
+    _guideTimerSync();   // guide passes need the scheduler even with claps off
+    setStatus(_abOn
+        ? 'Loop A/B on — first pass plays the recording, the next plays only the guide claps'
+        : 'Loop A/B off');
+    return true;
+}
+window.editorToggleLoopAB = _editorToggleLoopAB;
+
 // Start/stop the scheduler to match "playing AND enabled". Called from
 // startPlayback/stopPlayback and from the toggle (mid-play enable works).
 function _guideTimerSync() {
-    const want = S.playing && (editorGuideClapEnabled() || editorMetronomeEnabled());
+    const want = S.playing
+        && (editorGuideClapEnabled() || editorMetronomeEnabled() || _abActive());
     if (want && !_guideTimer) {
         _guideScheduledUntil = S.playStartTime
             + (S.audioCtx.currentTime - S.playStartWall);
@@ -6657,6 +6770,10 @@ async function loadCDLC(filename) {
         S.tempoMapMode = false;
         S.tempoSel = -1;
         S.tempoHover = -1;
+        // Drop loop A/B — session-only state; carrying a muted-reference
+        // phase into another song would read as a playback bug.
+        _abOn = false;
+        _abPhase = 'recording';
         // Abandon any in-progress drag — the global mouse handlers act on
         // S.drag regardless of mode, so a stale drag would otherwise keep
         // mutating the newly-loaded song's data.
