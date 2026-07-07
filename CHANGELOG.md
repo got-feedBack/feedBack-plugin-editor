@@ -41,8 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already behind the limiter). Levels persist as editor prefs, apply with a
   ~20 ms `setTargetAtTime` ramp (never a stepped jump mid-audio), and the
   defaults preserve the shipped balance exactly. Hearing safety: the first
-  play of each session fades the recording in from ~30% over 0.35 s, so an
-  unexpectedly hot recording is reached, never jumped to. The popover also
+  play of each loaded recording fades it in from ~30% over 0.35 s, so an
+  unexpectedly hot recording is reached, never jumped to — the guard re-arms
+  on every new load (`loadCDLC`, create/import, and replace-audio all funnel
+  through `loadAudio()`), not just the session's first song. The popover also
   hosts the new **edit blip** (on by default, toggleable): a soft 1320 Hz
   tick — pitched apart from the 1750 Hz guide clap — confirms note **adds
   and pitch changes** (fret set/adjust, string moves, pitch-changing drags)

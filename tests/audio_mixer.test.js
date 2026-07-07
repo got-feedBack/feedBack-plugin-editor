@@ -91,7 +91,7 @@ function makeEnv({ ctxState = 'running', storage = {} } = {}) {
         'S', 'localStorage', '_guideVoices',
         '"use strict";' + mixBlock + '\n' + busBlock
         + '\nreturn { _ensureMasterBus, _ensureRefGain, _mixLoadPct, _mixSetBusGain,'
-        + ' _mixApplyFirstPlayFade, _editBlipAt, editorEditBlipEnabled,'
+        + ' _mixApplyFirstPlayFade, _mixResetFirstPlay, _editBlipAt, editorEditBlipEnabled,'
         + ' voices: () => _guideVoices };'
     )(S, ls, voices);
     return { ...env, S, ls, initialVoices: voices };
@@ -194,6 +194,19 @@ t('first-play fade ramps the reference up once, then never again', () => {
     assert.strictEqual(rg.gain.calls[1][1], 1, 'ramps to the fader target');
     env._mixApplyFirstPlayFade();
     assert.strictEqual(rg.gain.calls.length, 2, 'second play does not re-fade');
+});
+
+t('first-play fade re-arms after a new recording loads (_mixResetFirstPlay)', () => {
+    const env = makeEnv();
+    const rg = env._ensureRefGain();
+    env._mixApplyFirstPlayFade();
+    assert.strictEqual(rg.gain.calls.length, 2, 'first recording fades once');
+    // loadAudio() calls this on every decoded recording, guitar/keys or
+    // replaced — the ramp is a hearing-safety guard, not a one-shot.
+    env._mixResetFirstPlay();
+    env._mixApplyFirstPlayFade();
+    const kinds = rg.gain.calls.slice(2).map(c => c[0]);
+    assert.deepStrictEqual(kinds, ['set', 'lin'], 'fades again for the new recording');
 });
 
 // ── Stateful: edit blip ──────────────────────────────────────────────

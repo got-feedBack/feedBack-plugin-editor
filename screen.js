@@ -5322,6 +5322,9 @@ async function loadAudio(url) {
         const buf = await resp.arrayBuffer();
         S.audioBuffer = await S.audioCtx.decodeAudioData(buf);
         S.duration = S.audioBuffer.duration;
+        // A new recording is loaded — re-arm the hearing-safety fade so it
+        // applies to this recording too, not just the session's first one.
+        _mixResetFirstPlay();
         _editorApplyScrollBounds();
         computeWaveform();
     } catch (e) {
@@ -5765,8 +5768,11 @@ function _ensureRefGain() {
     return _refGain;
 }
 
-// First-play fade (hearing safety): once per screen boot, the reference
-// ramps from a reduced level up to its fader target as playback starts.
+// First-play fade (hearing safety): once per loaded recording, the
+// reference ramps from a reduced level up to its fader target as playback
+// starts. Re-armed by _mixResetFirstPlay() on every new/replaced recording
+// (see loadAudio()) — the ramp guards against an unexpectedly hot recording,
+// so it must not go stale after the very first song of a session.
 let _mixFirstPlayDone = false;
 function _mixApplyFirstPlayFade() {
     if (_mixFirstPlayDone || !_refGain || !S.audioCtx) return;
@@ -5775,6 +5781,14 @@ function _mixApplyFirstPlayFade() {
     const now = S.audioCtx.currentTime;
     _refGain.gain.setValueAtTime(_mixFirstPlayStartGainPure(target), now);
     _refGain.gain.linearRampToValueAtTime(target, now + 0.35);
+}
+
+// Re-arm the first-play fade: called whenever a new reference recording is
+// decoded (loadCDLC, create/import, and replace-audio all funnel through
+// loadAudio()) so each new recording gets the hearing-safety ramp, not just
+// the first one of the screen's lifetime.
+function _mixResetFirstPlay() {
+    _mixFirstPlayDone = false;
 }
 
 // Apply a fader move: persist the pref and ramp the live node (~20 ms
