@@ -3864,6 +3864,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
     { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight (piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'renamePart', label: 'Rename current part', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -4832,6 +4833,7 @@ function _editorRunEofCommand(cmd) {
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return _editorTogglePartsView();
     case 'toggleKeyHighlight': return _editorToggleKeyHighlight();
+    case 'renamePart': window.editorRenameArrangement(); return true;
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -6812,6 +6814,13 @@ function updateArrangementSelector() {
     const removeBtn = document.getElementById('editor-remove-arr-btn');
     if (removeBtn) {
         removeBtn.classList.toggle('hidden', S.arrangements.length <= 1);
+    }
+
+    // Rename is available whenever an arrangement is active on a live
+    // session (rename persists through save; no session = nothing to save).
+    const renameBtn = document.getElementById('editor-rename-arr-btn');
+    if (renameBtn) {
+        renameBtn.classList.toggle('hidden', !S.arrangements.length || !S.sessionId);
     }
 }
 
@@ -11529,6 +11538,97 @@ function init() {
 // ════════════════════════════════════════════════════════════════════
 // Remove arrangement
 // ════════════════════════════════════════════════════════════════════
+
+// ── Part rename (EDITOR-VIEW-MODALITY / DAW-workspace 2.2b) ──────────
+// Unblocked by the manifest `type` stamping + merge-not-rebuild save
+// (#101): a rename no longer strips the entry's `type`/unknown keys, and
+// sloppak sessions carry a stable `id` the view prefs key off. One hard
+// limit stays, enforced honestly: the NAME still drives kind inference
+// (keys → piano roll + notation sidecar, /bass/i → 4-lane layout,
+// /^drums/i → drum routing), so a rename that would CHANGE the inferred
+// kind is refused — silently re-laning a 6-string chart as a 4-string
+// bass would strand notes on invisible strings.
+
+/* @pure:rename-arr:start */
+function _arrKindPure(name) {
+    const n = String(name || '');
+    if (KEYS_PATTERN.test(n)) return 'keys';
+    if (/^drums/i.test(n)) return 'drums';
+    if (/bass/i.test(n)) return 'bass';
+    return 'guitar';
+}
+// Validate a rename: trimmed non-empty, bounded, unique among the OTHER
+// parts (case-insensitive — the save-side name discipline), and never a
+// kind change. Returns {ok, reason, name} with the trimmed name.
+function _renameGuardPure(oldName, rawNewName, otherNames) {
+    const name = String(rawNewName || '').trim();
+    if (!name) return { ok: false, reason: 'Name can’t be empty.', name };
+    if (name.length > 60) return { ok: false, reason: 'Name too long (max 60 characters).', name };
+    if (name === String(oldName || '')) return { ok: false, reason: '', name };  // silent no-op
+    const taken = new Set((otherNames || []).map(n => String(n || '').trim().toLowerCase()));
+    if (taken.has(name.toLowerCase())) {
+        return { ok: false, reason: `Another part is already named “${name}”.`, name };
+    }
+    const oldKind = _arrKindPure(oldName);
+    const newKind = _arrKindPure(name);
+    if (oldKind !== newKind) {
+        return {
+            ok: false,
+            reason: `That name would change the part’s instrument (${oldKind} → ${newKind}) — `
+                + 'lane layout and notation still key off the name. Add a new part instead.',
+            name,
+        };
+    }
+    return { ok: true, reason: '', name };
+}
+/* @pure:rename-arr:end */
+
+// Undoable rename. Holds the arrangement INDEX (undo can fire after a
+// switch; EditHistory's per-arrangement tagging routes back) plus both
+// names; exec/rollback refresh the selector so the dropdown text follows.
+class RenameArrangementCmd {
+    constructor(arrIdx, newName) {
+        this.arrIdx = arrIdx;
+        this.newName = newName;
+        const arr = S.arrangements[arrIdx];
+        this.oldName = arr ? (arr.name || '') : '';
+    }
+    _set(name) {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        arr.name = name;
+        if (typeof updateArrangementSelector === 'function') updateArrangementSelector();
+    }
+    exec() { this._set(this.newName); }
+    rollback() { this._set(this.oldName); }
+}
+
+window.editorRenameArrangement = async () => {
+    if (_recState !== 'idle') {
+        setStatus('Cannot rename while recording. Stop the take first.');
+        return;
+    }
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return;
+    const val = await _editorPromptText({
+        title: 'Rename Part',
+        label: 'Part name (display label — the instrument kind can’t change here)',
+        value: String(arr.name || ''),
+    });
+    if (val === null) return;
+    const others = S.arrangements
+        .filter((_, i) => i !== S.currentArr)
+        .map(a => a && a.name);
+    const guard = _renameGuardPure(arr.name, val, others);
+    if (!guard.ok) {
+        if (guard.reason) setStatus(guard.reason);
+        return;
+    }
+    S.history.exec(new RenameArrangementCmd(S.currentArr, guard.name));
+    draw();
+    updateStatus();
+    setStatus(`Renamed to “${guard.name}”`);
+};
 
 window.editorRemoveArrangement = async () => {
     if (_recState !== 'idle') {

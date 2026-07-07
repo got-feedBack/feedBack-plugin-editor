@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Parts can be renamed (undoable).** A ✏ button next to the arrangement
+  selector (registry command `renamePart`) renames the current part
+  through a new `RenameArrangementCmd` — full undo/redo, selector text
+  follows, and the stable manifest `id` never changes, so view prefs and
+  the manifest merge survive. Unblocked by the merge-not-rebuild save:
+  a rename no longer strips the entry's `type`/unknown keys. One honest
+  hard limit: the NAME still drives kind inference (keys → piano roll +
+  notation, `bass` → 4-lane layout, `drums` → drum routing), so a rename
+  that would change the inferred instrument is refused with an
+  explanation — silently re-laning a 6-string chart as a bass would
+  strand notes on invisible strings. Duplicate names (case-insensitive)
+  are refused per the pack name discipline. Tests:
+  `tests/rename_part.test.js`.
+
 ### Fixed
 - **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
   arrangement entries.** The full-snapshot save path rebuilt every manifest
