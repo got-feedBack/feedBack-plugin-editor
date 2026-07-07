@@ -238,6 +238,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through when the server captured them (`velocities` index-aligned with
   `times`; older cores simply omit it) instead of pushing `v:100`.
   Tests: `tests/drum_velocity.test.js`.
+- **The Strings modal is tuning-aware: add at either end, type any tuning.**
+  The add/remove END is now the user's choice (two buttons per row) instead
+  of a hardcoded policy — the high-C 6-string bass took a special case and
+  every other high-side add was unreachable. Each string row also gains a
+  **direct offset input** (semitones from the lane's standard pitch, ±36,
+  undoable via the new `SetStringTuningCmd` which captures its target
+  arrangement so undo survives an arrangement switch), so drop tunings,
+  open tunings, and **re-entrant setups (a banjo's high drone 5th)** are
+  typable rather than unconstructible. Guitar-family arrangements now allow
+  **4–8 strings** (the floor was 6, blocking 5-lane banjo charts); removal
+  still refuses any end string that carries notes, on either end
+  independently. Tests: `tests/strings_modal.test.js`.
 - **Drum edits are undoable.** Click-add, drag-move (time and lane), Delete,
   and the G/F/K ghost/flam/choke toggles now run through the editor's shared
   undo history via four new command classes (`AddDrumHitCmd`,
