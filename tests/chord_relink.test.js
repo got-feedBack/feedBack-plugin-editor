@@ -21,13 +21,13 @@ if (!m) {
 const api = new Function(
     '"use strict";' + m[0] +
     '\nreturn { relinkChordTemplate, _fretKeyForL, _normFingers, _buildPreservedTemplates,' +
-    ' buildHandshapeChordIdMap, remapHandshapeChordIds,' +
+    ' buildHandshapeChordIdMap, remapHandshapeChordIds, dropOrphanedHandshapes,' +
     ' _normChordFn, _mergeChordFn, _groupFn,' +
     ' _sanitizeCaged, _sanitizeGuideTones, _parseGuideTones };'
 )();
 const {
     relinkChordTemplate, _normFingers, _buildPreservedTemplates,
-    buildHandshapeChordIdMap, remapHandshapeChordIds,
+    buildHandshapeChordIdMap, remapHandshapeChordIds, dropOrphanedHandshapes,
     _normChordFn, _mergeChordFn, _groupFn,
     _sanitizeCaged, _sanitizeGuideTones, _parseGuideTones,
 } = api;
@@ -205,6 +205,55 @@ t('handles empty + nullish inputs without throwing', () => {
     assert.deepStrictEqual(remapHandshapeChordIds([], {}), []);
     assert.deepStrictEqual(remapHandshapeChordIds(null, {}), []);
     assert.deepStrictEqual(remapHandshapeChordIds([{ chord_id: 0 }], null), []);
+});
+
+// ════════════════════════════════════════════════════════════════════
+// dropOrphanedHandshapes: a deleted chord must not leave its handshape
+// behind (which would also resurrect the deleted chord's template via the
+// map builder's preserve-append) — the "removed power chord still there
+// after saving" bug.
+// ════════════════════════════════════════════════════════════════════
+
+// 8b. The headline bug: chord deleted -> its chord-shape handshape drops.
+t('drops a chord-shape handshape whose chord was deleted', () => {
+    const handshapes = [
+        { chord_id: 0, start_time: 4.0, end_time: 4.6, arp: false }, // chord deleted
+        { chord_id: 0, start_time: 6.0, end_time: 6.6, arp: false }, // chord kept
+    ];
+    const chords = [{ time: 6.0 }];
+    const notes = [{ time: 4.0 }]; // leftover single note doesn't keep a chord shape
+    const out = dropOrphanedHandshapes(handshapes, chords, notes);
+    assert.strictEqual(out.length, 1);
+    assert.strictEqual(out[0], handshapes[1]); // same object, identity preserved
+});
+
+// 8c. Boundary times count as inside the span (float-drift epsilon).
+t('keeps a handshape whose chord sits exactly on the span boundary', () => {
+    const handshapes = [{ chord_id: 0, start_time: 4.0, end_time: 4.6, arp: false }];
+    assert.strictEqual(
+        dropOrphanedHandshapes(handshapes, [{ time: 4.0 }], []).length, 1);
+    assert.strictEqual(
+        dropOrphanedHandshapes(handshapes, [{ time: 4.6 }], []).length, 1);
+    assert.strictEqual(
+        dropOrphanedHandshapes(handshapes, [{ time: 4.7 }], []).length, 0);
+});
+
+// 8d. Arpeggio handshapes frame single notes: notes keep them alive, and
+// deleting every note under one drops it too.
+t('arp handshape: kept by notes in span, dropped when span is empty', () => {
+    const hs = [{ chord_id: 0, start_time: 1.0, end_time: 2.0, arp: true }];
+    assert.strictEqual(dropOrphanedHandshapes(hs, [], [{ time: 1.5 }]).length, 1);
+    assert.strictEqual(dropOrphanedHandshapes(hs, [{ time: 1.2 }], []).length, 1);
+    assert.strictEqual(dropOrphanedHandshapes(hs, [], [{ time: 3.0 }]).length, 0);
+});
+
+// 8e. Defensive: nullish / malformed inputs never throw.
+t('dropOrphanedHandshapes handles nullish inputs without throwing', () => {
+    assert.deepStrictEqual(dropOrphanedHandshapes(null, [], []), []);
+    assert.deepStrictEqual(dropOrphanedHandshapes([], null, null), []);
+    const hs = [{ chord_id: 0, start_time: 0, end_time: 1, arp: false }, null];
+    assert.deepStrictEqual(
+        dropOrphanedHandshapes(hs, [null, { time: 'x' }], null), []);
 });
 
 // ════════════════════════════════════════════════════════════════════

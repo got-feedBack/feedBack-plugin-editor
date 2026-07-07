@@ -1274,6 +1274,30 @@ function buildHandshapeChordIdMap(handshapes, oldTemplates, templateMap, chordTe
     }
     return oldToNew;
 }
+// Drop handshapes whose span no longer covers any content they could be
+// framing. Deleting a chord's notes removes only the notes — without this
+// filter the covering handshape survives the save (and re-appends the deleted
+// chord's template via buildHandshapeChordIdMap), so the "removed" chord keeps
+// rendering as a handshape chord panel on the highway forever. A chord-shape
+// handshape (arp:false) needs a chord instance inside its span; an arpeggio
+// handshape (arp:true) frames single notes, so any note or chord in the span
+// keeps it. Pure: takes the reconstructChords() rebuild outputs (editor-shaped
+// {time,...} chords/notes) and returns the surviving subset, same objects.
+const HS_ORPHAN_EPS = 1e-4; // s — tolerate float drift between span and content times
+function dropOrphanedHandshapes(handshapes, chords, notes) {
+    if (!Array.isArray(handshapes) || !handshapes.length) return [];
+    const inSpan = (x, hs) => {
+        const t = x && Number(x.time);
+        return Number.isFinite(t)
+            && t >= hs.start_time - HS_ORPHAN_EPS
+            && t <= hs.end_time + HS_ORPHAN_EPS;
+    };
+    return handshapes.filter(hs => {
+        if (!hs) return false;
+        if ((chords || []).some(c => inSpan(c, hs))) return true;
+        return !!hs.arp && (notes || []).some(n => inSpan(n, hs));
+    });
+}
 // E2: apply an old->new chord_id remap to handshapes, dropping any whose old
 // `chord_id` has no mapping (its template no longer exists -> invalid; the
 // backend validator drops these too). Mutates each surviving handshape's
@@ -1492,10 +1516,18 @@ function reconstructChords() {
     // appended (so it survives); references with no template are dropped to
     // match the backend's `chord_id < len(chord_templates)` validator.
     if (Array.isArray(arr.handshapes) && arr.handshapes.length) {
-        const oldToNew = buildHandshapeChordIdMap(
-            arr.handshapes, oldTemplates, templateMap, chordTemplates, L);
         const _selWasHere = S.handshapeSel && arr.handshapes.includes(S.handshapeSel);
-        arr.handshapes = remapHandshapeChordIds(arr.handshapes, oldToNew);
+        // Drop handshapes orphaned by note edits FIRST (a deleted chord must
+        // not keep its handshape — or resurrect its template through the map
+        // builder's preserve-append below). Dropping counts as an authored
+        // change: bump the dirty counter so an all-dropped (now empty) list
+        // still ships to the backend as an explicit clear instead of falling
+        // into the absent→preserve-from-disk path.
+        const live = dropOrphanedHandshapes(arr.handshapes, newChords, newNotes);
+        if (live.length < arr.handshapes.length) _bumpHandshapesDirty(arr, +1);
+        const oldToNew = buildHandshapeChordIdMap(
+            live, oldTemplates, templateMap, chordTemplates, L);
+        arr.handshapes = remapHandshapeChordIds(live, oldToNew);
         // If the selected handshape was in THIS arrangement and the remap
         // dropped it (its template vanished), clear the now-dangling selection.
         if (_selWasHere && !arr.handshapes.includes(S.handshapeSel)) S.handshapeSel = null;
