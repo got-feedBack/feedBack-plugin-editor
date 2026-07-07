@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Live MIDI record now uses the host's `midi-input` capability domain.**
+  The record path called private `navigator.requestMIDIAccess` while the
+  rest of the org converged on `window.feedBack.midiInput` (one permission
+  prompt, one shared source list, refcounted device sessions, PII-redacted
+  diagnostics) — a flagged compat drift, now closed. The domain is
+  preferred whenever the host ships it; older hosts fall back to the
+  private Web-MIDI path unchanged, and both deliver raw bytes into ONE
+  routing function so capture behavior is byte-identical. The domain
+  session pre-opens when the record modal opens (and on device change) so
+  the Start click stays synchronous — the user-gesture constraint that
+  keeps the transport anchor honest — and the shared session is
+  ref-released on modal close, never yanked from other consumers. Tests:
+  `tests/midi_domain.test.js` (backend selection, picker normalization,
+  and on/off/velocity-0/channel-filter/sustain-pedal routing equivalence).
+
 ### Fixed
 - **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
   arrangement entries.** The full-snapshot save path rebuilt every manifest
