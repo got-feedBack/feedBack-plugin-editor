@@ -1909,12 +1909,112 @@ function drawGrid(w) {
     }
 }
 
+/* @pure:section-coverage:start */
+// Per-section spans with a hasContent flag: does any charted note-time fall
+// in the section's [start, nextStart) window? The last section runs to the
+// song end (open-ended when duration is unknown), and is INCLUSIVE of its
+// upper edge — extended to the final note time when notes sit at or past a
+// stale/short duration, so trailing content is never invisible. A note on an
+// INTERIOR boundary belongs to the LATER section (half-open). Sections are
+// sorted defensively and non-finite start_times dropped. Returns [] when
+// there are no sections. Ambient progress — never a score.
+function _sectionCoveragePure(sections, noteTimes, duration) {
+    if (!Array.isArray(sections) || !sections.length) return [];
+    const secs = sections
+        .filter(s => s && Number.isFinite(Number(s.start_time)))
+        .map(s => Number(s.start_time))
+        .sort((a, b) => a - b);
+    if (!secs.length) return [];
+    const dur = (Number.isFinite(duration) && duration > 0) ? duration : Infinity;
+    const times = Array.isArray(noteTimes)
+        ? noteTimes.map(Number).filter(Number.isFinite)
+        : [];
+    // The final span has no later section to bound it, so it owns every
+    // trailing note: extend its end past `dur` to the last note time when a
+    // note sits at/after the (possibly stale/short) duration, and treat its
+    // upper edge as INCLUSIVE. Interior spans stay half-open [start, next) so
+    // a note on an interior boundary still belongs to the LATER section — the
+    // inclusive edge is only the outermost one, so there's no double-count.
+    let maxT = -Infinity;
+    for (const t of times) if (t > maxT) maxT = t;
+    const lastEnd = maxT > dur ? maxT : dur;   // may be Infinity
+    const out = [];
+    for (let i = 0; i < secs.length; i++) {
+        const start = secs[i];
+        const isLast = (i + 1 >= secs.length);
+        const end = isLast ? lastEnd : secs[i + 1];   // may be Infinity (last)
+        let hasContent = false;
+        for (const t of times) {
+            if (t >= start && (isLast ? t <= end : t < end)) { hasContent = true; break; }
+        }
+        out.push({ start, end, hasContent });
+    }
+    return out;
+}
+/* @pure:section-coverage:end */
+
+// Note times of the ACTIVE arrangement (flattened — chord notes already live
+// in notes() for the current arrangement).
+function _currentNoteTimes() {
+    return notes().map(n => n.time);
+}
+
+// Cross-frame memo for the section-coverage strip. drawSections runs on every
+// requestAnimationFrame during playback, but coverage only changes on
+// note/section/duration edits — never while the cursor moves. Recomputing the
+// pure helper (an O(N) note-time pass plus an O(sections×notes) scan) every
+// frame is the same per-frame O(N) trap the lanes()/laneLabels() caches in
+// draw() deliberately avoid, so memoize behind a cheap key. In-place note-time
+// moves keep the notes-array identity AND length, so they're caught by
+// `_coverageEditGen`, bumped by EditHistory._afterEdit() — the edit-contract
+// hook every mutation flows through (constitution IV). The section fingerprint
+// is O(sections) (a handful, negligible beside the O(notes) scan skipped) and
+// catches add/remove/retime/reorder without wiring every section mutation site.
+let _coverageEditGen = 0;
+let _covCache = { key: null, notesRef: null, value: [] };
+function _sectionCoverage() {
+    const secs = S.sections || [];
+    const ns = notes();
+    // A live note-move drag mutates note.time in place every mousemove and
+    // only commits to EditHistory on mouseUp, so `_coverageEditGen` hasn't
+    // bumped yet — bypass the memo for the drag's duration to keep the strip
+    // live (matching the pre-memo per-frame recompute). This is the ONE
+    // interactive path that changes note times without an edit-gen bump; the
+    // perf target (playback) has no active drag, so it still hits the cache.
+    if (S.drag && S.drag.type === 'move') {
+        return _sectionCoveragePure(secs, _currentNoteTimes(), S.duration || 0);
+    }
+    let secSig = secs.length + ':';
+    for (const s of secs) secSig += (s ? s.start_time : 'x') + ',';
+    const key = _coverageEditGen + '|' + S.currentArr + '|' + ns.length
+        + '|' + (S.duration || 0) + '|' + secSig;
+    if (key !== _covCache.key || _covCache.notesRef !== ns) {
+        _covCache = {
+            key, notesRef: ns,
+            value: _sectionCoveragePure(secs, _currentNoteTimes(), S.duration || 0),
+        };
+    }
+    return _covCache.value;
+}
+
 function drawSections(w) {
     const st = S.scrollX - 1;
     const et = S.scrollX + (w - LABEL_W) / S.zoom + 1;
     const laneBottom = isKeysMode()
         ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
         : WAVEFORM_H + lanes() * LANE_H;
+    // Completeness strip: a thin band at the top of the lane area tinting
+    // each section by whether the active arrangement has notes in it — an
+    // at-a-glance "where is this chart still empty", drawn under the section
+    // labels/lines below. Neutral, no percentage, no red.
+    const cov = _sectionCoverage();
+    for (const c of cov) {
+        const x0 = Math.max(LABEL_W, timeToX(c.start));
+        const x1 = Math.min(w, timeToX(c.end));
+        if (x1 <= x0) continue;
+        ctx.fillStyle = c.hasContent ? 'rgba(120,170,255,0.20)' : 'rgba(255,255,255,0.035)';
+        ctx.fillRect(x0, WAVEFORM_H, x1 - x0, 3);
+    }
     ctx.font = '9px monospace';
     ctx.textBaseline = 'top';
     for (const s of S.sections) {
@@ -2311,6 +2411,11 @@ class EditHistory {
     // Not _afterEdit() — that nudges the piano viewport, which a clear shouldn't.
     reset() { this.undo = []; this.redo = []; this._ui(); }
     _afterEdit() {
+        // Invalidate the section-coverage memo: an in-place note-time move
+        // keeps the notes array's identity + length, so the cheap cache key
+        // can't see it — this generation bump is what forces a recompute.
+        // typeof-guarded (like isKeysMode below): declared outside this @pure block.
+        if (typeof _coverageEditGen === 'number') _coverageEditGen++;
         // Keep the keys viewport in sync with the current note range so
         // multi-octave authoring works without manual range control.
         // expandOnly=true so adding a note outside the current viewport
@@ -3774,6 +3879,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+-' } },
     { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
     { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', eof: 'Ctrl+L' } },
+    { id: 'duplicateSelection', label: 'Duplicate selection to next position', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+D', eof: 'Ctrl+D' } },
     { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+R', eof: 'Shift+R' } },
     { id: 'addSection', label: 'Add section at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+M', eof: 'Shift+S' } },
     { id: 'addPhrase', label: 'Add phrase at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+P', eof: 'Shift+P' } },
@@ -4278,6 +4384,88 @@ function _editorJumpAnchor(dir) {
     if (next !== undefined) _editorSeekToTime(next);
 }
 
+/* @pure:duplicate:start */
+// Time shift for a duplicate: place the copy immediately after the
+// selection so a repeated Ctrl+D tiles a phrase. Multi-time selections
+// shift by their span PLUS one grid step, so the copy's first onset lands
+// one step past the original's last onset — the copies ABUT the source
+// instead of stacking a doubled note on the seam. A single note or a chord
+// (all one time) shifts by one grid step. Returns 0 for an empty / all-
+// non-finite selection so the caller no-ops. Interior timing is preserved
+// (the whole selection shifts by one offset — never re-quantized), so a
+// swung or syncopated phrase duplicates with its feel intact.
+function _duplicateShiftPure(times, snapStep) {
+    if (!Array.isArray(times) || !times.length) return 0;
+    let lo = Infinity, hi = -Infinity;
+    for (const t of times) {
+        const v = Number(t);
+        if (!Number.isFinite(v)) continue;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+    }
+    if (!Number.isFinite(lo)) return 0;
+    const span = hi - lo;
+    const step = (Number.isFinite(snapStep) && snapStep > 0) ? snapStep : 0.25;
+    return span > 1e-9 ? span + step : step;
+}
+
+// Batch-add `newNotes` to the note array `list`, keeping it time-sorted;
+// rollback removes exactly those refs (indexOf, not stored indices — the
+// sort reshuffles). `onChange(fn)` wraps the mutation so a caller can keep
+// its selection bound across the sort/splice; it defaults to just running
+// `fn`, which is what the tests use to drive the command in isolation.
+class AddNotesCmd {
+    constructor(list, newNotes, onChange) {
+        this.list = list;
+        this.newNotes = newNotes;
+        this.onChange = (typeof onChange === 'function') ? onChange : ((fn) => fn());
+    }
+    exec() {
+        this.onChange(() => {
+            for (const n of this.newNotes) this.list.push(n);
+            this.list.sort((a, b) => a.time - b.time);
+        });
+    }
+    rollback() {
+        this.onChange(() => {
+            for (const n of this.newNotes) {
+                const i = this.list.indexOf(n);
+                if (i >= 0) this.list.splice(i, 1);
+            }
+        });
+    }
+}
+/* @pure:duplicate:end */
+
+// Ctrl+D — copy the selection to the next position (one selection-length
+// later) as one undoable command, leaving the copies selected so a repeat
+// tiles the phrase. Mirrors the paste command's stable-selection handling.
+function _editorDuplicateSelection() {
+    if (S.drumEditMode || S.tempoMapMode || !S.sel.size) return false;
+    const nn = notes();
+    const selNotes = [...S.sel].map(i => nn[i]).filter(Boolean);
+    if (!selNotes.length) return false;
+    const shift = _duplicateShiftPure(
+        selNotes.map(n => n.time), _editorSnapStepSeconds());
+    if (shift <= 0) return false;
+    const newNotes = selNotes.map(n => ({
+        time: n.time + shift,
+        string: n.string,
+        fret: n.fret,
+        sustain: n.sustain || 0,
+        techniques: { ...(n.techniques || {}) },
+    }));
+    S.history.exec(new AddNotesCmd(nn, newNotes, _withStableSelection));
+    // Reselect the copies so a repeated Ctrl+D keeps tiling forward.
+    S.sel.clear();
+    const added = new Set(newNotes);
+    for (let i = 0; i < nn.length; i++) if (added.has(nn[i])) S.sel.add(i);
+    draw();
+    updateStatus();
+    setStatus(`Duplicated ${newNotes.length} note${newNotes.length === 1 ? '' : 's'}`);
+    return true;
+}
+
 function _editorSelectLike() {
     const idxs = _editorCurrentNoteIndices();
     if (!idxs.length) { setStatus('Select a note first'); return false; }
@@ -4320,11 +4508,81 @@ function _editorSetAnchorAtCursor() {
     return true;
 }
 
+/* @pure:section-cmds:start */
+// Sections (S.sections = [{name, number, start_time}]) are kept sorted by
+// start_time; add/rename/delete used to mutate the array raw (push/splice/
+// direct assignment) with no undo — a stray Delete on a section was
+// unrecoverable, and Ctrl+Z after adding one rolled back the last NOTE
+// edit instead. These three command classes route those mutations through
+// EditHistory. They hold the section OBJECT by reference (the array is
+// re-sorted, so indices go stale but refs survive), so exec↔rollback and
+// redo restore S.sections exactly, sort order included. Stable sort keeps
+// equal-start_time siblings in insertion order, so ref removal is
+// unambiguous even when two sections share a time.
+
+// Insert `section` and re-sort in place; returns it.
+function _sectionsInsertSorted(section) {
+    S.sections.push(section);
+    S.sections.sort((a, b) => a.start_time - b.start_time);
+    return section;
+}
+// Index of the first section within `tol` seconds of `time`, else -1 —
+// keyed off the ARGUMENTS, never a global cursor (the section context menu
+// tests a click time against each section here).
+function _sectionNearestIndexPure(sections, time, tol) {
+    if (!Array.isArray(sections)) return -1;
+    const t = Number(time);
+    const w = Number.isFinite(tol) ? tol : 1.0;
+    for (let i = 0; i < sections.length; i++) {
+        if (Math.abs(Number(sections[i].start_time) - t) <= w) return i;
+    }
+    return -1;
+}
+
+class AddSectionCmd {
+    constructor(section) { this.section = section; }
+    exec() { _sectionsInsertSorted(this.section); }
+    rollback() {
+        const i = S.sections.indexOf(this.section);
+        if (i >= 0) S.sections.splice(i, 1);
+    }
+}
+
+class RemoveSectionCmd {
+    constructor(section) { this.section = section; this.idx = -1; }
+    exec() {
+        this.idx = S.sections.indexOf(this.section);
+        if (this.idx >= 0) S.sections.splice(this.idx, 1);
+    }
+    rollback() {
+        // Restore at the EXACT original index (splice, not push+sort), so a
+        // section restored beside an equal-start_time sibling lands back in
+        // its original order — undo LIFO guarantees the array here matches
+        // the state exec left. Fall back to a sorted insert if the section
+        // wasn't found at exec time.
+        if (this.idx >= 0) S.sections.splice(this.idx, 0, this.section);
+        else _sectionsInsertSorted(this.section);
+    }
+}
+
+class RenameSectionCmd {
+    // Name-only, matching the prior rename behavior (the stale `number`
+    // field is left as-is, not recomputed — that's unchanged, just undoable).
+    constructor(section, newName) {
+        this.section = section;
+        this.oldName = section.name;
+        this.newName = newName;
+    }
+    exec() { this.section.name = this.newName; }
+    rollback() { this.section.name = this.oldName; }
+}
+/* @pure:section-cmds:end */
+
 function _editorAddSectionAtCursor() {
     const name = 'section';
     const num = S.sections.filter(s => s.name === name).length + 1;
-    S.sections.push({ name, number: num, start_time: snapTime(S.cursorTime || 0) });
-    S.sections.sort((a, b) => a.start_time - b.start_time);
+    S.history.exec(new AddSectionCmd(
+        { name, number: num, start_time: snapTime(S.cursorTime || 0) }));
     draw();
     setStatus('Section added');
     return true;
@@ -4584,6 +4842,7 @@ function _editorRunEofCommand(cmd) {
     case 'fretDown': return _editorAdjustSelectedFret(-1);
     case 'setAnchor': return _editorSetAnchorAtCursor();
     case 'selectLike': return _editorSelectLike();
+    case 'duplicateSelection': return _editorDuplicateSelection();
     case 'resnapSelection': return _editorResnapSelection();
     case 'addSection': return _editorAddSectionAtCursor();
     case 'addPhrase': return _editorAddPhraseAtCursor();
@@ -4728,11 +4987,10 @@ function onContextMenu(e) {
 
 function showSectionMenu(cx, cy, time) {
     const menu = document.getElementById('editor-context-menu');
-    // Check if clicking near an existing section
-    let nearSection = null;
-    for (const s of S.sections) {
-        if (Math.abs(s.start_time - time) < 1.0) { nearSection = s; break; }
-    }
+    // Section within 1 s of the click, if any (shared helper — same match
+    // the commands' tests exercise).
+    const nearIdx = _sectionNearestIndexPure(S.sections, time, 1.0);
+    const nearSection = nearIdx >= 0 ? S.sections[nearIdx] : null;
 
     let html = '';
     html += `<button class="w-full text-left px-3 py-1 text-xs hover:bg-dark-500" data-action="add">Add Section Here</button>`;
@@ -4750,17 +5008,20 @@ function showSectionMenu(cx, cy, time) {
                 });
                 if (!name) return;
                 const num = S.sections.filter(s => s.name === name).length + 1;
-                S.sections.push({ name, number: num, start_time: snapTime(time) });
-                S.sections.sort((a, b) => a.start_time - b.start_time);
+                S.history.exec(new AddSectionCmd(
+                    { name, number: num, start_time: snapTime(time) }));
                 draw();
             } else if (btn.dataset.action === 'rename' && nearSection) {
                 const name = await _editorPromptText({
                     title: 'Rename Section', label: 'New name', value: nearSection.name,
                 });
-                if (name) { nearSection.name = name; draw(); }
+                if (name && name !== nearSection.name) {
+                    S.history.exec(new RenameSectionCmd(nearSection, name));
+                    draw();
+                }
             } else if (btn.dataset.action === 'delete' && nearSection) {
-                const i = S.sections.indexOf(nearSection);
-                if (i >= 0) { S.sections.splice(i, 1); draw(); }
+                S.history.exec(new RemoveSectionCmd(nearSection));
+                draw();
             }
         };
     });
@@ -4941,6 +5202,17 @@ function onKeyDown(e) {
             const nn = notes();
             for (let i = 0; i < nn.length; i++) S.sel.add(i);
             draw();
+            return;
+        }
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
+        // Duplicate the selection to the next position. Same mode/focus
+        // gate as copy/paste below; preventDefault so the browser's
+        // bookmark shortcut doesn't fire.
+        if (!S.drumEditMode && !S.tempoMapMode && S.sel.size
+                && !e.target.matches('input, select, textarea')) {
+            e.preventDefault();
+            _editorDuplicateSelection();
             return;
         }
     }
@@ -6914,6 +7186,14 @@ function _renderInspector() {
         ${chordHtml}
         <div class="space-y-2 border-t border-gray-700 pt-3">
             <label class="flex items-center gap-2">
+                <span class="w-24 text-gray-400">Time (s)</span>
+                <input type="number" min="0" step="0.01" value="${inputVal(sharedTime)}"
+                    placeholder="${sharedTime === null ? 'mixed' : ''}"
+                    onchange="editorInspectorSetField('time', this.value)"
+                    class="flex-1 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs"
+                    title="Set the note's start time in seconds (for aligning to the recording)">
+            </label>
+            <label class="flex items-center gap-2">
                 <span class="w-24 text-gray-400">Sustain</span>
                 <input type="number" min="0" step="0.05" value="${inputVal(sharedSustain)}"
                     placeholder="${sharedSustain === null ? 'mixed' : ''}"
@@ -7018,6 +7298,10 @@ function _renderInspector() {
 // enforce — `type="number" min/max` on the inputs is only a UI hint;
 // users can paste / type out-of-range values, so we clamp here too.
 const _INSPECTOR_BOUNDS = {
+    // Time (start position, seconds): non-negative, no upper clamp (a note
+    // can't sit before the song start; the duration bound is soft). Lets an
+    // author type a precise onset to align a note to the recording.
+    time: { min: 0, max: Infinity, integer: false },
     // Sustain has no hard upper bound elsewhere (drag-resize / add-note
     // dialog leave it unconstrained), so the inspector matches — only
     // the lower clamp matters for input sanity.
@@ -7060,8 +7344,8 @@ function _coerceInspectorNumber(rawValue, bounds) {
 }
 
 window.editorInspectorSetField = (field, raw) => {
-    const sel = _selectedNotes();
-    if (sel.length === 0) return;
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) return;
     const bounds = _INSPECTOR_BOUNDS[field];
     if (!bounds) return;
     const v = _coerceInspectorNumber(raw, bounds);
@@ -7072,8 +7356,21 @@ window.editorInspectorSetField = (field, raw) => {
         _renderInspector();
         return;
     }
+    // Route through the undo history: the sustain edit used to mutate
+    // notes in place with no undo, and Time is new. Both apply to every
+    // selected note (matching the field's "set all" semantics) as one
+    // command, so a numeric edit is a single Ctrl+Z.
+    const nn = notes();
     if (field === 'sustain') {
-        for (const n of sel) n.sustain = v;
+        S.history.exec(new ResizeSustainGroupCmd(idxs, idxs.map(() => v)));
+    } else if (field === 'time') {
+        // MoveNoteCmd applies per-note deltas; convert the absolute target
+        // time to a delta per note (no re-sort — same as _editorResnapSelection,
+        // and hitNote is a linear scan, so order isn't load-bearing).
+        const dtimes = idxs.map(i => v - (nn[i] ? nn[i].time : 0));
+        S.history.exec(new MoveNoteCmd(idxs, dtimes, idxs.map(() => 0), null));
+    } else {
+        return;
     }
     draw();
     updateStatus();

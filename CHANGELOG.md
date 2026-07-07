@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
+  arrangement entries.** The full-snapshot save path rebuilt every manifest
+  arrangement entry from scratch (`{id, name, file, tuning, capo}`), silently
+  dropping spec fields the editor doesn't author — `type` (§5.2), `centOffset`,
+  and any future additive key — on every save, violating the format's
+  unknown-key preservation rule (§1.2). Rebuilt entries now merge onto the
+  existing entry for the same id, with editor-owned keys taking the fresh
+  values. Tests: `tests/test_manifest_type_preserve.py`.
+
+### Added
+- **Infer-once arrangement `type` stamping.** On save, an arrangement entry with
+  no `type` gets one inferred from its display name (keys-family → `piano`, bass
+  names → `bass`, classic guitar roles → `guitar`) — conservative on purpose:
+  vocals/drums/ambiguous names stay untyped, and an authored `type` is never
+  clobbered. `type` is the queryable instrument facet the spec defines; display
+  names stay free labels — groundwork for safe track renaming in the Parts view.
+
 ### Changed
 - **Canvas repaints are coalesced to one per animation frame.** `draw()` was
   called imperatively from ~150 sites and each call repainted the whole
@@ -168,6 +186,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preference (localStorage, never the feedpak) and the highlight a global one;
   both are view aids, not chart data. Groundwork for reading authored key
   regions (keys.json) in a later pass. Tests: `tests/scale_membership.test.js`.
+- **Section edits are undoable.** Adding (Shift+M or the beat-bar right-click
+  menu), renaming, and deleting a section mutated `S.sections` directly with
+  no undo — a stray Delete on a section was unrecoverable, and Ctrl+Z after
+  adding one rolled back the last *note* edit instead. Add/rename/delete now
+  run through the editor's undo history via three command classes
+  (`AddSectionCmd`, `RemoveSectionCmd`, `RenameSectionCmd`) that hold the
+  section by reference and restore `S.sections` exactly on undo/redo — a
+  deleted section returns to its original position even when another section
+  shares its start time. The section context menu's "near a section" lookup
+  now shares one pure helper with the command tests. Tests:
+  `tests/section_undo.test.js`.
+### Added
+- **Duplicate selection (Ctrl+D).** Copies the selected notes to the next
+  position — one selection-length later, so a chord or single note moves one
+  grid step and a multi-note phrase moves by its own span — and leaves the
+  copies selected, so repeating Ctrl+D tiles a riff forward. Interior timing
+  is preserved (the whole selection shifts by one offset, never re-quantized),
+  so a swung or syncopated phrase duplicates with its feel intact. Runs as one
+  undoable command; gated to note-edit mode (skipped in drum-edit / Tempo Map
+  and while typing in a field), and preventDefault keeps the browser's bookmark
+  shortcut from firing. Joins the command registry (findable in the shortcut
+  panel + command palette). Tests: `tests/duplicate_selection.test.js`.
+### Added
+- **Edit a note's start time from the inspector.** The selection inspector now
+  has a **Time (s)** field alongside Sustain, so you can type a precise onset
+  to align a note to the recording (down to the millisecond) instead of only
+  dragging. Applies to every selected note as one undoable command.
+
+### Fixed
+- **Inspector sustain edits are undoable.** Setting Sustain from the inspector
+  mutated the notes in place with no undo entry — a mistyped value couldn't be
+  taken back with Ctrl+Z. Both inspector numeric edits (Sustain and the new
+  Time) now route through the editor's undo history (`ResizeSustainGroupCmd` /
+  `MoveNoteCmd`). Tests: `tests/inspector_time.test.js`.
+### Added
+- **Section completeness strip.** A thin band along the top of the lane area
+  tints each section by whether the active arrangement has any notes in it —
+  an at-a-glance "where is this chart still empty" while working through a
+  long song. Ambient and neutral by design: a gentle blue where there's
+  content, a faint wash where there isn't — no percentage, no red, nothing
+  to click. Drawn under the existing section lines/labels. Tests:
+  `tests/section_coverage.test.js`.
 ### Added
 - **Import GoPlayAlong projects (`.gp` + audio + a GoPlayAlong `.xml`).** A GoPlayAlong export is a `<track>` **sync sidecar** — it points at a Guitar Pro score and an audio file and stores the bar→audio sync points, but carries **no chart** — so feeding it to the arrangement importer failed with "not a recognised EOF arrangement XML". Now, in the New-dialog Content Import, drop the Guitar Pro tab + the audio + the GoPlayAlong `.xml` together: the `.xml` is content-sniffed and staged as a **GoPlayAlong sync source** (not mistaken for an EOF arrangement, and it prefills title/artist), and on Import the editor applies GoPlayAlong's **authored** per-bar sync instead of re-deriving it via onset detection. Under the hood: new `goplayalong.py` parser + `/api/plugins/editor/parse-goplayalong-sync` endpoint emit the same `sync_points` / `audio_offset` shape `autosync-gp` / `extract-gp-sync` return, which the existing `convert-gp` warp path consumes (`sync_applied: "warp"`). All GoPlayAlong UI logic is gated on a staged sidecar, so normal GP/EOF/audio imports are byte-for-byte unchanged. Tests: `tests/test_goplayalong.py` (10 cases vs a real export). Verified end-to-end against a real GoPlayAlong project ("Would?" — Alice in Chains): 73 sync points → the referenced `.gp` (87 bars, 7 tracks) → 73 warp anchors → a monotonic per-bar warp.
 - **GP import with auto-sync now applies the full per-bar sync map (Songsterr-style), and the auto-sync audio can come from a YouTube URL.** Previously the auto-sync flow computed per-bar sync points but `convert-gp` applied only the scalar bar-1 offset, so recordings that drift from the tab's authored tempo went audibly out of sync over the song. Now: `convert-gp` accepts the `sync_points` payload back from the client and warps the whole converted chart (notes, sustains, beats, sections, handshapes, phrase levels, keys notation sidecars) onto the recording's timeline via core's new `lib.gp_autosync` warp helpers, responding with `sync_applied: "warp"`; it falls back to the scalar offset (`sync_applied: "offset"`) for GP3/4/5 files that use repeats/voltas/directions (their playback expansion can't be mapped from as-written sync points), when anchors degenerate, or when core lacks the new helpers. The create flow auto-runs the refine pass (onset phase sweep — requires the new core `refine_sync`, which this endpoint always imported but which never existed until now) right after the coarse DTW sync, and both refine calls send `gp_path` so refinement uses exact per-bar score times instead of a 4/4 approximation. The auto-sync section gains a YouTube URL input (reusing `/youtube-audio`) beside the file upload; the fetched audio becomes both the alignment target and the imported song audio.
