@@ -22,6 +22,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ref-released on modal close, never yanked from other consumers. Tests:
   `tests/midi_domain.test.js` (backend selection, picker normalization,
   and on/off/velocity-0/channel-filter/sustain-pedal routing equivalence).
+### Added
+- **Per-part view switcher: any fretted part can open in the piano roll
+  (read-first).** The editing view was derived from the arrangement NAME —
+  keys parts got the roll, everything else the lanes, no choice. A new
+  String · Piano roll switcher makes it a per-part preference (editor
+  localStorage keyed by song + stable part id — reorder/rename safe; never
+  pack data; keys parts stay piano-locked since their wire packing has no
+  string semantics to show). A fretted part in the roll renders at
+  **sounding pitch** (open string + tuning + capo + fret) with the same
+  mapping across draw, hit-testing, marquee select, and the viewport
+  auto-fit, and the in-key row shading applies automatically. Fretted
+  parts in the roll are **read-only for now** (a visible notice says so):
+  every command entry point is gated centrally in the undo history plus
+  the live-mutating drag paths, because adding or moving by pitch would
+  force a silent string/fret guess — editing arrives with the
+  suggest-position resolver. Under the hood the historical `isKeysMode()`
+  split into a piano-SURFACE predicate and a keys-DATA predicate
+  (`isKeysArr`), and data-semantics sites (string moves, chord-sibling
+  grouping, anchors) were re-pointed — a fretted part in the roll still
+  groups its chords and keeps its string-move machinery. Registry command
+  `cycleViewMode`. Tests: `tests/view_switcher.test.js`.
+- **The in-key highlight now covers the fretted lanes.** The song key/scale
+  picker's highlight applied only to the piano roll; guitar/bass notes now
+  dim when out of key too, resolving each note to its **sounding pitch =
+  open string + tuning offset + capo + fret** via the new
+  `_soundingPitchPure` helper. The capo is added exactly **once** — chart
+  frets are capo-relative, matching core's single source of the formula
+  (`lib/song.py pitch_from_base`, shared by the tuner and the highway's
+  scale-degree derivation) — and `_absolutePitch` (string-moves) still
+  deliberately omits it, now documented as a pair so composing the two
+  can never double-count. Out-of-key notes dim (never redden —
+  chromaticism isn't an error) and unresolvable pitches stay fully lit;
+  the Key controls now show for any pitched arrangement, not just keys.
+  Tests: `tests/fret_key_highlight.test.js` (including the capo-flips-
+  membership case an uncapoed resolver gets wrong).
 
 ### Fixed
 - **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
@@ -32,6 +67,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unknown-key preservation rule (§1.2). Rebuilt entries now merge onto the
   existing entry for the same id, with editor-owned keys taking the fresh
   values. Tests: `tests/test_manifest_type_preserve.py`.
+- **Editing one keys note no longer discards GP notation for the whole
+  arrangement.** GP-sourced notation (exact per-stave hand assignments,
+  dynamics, pedal events, fingering, grace notes) was kept only while a
+  fingerprint of ALL notes matched — so a single piano-roll edit invalidated
+  the entire sidecar and the save fell back to the heuristic lift, silently
+  re-guessing the hand split and dropping every GP-only attribute in every
+  measure. The save now performs a **measure-granular merge**: measures whose
+  `(time, midi)` note content still matches the current wire keep their GP
+  measure objects verbatim; only edited measures take the freshly lifted
+  measure. The merged payload is schema-validated and re-stamped; any grid
+  misalignment — or a merge that preserves zero measures (e.g. a
+  transpose-all) — falls back to the full lift (the old behavior), so a
+  100%-heuristic relift is never stamped as GP-sourced. Tests:
+  `tests/test_notation_preserve_merge.py`, `tests/test_notation_save.py`.
+- **The `.bak` safety copy now rolls with every save.** It was written only once
+  (the first time a pack was overwritten), so a user editing a pack over weeks
+  kept a first-ever-save recovery point that grew staler with every save. Both
+  overwrite sites (the editor save and the build/save-as path) now refresh the
+  `.bak` to the current on-disk pack before overwriting, so the backup is always
+  the previous save, one step back. Best-effort: a failed backup copy never
+  blocks the save. Tests: `tests/test_rolling_backup.py`.
 
 ### Added
 - **Infer-once arrangement `type` stamping.** On save, an arrangement entry with
