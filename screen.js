@@ -825,6 +825,11 @@ function _setLoopRegionEnabled(enabled) {
         _editorSeekToTime(region.startTime);
     }
     _updateLoopRegionControls();
+    // Toggling the loop off flips _abActive() false: restore the recording to
+    // its fader level so stopping the loop mid-guide-pass never leaves it
+    // silently muted. Toggle-only path (never the per-frame strip render), so
+    // scheduling the ~20 ms ramp here can't spam the audio param.
+    if (typeof _abApplyRefGain === 'function') _abApplyRefGain();
     draw();
     setStatus(S.loopEnabled ? 'Loop region enabled' : 'Loop region disabled');
 }
@@ -6319,7 +6324,16 @@ function _mixSetBusGain(bus, pct) {
         : bus === 'guide' ? (_masterBus && _masterBus.guideGain)
         : (_masterBus && _masterBus.clickGain);
     if (node && S.audioCtx) {
-        node.gain.setTargetAtTime(_mixGainForPctPure(p), S.audioCtx.currentTime, 0.02);
+        // The recording fader must never un-mute an active A/B guide pass:
+        // route ref moves through the A/B-aware target so a nudge ramps to
+        // the fresh level on a recording pass but stays muted on a guide
+        // pass. Guarded — the @pure:audio-bus test sandbox has no
+        // _abApplyRefGain, where this falls back to the plain fader ramp.
+        if (bus === 'ref' && typeof _abApplyRefGain === 'function') {
+            _abApplyRefGain();
+        } else {
+            node.gain.setTargetAtTime(_mixGainForPctPure(p), S.audioCtx.currentTime, 0.02);
+        }
     }
     return p;
 }
@@ -6549,10 +6563,10 @@ function _editorToggleLoopAB() {
     _abOn = !_abOn;
     _abPhase = 'recording';
     if (_abOn && !S.loopEnabled && _selectedLoopRegion()) {
-        // A/B is meaningless without looping — arm the loop like the user
-        // pressing Loop would (the existing toggle owns the button state).
-        S.loopEnabled = true;
-        _updateLoopRegionControls();
+        // A/B is meaningless without looping — arm the loop exactly like the
+        // Loop button, including the seek into the region when the cursor
+        // sits outside it, so A/B never rides a pre-loop stretch of audio.
+        _setLoopRegionEnabled(true);
     }
     _abApplyRefGain();
     _refreshLoopABBtn();

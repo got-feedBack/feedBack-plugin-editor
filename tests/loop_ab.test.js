@@ -74,5 +74,154 @@ t('a full loop session alternates recording → guide → recording …', () => 
     ], 'each pass is exactly one of the two surfaces, never both, never neither');
 });
 
+// ── Stateful wiring: drive the REAL runtime over stub ctx/DOM ─────────
+// The pure math above is correct on its own; the historical bugs live in
+// the STATEFUL glue that decides WHEN to (re)apply the ref gain. These
+// extract the audio-mixer/audio-bus/loop-ab blocks plus the loose A/B
+// runtime and drive them against stubs. They FAIL on the pre-review head:
+//  1. the recording fader ramped straight to its level during a guide
+//     pass, un-muting the reference the A/B mode had silenced;
+//  2. mid-play A/B arming set S.loopEnabled directly instead of arming the
+//     loop (which seeks the cursor into the region).
+
+function extractBlock(name) {
+    const re = new RegExp(
+        '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
+    const mm = src.match(re);
+    if (!mm) { console.error('FAIL: @pure:' + name + ' block not found'); process.exit(1); }
+    return mm[0];
+}
+// The loose A/B runtime (state + _abActive/_abApplyRefGain/_abOnLoopWrap/
+// _refreshLoopABBtn/_editorToggleLoopAB) is not a @pure block — slice it by
+// its stable endpoints.
+const abRuntime = (() => {
+    const mm = src.match(
+        /let _abOn = false;[\s\S]*?window\.editorToggleLoopAB = _editorToggleLoopAB;/);
+    if (!mm) { console.error('FAIL: A/B runtime slice not found'); process.exit(1); }
+    return mm[0];
+})();
+
+function stubParam() {
+    return {
+        value: 0, calls: [],
+        setValueAtTime(v, t) { this.calls.push(['set', v, t]); this.value = v; },
+        exponentialRampToValueAtTime(v, t) { this.calls.push(['exp', v, t]); },
+        linearRampToValueAtTime(v, t) { this.calls.push(['lin', v, t]); },
+        setTargetAtTime(v, t, c) { this.calls.push(['target', v, t, c]); this.value = v; },
+    };
+}
+function stubCtx() {
+    return {
+        state: 'running', currentTime: 10, destination: { kind: 'dest' },
+        createGain() { return { kind: 'gain', gain: stubParam(), connect() {} }; },
+        createDynamicsCompressor() {
+            return { threshold: {}, knee: {}, ratio: {}, attack: {}, release: {},
+                gain: stubParam(), connect() {} };
+        },
+    };
+}
+function stubLocalStorage() {
+    const store = {};
+    return {
+        getItem: (k) => (k in store ? store[k] : null),
+        setItem: (k, v) => { store[k] = String(v); },
+    };
+}
+
+// Build the runtime sandbox. `spies` collects side effects we assert on.
+function buildAB(opts) {
+    opts = opts || {};
+    const S = {
+        audioCtx: stubCtx(), playing: !!opts.playing,
+        loopEnabled: !!opts.loopEnabled, cursorTime: opts.cursorTime || 0,
+    };
+    const spies = { setLoopRegionEnabled: [] };
+    const region = opts.region || { startTime: 5, endTime: 9 };
+    const doc = { getElementById: () => null };
+    const win = {};
+    const mixBlock = extractBlock('audio-mixer');
+    const busBlock = extractBlock('audio-bus');
+    const abPure = extractBlock('loop-ab');
+    // Optionally splice in the REAL _setLoopRegionEnabled: its hoisted
+    // function declaration shadows the same-named spy param, so the sandbox
+    // drives the true loop-disarm path (for the "restore ref on disable" test).
+    let loopArm = '';
+    if (opts.withLoopArm) {
+        const mm = src.match(/function _setLoopRegionEnabled\(enabled\) \{[\s\S]*?\n\}/);
+        if (!mm) { console.error('FAIL: _setLoopRegionEnabled not found'); process.exit(1); }
+        loopArm = '\n' + mm[0];
+    }
+    const env = new Function(
+        'S', 'localStorage', 'document', 'window', '_guideVoices',
+        '_selectedLoopRegion', '_setLoopRegionEnabled', '_updateLoopRegionControls',
+        '_guideTimerSync', 'setStatus', '_editorSeekToTime', 'draw',
+        '"use strict";' + mixBlock + '\n' + busBlock + '\n' + abPure + '\n' + abRuntime + loopArm
+        + '\nreturn { _ensureRefGain, _mixSetBusGain, _mixLoadPct, _abApplyRefGain,'
+        + ' _abActive, _editorToggleLoopAB, _setLoopRegionEnabled, refGainNode: () => _refGain,'
+        + ' setPhase: (p) => { _abPhase = p; }, setOn: (v) => { _abOn = v; },'
+        + ' getOn: () => _abOn, getPhase: () => _abPhase };'
+    )(
+        S, stubLocalStorage(), doc, win, [],
+        () => region,
+        (enabled) => { spies.setLoopRegionEnabled.push(enabled); S.loopEnabled = !!enabled; },
+        () => {},   // _updateLoopRegionControls (pre-fix arming path uses this)
+        () => {},   // _guideTimerSync
+        () => {},   // setStatus
+        () => {},   // _editorSeekToTime
+        () => {},   // draw
+    );
+    return { env, S, spies, region };
+}
+
+t('ref fader during an active A/B guide pass stays MUTED (never un-mutes the reference)', () => {
+    const { env } = buildAB({ playing: true, loopEnabled: true });
+    env.setOn(true);
+    env.setPhase('guide');
+    env._ensureRefGain();
+    const g = env.refGainNode().gain;
+    // A recording-fader nudge to 80% must NOT lift the reference off 0.
+    env._mixSetBusGain('ref', '80');
+    const last = g.calls[g.calls.length - 1];
+    assert.ok(last && last[0] === 'target', 'ref bus ramps via setTargetAtTime');
+    assert.strictEqual(last[1], 0,
+        'guide pass keeps the recording muted even as its fader moves (pre-fix ramped to 0.8)');
+});
+
+t('ref fader on a recording pass ramps to the fresh fader level (mute is guide-pass-only)', () => {
+    const { env } = buildAB({ playing: true, loopEnabled: true });
+    env.setOn(true);
+    env.setPhase('recording');
+    env._ensureRefGain();
+    const g = env.refGainNode().gain;
+    env._mixSetBusGain('ref', '80');
+    const last = g.calls[g.calls.length - 1];
+    assert.strictEqual(last[1], 0.8, 'recording pass follows the fader');
+});
+
+t('mid-play A/B arming delegates to the loop arm (seeks into region) — no raw S.loopEnabled write', () => {
+    const { env, spies } = buildAB({ playing: true, loopEnabled: false, cursorTime: 0 });
+    env._editorToggleLoopAB();
+    assert.deepStrictEqual(spies.setLoopRegionEnabled, [true],
+        'arming A/B routes through _setLoopRegionEnabled(true) — which owns the cursor '
+        + 'seek into the region — instead of a raw S.loopEnabled=true that skips the seek');
+});
+
+t('disabling the loop mid-guide-pass RESTORES the recording (never leaves it silently muted)', () => {
+    // A/B on, playing, on a guide pass with the reference muted at 0.
+    const { env, S } = buildAB({ withLoopArm: true, playing: true, loopEnabled: true });
+    env.setOn(true);
+    env.setPhase('guide');
+    env._ensureRefGain();
+    const g = env.refGainNode().gain;
+    env._abApplyRefGain();
+    assert.strictEqual(g.value, 0, 'guide pass starts muted');
+    // User presses Loop to disarm the region (region still selected).
+    env._setLoopRegionEnabled(false);
+    const last = g.calls[g.calls.length - 1];
+    assert.strictEqual(last[1], 1,
+        'loop off restores the reference to its fader level (pre-fix left it muted at 0)');
+    assert.strictEqual(S.loopEnabled, false);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
