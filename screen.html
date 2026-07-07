@@ -10,6 +10,12 @@
         <div class="h-4 w-px bg-gray-700"></div>
         <span id="editor-song-title" class="text-sm text-gray-400">No song loaded</span>
         <div class="flex-1"></div>
+        <!-- Per-part view switcher: fretted parts choose String or Piano
+             roll (keys parts are piano-locked). Editor pref, never pack. -->
+        <div id="editor-view-switch" class="hidden items-center rounded overflow-hidden border border-gray-700 bg-dark-700/90 mr-1">
+            <button data-view="string" onclick="editorSetViewMode('string')" class="px-2 py-1 text-xs text-gray-400 hover:text-white" title="String view — the fretted lane editor" aria-pressed="false">String</button>
+            <button data-view="piano" onclick="editorSetViewMode('piano')" class="px-2 py-1 text-xs text-gray-400 hover:text-white border-l border-gray-700" title="Piano roll — notes at sounding pitch (tuning + capo); read-only for fretted parts until suggest-position lands" aria-pressed="false">Piano roll</button>
+        </div>
         <!-- Arrangement selector -->
         <select id="editor-arrangement" class="bg-dark-700 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none" onchange="editorSelectArrangement(this.value)" style="display:none">
         </select>
@@ -54,6 +60,7 @@
              select a range first). Returns to this exact edit position on exit. -->
         <button id="editor-loop3d-btn" onclick="editorLoopIn3D()" class="px-3 py-1 bg-accent hover:bg-accent-light rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled title="Select some notes or set a loop region first">▶ Loop in 3D</button>
         <button id="editor-loop-region-btn" onclick="editorToggleLoopRegion()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled title="Set a loop region first">Loop</button>
+        <button id="editor-loop-ab-btn" onclick="editorToggleLoopAB()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled title="Set a loop region first — A/B alternates recording and guide per pass" aria-pressed="false">A/B</button>
         <button id="editor-guide-btn" onclick="editorToggleGuideClap()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Guide claps: tick each charted note during playback (C)" aria-pressed="false">Claps</button>
         <button id="editor-metronome-btn" onclick="editorToggleMetronome()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Metronome: click every beat, accented on downbeats" aria-pressed="false">Click</button>
         <button id="editor-mixer-btn" onclick="editorToggleMixer()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Audio mixer: recording / guide / click levels and the edit blip (Shift+C)" aria-pressed="false">Mix</button>
@@ -118,7 +125,7 @@
             <span class="text-xs text-gray-500">Key:</span>
             <select id="editor-key-tonic" onchange="editorSetKeyTonic(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Song key (tonic)"></select>
             <select id="editor-key-scale" onchange="editorSetKeyScale(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Scale / mode"></select>
-            <button id="editor-key-highlight-btn" onclick="editorToggleKeyHighlight()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Shade out-of-key rows and dim out-of-key notes in the piano roll" aria-pressed="false">In-key</button>
+            <button id="editor-key-highlight-btn" onclick="editorToggleKeyHighlight()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Dim out-of-key notes — fretted lanes resolve pitch from tuning + capo; the piano roll also shades out-of-key rows" aria-pressed="false">In-key</button>
         </div>
 
         <div class="h-4 w-px bg-gray-700"></div>
@@ -152,6 +159,11 @@
                 </div>
             </div>
             <canvas id="editor-canvas" class="absolute inset-0"></canvas>
+            <!-- Read-only-roll notice: shown while a FRETTED part is in the
+                 piano roll (V4 — no silent string/fret writes). -->
+            <div id="editor-roll-lock-pill" class="hidden absolute top-12 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-dark-800/90 border border-amber-700/60 text-[11px] text-amber-200 pointer-events-none">
+                Piano roll is read-only for fretted parts — switch to String view to edit
+            </div>
             <!-- Stem mixer panel — floating, populated by _renderStemMixer() -->
             <div id="editor-stem-mixer" class="hidden absolute top-3 right-3 z-20 w-60 bg-dark-800/95 border border-gray-700 rounded-lg shadow-xl backdrop-blur">
                 <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
@@ -799,7 +811,7 @@
             <div id="editor-record-midi-setup" class="space-y-3">
                 <div>
                     <label class="text-xs font-medium text-gray-400 mb-1 block">MIDI Device</label>
-                    <select id="editor-record-midi-device"
+                    <select id="editor-record-midi-device" onchange="editorRecordMidiDeviceChanged(this.value)"
                         class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none"></select>
                     <p id="editor-record-midi-no-device" class="hidden text-[11px] text-rose-400 mt-1">No MIDI input detected — connect a keyboard and reopen.</p>
                     <p id="editor-record-midi-no-webmidi" class="hidden text-[11px] text-rose-400 mt-1">Web MIDI not available in this browser — use Chrome or Edge.</p>
