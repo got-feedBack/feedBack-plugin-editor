@@ -200,12 +200,18 @@ const S = {
     // downbeats ("sync points") to fit it to the audio; BPM is derived
     // from sync-point spacing. tempoSel/tempoHover index into S.beats.
     // tempoRideScope decides which notes re-time when the grid moves:
-    // 'drum' (only drum_tab hits) or 'all' (every arrangement). Hydrated
-    // from localStorage on init. Mode resets on song load.
+    // 'drum' (only drum_tab hits), 'all' (every arrangement), or 'custom'
+    // (the per-part checklist in tempoRideCustom). Presets hydrate from
+    // localStorage on init; 'custom' is session-only — its indices are
+    // song-shaped and would be meaningless in another song. Mode resets
+    // on song load.
     tempoMapMode: false,
     tempoSel: -1,
     tempoHover: -1,
     tempoRideScope: 'drum',
+    // {drum: bool, arrs: Set of S.arrangements indices} — only read when
+    // tempoRideScope === 'custom'.
+    tempoRideCustom: null,
 
     // View
     scrollX: 0,   // seconds
@@ -794,6 +800,14 @@ function _selectedLoopRegion() {
 function _updateLoopRegionControls() {
     const region = _selectedLoopRegion();
     if (!region && S.loopEnabled) S.loopEnabled = false;
+    // A/B rides the loop region — clearing the region disarms it (and
+    // restores the reference gain via the guarded apply).
+    if (!region && typeof _abOn !== 'undefined' && _abOn) {
+        _abOn = false;
+        _abPhase = 'recording';
+        if (typeof _abApplyRefGain === 'function') _abApplyRefGain();
+    }
+    if (typeof _refreshLoopABBtn === 'function') _refreshLoopABBtn();
     const loopBtn = document.getElementById('editor-loop-region-btn');
     if (loopBtn) {
         loopBtn.disabled = !region;
@@ -817,6 +831,11 @@ function _setLoopRegionEnabled(enabled) {
         _editorSeekToTime(region.startTime);
     }
     _updateLoopRegionControls();
+    // Toggling the loop off flips _abActive() false: restore the recording to
+    // its fader level so stopping the loop mid-guide-pass never leaves it
+    // silently muted. Toggle-only path (never the per-frame strip render), so
+    // scheduling the ~20 ms ramp here can't spam the audio param.
+    if (typeof _abApplyRefGain === 'function') _abApplyRefGain();
     draw();
     setStatus(S.loopEnabled ? 'Loop region enabled' : 'Loop region disabled');
 }
@@ -882,10 +901,113 @@ function _loopStripOnMouseUp() {
     draw();
     return true;
 }
-function isKeysMode() {
+/* @pure:view-pref:start */
+// Per-part editing-view choice (V2/V9 of EDITOR-VIEW-MODALITY-DESIGN):
+// 'string' (fretted lanes) or 'piano' (the roll). Keys-DATA arrangements
+// are piano-locked — their wire packing (string*24+fret) has no string
+// semantics for the lane view to show. Fretted parts default to 'string'
+// and may opt into the roll per part. The choice is EDITOR state
+// (localStorage per song), never pack data.
+function _partViewKeyPure(arr) {
+    if (!arr) return '';
+    const id = arr.id;
+    return (id !== undefined && id !== null && String(id) !== '')
+        ? String(id)
+        : (arr.name || '');
+}
+function _viewForPure(arrName, storedMode) {
+    if (KEYS_PATTERN.test(arrName || '')) return 'piano';
+    return storedMode === 'piano' ? 'piano' : 'string';
+}
+/* @pure:view-pref:end */
+
+// Per-song view prefs, cached so draw-path predicates never parse
+// localStorage per frame. Keyed song filename → { partKey: 'piano' }.
+let _viewPrefCache = null;
+let _viewPrefFor = null;
+function _viewPrefs() {
+    const key = 'editorViewPref:' + (S.filename || '');
+    if (_viewPrefFor === key && _viewPrefCache) return _viewPrefCache;
+    _viewPrefFor = key;
+    _viewPrefCache = {};
+    // Unsaved songs don't read a bare slot every unsaved song would share.
+    if (!S.filename) return _viewPrefCache;
+    try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+            const o = JSON.parse(raw);
+            if (o && typeof o === 'object' && !Array.isArray(o)) _viewPrefCache = o;
+        }
+    } catch (_) { /* ignore */ }
+    return _viewPrefCache;
+}
+function _viewPrefsSave() {
+    if (!S.filename) return;
+    try {
+        const key = 'editorViewPref:' + S.filename;
+        if (Object.keys(_viewPrefCache || {}).length) {
+            localStorage.setItem(key, JSON.stringify(_viewPrefCache));
+        } else {
+            localStorage.removeItem(key);
+        }
+    } catch (_) { /* ignore */ }
+}
+function viewFor(arr) {
+    return _viewForPure(arr && arr.name, _viewPrefs()[_partViewKeyPure(arr)]);
+}
+
+// Keys-DATA predicate: the active arrangement's wire packing is pitch
+// (string*24 + fret) — a keys/piano/synth part. DATA-SEMANTICS sites key
+// off this: string-move helpers, chord-sibling grouping, anchors, MIDI
+// record. Split from isKeysMode() when the view became a per-part choice.
+function isKeysArr() {
     if (!S.arrangements.length) return false;
     const arr = S.arrangements[S.currentArr];
-    return arr && KEYS_PATTERN.test(arr.name || '');
+    return !!(arr && KEYS_PATTERN.test(arr.name || ''));
+}
+
+// Piano SURFACE predicate: the piano-roll view is active for the current
+// part — keys data (always), or a fretted part opted into the roll. Draw
+// geometry, hit-testing, and viewport paths key off this. The name is
+// historical; every legacy call site that meant "the piano surface is
+// showing" keeps working unchanged.
+function isKeysMode() {
+    if (!S.arrangements.length) return false;
+    return viewFor(S.arrangements[S.currentArr]) === 'piano';
+}
+
+// Read-only roll: a FRETTED part shown in the piano roll (V4). Editing
+// stays locked until the suggest-position write path exists — the roll
+// must never write string/fret by silent guess.
+function _rollReadOnly() { return isKeysMode() && !isKeysArr(); }
+
+function _rollLockNotice() {
+    setStatus('Piano roll is read-only for fretted parts — switch to String view to edit (suggest-position editing is coming)');
+}
+
+// Sounding-pitch context for showing a FRETTED part in the roll — hoisted
+// once per draw/hit-test pass, never per note. Null for keys parts (their
+// packing IS the roll pitch).
+function _rollPitchCtx() {
+    if (!S.arrangements.length) return null;
+    const arr = S.arrangements[S.currentArr];
+    if (!arr || KEYS_PATTERN.test(arr.name || '')) return null;
+    const laneCount = _stringCountFor(arr);
+    const tuning = (Array.isArray(arr.tuning) ? arr.tuning : []).slice(0, laneCount);
+    while (tuning.length < laneCount) tuning.push(0);
+    return {
+        openMidi: _openMidiForArr(arr, laneCount),
+        tuning,
+        capo: Number(arr.capo) || 0,
+    };
+}
+
+// Roll Y-axis MIDI for one note: keys packing, or sounding pitch (D4:
+// openMidi + tuning + capo + fret) for fretted. Null = unresolvable —
+// callers skip the note rather than paint it at a wrong pitch.
+function _rollMidiForNote(n, rctx) {
+    if (!rctx) return noteToMidi(n.string, n.fret);
+    return _soundingPitchPure(rctx.openMidi, rctx.tuning, rctx.capo, n.string, n.fret);
 }
 
 function pianoLaneCount() { return pianoRange.hi - pianoRange.lo + 1; }
@@ -910,10 +1032,14 @@ function yToMidi(y) {
 // without it so the viewport snaps cleanly to the new arrangement.
 function updatePianoRange(expandOnly = false) {
     const nn = notes();
-    // noteToMidi encodes up to string=5, fret=23 → max 143; match the drag-clamp ceiling.
+    // Fretted parts fit the range to SOUNDING pitch; keys keep the packing
+    // (noteToMidi encodes up to string=5, fret=23 → max 143, matching the
+    // drag-clamp ceiling). Unresolvable fretted notes are skipped.
+    const rctx = typeof _rollPitchCtx === 'function' ? _rollPitchCtx() : null;
     let lo = 143, hi = 0;
     for (const n of nn) {
-        const m = noteToMidi(n.string, n.fret);
+        const m = _rollMidiForNote(n, rctx);
+        if (m === null) continue;
         if (m < lo) lo = m;
         if (m > hi) hi = m;
     }
@@ -1651,11 +1777,13 @@ function drawNow() {
 function drawWaveform(w) {
     ctx.fillStyle = '#08081a';
     ctx.fillRect(0, 0, w, WAVEFORM_H);
-    // The onset strip is independent of the waveform toggle: waveform off +
-    // onsets on = the pure "blocky" detection view; both on = an overlay.
+    // The onset strip and bookmark flags are independent of the waveform
+    // toggle: waveform off + onsets on = the pure "blocky" detection view;
+    // both on = an overlay; bookmarks always show over the band.
     // (typeof guards keep drawWaveform extractable by the render test.)
     const drawOnsets = () => {
         if (typeof _drawOnsetStrip === 'function') _drawOnsetStrip(w);
+        if (typeof _drawBookmarks === 'function') _drawBookmarks(w);
     };
     if (typeof editorWaveformVisible !== 'undefined' && !editorWaveformVisible) {
         drawOnsets();
@@ -1752,6 +1880,34 @@ function _drawOnsetStrip(w) {
     }
 }
 
+// Numbered bookmark flags over the waveform band. Bookmarks are EDITOR
+// authoring state (localStorage per song — never pack data, §6): nine
+// numbered time markers, Shift+Alt+1-9 sets/clears at the cursor,
+// Alt+1-9 jumps.
+function _drawBookmarks(w) {
+    const marks = _bookmarks();
+    let drew = false;
+    for (let n = 1; n <= 9; n++) {
+        const t = marks[n];
+        if (t === undefined) continue;
+        const px = Math.round(timeToX(t));
+        if (px < LABEL_W || px > w) continue;
+        if (!drew) {
+            ctx.save();
+            ctx.font = 'bold 9px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            drew = true;
+        }
+        ctx.fillStyle = 'rgba(120,220,160,0.9)';
+        ctx.fillRect(px, 2, 1, WAVEFORM_H - 4);
+        ctx.fillRect(px, 2, 11, 11);
+        ctx.fillStyle = '#0b1512';
+        ctx.fillText(String(n), px + 6, 8);
+    }
+    if (drew) ctx.restore();
+}
+
 function drawLanes(w) {
     if (isKeysMode()) return drawPianoLanes(w);
     const L = lanes();
@@ -1845,11 +2001,81 @@ function _editorToggleKeyHighlight() {
     _refreshKeyControls();
     draw();
     setStatus(next
-        ? 'In-key highlight on — out-of-key rows are shaded in the piano roll'
+        ? 'In-key highlight on — out-of-key notes dim (piano roll also shades out-of-key rows)'
         : 'In-key highlight off');
     return true;
 }
 window.editorToggleKeyHighlight = _editorToggleKeyHighlight;
+
+// ── Per-part view switcher (String · Piano roll) ─────────────────────
+let _viewSwitchState = '';
+function _refreshViewSwitch() {
+    const el = document.getElementById('editor-view-switch');
+    if (!el) return;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    const fretted = !!arr && !KEYS_PATTERN.test(arr.name || '');
+    // Only fretted parts get a choice (keys are piano-locked), and only
+    // when a focus editor is showing (not drum/tempo/parts modes).
+    const visible = fretted && !S.drumEditMode && !S.tempoMapMode && !S.partsViewMode;
+    const mode = arr ? viewFor(arr) : 'string';
+    const sig = `${visible}|${mode}`;
+    if (sig === _viewSwitchState) return;
+    _viewSwitchState = sig;
+    el.classList.toggle('hidden', !visible);
+    el.classList.toggle('flex', visible);
+    el.querySelectorAll('button[data-view]').forEach(b => {
+        const active = b.dataset.view === mode;
+        b.classList.toggle('bg-accent', active);
+        b.classList.toggle('text-white', active);
+        b.classList.toggle('text-gray-400', !active);
+        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    const pill = document.getElementById('editor-roll-lock-pill');
+    if (pill) pill.classList.toggle('hidden', !(visible && mode === 'piano'));
+}
+
+window.editorSetViewMode = (mode) => {
+    if (mode !== 'string' && mode !== 'piano') return;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    if (!arr) return;
+    if (KEYS_PATTERN.test(arr.name || '')) {
+        setStatus('Keys parts always use the piano roll');
+        return;
+    }
+    if (viewFor(arr) === mode) return;
+    const prefs = _viewPrefs();
+    const key = _partViewKeyPure(arr);
+    if (mode === 'piano') prefs[key] = 'piano';
+    else delete prefs[key];
+    _viewPrefsSave();
+    // V3: selection/interaction semantics are per-view — clear both, and
+    // close any note UI anchored to the old geometry.
+    S.sel.clear();
+    S.drag = null;
+    hideContextMenu();
+    hideAddNote();
+    if (mode === 'piano') updatePianoRange();
+    _refreshViewSwitch();
+    // Lane heights differ between views; recompute after the reflow the
+    // same way the string-count change path does.
+    if (typeof resizeCanvas === 'function') requestAnimationFrame(() => resizeCanvas());
+    draw();
+    updateStatus();
+    setStatus(mode === 'piano'
+        ? 'Piano roll — fretted notes shown at sounding pitch (read-only until suggest-position lands)'
+        : 'String view');
+};
+
+function _editorCycleViewMode() {
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    if (!arr) { setStatus('Load a song first'); return true; }
+    if (KEYS_PATTERN.test(arr.name || '')) {
+        setStatus('Keys parts always use the piano roll');
+        return true;
+    }
+    window.editorSetViewMode(viewFor(arr) === 'piano' ? 'string' : 'piano');
+    return true;
+}
 
 let _keyControlsPopulated = false;
 let _keyControlsState = '';
@@ -1869,9 +2095,12 @@ function _refreshKeyControls() {
             _keyControlsPopulated = true;
         }
     }
-    // The highlight applies to the piano roll, so only show the controls
-    // when a keys arrangement is active.
-    const visible = isKeysMode();
+    // The highlight applies to any pitched arrangement view — the piano
+    // roll AND the fretted lanes (notes resolve to sounding pitch via
+    // tuning + capo). The drum grid and Parts overview have no per-note
+    // pitch surface, so the controls hide there.
+    const visible = !!(S.arrangements && S.arrangements.length)
+        && !S.drumEditMode && !S.partsViewMode;
     const on = editorKeyHighlightEnabled();
     const tonic = S.editorKey ? S.editorKey.tonic : 0;
     const scale = S.editorKey ? S.editorKey.scale : 'major';
@@ -2189,27 +2418,61 @@ function drawNotes(w) {
     // Hoist the active-highlight lookup out of the per-note loop: it reads
     // localStorage, so resolving it once per draw (not once per visible note)
     // keeps drawNotes off the synchronous-storage path during playback/scroll.
-    const hl = keysMode ? _activeKeyHighlight() : null;
+    const hl = _activeKeyHighlight();
+    // Fretted lanes resolve notes to SOUNDING pitch (tuning + capo + fret) —
+    // the whole context is hoisted here so _drawNote does zero per-note
+    // arrangement work. `ghl` is null whenever the highlight can't apply.
+    let ghl = null;
+    if (hl && !keysMode) {
+        const arr = S.arrangements[S.currentArr];
+        if (arr) {
+            const laneCount = _stringCountFor(arr);
+            const tuning = (Array.isArray(arr.tuning) ? arr.tuning : []).slice(0, laneCount);
+            while (tuning.length < laneCount) tuning.push(0);
+            ghl = {
+                hl,
+                openMidi: _openMidiForArr(arr, laneCount),
+                tuning,
+                capo: Number(arr.capo) || 0,
+            };
+        }
+    }
+    // Fretted-in-roll draws at SOUNDING pitch — one hoisted context, and
+    // the same mapping hit-testing/marquee use (they must never disagree).
+    const rctx = keysMode ? _rollPitchCtx() : null;
     for (let i = 0; i < nn.length; i++) {
         const n = nn[i];
         if (n.time + (n.sustain || 0) < st || n.time > et) continue;
         if (keysMode) {
-            _drawPianoNote(n, S.sel.has(i), hl);
+            const midi = _rollMidiForNote(n, rctx);
+            if (midi !== null) _drawPianoNote(n, S.sel.has(i), hl, midi);
         } else {
-            _drawNote(n, S.sel.has(i));
+            _drawNote(n, S.sel.has(i), ghl);
         }
     }
 }
 
-function _drawNote(n, selected) {
+function _drawNote(n, selected, ghl) {
     const x = timeToX(n.time);
     const y = strToY(n.string) + NOTE_PAD;
     const sw = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
     const h = LANE_H - NOTE_PAD * 2;
     const color = colorForLane(strToLane(n.string));
 
+    // In-key highlight (mirrors the piano roll's treatment): out-of-key
+    // notes dim, never redden — chromaticism is not an error. Membership
+    // uses the SOUNDING pitch (tuning + capo + fret); an unresolvable
+    // pitch stays fully lit rather than falsely flagged.
+    let outOfKey = false;
+    if (ghl) {
+        const midi = _soundingPitchPure(
+            ghl.openMidi, ghl.tuning, ghl.capo, n.string, n.fret);
+        outOfKey = midi !== null
+            && !_pcInScalePure(((midi % 12) + 12) % 12, ghl.hl.tonic, ghl.hl.scale);
+    }
+
     // Body
-    ctx.fillStyle = color + 'cc';
+    ctx.fillStyle = color + (outOfKey ? '55' : 'cc');
     ctx.beginPath();
     ctx.roundRect(x, y, sw, h, 3);
     ctx.fill();
@@ -2227,7 +2490,7 @@ function _drawNote(n, selected) {
     ctx.stroke();
 
     // Fret number
-    ctx.fillStyle = '#fff';
+    ctx.fillStyle = outOfKey ? 'rgba(255,255,255,0.6)' : '#fff';
     ctx.font = 'bold 13px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -2267,8 +2530,10 @@ function _drawNote(n, selected) {
     }
 }
 
-function _drawPianoNote(n, selected, hl) {
-    const midi = noteToMidi(n.string, n.fret);
+function _drawPianoNote(n, selected, hl, midi) {
+    // `midi` is resolved by the caller through _rollMidiForNote — keys
+    // packing or fretted sounding pitch — so this renderer never guesses.
+    if (midi === undefined) midi = noteToMidi(n.string, n.fret);
     if (midi < pianoRange.lo || midi > pianoRange.hi) return;
 
     const x = timeToX(n.time);
@@ -2354,12 +2619,16 @@ const EDGE_GRAB = 8; // pixels from right edge to trigger resize
 function hitNote(mx, my) {
     const nn = notes();
     const keysMode = isKeysMode();
+    // Fretted-in-roll hit-testing must use the same sounding-pitch mapping
+    // the draw uses — hoisted once, not per note.
+    const rctx = keysMode ? _rollPitchCtx() : null;
     for (let i = nn.length - 1; i >= 0; i--) {
         const n = nn[i];
         const x = timeToX(n.time);
         let y, w, h;
         if (keysMode) {
-            const midi = noteToMidi(n.string, n.fret);
+            const midi = _rollMidiForNote(n, rctx);
+            if (midi === null) continue;
             y = midiToY(midi) + 1;
             w = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
             h = PIANO_LANE_H - 2;
@@ -2406,6 +2675,19 @@ class EditHistory {
     // song-level state (drum tab, tempo grid) opt out via `songScope = true`.
     // The `typeof` guards keep this block browser-free for the test harness.
     exec(cmd) {
+        // Read-only roll (V4): a FRETTED part shown in the piano roll is
+        // edit-locked until the suggest-position writer exists, so every
+        // NOTE-scope command entry point (keys, menus, inspector, dialogs)
+        // is inert here in one place. Song-scope commands (drum tab, tempo
+        // grid) edit song-level data, not the fretted chart, so they still
+        // pass through even while a fretted part is shown in the roll —
+        // otherwise switching an unrelated part to the roll would freeze
+        // tempo/drum editing. typeof-guarded so extracted-test envs without
+        // the view layer are unaffected.
+        if (cmd.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+            if (typeof _rollLockNotice === 'function') _rollLockNotice();
+            return;
+        }
         cmd._arrIdx = (cmd.songScope === true) ? -1
             : (typeof S !== 'undefined' ? (S.currentArr ?? -1) : -1);
         cmd.exec();
@@ -2422,6 +2704,18 @@ class EditHistory {
         // _historyEnsureArr switches to it (or refuses when it's gone) BEFORE
         // the command leaves the stack, so a refused undo loses nothing.
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
+        // Read-only roll (V4): rolling a NOTE-scope command back would write
+        // the fretted chart currently shown read-only in the piano roll, so
+        // undo would silently bypass the exec/drag lock. Refuse (peek only —
+        // the command stays on the stack, nothing is lost). _historyEnsureArr
+        // above has already switched to the command's arrangement, so this
+        // evaluates read-only against the part the rollback would touch.
+        // Song-scope commands (drum/tempo) don't touch the fretted chart and
+        // undo normally.
+        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+            if (typeof _rollLockNotice === 'function') _rollLockNotice();
+            return;
+        }
         this.undo.pop(); c.rollback(); this.redo.push(c);
         this._afterEdit(); this._ui(); draw(); updateStatus();
     }
@@ -2429,6 +2723,12 @@ class EditHistory {
         if (!this.redo.length) return;
         const c = this.redo[this.redo.length - 1];
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
+        // Read-only roll (V4): re-exec of a NOTE-scope command writes the
+        // fretted chart that is read-only in the roll — same lock as doUndo.
+        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+            if (typeof _rollLockNotice === 'function') _rollLockNotice();
+            return;
+        }
         this.redo.pop(); c.exec(); this.undo.push(c);
         // Re-apply the MAX_UNDO cap: a redo pushes back onto the undo stack, so
         // without this a redo-heavy session could grow it past the bound that
@@ -2889,6 +3189,11 @@ function _openMidiForArr(arr, laneCount) {
 // tuning offsets.  `openMidi[s]` is the standard open-string pitch for
 // string `s`; `arr.tuning[s]` is the per-string semitone offset from
 // standard (e.g. −2 for Drop D on string 0, 0 for standard).
+// DELIBERATELY OMITS CAPO: string-moves compare two pitches on the same
+// arrangement, so the capo cancels on both sides. Anything that needs the
+// real SOUNDING pitch (in-key highlight, future guide synthesis) must use
+// _soundingPitchPure below, which adds the capo exactly once — adding it
+// here too would double-count it in code that composes the two.
 function _absolutePitch(openMidi, tuning, stringIdx, fret) {
     const offset = (Array.isArray(tuning) && tuning[stringIdx] !== undefined)
         ? (Number(tuning[stringIdx]) || 0)
@@ -2896,13 +3201,33 @@ function _absolutePitch(openMidi, tuning, stringIdx, fret) {
     return openMidi[stringIdx] + offset + fret;
 }
 
+/* @pure:fret-pitch:start */
+// Sounding pitch (MIDI) of one fretted note:
+//     openMidi[string] + tuning offset + CAPO + fret
+// Chart frets are capo-relative (fret 0 = the capo), so the capo is added
+// exactly ONCE — verified against core's single source of the formula
+// (lib/song.py pitch_from_base, which the tuner/open-string labels and the
+// highway's scale-degree derivation share). Returns null for a string with
+// no open pitch or a non-finite fret, so callers skip rather than paint
+// garbage.
+function _soundingPitchPure(openMidi, tuning, capo, stringIdx, fret) {
+    if (!Array.isArray(openMidi) || openMidi[stringIdx] === undefined) return null;
+    const f = Number(fret);
+    if (!Number.isFinite(f)) return null;
+    const offset = (Array.isArray(tuning) && tuning[stringIdx] !== undefined)
+        ? (Number(tuning[stringIdx]) || 0)
+        : 0;
+    return openMidi[stringIdx] + offset + (Number(capo) || 0) + f;
+}
+/* @pure:fret-pitch:end */
+
 // Try to move a single note to an adjacent string while preserving its
 // absolute pitch.  `direction` is +1 (higher string index) or -1 (lower).
 // Returns { targetString, targetFret } when valid, or null when the
 // resulting fret would be out of range [0, 24] or the target string
 // doesn't exist.
 function _getMoveStringResult(noteIdx, direction) {
-    if (isKeysMode()) return null;          // keys mode: no string concept
+    if (isKeysArr()) return null;           // keys DATA: no string concept
     const arr = S.arrangements[S.currentArr];
     if (!arr) return null;
     const n = notes()[noteIdx];
@@ -2931,7 +3256,7 @@ function _getMoveStringResult(noteIdx, direction) {
 // string in `direction` without leaving the fret range [0, 24].
 function _canMoveString(direction) {
     if (!S.sel || S.sel.size === 0) return false;
-    if (isKeysMode()) return false;
+    if (isKeysArr()) return false;
     for (const idx of S.sel) {
         if (_getMoveStringResult(idx, direction) === null) return false;
     }
@@ -2961,7 +3286,7 @@ class MoveToStringCmd {
 
 // Build the MoveToStringCmd payload and execute it for all selected notes.
 function _getMoveStringSameFretResult(noteIdx, direction) {
-    if (isKeysMode()) return null;
+    if (isKeysArr()) return null;
     const arr = S.arrangements[S.currentArr];
     if (!arr) return null;
     const n = notes()[noteIdx];
@@ -3436,11 +3761,13 @@ function onMouseDown(e) {
     // silently overwritten by _recNotes when the take is finalized on Stop.
     if (_recState === 'recording') return;
 
-    // Check for sustain edge grab first
-    const edgeIdx = hitNoteEdge(x, y);
+    // Check for sustain edge grab first. Read-only roll (V4): resize
+    // mutates sustains LIVE during the drag (before any command), so the
+    // drag must not start at all — selection stays available below.
+    const edgeIdx = _rollReadOnly() ? -1 : hitNoteEdge(x, y);
     if (edgeIdx >= 0) {
         const nn = notes();
-        const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, !isKeysMode() && !e.altKey);
+        const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, !isKeysArr() && !e.altKey);
         const allResizeSelected = resizeIndices.every(i => S.sel.has(i));
         if (!allResizeSelected) {
             S.sel.clear();
@@ -3463,12 +3790,14 @@ function onMouseDown(e) {
 
     if (idx >= 0) {
         // Click on note — also select all chord siblings (same time).
-        // In keys mode same-timestamp notes are independent voices (not
-        // a strummed chord), so skip the sibling expansion.
+        // In keys DATA same-timestamp notes are independent voices (not
+        // a strummed chord), so skip the sibling expansion. Keyed on the
+        // data kind, not the surface: a fretted part in the roll still
+        // groups its chords.
         const nn = notes();
         const clickedTime = nn[idx].time;
         const chordSiblings = [idx];
-        if (!isKeysMode()) {
+        if (!isKeysArr()) {
             for (let i = 0; i < nn.length; i++) {
                 if (i !== idx && Math.abs(nn[i].time - clickedTime) < 0.001) chordSiblings.push(i);
             }
@@ -3485,7 +3814,14 @@ function onMouseDown(e) {
             for (const i of chordSiblings) S.sel.add(i);
         }
 
-        // Start drag
+        // Start drag — unless the roll is read-only (fretted part in piano
+        // view): move drags mutate notes LIVE before the commit command,
+        // so selection happens above but no drag begins.
+        if (_rollReadOnly()) {
+            _rollLockNotice();
+            draw();
+            return;
+        }
         const selArr = [...S.sel];
         S.drag = {
             type: 'move',
@@ -3599,6 +3935,14 @@ function _onMouseMoveBody(e, x, y, L) {
         return;
     }
 
+    // Drum velocity drag (Alt+drag): vertical drift edits the selection's
+    // velocity live — the render brightness/height tracks it as feedback.
+    if (S.drag.type === 'drum-velocity') {
+        _drumEditorOnVelocityDragMove(y);
+        draw();
+        return;
+    }
+
     // Drum-edit marquee: track the rubber-band rect; flip `moved` once the
     // pointer has left the click threshold so mouseup knows it's a box
     // select rather than an add-hit click.
@@ -3704,6 +4048,11 @@ function onMouseUp(e) {
         return;
     }
 
+    if (S.drag.type === 'drum-velocity') {
+        _drumEditorOnVelocityDragEnd();
+        return;
+    }
+
     if (S.drag.type === 'drum-select') {
         _drumEditorOnSelectEnd();
         return;
@@ -3770,11 +4119,13 @@ function onMouseUp(e) {
 
         const nn = notes();
         const keysMode = isKeysMode();
+        const rctx = keysMode ? _rollPitchCtx() : null;
         for (let i = 0; i < nn.length; i++) {
             const nx = timeToX(nn[i].time);
             let ny;
             if (keysMode) {
-                const midi = noteToMidi(nn[i].string, nn[i].fret);
+                const midi = _rollMidiForNote(nn[i], rctx);
+                if (midi === null) continue;
                 ny = midiToY(midi) + PIANO_LANE_H / 2;
             } else {
                 ny = strToY(nn[i].string) + LANE_H / 2;
@@ -3804,6 +4155,10 @@ function onDblClick(e) {
 
     const idx = hitNote(x, y);
     if (idx >= 0) return; // double-click on existing note = no-op
+
+    // Read-only roll (V4): adding by pitch would force a silent
+    // string/fret guess — refused until suggest-position exists.
+    if (_rollReadOnly()) { _rollLockNotice(); return; }
 
     // Show add-note dialog
     const t = snapTime(Math.max(0, xToTime(x)));
@@ -3861,9 +4216,14 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', eof: 'C' } },
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleMixer', label: 'Toggle audio mixer', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
+    { id: 'toggleLoopAB', label: 'Toggle loop A/B compare (recording ↔ guide)', group: 'Preview', status: 'ready', keys: { feedback: 'Alt+B', eof: 'Alt+B' } },
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
-    { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight (piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'cycleViewMode', label: 'Cycle part view (String / Piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'showTabPreview', label: 'Preview part as tab (read-only, saved pack)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'toggleDrumDensity', label: 'Toggle drum row density (Full / Compact)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'toggleFollow', label: 'Toggle follow playhead', group: 'View', status: 'ready', keys: { feedback: 'Shift+L', eof: 'Shift+L' } },
     { id: 'renamePart', label: 'Rename current part', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
@@ -3878,6 +4238,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'nextGrid', label: 'Jump to next grid line', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Page Down', eof: 'Ctrl+Shift+Page Down' } },
     { id: 'prevAnchor', label: 'Jump to previous anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Left', eof: 'Alt+Page Up' } },
     { id: 'nextAnchor', label: 'Jump to next anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Right', eof: 'Alt+Page Down' } },
+    { id: 'gotoBookmarkDigit', label: 'Jump to bookmark 1-9', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+1-9', eof: 'Alt+1-9' } },
+    { id: 'setBookmarkDigit', label: 'Set / clear bookmark 1-9 at cursor', group: 'Timeline', status: 'ready', keys: { feedback: 'Shift+Alt+1-9', eof: 'Shift+Alt+1-9' } },
     { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: '[' } },
     { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: ']' } },
     { id: 'toggleSnap', label: 'Toggle snap on/off', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'G', eof: '' } },
@@ -3983,8 +4345,10 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (sig === 'F5') return 'toggleWaveform';
     if (plain && key === 'c') return 'toggleGuideClap';
     if (shift && key === 'c') return 'toggleMixer';
+    if (alt && key === 'b') return 'toggleLoopAB';
     if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === 'a') return 'togglePartsView';
+    if (shift && key === 'l') return 'toggleFollow';
     if (shift && key === '?') return 'showShortcutHelp';
     if (ctrl && key === 'k') return 'openCommandPalette';
     if (sig === 'F6') return 'importMidi';
@@ -4051,6 +4415,14 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (ctrl && e.key === 'ArrowUp') return 'slideUp';
     if (ctrl && e.key === 'ArrowDown') return 'slideDown';
     if (alt && (e.key === 'PageUp' || e.key === 'PageDown')) return e.key === 'PageUp' ? 'prevAnchor' : 'nextAnchor';
+    // Bookmarks match on e.code — with Shift held, e.key for the digit row
+    // is '!','@',… on most layouts, so the physical key is the stable signal.
+    {
+        const digit = /^Digit([1-9])$/.exec(e.code || '');
+        const shiftAlt = e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey;
+        if (digit && alt) return 'gotoBookmark:' + digit[1];
+        if (digit && shiftAlt) return 'setBookmark:' + digit[1];
+    }
     return null;
 }
 
@@ -4097,8 +4469,10 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (plain && key === 'w') return 'toggleWaveform';
     if (plain && key === 'c') return 'toggleGuideClap';
     if (shift && key === 'c') return 'toggleMixer';
+    if (alt && key === 'b') return 'toggleLoopAB';
     if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === 'a') return 'togglePartsView';
+    if (shift && key === 'l') return 'toggleFollow';
     if (shift && key === '?') return 'showShortcutHelp';
     if (ctrl && key === 'k') return 'openCommandPalette';
     if (sig === 'PageUp') return 'prevBeat';
@@ -4149,6 +4523,14 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (shift && key === 'p') return 'addPhrase';
     if (ctrl && e.key === 'ArrowUp') return 'slideUp';
     if (ctrl && e.key === 'ArrowDown') return 'slideDown';
+    // Bookmarks match on e.code — with Shift held, e.key for the digit row
+    // is '!','@',… on most layouts, so the physical key is the stable signal.
+    {
+        const digit = /^Digit([1-9])$/.exec(e.code || '');
+        const shiftAlt = e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey;
+        if (digit && alt) return 'gotoBookmark:' + digit[1];
+        if (digit && shiftAlt) return 'setBookmark:' + digit[1];
+    }
     return null;
 }
 /* @pure:shortcut-profile:end */
@@ -4263,6 +4645,195 @@ function _editorRenderShortcutPanel() {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════
+// Read-only Tab preview (EDITOR-VIEW-MODALITY-DESIGN VA.4, V8/V12) —
+// render the CURRENT part as engraved tab by reusing the Tab View
+// plugin's arrangement→GP conversion endpoint + the same pinned alphaTab
+// CDN render idiom. Strictly read-only, refresh-on-open only (alphaTab
+// lays out once per load — never per frame), and honest about its source:
+// the endpoint reads the SAVED pack, so unsaved edits need a Save first.
+// Degrades cleanly when the Tab View plugin isn't installed.
+// ════════════════════════════════════════════════════════════════════
+
+/* @pure:tab-preview:start */
+// Guard: which parts can preview, with the exact user-facing reason when
+// one can't. NON-FRETTED parts (keys AND drums) are excluded — their wire
+// packing isn't fret/string, so a GP conversion of it would engrave
+// nonsense tab. The non-fretted test mirrors the editor-wide one
+// (KEYS_PATTERN /^(keys|piano|keyboard|synth)/i plus /^drums/i, e.g. the
+// Strings modal's gate) but is INLINED so this @pure block stays
+// self-contained and extractable — no reference to the outer KEYS_PATTERN
+// global, matching the parts-view block's "regexes inlined" convention.
+function _tabPreviewGuardPure(filename, arrName, hasArrangements) {
+    if (!hasArrangements) return { ok: false, reason: 'Load a song first.' };
+    const nm = String(arrName || '');
+    if (/^(keys|piano|keyboard|synth)/i.test(nm) || /^drums/i.test(nm)) {
+        return { ok: false, reason: 'Tab preview is for fretted parts — keys and drums parts have no tab.' };
+    }
+    if (!filename) {
+        return { ok: false, reason: 'Save the song first — the preview reads the saved pack.' };
+    }
+    return { ok: true, reason: '' };
+}
+// Keyboard policy while the read-only preview modal is open. It is a modal
+// proofreading lens, so NO editor shortcut may reach the chart behind it
+// (mirrors the partsViewMode read-only gate, which blocks note edits from
+// mutating the arrangement hidden behind an overview). Escape closes it;
+// every other key is swallowed. Returns 'close' | 'swallow' | 'ignore'
+// ('ignore' only when the preview isn't open, so onKeyDown proceeds).
+function _tabPreviewKeyPolicyPure(previewOpen, key) {
+    if (!previewOpen) return 'ignore';
+    if (key === 'Escape') return 'close';
+    return 'swallow';
+}
+// The Tab View conversion URL for one saved part. `ts` busts any
+// intermediate cache so Refresh after a Save always re-converts.
+function _tabPreviewUrlPure(filename, arrIdx, ts) {
+    return '/api/plugins/tabview/gp5/' + encodeURIComponent(filename || '')
+        + '?arrangement=' + (Number(arrIdx) || 0)
+        + '&t=' + (Number(ts) || 0);
+}
+// Map a failed conversion response to the honest user-facing message.
+function _tabPreviewHttpMessagePure(status, bodyText) {
+    if (status === 404) {
+        return 'Tab preview needs the Tab View plugin installed — or the song has no saved pack yet.';
+    }
+    if (status === 501) {
+        return 'The host is too old for pack conversion — update feedBack.';
+    }
+    const body = String(bodyText || '').slice(0, 140);
+    return 'Preview failed (' + status + ')' + (body ? ': ' + body : '');
+}
+/* @pure:tab-preview:end */
+
+// Same pinned version + memoized loader idiom as the Tab View plugin —
+// pinning insulates the preview from CDN latest-tag churn (V12: alphaTab
+// is MPL-2.0, render-only, CDN-loaded; never vendored).
+const _TAB_PREVIEW_AT_VERSION = '1.8.2';
+const _TAB_PREVIEW_CDN = 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@'
+    + _TAB_PREVIEW_AT_VERSION + '/dist';
+let _tabPreviewLoadPromise = null;
+function _tabPreviewLoadScript() {
+    if (window.alphaTab) return Promise.resolve();
+    if (_tabPreviewLoadPromise) return _tabPreviewLoadPromise;
+    _tabPreviewLoadPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = _TAB_PREVIEW_CDN + '/alphaTab.min.js';
+        s.onload = resolve;
+        s.onerror = () => {
+            _tabPreviewLoadPromise = null;   // allow retry on next open
+            reject(new Error('Failed to load the tab renderer (offline?)'));
+        };
+        document.head.appendChild(s);
+    });
+    return _tabPreviewLoadPromise;
+}
+
+let _tabPreviewApi = null;
+let _tabPreviewSeq = 0;   // stale-render guard across rapid refreshes
+
+function _tabPreviewStatus(msg) {
+    const el = document.getElementById('editor-tab-preview-status');
+    if (el) el.textContent = msg || '';
+}
+
+function _tabPreviewDestroyApi() {
+    if (_tabPreviewApi) {
+        try { _tabPreviewApi.destroy(); } catch (_) { /* best-effort */ }
+        _tabPreviewApi = null;
+    }
+    const mount = document.getElementById('editor-tab-preview-mount');
+    if (mount) mount.innerHTML = '';
+}
+
+async function _tabPreviewRender() {
+    const seq = ++_tabPreviewSeq;
+    const mount = document.getElementById('editor-tab-preview-mount');
+    if (!mount) return;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    const guard = _tabPreviewGuardPure(
+        S.filename, arr && arr.name, !!S.arrangements.length);
+    if (!guard.ok) {
+        _tabPreviewDestroyApi();
+        _tabPreviewStatus(guard.reason);
+        return;
+    }
+    _tabPreviewStatus('Converting…');
+    try {
+        await _tabPreviewLoadScript();
+        const url = _tabPreviewUrlPure(S.filename, S.currentArr, Date.now());
+        const resp = await fetch(url);
+        if (seq !== _tabPreviewSeq) return;   // superseded by a newer refresh
+        if (!resp.ok) {
+            let body = '';
+            try { body = await resp.text(); } catch (_) { /* keep '' */ }
+            // Re-check after the body read — reading it is another await, so a
+            // newer refresh may have superseded us; without this a stale error
+            // would destroy the newer render and stomp its status (symmetric
+            // with the arrayBuffer() checkpoint on the success path below).
+            if (seq !== _tabPreviewSeq) return;
+            _tabPreviewDestroyApi();
+            _tabPreviewStatus(_tabPreviewHttpMessagePure(resp.status, body));
+            return;
+        }
+        const buf = await resp.arrayBuffer();
+        if (seq !== _tabPreviewSeq) return;
+        _tabPreviewDestroyApi();
+        _tabPreviewApi = new alphaTab.AlphaTabApi(mount, {
+            core: { fontDirectory: _TAB_PREVIEW_CDN + '/font/' },
+            display: { layoutMode: alphaTab.LayoutMode.Page, scale: 0.9 },
+            // No alphaTab synth — the editor owns audio (same rationale as
+            // the Tab View plugin: drops the soundfont download entirely).
+            player: { enablePlayer: false },
+        });
+        if (_tabPreviewApi.renderFinished && _tabPreviewApi.renderFinished.on) {
+            _tabPreviewApi.renderFinished.on(() => {
+                if (seq === _tabPreviewSeq) _tabPreviewStatus('');
+            });
+        }
+        if (_tabPreviewApi.error && _tabPreviewApi.error.on) {
+            _tabPreviewApi.error.on((e) => {
+                if (seq === _tabPreviewSeq) {
+                    _tabPreviewStatus('Render failed: ' + ((e && e.message) || 'unknown error'));
+                }
+            });
+        }
+        _tabPreviewStatus('Engraving…');
+        _tabPreviewApi.load(new Uint8Array(buf));
+    } catch (e) {
+        if (seq === _tabPreviewSeq) {
+            _tabPreviewDestroyApi();
+            _tabPreviewStatus('Preview failed: ' + (e && e.message ? e.message : e));
+        }
+    }
+}
+
+function _editorShowTabPreview() {
+    const modal = document.getElementById('editor-tab-preview-modal');
+    if (!modal) return false;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    const title = document.getElementById('editor-tab-preview-title');
+    if (title) {
+        title.textContent = 'Tab preview — ' + ((arr && arr.name) || 'part') + ' (as last saved)';
+    }
+    modal.classList.remove('hidden');
+    _tabPreviewRender();
+    return true;
+}
+window.editorShowTabPreview = _editorShowTabPreview;
+
+window.editorRefreshTabPreview = () => { _tabPreviewRender(); };
+
+window.editorHideTabPreview = () => {
+    const modal = document.getElementById('editor-tab-preview-modal');
+    if (modal) modal.classList.add('hidden');
+    // Free the engraving resources — the modal is refresh-on-open, so
+    // nothing may keep laying out behind a hidden panel.
+    _tabPreviewSeq++;
+    _tabPreviewDestroyApi();
+    _tabPreviewStatus('');
+};
+
 window.editorToggleShortcutPanel = (force) => {
     const panel = document.getElementById('editor-shortcut-panel');
     if (!panel) return;
@@ -4271,11 +4842,33 @@ window.editorToggleShortcutPanel = (force) => {
     if (show) _editorRenderShortcutPanel();
 };
 
+/* @pure:shortcut-panel-hint:start */
+// Digit-RANGE commands (fret 0-9, bookmark 1-9) are keyboard-only: a single
+// panel-button click can't pick which digit, so _editorRunEofCommand only
+// knows the per-digit forms (setFretDigit:<n>, gotoBookmark:<n>, …). Clicking
+// the bare range row would otherwise be silently inert — return an
+// instructional hint for those ids so the click tells the user which keys to
+// press; null for every ordinary command (which the panel runs directly).
+function _editorShortcutPanelHintPure(id) {
+    switch (id) {
+    case 'gotoBookmarkDigit': return 'Press Alt+1 to Alt+9 to jump to a numbered bookmark';
+    case 'setBookmarkDigit': return 'Press Shift+Alt+1 to Shift+Alt+9 to set or clear a bookmark at the cursor';
+    case 'setFretDigit': return 'Press 0-9 to set the selected note fret';
+    default: return null;
+    }
+}
+/* @pure:shortcut-panel-hint:end */
+
 window.editorRunShortcutCommand = (id) => {
     const def = _editorCommandById(id);
     if (!def) return false;
     if (def.status !== 'ready') {
         setStatus(`${def.label} is planned but not wired yet.`);
+        return true;
+    }
+    const hint = _editorShortcutPanelHintPure(id);
+    if (hint) {
+        setStatus(hint);
         return true;
     }
     const handled = _editorRunEofCommand(id);
@@ -4397,6 +4990,87 @@ function _editorSeekToTime(t) {
     if (S.playing) { stopPlayback(); startPlayback(); }
     draw();
     updateTimeDisplay();
+}
+
+/* @pure:bookmarks:start */
+// Numbered bookmarks: up to nine time markers per song, EDITOR-side
+// authoring state (one localStorage entry keyed by filename — never pack
+// data, §6). Slots are 1-9; times are seconds, 3 dp.
+function _bookmarkStorageKeyPure(filename) {
+    return 'editorBookmarks:' + (filename || '');
+}
+// Parse a stored map defensively: junk JSON, arrays, out-of-range slots,
+// and non-finite/negative times all drop out rather than poisoning the
+// draw/jump paths.
+function _bookmarksParsePure(raw) {
+    let obj = null;
+    try { obj = JSON.parse(raw); } catch (_) { return {}; }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+    const out = {};
+    for (let n = 1; n <= 9; n++) {
+        const v = Number(obj[n]);
+        if (Number.isFinite(v) && v >= 0) out[n] = v;
+    }
+    return out;
+}
+// Toggle-set semantics on a slot: setting it at (about) its existing time
+// clears it, anywhere else (re)places it. Returns a NEW map, or the same
+// object for invalid input (callers use identity to skip persisting).
+function _bookmarkTogglePure(map, n, t) {
+    if (!(n >= 1 && n <= 9) || !Number.isFinite(t) || t < 0) return map;
+    const out = { ...map };
+    if (out[n] !== undefined && Math.abs(out[n] - t) < 0.01) delete out[n];
+    else out[n] = Math.round(t * 1000) / 1000;
+    return out;
+}
+/* @pure:bookmarks:end */
+
+// Per-song cache so the draw path never parses localStorage per frame;
+// keyed by filename, so a song switch invalidates it naturally.
+let _bookmarksCache = null;
+let _bookmarksCacheKey = null;
+function _bookmarks() {
+    const key = _bookmarkStorageKeyPure(S.filename);
+    if (_bookmarksCacheKey === key && _bookmarksCache) return _bookmarksCache;
+    let raw = null;
+    try { raw = localStorage.getItem(key); } catch (_) {}
+    _bookmarksCache = _bookmarksParsePure(raw);
+    _bookmarksCacheKey = key;
+    return _bookmarksCache;
+}
+function _bookmarksSave(map) {
+    const key = _bookmarkStorageKeyPure(S.filename);
+    _bookmarksCache = map;
+    _bookmarksCacheKey = key;
+    try {
+        if (Object.keys(map).length) localStorage.setItem(key, JSON.stringify(map));
+        else localStorage.removeItem(key);
+    } catch (_) {}
+}
+
+function _editorSetBookmark(n) {
+    if (!S.filename) { setStatus('Load a song first'); return true; }
+    const before = _bookmarks();
+    const after = _bookmarkTogglePure(before, n, S.cursorTime || 0);
+    if (after === before) return true;
+    const removed = after[n] === undefined;
+    _bookmarksSave(after);
+    draw();
+    setStatus(removed
+        ? `Bookmark ${n} cleared`
+        : `Bookmark ${n} set at ${(S.cursorTime || 0).toFixed(2)} s — Alt+${n} jumps here`);
+    return true;
+}
+
+function _editorGotoBookmark(n) {
+    const t = _bookmarks()[n];
+    if (t === undefined) {
+        setStatus(`Bookmark ${n} isn't set — Shift+Alt+${n} sets it at the cursor`);
+        return true;
+    }
+    _editorSeekToTime(t);
+    setStatus(`Bookmark ${n}`);
+    return true;
 }
 
 function _editorJumpBeat(dir) {
@@ -4537,7 +5211,7 @@ function _editorResnapSelection() {
 }
 
 function _editorSetAnchorAtCursor() {
-    if (!S.arrangements.length || isKeysMode()) { setStatus('Anchors are for guitar/bass arrangements'); return false; }
+    if (!S.arrangements.length || isKeysArr()) { setStatus('Anchors are for guitar/bass arrangements'); return false; }
     const idxs = _editorCurrentNoteIndices();
     const nn = notes();
     const atCursor = idxs.map(i => nn[i]).filter(Boolean);
@@ -4780,7 +5454,10 @@ function _editorPromptTempoBeatCountAtSelection() {
 
 function _editorToggleTempoRideScope() {
     if (!S.tempoMapMode) return false;
-    S.tempoRideScope = S.tempoRideScope === 'all' ? 'drum' : 'all';
+    // Ctrl+T cycles the two presets; a 'custom' checklist steps back to
+    // 'drum' (the conservative preset) rather than silently mutating the
+    // user's hand-picked part set.
+    S.tempoRideScope = S.tempoRideScope === 'drum' ? 'all' : 'drum';
     try {
         localStorage.setItem('editor-tempomap-scope', S.tempoRideScope);
     } catch (_) { /* localStorage unavailable */ }
@@ -4824,16 +5501,27 @@ function _editorRunEofCommand(cmd) {
     if (typeof cmd === 'string' && cmd.startsWith('setFretDigit:')) {
         return _editorSetSelectedFret(parseInt(cmd.slice('setFretDigit:'.length), 10));
     }
+    if (typeof cmd === 'string' && cmd.startsWith('gotoBookmark:')) {
+        return _editorGotoBookmark(parseInt(cmd.slice('gotoBookmark:'.length), 10));
+    }
+    if (typeof cmd === 'string' && cmd.startsWith('setBookmark:')) {
+        return _editorSetBookmark(parseInt(cmd.slice('setBookmark:'.length), 10));
+    }
     switch (cmd) {
     case 'save': editorSave(); return true;
     case 'toggleWaveform': return _editorToggleWaveform();
     case 'toggleGuideClap': return _editorToggleGuideClap();
     case 'toggleMetronome': return _editorToggleMetronome();
     case 'toggleMixer': return _editorToggleMixer();
+    case 'toggleLoopAB': return _editorToggleLoopAB();
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return _editorTogglePartsView();
     case 'toggleKeyHighlight': return _editorToggleKeyHighlight();
     case 'renamePart': window.editorRenameArrangement(); return true;
+    case 'toggleFollow': return _editorToggleFollow();
+    case 'toggleDrumDensity': return _editorToggleDrumDensity();
+    case 'showTabPreview': return _editorShowTabPreview();
+    case 'cycleViewMode': return _editorCycleViewMode();
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -4938,6 +5626,9 @@ function _editorRightClickNoteEdit(e, x, y) {
     // reassigns arr.notes = _recNotes on Stop, so an add/remove here would be
     // silently overwritten and muddle undo history.
     if (_recState === 'recording') return false;
+    // Read-only roll (V4): the EOF-style right-click add/remove is a note
+    // edit — inert for a fretted part shown in the piano roll.
+    if (_rollReadOnly()) { _rollLockNotice(); return true; }
     const keysMode = isKeysMode();
     const laneBottom = keysMode
         ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
@@ -5079,6 +5770,25 @@ function onKeyDown(e) {
     const screen = document.getElementById('plugin-editor');
     if (!screen || !screen.classList.contains('active')) return;
 
+    // Read-only Tab preview is a modal proofreading lens — while it's open
+    // NO editor shortcut (fret digits, f, arrows, Delete, transport …) may
+    // reach the chart hidden behind it, or the "read-only" preview would
+    // silently mutate the arrangement and pollute undo/redo. Escape closes
+    // it; every other key is swallowed. Mirrors the partsViewMode gate and
+    // must sit before the spacebar/transport handler below.
+    const _tabPreviewModal = document.getElementById('editor-tab-preview-modal');
+    const _tabPreviewOpen = !!(_tabPreviewModal && !_tabPreviewModal.classList.contains('hidden'));
+    const _tabPreviewAction = _tabPreviewKeyPolicyPure(_tabPreviewOpen, e.key);
+    if (_tabPreviewAction === 'close') {
+        e.preventDefault();
+        window.editorHideTabPreview();
+        return;
+    }
+    if (_tabPreviewAction === 'swallow') {
+        e.preventDefault();
+        return;
+    }
+
     if (e.key === ' ' && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
         editorTogglePlay();
@@ -5120,6 +5830,29 @@ function onKeyDown(e) {
             draw();
             return;
         }
+        // Velocity quick-sets: A = accent, N = normal. In drum mode these
+        // would otherwise fall through to note commands (toggleAccent /
+        // noteMenu) that no-op on an empty note selection.
+        if (dk === 'a' || dk === 'n') {
+            e.preventDefault();
+            if (dk === 'a') _drumEditorSetVelocity(115, 'Accent');
+            else _drumEditorSetVelocity(100, 'Normal');
+            draw();
+            return;
+        }
+    }
+
+    // Drum velocity nudge: Shift+↑/↓ = ±10 on the selection. Claimed here
+    // (before the profile dispatch) because in drum mode the note-transpose
+    // commands those keys map to only no-op against the empty note selection.
+    if (S.drumEditMode && S.drumSel.size && S.drumTab
+        && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key === 'ArrowUp' || e.key === 'ArrowDown')
+        && !e.target.matches('input, select, textarea')) {
+        e.preventDefault();
+        _drumEditorNudgeVelocity(e.key === 'ArrowUp' ? 10 : -10);
+        draw();
+        return;
     }
 
     // A pending tap-tempo run owns Enter/Escape until resolved — checked
@@ -5646,6 +6379,10 @@ function _parseFretInput(val) {
 
 async function promptSlide(idx) {
     hideContextMenu();
+    // Read-only roll (V4): slide authoring mutates n.techniques directly
+    // (it bypasses EditHistory), so the exec lock can't catch it — guard
+    // the entry point like every other note-edit path in the roll.
+    if (_rollReadOnly()) { _rollLockNotice(); return; }
     const n = notes()[idx];
     const techs = n.techniques || {};
     const current = techs.slide_to >= 0 ? techs.slide_to : '';
@@ -5663,6 +6400,8 @@ async function promptSlide(idx) {
 
 async function promptSlideUnpitch(idx) {
     hideContextMenu();
+    // Read-only roll (V4): direct n.techniques mutation — guard like promptSlide.
+    if (_rollReadOnly()) { _rollLockNotice(); return; }
     const n = notes()[idx];
     const techs = n.techniques || {};
     const current = techs.slide_unpitch_to >= 0 ? techs.slide_unpitch_to : '';
@@ -5996,6 +6735,14 @@ function startPlayback() {
     if (S.loopEnabled && region && (S.cursorTime < region.startTime || S.cursorTime >= region.endTime)) {
         S.cursorTime = region.startTime;
     }
+    // Every (re)start — including seeks, which route through here — begins
+    // an A/B cycle on the RECORDING pass, so the user always hears the real
+    // thing first from a fresh position. Reset BEFORE the first tick /
+    // scheduler sync so _guideTick can never schedule a guide pass off a
+    // stale phase, and so the first-play fade (in _startAudioSourceAtCursor)
+    // is the last automation written to the ref gain, not clobbered by this.
+    _abPhase = 'recording';
+    _abApplyRefGain();
     _startAudioSourceAtCursor();
     S.playing = true;
     updatePlayIcon();
@@ -6012,6 +6759,9 @@ function stopPlayback() {
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     _guideTimerSync();
     _guideCancelVoices();
+    // Restore the reference to its fader level (a stop mid-guide-pass must
+    // never leave the recording silently muted).
+    _abApplyRefGain();
 }
 
 function playbackTick() {
@@ -6021,6 +6771,9 @@ function playbackTick() {
         ? null
         : _loopPlaybackRestartTimePure(S.cursorTime, S.barSel, S.loopEnabled, S.duration);
     if (loopRestart !== null) {
+        // A/B compare flips its pass BEFORE the restart so the ramped
+        // reference mute/unmute lands with the wrap, not a frame late.
+        _abOnLoopWrap();
         _restartPlaybackAt(loopRestart);
         updateTimeDisplay();
         // playbackTick already runs once per animation frame — paint
@@ -6044,16 +6797,47 @@ function playbackTick() {
         return; // stopPlayback() already cancelled rafId; don't re-schedule.
     }
 
-    // Auto-scroll to follow cursor
-    const cx = timeToX(S.cursorTime);
-    const w = canvas ? canvas.width / DPR : 800;
-    if (cx > w * 0.8) {
-        S.scrollX = _editorClampScrollX(S.cursorTime - (w * 0.3) / S.zoom);
+    // Auto-scroll to follow the playhead — unless follow is toggled off
+    // (Shift+L), which lets an author inspect/edit one spot while the
+    // song plays on.
+    {
+        const cx = timeToX(S.cursorTime);
+        const w = canvas ? canvas.width / DPR : 800;
+        const target = _followScrollTargetPure(
+            S.cursorTime, cx, w, S.zoom, editorFollowEnabled());
+        if (target !== null) S.scrollX = _editorClampScrollX(target);
     }
 
     updateTimeDisplay();
     drawNow();
     rafId = requestAnimationFrame(playbackTick);
+}
+
+/* @pure:follow-scroll:start */
+// Follow-playhead scroll policy: once the cursor crosses 80% of the view,
+// jump the window so the cursor sits at 30% — but only when follow is on.
+// Returns the UNCLAMPED scrollX target, or null for "don't move".
+function _followScrollTargetPure(cursorTime, cursorX, viewW, zoom, followOn) {
+    if (!followOn) return null;
+    if (!(cursorX > viewW * 0.8)) return null;
+    return cursorTime - (viewW * 0.3) / zoom;
+}
+/* @pure:follow-scroll:end */
+
+function editorFollowEnabled() {
+    // Default ON — follow is today's behavior; the pref only records an
+    // explicit opt-out.
+    try { return localStorage.getItem('editorFollow') !== '0'; }
+    catch (_) { return true; }
+}
+
+function _editorToggleFollow() {
+    const next = !editorFollowEnabled();
+    try { localStorage.setItem('editorFollow', next ? '1' : '0'); } catch (_) {}
+    setStatus(next
+        ? 'Follow on — the view tracks the playhead during playback (Shift+L)'
+        : 'Follow off — the view stays put while the song plays (Shift+L)');
+    return true;
 }
 
 function updatePlayIcon() {
@@ -6298,7 +7082,16 @@ function _mixSetBusGain(bus, pct) {
         : bus === 'guide' ? (_masterBus && _masterBus.guideGain)
         : (_masterBus && _masterBus.clickGain);
     if (node && S.audioCtx) {
-        node.gain.setTargetAtTime(_mixGainForPctPure(p), S.audioCtx.currentTime, 0.02);
+        // The recording fader must never un-mute an active A/B guide pass:
+        // route ref moves through the A/B-aware target so a nudge ramps to
+        // the fresh level on a recording pass but stays muted on a guide
+        // pass. Guarded — the @pure:audio-bus test sandbox has no
+        // _abApplyRefGain, where this falls back to the plain fader ramp.
+        if (bus === 'ref' && typeof _abApplyRefGain === 'function') {
+            _abApplyRefGain();
+        } else {
+            node.gain.setTargetAtTime(_mixGainForPctPure(p), S.audioCtx.currentTime, 0.02);
+        }
     }
     return p;
 }
@@ -6414,7 +7207,9 @@ function _guideResetSchedule() {
 }
 
 function _guideTick() {
-    const claps = editorGuideClapEnabled();
+    // A/B overrides the claps pref while active: guide passes clap even
+    // with the pref off; recording passes stay clean even with it on.
+    const claps = _abClapsEnabledPure(_abActive(), _abPhase, editorGuideClapEnabled());
     const metro = editorMetronomeEnabled();
     if (!S.playing || !S.audioCtx || (!claps && !metro)) return;
     const nowChart = S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
@@ -6454,10 +7249,98 @@ function _guideTick() {
     }
 }
 
+// ── Loop A/B compare — the ear-training loop ─────────────────────────
+// While looping, alternate each pass between the RECORDING (reference
+// audible, claps off) and the GUIDE (reference muted via the mixer's
+// transparent ref gain, claps on) so a charter can hear what they charted
+// against what the artist played, one pass apart. Session-only state —
+// deliberately not persisted: silently muting the recording on a later
+// session would read as a playback bug.
+
+/* @pure:loop-ab:start */
+// Do claps schedule this tick? A/B overrides the claps pref while active:
+// guide passes clap even with the pref off, recording passes stay clean
+// even with it on.
+function _abClapsEnabledPure(abActive, phase, clapsPref) {
+    return abActive ? phase === 'guide' : clapsPref;
+}
+function _abNextPhasePure(phase) {
+    return phase === 'guide' ? 'recording' : 'guide';
+}
+// The reference gain target: muted only during an ACTIVE A/B guide pass
+// while playing; every other state restores the mixer fader's value.
+function _abRefTargetPure(abActive, playing, phase, faderGain) {
+    return (abActive && playing && phase === 'guide') ? 0 : faderGain;
+}
+/* @pure:loop-ab:end */
+
+let _abOn = false;
+let _abPhase = 'recording';   // every play starts by hearing the real thing
+
+function _abActive() { return _abOn && !!S.loopEnabled; }
+
+function _abApplyRefGain() {
+    const rg = _ensureRefGain();
+    if (!rg || !S.audioCtx) return;
+    const target = _abRefTargetPure(
+        _abActive(), !!S.playing, _abPhase,
+        _mixGainForPctPure(_mixLoadPct().ref));
+    // Same ~20 ms ramp as every mixer move — a phase flip is never a pop.
+    rg.gain.setTargetAtTime(target, S.audioCtx.currentTime, 0.02);
+}
+
+function _abOnLoopWrap() {
+    if (!_abActive()) return;
+    _abPhase = _abNextPhasePure(_abPhase);
+    _abApplyRefGain();
+    setStatus(_abPhase === 'guide'
+        ? 'A/B: guide pass (recording muted)'
+        : 'A/B: recording pass');
+}
+
+function _refreshLoopABBtn() {
+    const btn = document.getElementById('editor-loop-ab-btn');
+    if (!btn) return;
+    const region = _selectedLoopRegion();
+    btn.disabled = !region;
+    btn.classList.toggle('bg-accent', _abOn);
+    btn.classList.toggle('hover:bg-accent-light', _abOn);
+    btn.classList.toggle('bg-dark-600', !_abOn);
+    btn.classList.toggle('hover:bg-dark-500', !_abOn);
+    btn.setAttribute('aria-pressed', _abOn ? 'true' : 'false');
+    btn.title = region
+        ? 'A/B compare: each loop pass alternates — recording, then guide claps only (Alt+B)'
+        : 'Set a loop region first — A/B alternates recording and guide per pass';
+}
+
+function _editorToggleLoopAB() {
+    if (!_abOn && !_selectedLoopRegion()) {
+        setStatus('Set a loop region first — A/B alternates recording and guide per pass');
+        return true;
+    }
+    _abOn = !_abOn;
+    _abPhase = 'recording';
+    if (_abOn && !S.loopEnabled && _selectedLoopRegion()) {
+        // A/B is meaningless without looping — arm the loop exactly like the
+        // Loop button, including the seek into the region when the cursor
+        // sits outside it, so A/B never rides a pre-loop stretch of audio.
+        _setLoopRegionEnabled(true);
+    }
+    _abApplyRefGain();
+    _refreshLoopABBtn();
+    _guideTimerSync();   // guide passes need the scheduler even with claps off
+    setStatus(_abOn
+        ? 'Loop A/B on — first pass plays the recording, the next plays only the guide claps'
+        : 'Loop A/B off');
+    return true;
+}
+window.editorToggleLoopAB = _editorToggleLoopAB;
+
 // Start/stop the scheduler to match "playing AND enabled". Called from
 // startPlayback/stopPlayback and from the toggle (mid-play enable works).
 function _guideTimerSync() {
-    const want = S.playing && (editorGuideClapEnabled() || editorMetronomeEnabled());
+    const want = S.playing
+        && (editorGuideClapEnabled() || editorMetronomeEnabled() || _abActive());
     if (want && !_guideTimer) {
         _guideScheduledUntil = S.playStartTime
             + (S.audioCtx.currentTime - S.playStartWall);
@@ -6659,6 +7542,21 @@ async function loadCDLC(filename) {
         S.tempoMapMode = false;
         S.tempoSel = -1;
         S.tempoHover = -1;
+        // Drop the per-part ride checklist: its indices are song-shaped.
+        // A 'custom' scope falls back to the conservative 'drum' preset —
+        // silently riding a different song's parts would be corrupting.
+        S.tempoRideCustom = null;
+        if (S.tempoRideScope === 'custom') S.tempoRideScope = 'drum';
+        // Drop loop A/B — session-only state; carrying a muted-reference
+        // phase into another song would read as a playback bug. Refresh the
+        // audio + UI too: clearing the flags alone would leave a guide-pass
+        // mute on the ref gain and stale A/B button styling until the next
+        // incidental control refresh.
+        _abOn = false;
+        _abPhase = 'recording';
+        _abApplyRefGain();
+        _guideTimerSync();
+        _updateLoopRegionControls();
         // Abandon any in-progress drag — the global mouse handlers act on
         // S.drag regardless of mode, so a stale drag would otherwise keep
         // mutating the newly-loaded song's data.
@@ -6801,12 +7699,12 @@ function updateArrangementSelector() {
     const recBtn = document.getElementById('editor-record-midi-btn');
     if (recBtn) {
         recBtn.classList.toggle('hidden', !S.sessionId || S.format !== 'sloppak');
-        if (!navigator.requestMIDIAccess) {
+        if (_recMidiBackend() === 'none') {
             recBtn.disabled = true;
-            recBtn.title = 'Web MIDI not available — use Chrome or Edge.';
+            recBtn.title = 'MIDI not available — needs the host MIDI input capability or Web MIDI (Chrome/Edge).';
         } else {
             recBtn.disabled = false;
-            recBtn.title = 'Record a Keys arrangement live from a MIDI keyboard (Chrome/Edge)';
+            recBtn.title = 'Record a Keys arrangement live from a MIDI keyboard';
         }
     }
 
@@ -7648,6 +8546,10 @@ window.editorInspectorSetField = (field, raw) => {
 window.editorInspectorSetTech = (key, raw) => {
     const sel = _selectedNotes();
     if (sel.length === 0) return;
+    // Read-only roll (V4): scalar technique edits mutate n.techniques in
+    // place (no EditHistory command), so the exec lock never sees them.
+    // Refuse and bounce the input back to the model value.
+    if (_rollReadOnly()) { _rollLockNotice(); _renderInspector(); return; }
     const bounds = _INSPECTOR_BOUNDS[key];
     if (!bounds) return;
     const v = _coerceInspectorNumber(raw, bounds);
@@ -7698,6 +8600,9 @@ window.editorOpenBendCurve = () => {
 window.editorInspectorSetFlag = (key, on) => {
     const sel = _selectedNotes();
     if (sel.length === 0) return;
+    // Read-only roll (V4): flag toggles mutate n.techniques directly — same
+    // bypass as editorInspectorSetTech. Refuse and re-render to reset the box.
+    if (_rollReadOnly()) { _rollLockNotice(); _renderInspector(); return; }
     for (const n of sel) {
         if (!n.techniques) n.techniques = {};
         n.techniques[key] = !!on;
@@ -8311,6 +9216,11 @@ window.editorSelectArrangement = (val) => {
     updateStatus();
 };
 window.editorToggleTech = (idx, tech) => {
+    // Read-only roll (V4): the context-menu technique toggle mutates
+    // n.techniques directly (no EditHistory), so it escapes the exec lock.
+    // The note context menu still opens in the roll (right-click selection is
+    // allowed), so guard the toggle itself.
+    if (_rollReadOnly()) { hideContextMenu(); _rollLockNotice(); return; }
     const n = notes()[idx];
     if (!n.techniques) n.techniques = {};
     n.techniques[tech] = !n.techniques[tech];
@@ -11714,6 +12624,10 @@ window.editorRemoveArrangement = async () => {
     // reconstructChords() reset (#18): drop the stack when the model shifts
     // under it.
     if (S.history) S.history.reset();
+    // The splice renumbers arrangements, so rebase the per-part tempo-ride
+    // checklist too — its stored indices would otherwise ride the wrong
+    // (out-of-scope) arrangement on the next tempo edit.
+    S.tempoRideCustom = _rebaseTempoRideForRemoval(S.tempoRideCustom, removeIdx);
     S.currentArr = Math.min(removeIdx, S.arrangements.length - 1);
     S.sel.clear();
     flattenChords();
@@ -12745,8 +13659,11 @@ window.editorDoImportGuitar = async () => {
 // Record Keys arrangement live from a MIDI keyboard (Web MIDI API)
 // ════════════════════════════════════════════════════════════════════
 
-let _recMidiAccess = null;
-let _recMidiInput = null;
+let _recMidiAccess = null;                 // legacy private Web-MIDI access (fallback path)
+let _recMidiInput = null;                  // legacy private Web-MIDI input (fallback path)
+let _recMidiHandle = null;                 // host midi-input domain live handle {addListener, removeListener}
+let _recMidiOpenKey = null;                // logicalSourceKey _recMidiHandle belongs to
+let _recMidiOpenGen = 0;                   // bumped on every open/teardown; stale async opens self-close
 let _recState = 'idle';                    // idle | recording | finalizing
 let _recChannel = -1;                      // -1 = all, else 0..15
 const _recHeld = new Map();                // pitch -> [{onTime, channel}, ...] FIFO
@@ -12765,9 +13682,58 @@ function chartTimeNow() {
     return S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
 }
 
+/* @pure:midi-adapter:start */
+// Which MIDI backend the record path uses. The host `midi-input`
+// capability domain is the org's ONE device-access boundary (one
+// permission prompt, one source list, PII-redacted diagnostics) — prefer
+// it whenever the host ships it; fall back to the editor's legacy private
+// Web-MIDI path on older hosts; 'none' when neither exists.
+function _recMidiBackendPure(domain, hasWebMidi) {
+    if (domain && domain.version === 1) return 'domain';
+    return hasWebMidi ? 'private' : 'none';
+}
+// Normalize a device list to the picker's one shape [{id, label}]:
+// domain sources carry {logicalSourceKey, label}; private Web-MIDI inputs
+// carry {id, name, manufacturer}.
+function _recMidiDeviceRowsPure(backend, list) {
+    if (backend === 'domain') {
+        return (list || []).map(s => ({
+            id: s.logicalSourceKey,
+            label: s.label || 'MIDI input',
+        }));
+    }
+    return (list || []).map(inp => ({
+        id: inp.id,
+        label: inp.name || inp.manufacturer || `MIDI Device (${inp.id})`,
+    }));
+}
+/* @pure:midi-adapter:end */
+
+function _recMidiDomain() {
+    const d = window.feedBack && window.feedBack.midiInput;
+    return (d && d.version === 1) ? d : null;
+}
+function _recMidiBackend() {
+    return _recMidiBackendPure(
+        _recMidiDomain(),
+        typeof navigator !== 'undefined' && !!navigator.requestMIDIAccess);
+}
+
 async function _recMidiInit() {
+    const backend = _recMidiBackend();
+    if (backend === 'domain') {
+        // `discover` is the domain's permission boundary (it gates the whole
+        // Web-MIDI input list) — the analog of requestMIDIAccess below.
+        try {
+            const r = await _recMidiDomain().discover();
+            return !(r && r.outcome === 'denied');
+        } catch (e) {
+            console.warn('[Editor] MIDI discover failed:', e);
+            return false;
+        }
+    }
+    if (backend !== 'private') return false;
     if (_recMidiAccess) return true;
-    if (!navigator.requestMIDIAccess) return false;
     try {
         _recMidiAccess = await navigator.requestMIDIAccess({ sysex: false });
         _recMidiAccess.onstatechange = () => _recMidiUpdateDeviceList();
@@ -12778,49 +13744,132 @@ async function _recMidiInit() {
     }
 }
 
+// Pre-open the domain session for `id` (modal-open / device-change time,
+// where async is fine). Start must stay SYNCHRONOUS — see the user-gesture
+// comment in editorStartRecordMidi — so the session is ready before the
+// Start click and _recMidiConnect only attaches the listener.
+async function _recMidiEnsureOpen(id) {
+    const d = _recMidiDomain();
+    if (!d || !id) return false;
+    if (_recMidiHandle && _recMidiOpenKey === id) return true;
+    _recMidiDisconnectDomain();          // bumps _recMidiOpenGen
+    // Snapshot the generation AFTER teardown. If a newer open — or a
+    // teardown (device change / modal close) — happens while we await, the
+    // generation moves on and this resolution is stale: we must NOT install
+    // its handle (that would leak the session opened by the newer request
+    // and resurrect a handle after teardown). Close the orphaned ref instead.
+    const gen = ++_recMidiOpenGen;
+    try {
+        d.select(id);
+        const r = await d.open({ requester: 'editor-record', logicalSourceKey: id });
+        if (!r || !r.handle) return false;
+        if (gen !== _recMidiOpenGen) {
+            try { d.close({ requester: 'editor-record', logicalSourceKey: id }); } catch (_) { /* best-effort */ }
+            return false;
+        }
+        _recMidiHandle = r.handle;
+        _recMidiOpenKey = id;
+        try { localStorage.setItem('editor.recordMidiDeviceId', id); } catch (_) {}
+        return true;
+    } catch (e) {
+        console.warn('[Editor] MIDI open failed:', e);
+        return false;
+    }
+}
+
+function _recMidiDisconnectDomain() {
+    const d = _recMidiDomain();
+    if (_recMidiHandle) {
+        try { _recMidiHandle.removeListener(_recMidiOnData); } catch (_) { /* best-effort */ }
+    }
+    if (d && _recMidiOpenKey) {
+        // Release our ref on the SHARED session (the domain refcounts across
+        // consumers — closing here never yanks the device from the drums
+        // plugin or the input wizard).
+        try { d.close({ requester: 'editor-record', logicalSourceKey: _recMidiOpenKey }); } catch (_) { /* best-effort */ }
+    }
+    _recMidiHandle = null;
+    _recMidiOpenKey = null;
+    // Invalidate any open() still in flight so its late resolution self-closes
+    // instead of resurrecting a handle onto this torn-down session.
+    _recMidiOpenGen++;
+}
+
+window.editorRecordMidiDeviceChanged = (id) => {
+    try { localStorage.setItem('editor.recordMidiDeviceId', id); } catch (_) {}
+    // Domain path: swap the pre-opened session to the new device now, so
+    // the Start click stays synchronous. Private path connects at Start.
+    if (_recMidiBackend() === 'domain') _recMidiEnsureOpen(id);
+};
+
 function _recMidiUpdateDeviceList() {
     const sel = document.getElementById('editor-record-midi-device');
     const noDevice = document.getElementById('editor-record-midi-no-device');
     const startBtn = document.getElementById('editor-record-midi-start');
     if (!sel) return;
-    const inputs = [];
-    if (_recMidiAccess) _recMidiAccess.inputs.forEach(inp => inputs.push(inp));
+    const backend = _recMidiBackend();
+    let raw = [];
+    if (backend === 'domain') {
+        raw = _recMidiDomain().listSources();
+    } else if (_recMidiAccess) {
+        _recMidiAccess.inputs.forEach(inp => raw.push(inp));
+    }
+    const rows = _recMidiDeviceRowsPure(backend, raw);
 
     const saved = localStorage.getItem('editor.recordMidiDeviceId') || '';
     // Build options with createElement so device-supplied id/name strings
     // can't break out into HTML — Web MIDI metadata comes from the OS/USB
     // descriptor and isn't safe to interpolate via innerHTML.
     sel.replaceChildren();
-    for (const inp of inputs) {
+    for (const row of rows) {
         const opt = document.createElement('option');
-        opt.value = inp.id;
-        const label = inp.name || inp.manufacturer || `MIDI Device (${inp.id})`;
-        opt.textContent = label;
-        if (inp.id === saved) opt.selected = true;
+        opt.value = row.id;
+        opt.textContent = row.label;
+        if (row.id === saved) opt.selected = true;
         sel.appendChild(opt);
     }
 
-    const empty = !inputs.length;
+    const empty = !rows.length;
     if (noDevice) noDevice.classList.toggle('hidden', !empty);
     if (startBtn) startBtn.disabled = empty;
 }
 
+// Arm the record path for `id`. Returns 'ok' | 'pending' | 'fail'.
+// Domain path: the session was pre-opened by the modal / device-change
+// handler, so this only (re)attaches the listener — synchronous, which
+// the Start click requires. 'pending' means the pre-open is still in
+// flight (we kick another and the user presses Start again).
 function _recMidiConnect(id) {
+    if (_recMidiBackend() === 'domain') {
+        if (!_recMidiHandle || _recMidiOpenKey !== id) {
+            _recMidiEnsureOpen(id);   // fire-and-forget; resolves for the retry
+            return 'pending';
+        }
+        try { _recMidiHandle.removeListener(_recMidiOnData); } catch (_) { /* idempotent re-arm */ }
+        _recMidiHandle.addListener(_recMidiOnData);
+        try { localStorage.setItem('editor.recordMidiDeviceId', id); } catch (_) {}
+        return 'ok';
+    }
+    // Legacy private Web-MIDI path (hosts without the midi-input domain).
     if (_recMidiInput) _recMidiInput.onmidimessage = null;
     _recMidiInput = null;
-    if (!_recMidiAccess) return;
+    if (!_recMidiAccess) return 'fail';
     _recMidiAccess.inputs.forEach(inp => {
         if (inp.id === id) {
             _recMidiInput = inp;
-            _recMidiInput.onmidimessage = _recMidiOnMessage;
+            // Both paths deliver RAW BYTES to _recMidiOnData — the domain
+            // handle calls listeners with e.data, so the private path
+            // unwraps the event here to keep one routing function.
+            _recMidiInput.onmidimessage = (e) => _recMidiOnData(e.data);
             localStorage.setItem('editor.recordMidiDeviceId', id);
         }
     });
+    return _recMidiInput ? 'ok' : 'fail';
 }
 
-function _recMidiOnMessage(e) {
+function _recMidiOnData(data) {
     if (_recState !== 'recording') return;
-    const [status, data1, velocity] = e.data;
+    const [status, data1, velocity] = data;
     const ch = status & 0x0F;
     if (_recChannel >= 0 && ch !== _recChannel) return;
     const cmd = status & 0xF0;
@@ -12917,7 +13966,8 @@ window.editorShowRecordMidiModal = async () => {
         }
     }
 
-    if (!navigator.requestMIDIAccess) {
+    const backend = _recMidiBackend();
+    if (backend === 'none') {
         if (noWebMidi) noWebMidi.classList.remove('hidden');
         if (startBtn) startBtn.disabled = true;
     } else {
@@ -12929,6 +13979,13 @@ window.editorShowRecordMidiModal = async () => {
         } else {
             status.textContent = '';
             _recMidiUpdateDeviceList();
+            // Domain path: pre-open the selected device's shared session
+            // NOW so the Start click can stay synchronous (user-gesture
+            // constraint in editorStartRecordMidi).
+            if (backend === 'domain') {
+                const devSel = document.getElementById('editor-record-midi-device');
+                if (devSel && devSel.value) _recMidiEnsureOpen(devSel.value);
+            }
         }
     }
 
@@ -12939,6 +13996,9 @@ window.editorHideRecordMidiModal = () => {
     // Refuse to close while a take is active — explicit Stop is required.
     if (_recState !== 'idle') return;
     document.getElementById('editor-record-midi-modal').classList.add('hidden');
+    // Release our ref on the shared domain session (refcounted — never
+    // yanks the device from other consumers). Re-opens on next modal show.
+    _recMidiDisconnectDomain();
 };
 
 window.editorStartRecordMidi = () => {
@@ -12960,8 +14020,14 @@ window.editorStartRecordMidi = () => {
         status.textContent = 'Select a MIDI device first.';
         return;
     }
-    _recMidiConnect(sel.value);
-    if (!_recMidiInput) {
+    const connected = _recMidiConnect(sel.value);
+    if (connected === 'pending') {
+        // Domain pre-open still in flight (rare — modal open kicks it);
+        // the retry click lands after it resolves.
+        status.textContent = 'Connecting to the MIDI device — press Start again in a moment.';
+        return;
+    }
+    if (connected !== 'ok') {
         status.textContent = 'Failed to connect to MIDI device.';
         return;
     }
@@ -13080,6 +14146,12 @@ window.editorStopRecordMidi = () => {
     _recSustainOn.clear();
 
     if (_recMidiInput) _recMidiInput.onmidimessage = null;
+    // Domain path: Stop hides the modal at the end of this function, so fully
+    // release our ref on the shared session here — otherwise the refcount is
+    // held open indefinitely (the modal-close teardown never runs on the Stop
+    // path). Refcounted, so this never yanks the device from other consumers;
+    // reopening the modal re-opens the session.
+    _recMidiDisconnectDomain();
 
     // Populate the target arrangement registered at Start time. No second
     // POST: the arrangement was already registered with the backend, so
@@ -13164,6 +14236,87 @@ const DRUM_PIECE_ORDER = [
     'kick',
 ];
 
+/* @pure:drum-density:start */
+// Compact row grouping — the community 7-row shape (mirrors core
+// lib/drums.py PRESET_RB4 family boundaries), physical-kit top→bottom to
+// match the Full order. RENDER/SELECTION grouping ONLY: hits keep their
+// real piece-ids (EDITOR-VIEW-MODALITY-DESIGN V6 — one grid, density
+// presets, never a second data path). `canonical` is the piece an ADD in
+// that row authors — each family's bread-and-butter voice.
+const DRUM_COMPACT_LANES = [
+    { pieces: ['china', 'splash', 'crash_l', 'crash_r', 'stack'], label: 'Crash', canonical: 'crash_l' },
+    { pieces: ['hh_open', 'hh_closed', 'hh_pedal'],               label: 'Hi-hat', canonical: 'hh_closed' },
+    { pieces: ['ride', 'ride_bell', 'bell'],                      label: 'Ride', canonical: 'ride' },
+    { pieces: ['tom_hi', 'tom_mid'],                              label: 'Toms', canonical: 'tom_hi' },
+    { pieces: ['tom_low', 'tom_floor'],                           label: 'Fl toms', canonical: 'tom_floor' },
+    { pieces: ['snare', 'snare_xstick'],                          label: 'Snare', canonical: 'snare' },
+    { pieces: ['kick'],                                           label: 'Kick', canonical: 'kick' },
+];
+
+// The lane table for a density mode: [{pieces, label, canonical}], one
+// entry per visual row. Full = one row per piece (today's grid, label
+// null → per-piece meta label). Unknown densities fall back to full so a
+// corrupted pref can never blank the grid.
+function _drumLaneTablePure(density, fullOrder, compactLanes) {
+    if (density !== 'compact') {
+        return fullOrder.map(p => ({ pieces: [p], label: null, canonical: p }));
+    }
+    return compactLanes.map(l => ({
+        pieces: l.pieces.slice(), label: l.label, canonical: l.canonical,
+    }));
+}
+
+// Which visual row a piece-id lives on (-1 for unknown pieces — the
+// renderer skips them, same as today's indexOf contract).
+function _drumLaneIdxForPiecePure(pieceId, laneTable) {
+    for (let i = 0; i < laneTable.length; i++) {
+        if (laneTable[i].pieces.includes(pieceId)) return i;
+    }
+    return -1;
+}
+/* @pure:drum-density:end */
+
+// Density pref (editor localStorage, never pack data) + a memoized lane
+// table so per-frame draw/hit paths never rebuild it.
+let _drumDensityCache = null;
+function _drumDensityMode() {
+    if (_drumDensityCache === null) {
+        try {
+            _drumDensityCache = localStorage.getItem('editorDrumDensity') === 'compact'
+                ? 'compact' : 'full';
+        } catch (_) { _drumDensityCache = 'full'; }
+    }
+    return _drumDensityCache;
+}
+let _drumLaneTableMemo = null;
+let _drumLaneTableMemoMode = null;
+function _drumLanes() {
+    const mode = _drumDensityMode();
+    if (_drumLaneTableMemoMode !== mode) {
+        _drumLaneTableMemo = _drumLaneTablePure(mode, DRUM_PIECE_ORDER, DRUM_COMPACT_LANES);
+        _drumLaneTableMemoMode = mode;
+    }
+    return _drumLaneTableMemo;
+}
+function _drumLaneIdxForPiece(pieceId) {
+    return _drumLaneIdxForPiecePure(pieceId, _drumLanes());
+}
+
+function _editorToggleDrumDensity() {
+    const next = _drumDensityMode() === 'compact' ? 'full' : 'compact';
+    _drumDensityCache = next;
+    try { localStorage.setItem('editorDrumDensity', next); } catch (_) {}
+    // Row count changed — drop selection (indices keep meaning, but the
+    // user's visual anchor doesn't) and repaint.
+    S.drumSel = new Set();
+    draw();
+    setStatus(next === 'compact'
+        ? 'Compact rows — families share a row (colors keep each piece distinct); adding writes the family’s main piece'
+        : 'Full rows — one row per drum piece');
+    return true;
+}
+window.editorToggleDrumDensity = _editorToggleDrumDensity;
+
 // GM Percussion (channel 10) names for the unmapped-notes import dialog
 // — gives users a hint of what was dropped instead of just a number.
 const _GM_PERC_NAMES = {
@@ -13231,16 +14384,21 @@ function _showDrumImportUnmappedModal(unmapped) {
         + '<th class="text-left p-2">Map to</th></tr>';
     table.appendChild(thead);
 
-    // Keep the times arrays in a JS Map keyed by the row element rather
-    // than round-tripping through JSON.stringify/JSON.parse on a dataset
-    // attribute — avoids extra CPU + DOM payload for large unmapped sets.
+    // Keep the times/velocities arrays in a JS Map keyed by the row element
+    // rather than round-tripping through JSON.stringify/JSON.parse on a
+    // dataset attribute — avoids extra CPU + DOM payload for large sets.
     const rowTimes = new Map();
     const tbody = document.createElement('tbody');
     for (const u of unmapped) {
         const tr = document.createElement('tr');
         tr.className = 'border-t border-gray-800';
         tr.dataset.midi = String(u.midi);
-        rowTimes.set(tr, Array.isArray(u.times) ? u.times : []);
+        rowTimes.set(tr, {
+            times: Array.isArray(u.times) ? u.times : [],
+            // Optional, index-aligned with times when the server captured
+            // them — the source notes' REAL velocities.
+            vels: Array.isArray(u.velocities) ? u.velocities : null,
+        });
         const tdMidi = document.createElement('td');
         tdMidi.className = 'p-2 font-mono';
         tdMidi.textContent = u.midi;
@@ -13305,8 +14463,9 @@ function _showDrumImportUnmappedModal(unmapped) {
             const sel = tr.querySelector('select');
             if (!sel || !sel.value) continue;
             const pid = sel.value;
-            const times = rowTimes.get(tr) || [];
-            for (const t of times) {
+            const row = rowTimes.get(tr) || { times: [], vels: null };
+            for (let ti = 0; ti < row.times.length; ti++) {
+                const t = row.times[ti];
                 // Guard against malformed payload: skip NaN / Infinity /
                 // negative times rather than push invalid hit objects
                 // that break sort/draw and would be dropped by the
@@ -13316,7 +14475,15 @@ function _showDrumImportUnmappedModal(unmapped) {
                 const key = `${Math.round(t * 1000)}|${pid}`;
                 if (seen.has(key)) { skipped++; continue; }
                 seen.add(key);
-                S.drumTab.hits.push({ t: tRounded, p: pid, v: 100 });
+                // Carry the source note's REAL velocity through when the
+                // server captured it (index-aligned with times) — hand-
+                // mapping a note must not flatten its dynamics to v:100 —
+                // and derive the ghost flag from that velocity exactly like
+                // the MIDI importer does, so a hand-mapped quiet note renders
+                // and round-trips as a ghost identically to the same note
+                // imported through the normal path.
+                const rawV = row.vels ? row.vels[ti] : undefined;
+                S.drumTab.hits.push(_drumImportHitPure(tRounded, pid, rawV));
                 added++;
             }
         }
@@ -13372,7 +14539,11 @@ const DRUM_PIECE_META = {
 const DRUM_LANE_H = 22;
 const DRUM_HIT_RADIUS = 8;
 
-function _drumPieceCount()        { return DRUM_PIECE_ORDER.length; }
+// Lane-count/geometry helpers route through the density lane table:
+// Full = one row per piece (unchanged), Compact = family rows. "Piece at
+// Y" answers with the row's CANONICAL piece — the add-target; hit lookup
+// matches any member of the row (see _drumHitAtPoint).
+function _drumPieceCount()        { return _drumLanes().length; }
 function _drumLaneIdxToY(idx)     { return WAVEFORM_H + idx * DRUM_LANE_H; }
 function _drumYToLaneIdx(y) {
     const idx = Math.floor((y - WAVEFORM_H) / DRUM_LANE_H);
@@ -13381,17 +14552,21 @@ function _drumYToLaneIdx(y) {
 }
 function _drumPieceAtY(y) {
     const i = _drumYToLaneIdx(y);
-    return i >= 0 ? DRUM_PIECE_ORDER[i] : null;
+    return i >= 0 ? _drumLanes()[i].canonical : null;
 }
 
 // Hit lookup: which hit (if any) is under (x, y)? Returns the index into
 // S.drumTab.hits[], or -1. Tolerance is the hit's draw radius.
 function _drumHitAtPoint(x, y) {
     if (!S.drumTab) return -1;
-    const pieceUnder = _drumPieceAtY(y);
-    if (!pieceUnder) return -1;
+    const laneIdx = _drumYToLaneIdx(y);
+    if (laneIdx < 0) return -1;
+    // Match ANY piece that lives on this visual row — in Compact several
+    // family members share it; in Full the row has exactly one piece
+    // (today's behavior unchanged).
+    const lanePieces = _drumLanes()[laneIdx].pieces;
     const t = xToTime(x);
-    const yLane = _drumLaneIdxToY(DRUM_PIECE_ORDER.indexOf(pieceUnder)) + DRUM_LANE_H / 2;
+    const yLane = _drumLaneIdxToY(laneIdx) + DRUM_LANE_H / 2;
     const hits = S.drumTab.hits || [];  // guard against malformed tabs with no hits[]
     for (let i = 0; i < hits.length; i++) {
         const h = hits[i];
@@ -13399,7 +14574,7 @@ function _drumHitAtPoint(x, y) {
         // This check must run before the piece filter so hits on other lanes
         // don't prevent the early break from firing.
         if (h.t > t + 0.5) break;
-        if (h.p !== pieceUnder) continue;
+        if (!lanePieces.includes(h.p)) continue;
         const hx = timeToX(h.t);
         const dx = Math.abs(hx - x);
         const dy = Math.abs(yLane - y);
@@ -13416,9 +14591,10 @@ function _drumEditorDraw(w, h) {
     drawWaveform(w);
 
     // ── Lane grid ─────────────────────────────────────────────────────
-    for (let i = 0; i < _drumPieceCount(); i++) {
-        const piece = DRUM_PIECE_ORDER[i];
-        const meta = DRUM_PIECE_META[piece];
+    const laneTable = _drumLanes();
+    for (let i = 0; i < laneTable.length; i++) {
+        const lane = laneTable[i];
+        const meta = DRUM_PIECE_META[lane.canonical];
         const y = _drumLaneIdxToY(i);
         ctx.fillStyle = i % 2 === 0 ? '#0c0c1c' : '#0f0f24';
         ctx.fillRect(LABEL_W, y, w - LABEL_W, DRUM_LANE_H);
@@ -13429,12 +14605,13 @@ function _drumEditorDraw(w, h) {
         ctx.moveTo(LABEL_W, y + DRUM_LANE_H);
         ctx.lineTo(w, y + DRUM_LANE_H);
         ctx.stroke();
-        // Lane label (left margin)
+        // Lane label (left margin): family label in Compact, per-piece
+        // label in Full. Hits keep their own piece colors either way.
         ctx.fillStyle = meta.color;
         ctx.font = '10px sans-serif';
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
-        ctx.fillText(meta.label, LABEL_W - 4, y + DRUM_LANE_H / 2);
+        ctx.fillText(lane.label || meta.label, LABEL_W - 4, y + DRUM_LANE_H / 2);
     }
 
     // ── Beat grid (reuse the existing helper geometry) ────────────────
@@ -13456,7 +14633,7 @@ function _drumEditorDraw(w, h) {
     for (let i = 0; i < hits.length; i++) {
         const h = hits[i];
         if (h.t < visibleStart || h.t > visibleEnd) continue;
-        const pieceIdx = DRUM_PIECE_ORDER.indexOf(h.p);
+        const pieceIdx = _drumLaneIdxForPiece(h.p);
         if (pieceIdx < 0) continue;  // unknown piece-id; renderer skip
         const meta = DRUM_PIECE_META[h.p];
         const cx = timeToX(h.t);
@@ -13576,7 +14753,7 @@ function _drumEditorDraw(w, h) {
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    const hud = `Drum editor — ${hits.length} hits, ${S.drumSel.size} selected. Click empty: add. Drag empty: select box. Click hit: select. Del: remove. G/F/K: ghost/flam/choke.`;
+    const hud = `Drum editor — ${hits.length} hits, ${S.drumSel.size} selected. Click empty: add. Drag empty: select box. Click hit: select. Del: remove. G/F/K: ghost/flam/choke. A/N: accent/normal. Alt+drag or Shift+↑/↓: velocity.`;
     ctx.fillText(hud, LABEL_W + 6, WAVEFORM_H + _drumPieceCount() * DRUM_LANE_H + 6);
 }
 
@@ -13629,7 +14806,7 @@ function _tempoDrawReferenceNotes(w, gridBottom, visStart, visEnd) {
             if (typeof hit.t !== 'number' || hit.t < visStart || hit.t > visEnd) continue;
             const x = timeToX(hit.t);
             if (x < LABEL_W || x > w) continue;
-            const pi = DRUM_PIECE_ORDER.indexOf(hit.p);
+            const pi = _drumLaneIdxForPiece(hit.p);
             const frac = (pi >= 0 && pc > 1) ? pi / (pc - 1) : 0.5;
             dot(x, bandMid + REF_R + 4 + frac * (bandBot - bandMid - 2 * REF_R - 4));
         }
@@ -14101,7 +15278,7 @@ function _ensureTempoScopeToggle() {
         if (!wrap) return null;
         el = document.createElement('div');
         el.id = 'editor-tempo-scope';
-        el.className = 'absolute hidden items-center gap-1 px-2 py-1 '
+        el.className = 'absolute hidden flex-col gap-1 px-2 py-1 '
             + 'bg-dark-800 border border-gray-700 rounded text-xs z-10';
         el.style.right = '10px';
         el.style.bottom = '8px';
@@ -14111,15 +15288,34 @@ function _ensureTempoScopeToggle() {
         el.title = 'The beat grid and section markers always move with a '
             + 'tempo edit. This chooses which instrument notes re-time too.';
         el.innerHTML =
-            '<span class="text-gray-500 mr-1">Notes that ride the grid:</span>'
+            '<div class="flex items-center gap-1">'
+            + '<span class="text-gray-500 mr-1">Notes that ride the grid:</span>'
             + '<button type="button" data-scope="drum" class="px-2 py-0.5 rounded"></button>'
-            + '<button type="button" data-scope="all" class="px-2 py-0.5 rounded"></button>';
-        el.querySelectorAll('button').forEach(b => {
-            b.textContent = b.dataset.scope === 'drum' ? 'Drum tab' : 'All instruments';
+            + '<button type="button" data-scope="all" class="px-2 py-0.5 rounded"></button>'
+            + '<button type="button" data-scope="custom" class="px-2 py-0.5 rounded"></button>'
+            + '</div>'
+            + '<div id="editor-tempo-scope-parts" class="hidden flex-col gap-0.5 mt-1 '
+            + 'pt-1 border-t border-gray-700/70 max-h-40 overflow-y-auto"></div>';
+        el.querySelectorAll('button[data-scope]').forEach(b => {
+            b.textContent = b.dataset.scope === 'drum' ? 'Drum tab'
+                : b.dataset.scope === 'all' ? 'All instruments' : 'Per part…';
             b.onclick = () => {
                 S.tempoRideScope = b.dataset.scope;
+                if (b.dataset.scope === 'custom' && !S.tempoRideCustom) {
+                    // First open seeds the checklist to "everything rides"
+                    // so unchecking is the gesture — a part someone has
+                    // hand-verified is the exception, not the rule.
+                    S.tempoRideCustom = {
+                        drum: true,
+                        arrs: new Set((S.arrangements || []).map((_, i) => i)),
+                    };
+                }
                 try {
-                    localStorage.setItem('editor-tempomap-scope', S.tempoRideScope);
+                    // 'custom' is session-only: its indices are song-shaped,
+                    // so only the presets persist (hydration ignores the rest).
+                    if (b.dataset.scope !== 'custom') {
+                        localStorage.setItem('editor-tempomap-scope', S.tempoRideScope);
+                    }
                 } catch (_) { /* localStorage unavailable */ }
                 _refreshTempoScopeToggle();
                 _refreshTempoSyncInspector();
@@ -14131,25 +15327,90 @@ function _ensureTempoScopeToggle() {
     return el;
 }
 
+// Rebuild the per-part checklist rows (drum tab + one per arrangement).
+// Only called when the memo signature changed, so full rebuilds are cheap.
+function _renderTempoScopeParts(listEl) {
+    listEl.replaceChildren();
+    const c = S.tempoRideCustom || { drum: true, arrs: null };
+    const mkRow = (label, checked, onChange) => {
+        const row = document.createElement('label');
+        row.className = 'flex items-center gap-1.5 text-gray-300 cursor-pointer';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = checked;
+        cb.className = 'accent-amber-500';
+        cb.onchange = () => onChange(cb.checked);
+        const span = document.createElement('span');
+        span.className = 'truncate max-w-[11rem]';
+        span.textContent = label;
+        row.append(cb, span);
+        listEl.appendChild(row);
+    };
+    const commit = () => {
+        S.tempoRideScope = 'custom';
+        // Don't tear down and rebuild the rows here: the browser already
+        // reflects this checkbox flip in the DOM, and the model was just
+        // updated to match, so a replaceChildren() would only drop keyboard
+        // focus off the box the user is toggling. Structural changes (mode,
+        // scope, roster) still rebuild via _refreshTempoScopeToggle's memo.
+        _refreshTempoScopeToggle();
+        _refreshTempoSyncInspector();
+        draw();
+    };
+    mkRow('Drum tab', c.drum !== false, (on) => {
+        const cur = S.tempoRideCustom
+            || (S.tempoRideCustom = { drum: true, arrs: new Set((S.arrangements || []).map((_, i) => i)) });
+        cur.drum = on;
+        commit();
+    });
+    (S.arrangements || []).forEach((arr, i) => {
+        if (!arr) return;
+        const name = arr.name || `Arrangement ${i + 1}`;
+        const checked = !(c.arrs instanceof Set) || c.arrs.has(i);
+        mkRow(name, checked, (on) => {
+            const cur = S.tempoRideCustom
+                || (S.tempoRideCustom = { drum: true, arrs: new Set((S.arrangements || []).map((_, k) => k)) });
+            if (!(cur.arrs instanceof Set)) {
+                cur.arrs = new Set((S.arrangements || []).map((_, k) => k));
+            }
+            if (on) cur.arrs.add(i); else cur.arrs.delete(i);
+            commit();
+        });
+    });
+}
+
 let _tempoScopeToggleState = '';  // memo signature; runs every draw()
 
 function _refreshTempoScopeToggle() {
     const el = _ensureTempoScopeToggle();
     if (!el) return;
-    // Memoize on the only inputs that affect the control — _refreshTempo-
-    // ScopeToggle runs on every draw() (every animation frame during
-    // playback), so skip the DOM writes when nothing changed.
-    const sig = `${!!S.tempoMapMode}|${S.tempoRideScope}`;
+    // Memoize on the STRUCTURAL inputs that change which rows exist —
+    // _refreshTempoScopeToggle runs on every draw() (every animation frame
+    // during playback), so skip the DOM writes when nothing changed. The
+    // per-part CHECK STATE is deliberately NOT in the signature: a checkbox
+    // flip is already reflected in the DOM and the model, so rebuilding the
+    // rows for it would only drop keyboard focus (see commit() above). A
+    // changed roster (add/remove/rename) or first-time custom seeding does
+    // change the signature and rebuilds the rows.
+    const arrSig = (S.arrangements || []).map(a => (a && a.name) || '').join('|');
+    const sig = `${!!S.tempoMapMode}|${S.tempoRideScope}|${!!S.tempoRideCustom}|${arrSig}`;
     if (sig === _tempoScopeToggleState) return;
     _tempoScopeToggleState = sig;
     el.classList.toggle('hidden', !S.tempoMapMode);
     el.classList.toggle('flex', !!S.tempoMapMode);
-    el.querySelectorAll('button').forEach(b => {
+    el.querySelectorAll('button[data-scope]').forEach(b => {
         const active = b.dataset.scope === S.tempoRideScope;
         b.className = 'px-2 py-0.5 rounded ' + (active
             ? 'bg-amber-600 text-white font-medium'
             : 'bg-dark-600 text-gray-400 hover:bg-dark-500');
     });
+    const list = el.querySelector('#editor-tempo-scope-parts');
+    if (list) {
+        const showList = !!S.tempoMapMode && S.tempoRideScope === 'custom';
+        list.classList.toggle('hidden', !showList);
+        list.classList.toggle('flex', showList);
+        if (showList) _renderTempoScopeParts(list);
+    }
 }
 
 // ── Tempo Map interaction ───────────────────────────────────────────
@@ -14990,6 +16251,7 @@ function _finalizeActiveDrag() {
     if (!S.drag) return;
     if (S.drag.type === 'tempo-sync' || S.drag.type === 'tempo-beat') _tempoMapOnDragEnd();
     else if (S.drag.type === 'drum-move') _drumEditorOnDragEnd();
+    else if (S.drag.type === 'drum-velocity') _drumEditorOnVelocityDragEnd();
     // Commit an in-flight handshape create/move/resize through its own mouseup
     // so the edit lands as a history command (instead of being silently
     // dropped when a mode toggle interrupts the drag).
@@ -15038,23 +16300,78 @@ function _tempoRetimeArrangements() {
     return (S.arrangements || []).filter(Boolean);
 }
 
-// Apply `remap` to every timed object the scope re-times. Always
-// re-times drum_tab hits; 'all' additionally re-times the given
-// arrangements' notes/chords/anchors/handshapes/phrases + sections.
-function _applyTempoRemap(remap, scope, arrs) {
-    if (S.drumTab && Array.isArray(S.drumTab.hits)) {
+/* @pure:tempo-ride:start */
+// Resolve which parts ride a tempo edit. `candidateIdxs` are indices into
+// S.arrangements for the arrangements a tempo edit MAY re-time (already
+// archive-limited by _tempoRetimeArrangements). Returns {drum, idxs}:
+//   'drum'   → drum tab only (the legacy default);
+//   'all'    → drum tab + every candidate;
+//   'custom' → the per-part checklist ({drum, arrs:Set}); a missing/null
+//              checklist rides everything (the safe superset), and indices
+//              outside the candidate list are ignored — an archive save
+//              can't re-time an arrangement it would silently drop.
+function _tempoRideResolvePure(scope, custom, candidateIdxs) {
+    const idxs = Array.isArray(candidateIdxs) ? candidateIdxs.slice() : [];
+    if (scope === 'all') return { drum: true, idxs };
+    if (scope !== 'custom' || !custom) return { drum: true, idxs: [] };
+    const set = custom.arrs instanceof Set ? custom.arrs : null;
+    return {
+        drum: custom.drum !== false,
+        idxs: set ? idxs.filter(i => set.has(i)) : idxs,
+    };
+}
+
+// Rebase the per-part ride checklist when the arrangement at `removeIdx`
+// is spliced out of S.arrangements. The checklist stores arrangement
+// INDICES, and a splice renumbers every part after removeIdx, so without
+// this the checked set would slide onto its neighbours — riding a part the
+// user explicitly unchecked (or dropping one they checked). That is exactly
+// the out-of-scope corruption the per-part scope exists to prevent. Indices
+// below removeIdx are unaffected, the removed index is dropped, and indices
+// above it shift down by one. Pure: returns a fresh Set, never mutates.
+function _rebaseTempoRideForRemoval(custom, removeIdx) {
+    if (!custom || !(custom.arrs instanceof Set)) return custom;
+    const rebased = new Set();
+    for (const idx of custom.arrs) {
+        if (idx < removeIdx) rebased.add(idx);
+        else if (idx > removeIdx) rebased.add(idx - 1);
+        // idx === removeIdx → the removed part, dropped.
+    }
+    return { drum: custom.drum, arrs: rebased };
+}
+/* @pure:tempo-ride:end */
+
+// Freeze the ride set for one tempo edit: whether drum_tab rides plus the
+// exact arrangement OBJECTS that re-time. TempoMapCmd captures this at
+// construction so capture / remap / restore agree even if the checklist
+// changes or the user switches arrangements before an undo.
+function _tempoRideSet() {
+    const candidates = _tempoRetimeArrangements();
+    const resolved = _tempoRideResolvePure(
+        S.tempoRideScope, S.tempoRideCustom,
+        candidates.map(a => (S.arrangements || []).indexOf(a)));
+    return {
+        drum: resolved.drum,
+        arrs: resolved.idxs.map(i => S.arrangements[i]).filter(Boolean),
+    };
+}
+
+// Apply `remap` to every timed object the ride set re-times: drum_tab hits
+// when ride.drum, the ride's arrangements' notes/chords/anchors/handshapes/
+// phrases, and — in EVERY ride — the section markers.
+function _applyTempoRemap(remap, ride) {
+    if (ride.drum && S.drumTab && Array.isArray(S.drumTab.hits)) {
         for (const h of S.drumTab.hits) {
             if (typeof h.t === 'number') h.t = _r3(remap(h.t));
         }
         S.drumTabDirty = true;
     }
-    // Sections mark song structure — they ride the grid in EVERY scope.
+    // Sections mark song structure — they ride the grid in EVERY ride.
     // The grid moved, so a section marker must follow its measure
     // regardless of which instruments' notes ride.
     for (const s of (S.sections || [])) {
         if (typeof s.start_time === 'number') s.start_time = _r3(remap(s.start_time));
     }
-    if (scope !== 'all') return;
     const remapNote = (o) => {
         if (typeof o.time !== 'number') return;
         const oldT = o.time;
@@ -15063,7 +16380,7 @@ function _applyTempoRemap(remap, scope, arrs) {
             o.sustain = Math.max(0, _r3(remap(oldT + o.sustain) - remap(oldT)));
         }
     };
-    for (const arr of (arrs || [])) {
+    for (const arr of (ride.arrs || [])) {
         if (!arr) continue;
         for (const n of (arr.notes || [])) remapNote(n);
         for (const ch of (arr.chords || [])) {
@@ -15092,8 +16409,8 @@ function _applyTempoRemap(remap, scope, arrs) {
     }
 }
 
-// Snapshot the exact times the scope re-times, so undo restores them
-// without inverse-remap rounding drift. `arrs` is the frozen list the
+// Snapshot the exact times the ride set re-times, so undo restores them
+// without inverse-remap rounding drift. `ride` is the frozen set the
 // owning TempoMapCmd will also remap and restore.
 // Each captured entry keeps a direct reference to the timed object
 // (`ref`) plus its pre-edit values — NOT an array index. Drum-hit and
@@ -15102,43 +16419,44 @@ function _applyTempoRemap(remap, scope, arrs) {
 // snapshot could restore times onto the wrong objects. Refs are stable
 // across reordering; objects added later simply aren't in the snapshot,
 // and a removed object's ref is harmlessly detached.
-function _captureScopedTimes(scope, arrs) {
+function _captureScopedTimes(ride) {
     const snap = { drum: null, arr: null, sections: null };
-    if (S.drumTab && Array.isArray(S.drumTab.hits)) {
+    if (ride.drum && S.drumTab && Array.isArray(S.drumTab.hits)) {
         snap.drum = S.drumTab.hits.map(h => ({ ref: h, t: h.t }));
     }
-    // Sections ride the grid in every scope — always snapshot them.
+    // Sections ride the grid in every ride — always snapshot them.
     snap.sections = (S.sections || []).map(s => ({ ref: s, start_time: s.start_time }));
-    if (scope === 'all') {
-        snap.arr = (arrs || []).map(arr => {
-            if (!arr) return null;
-            return {
-                notes: (arr.notes || []).map(n => ({ ref: n, time: n.time, sustain: n.sustain })),
-                chords: (arr.chords || []).map(ch => ({
-                    ref: ch, time: ch.time,
-                    notes: (ch.notes || []).map(cn => ({ ref: cn, time: cn.time, sustain: cn.sustain })),
-                })),
-                anchors: (arr.anchors || []).map(a => ({ ref: a, time: a.time })),
-                anchors_user: (arr.anchors_user || []).map(a => ({ ref: a, time: a.time })),
-                handshapes: (arr.handshapes || []).map(hs => ({
-                    ref: hs, start_time: hs.start_time, end_time: hs.end_time,
-                })),
-                phrases: (arr.phrases || []).map(p => ({ ref: p, time: p.time })),
-            };
-        });
-    }
+    snap.arr = (ride.arrs || []).map(arr => {
+        if (!arr) return null;
+        return {
+            notes: (arr.notes || []).map(n => ({ ref: n, time: n.time, sustain: n.sustain })),
+            chords: (arr.chords || []).map(ch => ({
+                ref: ch, time: ch.time,
+                notes: (ch.notes || []).map(cn => ({ ref: cn, time: cn.time, sustain: cn.sustain })),
+            })),
+            anchors: (arr.anchors || []).map(a => ({ ref: a, time: a.time })),
+            anchors_user: (arr.anchors_user || []).map(a => ({ ref: a, time: a.time })),
+            handshapes: (arr.handshapes || []).map(hs => ({
+                ref: hs, start_time: hs.start_time, end_time: hs.end_time,
+            })),
+            phrases: (arr.phrases || []).map(p => ({ ref: p, time: p.time })),
+        };
+    });
     return snap;
 }
 
-function _restoreScopedTimes(snap, scope) {
+// Restore everything a snapshot captured — the snapshot's own shape says
+// what rode (drum omitted when it didn't ride; arr holds only the ride's
+// arrangements), so no scope parameter is needed.
+function _restoreScopedTimes(snap) {
     if (snap.drum) {
         for (const e of snap.drum) { if (e.ref) e.ref.t = e.t; }
     }
-    // Sections ride in every scope — always restore them.
+    // Sections ride in every ride — always restore them.
     if (snap.sections) {
         for (const e of snap.sections) { if (e.ref) e.ref.start_time = e.start_time; }
     }
-    if (scope === 'all' && snap.arr) {
+    if (snap.arr) {
         for (const a of snap.arr) {
             if (!a) continue;
             for (const e of a.notes) {
@@ -15170,18 +16488,17 @@ function _restoreScopedTimes(snap, scope) {
     }
 }
 
-// Undo command for one tempo-map edit. Captures the scope AND the exact
-// arrangement objects it re-times at first exec, so capture / remap /
-// restore stay consistent even if the scope toggle is flipped or the
-// user switches arrangements between the edit and an undo.
+// Undo command for one tempo-map edit. Freezes the RIDE SET (drum flag +
+// the exact arrangement objects it re-times) at construction, so capture /
+// remap / restore stay consistent even if the ride checklist is changed or
+// the user switches arrangements between the edit and an undo.
 class TempoMapCmd {
     constructor(oldBeats, newBeats, label) {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
-        this.scope = S.tempoRideScope;
+        this.ride = _tempoRideSet();
         this.label = label || 'tempo';
         this.before = null;
-        this.arrs = null;
         // Snapshot of the loop selection captured on first exec so rollback can
         // restore it verbatim (see rollback).
         this.beforeBarSel = undefined;
@@ -15192,8 +16509,7 @@ class TempoMapCmd {
         // validates this before the command is ever created, so a
         // length-changing edit can't reach here (those use TempoGridCmd).
         if (!this.before) {
-            this.arrs = (this.scope === 'all') ? _tempoRetimeArrangements() : [];
-            this.before = _captureScopedTimes(this.scope, this.arrs);
+            this.before = _captureScopedTimes(this.ride);
         }
         // Snapshot the pre-edit loop selection BEFORE relocking (see rollback);
         // relock re-derives it from the new grid and is not self-inverse.
@@ -15201,13 +16517,12 @@ class TempoMapCmd {
             this.beforeBarSel = S.barSel ? { ...S.barSel } : null;
         }
         S.beats = this.newBeats.map(b => ({ ...b }));
-        _applyTempoRemap(_makeTimeRemap(this.oldBeats, this.newBeats),
-                         this.scope, this.arrs);
+        _applyTempoRemap(_makeTimeRemap(this.oldBeats, this.newBeats), this.ride);
         _loopRelockAfterGridChange();
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
-        _restoreScopedTimes(this.before, this.scope);
+        _restoreScopedTimes(this.before);
         // Restore the EXACT pre-edit loop selection rather than relocking
         // (relock is lossy — an undone tempo edit would otherwise move the loop).
         S.barSel = this.beforeBarSel ? { ...this.beforeBarSel } : null;
@@ -15315,14 +16630,23 @@ class MoveDrumHitsCmd {
 }
 
 class ToggleDrumArticulationCmd {
-    // g/f/k toggles are involutive per hit, so rollback = exec and mixed
-    // initial states round-trip exactly. The choke cymbal-only gate is applied
-    // at CONSTRUCTION (callers pass only the refs the toggle really touches),
-    // keeping exec/rollback perfectly symmetric.
+    // f/k toggles are involutive per hit, so rollback = exec and mixed
+    // initial states round-trip exactly. The GHOST toggle additionally pulls
+    // a normal-strength hit's velocity down to the ghost level — a ghost IS
+    // a quiet hit (import derives g from v < 40, and both the renderer and
+    // guide audio scale with v), so ghosting a v:100 hit without quieting it
+    // would author a contradiction. That makes 'g' asymmetric: it snapshots
+    // {had, v} per hit at construction and restores both exactly on
+    // rollback (including deleting a v that wasn't there). The choke
+    // cymbal-only gate is applied at CONSTRUCTION (callers pass only the
+    // refs the toggle really touches).
     constructor(hitRefs, field) {
         this.hits = [...hitRefs];
         this.field = field;
         this.songScope = true;
+        if (field === 'g') {
+            this.before = this.hits.map(h => ({ had: !!h.g, v: h.v }));
+        }
     }
     _toggle() {
         for (const h of this.hits) {
@@ -15336,8 +16660,113 @@ class ToggleDrumArticulationCmd {
         }
         S.drumTabDirty = true;
     }
-    exec() { this._toggle(); }
-    rollback() { this._toggle(); }
+    exec() {
+        if (this.field !== 'g') { this._toggle(); return; }
+        for (let i = 0; i < this.hits.length; i++) {
+            const h = this.hits[i];
+            if (this.before[i].had) {
+                // Un-ghost: the flag lifts, authored dynamics stay put.
+                delete h.g;
+            } else {
+                h.g = true;
+                // Pull a normal-strength hit down to ghost level; a hit
+                // that is already quiet keeps its authored velocity.
+                const v = typeof h.v === 'number' ? h.v : 100;
+                if (v > DRUM_GHOST_VELOCITY + 5) h.v = DRUM_GHOST_VELOCITY;
+            }
+        }
+        S.drumTabDirty = true;
+    }
+    rollback() {
+        if (this.field !== 'g') { this._toggle(); return; }
+        for (let i = 0; i < this.hits.length; i++) {
+            const h = this.hits[i];
+            if (this.before[i].had) h.g = true; else delete h.g;
+            if (this.before[i].v === undefined) delete h.v;
+            else h.v = this.before[i].v;
+        }
+        S.drumTabDirty = true;
+    }
+}
+
+// The velocity a ghosted hit pulls down to. The MIDI importer derives
+// g from v < 40, so 35 round-trips as a ghost on re-import.
+const DRUM_GHOST_VELOCITY = 35;
+
+// Clamp any velocity input to MIDI 1..127; non-numeric falls back to the
+// import default (100) so a malformed value can't author v:NaN.
+function _drumClampVelocityPure(v) {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return 100;
+    return Math.max(1, Math.min(127, n));
+}
+
+// Alt-drag velocity mapping (the piano-roll idiom): dragging UP makes the
+// hit louder — 1 velocity step per pixel of vertical drift off the
+// hit's original value.
+function _drumVelocityDragValuePure(origV, dy) {
+    const base = typeof origV === 'number' ? origV : 100;
+    return _drumClampVelocityPure(base - dy);
+}
+
+// Build a drum hit for a hand-mapped unmapped-notes import. Carries the
+// source velocity through (default 100 when the server didn't capture one)
+// and derives the ghost flag from it the SAME way the MIDI importer does
+// (g ⇐ v below the ghost band). `DRUM_GHOST_VELOCITY + 5` is the shared
+// ghost-band boundary (currently 40, matching the core importer's v < 40),
+// so all three velocity paths — this import, the ghost-pull, and
+// SetDrumVelocityCmd — agree on when a hit is a ghost.
+function _drumImportHitPure(t, pid, rawV) {
+    const v = _drumClampVelocityPure(rawV === undefined ? 100 : rawV);
+    const hit = { t, p: pid, v };
+    if (v < DRUM_GHOST_VELOCITY + 5) hit.g = true;
+    return hit;
+}
+
+class SetDrumVelocityCmd {
+    // One velocity edit for a set of hits (Alt-drag, ±10 nudge keys, the
+    // accent/normal quick sets). Holds refs + the exact old values so
+    // rollback restores authored dynamics verbatim — a hit that had no
+    // explicit v gets the field DELETED again, not set to 100.
+    //
+    // A ghost IS a quiet hit (the pull in ToggleDrumArticulationCmd and the
+    // importer's `g` ⇐ `v < 40` derivation both encode this), so raising a
+    // ghosted hit's velocity back above the ghost band (Accent / ↑ / drag
+    // up) must LIFT the ghost flag in the same edit — otherwise the edit
+    // authors a contradictory "loud ghost" that the renderer draws as a
+    // small-but-bright pip and re-import would flip back to a ghost. The old
+    // g-state is snapshotted so rollback restores the exact {g, v} pair.
+    constructor(hitRefs, newVs) {
+        this.hits = [...hitRefs];
+        this.newVs = Array.isArray(newVs)
+            ? newVs.map(_drumClampVelocityPure)
+            : this.hits.map(() => _drumClampVelocityPure(newVs));
+        this.oldVs = this.hits.map(h => h.v);
+        this.oldGs = this.hits.map(h => !!h.g);
+        this.songScope = true;
+    }
+    exec() {
+        for (let i = 0; i < this.hits.length; i++) {
+            const h = this.hits[i];
+            h.v = this.newVs[i];
+            // Only ever CLEAR the flag (never auto-ghost a quieted hit — a
+            // quiet non-ghost hit is legitimate); the threshold mirrors the
+            // ghost-pull boundary in ToggleDrumArticulationCmd's exec.
+            if (h.g && this.newVs[i] > DRUM_GHOST_VELOCITY + 5) delete h.g;
+        }
+        S.drumTabDirty = true;
+    }
+    rollback() {
+        for (let i = 0; i < this.hits.length; i++) {
+            const h = this.hits[i];
+            if (this.oldVs[i] === undefined) delete h.v;
+            else h.v = this.oldVs[i];
+            // exec only clears g, so restoring the snapshot re-sets it where
+            // it was lifted and no-ops everywhere else.
+            if (this.oldGs[i]) h.g = true; else delete h.g;
+        }
+        S.drumTabDirty = true;
+    }
 }
 /* @pure:drum-cmds:end */
 
@@ -15377,10 +16806,28 @@ function _drumEditorOnMouseDown(e, x, y) {
 
     const idx = _drumHitAtPoint(x, y);
     if (idx >= 0) {
-        // Clicked on an existing hit. Two paths from here:
+        // Clicked on an existing hit. Three paths from here:
         //   - plain click → ensure that hit is in the selection, then start
         //     a drag that moves every selected hit together.
+        //   - Alt+click → start a VELOCITY drag on the selection (vertical,
+        //     piano-roll idiom: up = louder, 1 step/px).
         //   - Shift+click → toggle the hit in/out of the selection (no drag).
+        if (e.altKey) {
+            if (!S.drumSel.has(idx)) {
+                S.drumSel.clear();
+                S.drumSel.add(idx);
+            }
+            const indices = [...S.drumSel];
+            S.drag = {
+                type: 'drum-velocity',
+                startY: y,
+                indices,
+                origVs: indices.map(i => S.drumTab.hits[i].v),
+                moved: false,
+            };
+            draw();
+            return;
+        }
         if (e.shiftKey) {
             if (S.drumSel.has(idx)) S.drumSel.delete(idx);
             else S.drumSel.add(idx);
@@ -15471,16 +16918,23 @@ function _drumEditorOnDragMove(x, y) {
         const newT = Math.max(0, S.drag.origTimes[k] + snappedDt);
         h.t = Math.round(newT * 1000) / 1000;
 
-        // Lane (piece) movement — index into DRUM_PIECE_ORDER.
-        // Skip remap for unknown piece ids (indexOf returns -1) to avoid
-        // silently mapping the hit to lane 0 ("china") on the first drag.
-        const origPieceIdx = DRUM_PIECE_ORDER.indexOf(S.drag.origPieces[k]);
-        if (origPieceIdx >= 0) {
-            const newPieceIdx = Math.max(
+        // Lane (piece) movement — via the density lane table. Skip remap
+        // for unknown piece ids (-1) to avoid silently mapping the hit to
+        // lane 0 on the first drag. Staying on the SAME row keeps the
+        // hit's original piece (a time-only drag in Compact must never
+        // rewrite hh_open → hh_closed); crossing rows assigns the target
+        // row's canonical piece — in Full that's the row's only piece,
+        // exactly today's behavior.
+        const laneTable = _drumLanes();
+        const origLaneIdx = _drumLaneIdxForPiece(S.drag.origPieces[k]);
+        if (origLaneIdx >= 0) {
+            const newLaneIdx = Math.max(
                 0,
-                Math.min(DRUM_PIECE_ORDER.length - 1, origPieceIdx + dLanes),
+                Math.min(laneTable.length - 1, origLaneIdx + dLanes),
             );
-            h.p = DRUM_PIECE_ORDER[newPieceIdx];
+            h.p = newLaneIdx === origLaneIdx
+                ? S.drag.origPieces[k]
+                : laneTable[newLaneIdx].canonical;
         }
     }
 }
@@ -15522,6 +16976,77 @@ function _drumEditorOnDragEnd() {
     draw();
 }
 
+// Apply an in-progress velocity drag — vertical drift maps 1 velocity step
+// per pixel off each hit's ORIGINAL value (not the live one, so the drag
+// never accumulates). Live-preview only; the commit happens on drag end.
+function _drumEditorOnVelocityDragMove(y) {
+    if (!S.drag || S.drag.type !== 'drum-velocity' || !S.drumTab) return;
+    if (!Array.isArray(S.drumTab.hits)) return;
+    const dy = y - S.drag.startY;
+    if (Math.abs(dy) > 2) S.drag.moved = true;
+    if (!S.drag.moved) return;
+    let shown = null;
+    for (let k = 0; k < S.drag.indices.length; k++) {
+        const h = S.drumTab.hits[S.drag.indices[k]];
+        if (!h) continue;
+        h.v = _drumVelocityDragValuePure(S.drag.origVs[k], dy);
+        if (shown === null) shown = h.v;
+    }
+    if (shown !== null) {
+        setStatus(`Velocity ${shown}${S.drag.indices.length > 1 ? ` (${S.drag.indices.length} hits)` : ''}`);
+    }
+}
+
+// Finalise a velocity drag — revert to the originals and let the command's
+// exec() re-apply, so undo/redo replay the exact result (the MoveDrumHitsCmd
+// finalize pattern).
+function _drumEditorOnVelocityDragEnd() {
+    if (!S.drag || S.drag.type !== 'drum-velocity' || !S.drumTab) {
+        S.drag = null;
+        draw();
+        return;
+    }
+    if (S.drag.moved && Array.isArray(S.drumTab.hits)) {
+        const refs = [], newVs = [];
+        let changed = false;
+        for (let k = 0; k < S.drag.indices.length; k++) {
+            const h = S.drumTab.hits[S.drag.indices[k]];
+            if (!h) continue;
+            refs.push(h);
+            newVs.push(h.v);
+            if (h.v !== S.drag.origVs[k]) changed = true;
+            // Revert to the original (including "no v" hits, so a no-op
+            // drag leaves the wire data untouched).
+            if (S.drag.origVs[k] === undefined) delete h.v;
+            else h.v = S.drag.origVs[k];
+        }
+        if (refs.length && changed) {
+            S.history.exec(new SetDrumVelocityCmd(refs, newVs));
+        }
+    }
+    S.drag = null;
+    draw();
+}
+
+// Nudge / set the selection's velocity from the keyboard (Shift+↑/↓ = ±10,
+// A = accent, N = normal). One undoable command per keypress.
+function _drumEditorNudgeVelocity(delta) {
+    if (!S.drumTab || !Array.isArray(S.drumTab.hits)) return;
+    const refs = _drumSelectedRefs();
+    if (!refs.length) return;
+    const newVs = refs.map(h =>
+        _drumClampVelocityPure((typeof h.v === 'number' ? h.v : 100) + delta));
+    S.history.exec(new SetDrumVelocityCmd(refs, newVs));
+    setStatus(`Velocity ${newVs[0]}${refs.length > 1 ? ` (${refs.length} hits)` : ''}`);
+}
+function _drumEditorSetVelocity(value, label) {
+    if (!S.drumTab || !Array.isArray(S.drumTab.hits)) return;
+    const refs = _drumSelectedRefs();
+    if (!refs.length) return;
+    S.history.exec(new SetDrumVelocityCmd(refs, value));
+    setStatus(`${label} (velocity ${_drumClampVelocityPure(value)}, ${refs.length} hit${refs.length === 1 ? '' : 's'})`);
+}
+
 // Finalise a drum marquee drag. The selection is cleared lazily here (not
 // on mousedown), so a press that does nothing leaves it intact:
 //   - real drag (moved): non-shift replaces the selection, shift unions
@@ -15558,7 +17083,7 @@ function _drumEditorOnSelectEnd() {
     const hits = Array.isArray(S.drumTab.hits) ? S.drumTab.hits : [];
     for (let i = 0; i < hits.length; i++) {
         const h = hits[i];
-        const laneIdx = DRUM_PIECE_ORDER.indexOf(h.p);
+        const laneIdx = _drumLaneIdxForPiece(h.p);
         if (laneIdx < 0) continue;  // unknown piece → not on the grid
         const hx = timeToX(h.t);
         const hy = _drumLaneIdxToY(laneIdx) + DRUM_LANE_H / 2;
@@ -15657,6 +17182,37 @@ function _refreshDrumEditButton() {
         btn.classList.remove('bg-amber-600', 'hover:bg-amber-500');
         btn.classList.add('bg-dark-600', 'hover:bg-dark-500');
     }
+}
+
+// ── Drum row-density toggle (Full / Compact) ─────────────────────────
+let _drumDensityBtnState = '';
+function _ensureDrumDensityButton() {
+    let btn = document.getElementById('editor-drum-density-btn');
+    if (!btn) {
+        const editBtn = document.getElementById('editor-drum-edit-btn');
+        if (!editBtn) return null;
+        btn = document.createElement('button');
+        btn.id = 'editor-drum-density-btn';
+        btn.type = 'button';
+        btn.className = 'px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden';
+        btn.title = 'Row density: Full = one row per drum piece; Compact = family rows '
+            + '(crash / hi-hat / ride / toms / floor toms / snare / kick — the community '
+            + '7-row shape). Hits keep their real pieces and colors either way; adding in '
+            + 'a Compact row writes the family’s main piece, and dragging onto another '
+            + 'row does too.';
+        btn.onclick = () => _editorToggleDrumDensity();
+        editBtn.insertAdjacentElement('afterend', btn);
+    }
+    return btn;
+}
+function _refreshDrumDensityButton() {
+    const btn = _ensureDrumDensityButton();
+    if (!btn) return;
+    const sig = `${!!S.drumEditMode}|${_drumDensityMode()}`;
+    if (sig === _drumDensityBtnState) return;
+    _drumDensityBtnState = sig;
+    btn.classList.toggle('hidden', !S.drumEditMode);
+    btn.textContent = _drumDensityMode() === 'compact' ? 'Rows: Compact' : 'Rows: Full';
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -15992,11 +17548,13 @@ const _checkBtnInterval = setInterval(() => {
 const _origDraw = draw;
 draw = function () {
     _refreshDrumEditButton();
+    _refreshDrumDensityButton();
     _refreshTempoMapButton();
     _refreshTempoScopeToggle();
     _refreshTempoSyncInspector();
     _refreshPartsViewButton();
     _refreshKeyControls();
+    _refreshViewSwitch();
     return _origDraw.apply(this, arguments);
 };
 

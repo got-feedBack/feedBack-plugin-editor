@@ -137,7 +137,21 @@ t('drawSections uses the memo, not a per-frame recompute', () => {
 });
 
 t('the coverage memo is invalidated on edit via _afterEdit()', () => {
-    const body = src.slice(src.indexOf('_afterEdit() {'), src.indexOf('_afterEdit() {') + 400);
+    // Brace-match the METHOD body rather than slicing a fixed character
+    // window: a fixed window silently shrinks by one char per line on a
+    // CRLF (Windows) checkout, and comment growth inside the method had
+    // already pushed the bump statement past the old 400-char cutoff —
+    // green on CI's LF checkout, red on every Windows clone.
+    const start = src.indexOf('_afterEdit() {');
+    assert.ok(start >= 0, '_afterEdit() must exist');
+    const open = src.indexOf('{', start);
+    let depth = 0, end = -1;
+    for (let i = open; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}' && --depth === 0) { end = i + 1; break; }
+    }
+    assert.ok(end > 0, '_afterEdit() must have a balanced body');
+    const body = src.slice(start, end);
     assert.ok(/_coverageEditGen\+\+/.test(body),
         '_afterEdit() must bump _coverageEditGen so in-place note moves invalidate the memo');
     assert.ok(/_coverageEditGen[\s\S]*?_covCache/.test(src),
