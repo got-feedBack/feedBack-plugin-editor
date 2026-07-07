@@ -12605,6 +12605,7 @@ let _recMidiAccess = null;                 // legacy private Web-MIDI access (fa
 let _recMidiInput = null;                  // legacy private Web-MIDI input (fallback path)
 let _recMidiHandle = null;                 // host midi-input domain live handle {addListener, removeListener}
 let _recMidiOpenKey = null;                // logicalSourceKey _recMidiHandle belongs to
+let _recMidiOpenGen = 0;                   // bumped on every open/teardown; stale async opens self-close
 let _recState = 'idle';                    // idle | recording | finalizing
 let _recChannel = -1;                      // -1 = all, else 0..15
 const _recHeld = new Map();                // pitch -> [{onTime, channel}, ...] FIFO
@@ -12693,11 +12694,21 @@ async function _recMidiEnsureOpen(id) {
     const d = _recMidiDomain();
     if (!d || !id) return false;
     if (_recMidiHandle && _recMidiOpenKey === id) return true;
-    _recMidiDisconnectDomain();
+    _recMidiDisconnectDomain();          // bumps _recMidiOpenGen
+    // Snapshot the generation AFTER teardown. If a newer open — or a
+    // teardown (device change / modal close) — happens while we await, the
+    // generation moves on and this resolution is stale: we must NOT install
+    // its handle (that would leak the session opened by the newer request
+    // and resurrect a handle after teardown). Close the orphaned ref instead.
+    const gen = ++_recMidiOpenGen;
     try {
         d.select(id);
         const r = await d.open({ requester: 'editor-record', logicalSourceKey: id });
         if (!r || !r.handle) return false;
+        if (gen !== _recMidiOpenGen) {
+            try { d.close({ requester: 'editor-record', logicalSourceKey: id }); } catch (_) { /* best-effort */ }
+            return false;
+        }
         _recMidiHandle = r.handle;
         _recMidiOpenKey = id;
         try { localStorage.setItem('editor.recordMidiDeviceId', id); } catch (_) {}
@@ -12721,6 +12732,9 @@ function _recMidiDisconnectDomain() {
     }
     _recMidiHandle = null;
     _recMidiOpenKey = null;
+    // Invalidate any open() still in flight so its late resolution self-closes
+    // instead of resurrecting a handle onto this torn-down session.
+    _recMidiOpenGen++;
 }
 
 window.editorRecordMidiDeviceChanged = (id) => {
@@ -13074,12 +13088,12 @@ window.editorStopRecordMidi = () => {
     _recSustainOn.clear();
 
     if (_recMidiInput) _recMidiInput.onmidimessage = null;
-    // Domain path: detach the take's listener but KEEP the shared session
-    // open — the modal is still up and a follow-up take shouldn't re-open
-    // the device. The ref releases on modal close.
-    if (_recMidiHandle) {
-        try { _recMidiHandle.removeListener(_recMidiOnData); } catch (_) { /* best-effort */ }
-    }
+    // Domain path: Stop hides the modal at the end of this function, so fully
+    // release our ref on the shared session here — otherwise the refcount is
+    // held open indefinitely (the modal-close teardown never runs on the Stop
+    // path). Refcounted, so this never yanks the device from other consumers;
+    // reopening the modal re-opens the session.
+    _recMidiDisconnectDomain();
 
     // Populate the target arrangement registered at Start time. No second
     // POST: the arrangement was already registered with the backend, so
