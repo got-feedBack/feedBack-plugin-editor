@@ -3864,6 +3864,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
     { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight (piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'toggleFollow', label: 'Toggle follow playhead', group: 'View', status: 'ready', keys: { feedback: 'Shift+L', eof: 'Shift+L' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -3984,6 +3985,7 @@ function _editorEofCommandForKeyPure(e, mode) {
     if (shift && key === 'c') return 'toggleMixer';
     if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === 'a') return 'togglePartsView';
+    if (shift && key === 'l') return 'toggleFollow';
     if (shift && key === '?') return 'showShortcutHelp';
     if (ctrl && key === 'k') return 'openCommandPalette';
     if (sig === 'F6') return 'importMidi';
@@ -4098,6 +4100,7 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
     if (shift && key === 'c') return 'toggleMixer';
     if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === 'a') return 'togglePartsView';
+    if (shift && key === 'l') return 'toggleFollow';
     if (shift && key === '?') return 'showShortcutHelp';
     if (ctrl && key === 'k') return 'openCommandPalette';
     if (sig === 'PageUp') return 'prevBeat';
@@ -4832,6 +4835,7 @@ function _editorRunEofCommand(cmd) {
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return _editorTogglePartsView();
     case 'toggleKeyHighlight': return _editorToggleKeyHighlight();
+    case 'toggleFollow': return _editorToggleFollow();
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -6042,16 +6046,47 @@ function playbackTick() {
         return; // stopPlayback() already cancelled rafId; don't re-schedule.
     }
 
-    // Auto-scroll to follow cursor
-    const cx = timeToX(S.cursorTime);
-    const w = canvas ? canvas.width / DPR : 800;
-    if (cx > w * 0.8) {
-        S.scrollX = _editorClampScrollX(S.cursorTime - (w * 0.3) / S.zoom);
+    // Auto-scroll to follow the playhead — unless follow is toggled off
+    // (Shift+L), which lets an author inspect/edit one spot while the
+    // song plays on.
+    {
+        const cx = timeToX(S.cursorTime);
+        const w = canvas ? canvas.width / DPR : 800;
+        const target = _followScrollTargetPure(
+            S.cursorTime, cx, w, S.zoom, editorFollowEnabled());
+        if (target !== null) S.scrollX = _editorClampScrollX(target);
     }
 
     updateTimeDisplay();
     drawNow();
     rafId = requestAnimationFrame(playbackTick);
+}
+
+/* @pure:follow-scroll:start */
+// Follow-playhead scroll policy: once the cursor crosses 80% of the view,
+// jump the window so the cursor sits at 30% — but only when follow is on.
+// Returns the UNCLAMPED scrollX target, or null for "don't move".
+function _followScrollTargetPure(cursorTime, cursorX, viewW, zoom, followOn) {
+    if (!followOn) return null;
+    if (!(cursorX > viewW * 0.8)) return null;
+    return cursorTime - (viewW * 0.3) / zoom;
+}
+/* @pure:follow-scroll:end */
+
+function editorFollowEnabled() {
+    // Default ON — follow is today's behavior; the pref only records an
+    // explicit opt-out.
+    try { return localStorage.getItem('editorFollow') !== '0'; }
+    catch (_) { return true; }
+}
+
+function _editorToggleFollow() {
+    const next = !editorFollowEnabled();
+    try { localStorage.setItem('editorFollow', next ? '1' : '0'); } catch (_) {}
+    setStatus(next
+        ? 'Follow on — the view tracks the playhead during playback (Shift+L)'
+        : 'Follow off — the view stays put while the song plays (Shift+L)');
+    return true;
 }
 
 function updatePlayIcon() {

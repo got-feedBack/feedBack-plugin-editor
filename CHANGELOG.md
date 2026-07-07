@@ -70,6 +70,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silences the edit cue); time-only moves and marquee selects stay
   silent, group edits rate-limit to one cue, and the blip never fires when
   the audio context isn't running. Tests: `tests/audio_mixer.test.js`.
+- **Follow-playhead is toggleable (Shift+L).** The playback auto-scroll
+  (view jumps once the cursor crosses 80% of the window) was unconditional;
+  it is now a registry command in both shortcut profiles, default ON, so an
+  author can pin the view on one passage and edit while the song plays on.
+  Editor pref only. Tests: `tests/follow_toggle.test.js`.
 - **Drum edits are undoable.** Click-add, drag-move (time and lane), Delete,
   and the G/F/K ghost/flam/choke toggles now run through the editor's shared
   undo history via four new command classes (`AddDrumHitCmd`,
