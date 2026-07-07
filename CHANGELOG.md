@@ -32,6 +32,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unknown-key preservation rule (§1.2). Rebuilt entries now merge onto the
   existing entry for the same id, with editor-owned keys taking the fresh
   values. Tests: `tests/test_manifest_type_preserve.py`.
+- **Editing one keys note no longer discards GP notation for the whole
+  arrangement.** GP-sourced notation (exact per-stave hand assignments,
+  dynamics, pedal events, fingering, grace notes) was kept only while a
+  fingerprint of ALL notes matched — so a single piano-roll edit invalidated
+  the entire sidecar and the save fell back to the heuristic lift, silently
+  re-guessing the hand split and dropping every GP-only attribute in every
+  measure. The save now performs a **measure-granular merge**: measures whose
+  `(time, midi)` note content still matches the current wire keep their GP
+  measure objects verbatim; only edited measures take the freshly lifted
+  measure. The merged payload is schema-validated and re-stamped; any grid
+  misalignment — or a merge that preserves zero measures (e.g. a
+  transpose-all) — falls back to the full lift (the old behavior), so a
+  100%-heuristic relift is never stamped as GP-sourced. Tests:
+  `tests/test_notation_preserve_merge.py`, `tests/test_notation_save.py`.
+- **The `.bak` safety copy now rolls with every save.** It was written only once
+  (the first time a pack was overwritten), so a user editing a pack over weeks
+  kept a first-ever-save recovery point that grew staler with every save. Both
+  overwrite sites (the editor save and the build/save-as path) now refresh the
+  `.bak` to the current on-disk pack before overwriting, so the backup is always
+  the previous save, one step back. Best-effort: a failed backup copy never
+  blocks the save. Tests: `tests/test_rolling_backup.py`.
 
 ### Added
 - **Infer-once arrangement `type` stamping.** On save, an arrangement entry with
@@ -67,6 +88,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tests: `tests/boot_teardown.test.js`.
 
 ### Added
+- **Audio mixer popover with recording / guide / click faders, first-play
+  fade, and an edit-preview blip.** A new **Mix** toolbar button (Shift+C,
+  both shortcut profiles) opens a small popover with three level faders:
+  the reference recording (a new transparent gain node — still never routed
+  through the guide limiter), guide claps, and the metronome click (both
+  already behind the limiter). Levels persist as editor prefs, apply with a
+  ~20 ms `setTargetAtTime` ramp (never a stepped jump mid-audio), and the
+  defaults preserve the shipped balance exactly. Hearing safety: the first
+  play of each loaded recording fades it in from ~30% over 0.35 s, so an
+  unexpectedly hot recording is reached, never jumped to — the guard re-arms
+  on every new load (`loadCDLC`, create/import, and replace-audio all funnel
+  through `loadAudio()`), not just the session's first song. The popover also
+  hosts the new **edit blip** (on by default, toggleable): a soft 1320 Hz
+  tick — pitched apart from the 1750 Hz guide clap — confirms note **adds
+  and pitch changes** (fret set/adjust, string moves, pitch-changing drags)
+  summed straight into the shared limiter (so muting guide claps never also
+  silences the edit cue); time-only moves and marquee selects stay
+  silent, group edits rate-limit to one cue, and the blip never fires when
+  the audio context isn't running. Tests: `tests/audio_mixer.test.js`.
 - **Drum edits are undoable.** Click-add, drag-move (time and lane), Delete,
   and the G/F/K ghost/flam/choke toggles now run through the editor's shared
   undo history via four new command classes (`AddDrumHitCmd`,
