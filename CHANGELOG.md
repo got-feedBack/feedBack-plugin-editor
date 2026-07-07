@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unknown-key preservation rule (§1.2). Rebuilt entries now merge onto the
   existing entry for the same id, with editor-owned keys taking the fresh
   values. Tests: `tests/test_manifest_type_preserve.py`.
+- **Editing one keys note no longer discards GP notation for the whole
+  arrangement.** GP-sourced notation (exact per-stave hand assignments,
+  dynamics, pedal events, fingering, grace notes) was kept only while a
+  fingerprint of ALL notes matched — so a single piano-roll edit invalidated
+  the entire sidecar and the save fell back to the heuristic lift, silently
+  re-guessing the hand split and dropping every GP-only attribute in every
+  measure. The save now performs a **measure-granular merge**: measures whose
+  `(time, midi)` note content still matches the current wire keep their GP
+  measure objects verbatim; only edited measures take the freshly lifted
+  measure. The merged payload is schema-validated and re-stamped; any grid
+  misalignment — or a merge that preserves zero measures (e.g. a
+  transpose-all) — falls back to the full lift (the old behavior), so a
+  100%-heuristic relift is never stamped as GP-sourced. Tests:
+  `tests/test_notation_preserve_merge.py`, `tests/test_notation_save.py`.
 - **The `.bak` safety copy now rolls with every save.** It was written only once
   (the first time a pack was overwritten), so a user editing a pack over weeks
   kept a first-ever-save recovery point that grew staler with every save. Both
