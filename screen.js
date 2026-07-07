@@ -7725,18 +7725,23 @@ function updateArrangementSelector() {
         renameBtn.classList.toggle('hidden', !S.arrangements.length || !S.sessionId);
     }
 
-    // Reorder buttons: only meaningful with 2+ parts; each end disables
-    // its direction so the affordance always tells the truth.
+    // Reorder buttons: only meaningful with 2+ parts, and only where the
+    // new order actually persists. The order rides to disk on the FULL
+    // arrangement snapshot, which `_buildSaveBody` ships only for sloppak
+    // saves — an archive save writes just the active arrangement keyed by
+    // `arrangement_index`, so a reorder there is silently lost (worse, the
+    // stale index re-targets the wrong part). Gate to sloppak sessions,
+    // exactly like +Keys / Record, so the affordance never lies.
     const upBtn = document.getElementById('editor-move-arr-earlier-btn');
     const downBtn = document.getElementById('editor-move-arr-later-btn');
-    const many = S.arrangements.length > 1;
+    const canReorder = S.arrangements.length > 1 && !!S.sessionId && S.format === 'sloppak';
     if (upBtn) {
-        upBtn.classList.toggle('hidden', !many);
-        upBtn.disabled = !many || S.currentArr <= 0;
+        upBtn.classList.toggle('hidden', !canReorder);
+        upBtn.disabled = !canReorder || S.currentArr <= 0;
     }
     if (downBtn) {
-        downBtn.classList.toggle('hidden', !many);
-        downBtn.disabled = !many || S.currentArr >= S.arrangements.length - 1;
+        downBtn.classList.toggle('hidden', !canReorder);
+        downBtn.disabled = !canReorder || S.currentArr >= S.arrangements.length - 1;
     }
 }
 
@@ -12485,6 +12490,16 @@ function _movePartTargetPure(from, dir, count) {
 function _editorMovePart(dir) {
     if (_recState !== 'idle') {
         setStatus('Cannot reorder while recording. Stop the take first.');
+        return true;
+    }
+    // The reorder persists only through the full-snapshot sloppak save
+    // (see updateArrangementSelector's button gate). On an archive save
+    // `_buildSaveBody` ships just the active arrangement keyed by index,
+    // so a client-side reorder would be lost — or re-target the wrong
+    // part via the now-stale `arrangement_index`. Refuse here too so the
+    // command palette / keyboard paths can't bypass the hidden buttons.
+    if (S.format !== 'sloppak') {
+        setStatus('Reordering parts is only available for Sloppak songs.');
         return true;
     }
     const from = S.currentArr;

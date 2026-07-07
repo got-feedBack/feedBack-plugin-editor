@@ -62,12 +62,17 @@ t('one-slot moves inside the list; ends and degenerate inputs refuse', () => {
 
 // ── The real handler over an injected environment ────────────────────
 
-function makeEnv(arrs, currentArr) {
+function makeEnv(arrs, currentArr, format) {
     const S = {
         currentArr,
         arrangements: arrs,
         sel: new Set([0, 1]),
         history: { resets: 0, reset() { this.resets++; } },
+        // Reorder persists only through the full-snapshot sloppak save; the
+        // handler refuses on any other format. Default to sloppak so the
+        // happy-path cases exercise a real move.
+        sessionId: 'sess-1',
+        format: format || 'sloppak',
     };
     const calls = { selector: 0, draw: 0 };
     const env = new Function(
@@ -105,6 +110,19 @@ t('moving earlier from the end, then bumping the first slot, is a clean no-op', 
     move(-1);   // already first — must be a total no-op
     assert.deepStrictEqual(S.arrangements, [b, a], 'no change');
     assert.strictEqual(S.history.resets, resetsAfterMove, 'no gratuitous history reset');
+});
+
+t('archive sessions refuse the move — the order would be lost on save', () => {
+    // `_buildSaveBody(false)` only ships the full arrangements snapshot for
+    // sloppak; an archive save writes just the active arrangement keyed by
+    // `arrangement_index`, so a client-only reorder is silently dropped (and
+    // the stale index re-targets the wrong part). The handler must refuse.
+    const a = { id: 'a', name: 'Lead' }, b = { id: 'b', name: 'Bass' };
+    const { move, S } = makeEnv([a, b], 0, 'archive');
+    move(+1);
+    assert.deepStrictEqual(S.arrangements, [a, b], 'untouched on archive');
+    assert.strictEqual(S.currentArr, 0, 'selection unchanged');
+    assert.strictEqual(S.history.resets, 0, 'no history reset when refused');
 });
 
 t('recording blocks reordering (a take pins its arrangement index)', () => {
