@@ -175,6 +175,58 @@ def _load_arrangement_json(path) -> dict:
     return json.loads(raw)
 
 
+# Keys-family arrangement names (piano/keyboard/synth). The SAME matcher — a
+# word-boundary search over the SAME keyword set — decides both the manifest
+# ``type`` facet (below) and the keys notation sidecar (see the sidecar detector
+# further down, which reuses this regex). Keeping them identical guarantees a
+# name that earns a keys sidecar also infers a keys/piano type, so the two never
+# disagree (e.g. "Electric Piano", "Grand Piano", "Lead Synth").
+_KEYS_NAME_RE = re.compile(r"\b(keys|piano|keyboard|synth)\b", re.IGNORECASE)
+_TYPE_BASS_RE = re.compile(r"bass", re.I)
+_TYPE_SKIP_RE = re.compile(r"vocal|voice|sing|drum", re.I)
+_TYPE_GUITAR_RE = re.compile(r"guitar|lead|rhythm|combo|acoustic|electric", re.I)
+
+
+def _infer_arrangement_type(name) -> str:
+    """Manifest ``type`` (feedpak-spec §5.2) inferred from a display name.
+
+    The infer-once migration: callers write this only when an entry carries
+    no ``type`` yet, never clobbering an authored value. Conservative on
+    purpose — a name that doesn't clearly identify an instrument returns ""
+    and the entry stays untyped, because writing a WRONG type is worse than
+    writing none. Vocals/drums names also return "": per the spec those are
+    side-file mechanisms, not arrangement types.
+    """
+    n = (name or "").strip()
+    if not n:
+        return ""
+    # keys checked before bass so "Synth Bass" resolves to piano (intentional:
+    # a keys arrangement that happens to sit in the bass register still wants
+    # keys notation). Word-boundary search shared with the sidecar detector.
+    if _KEYS_NAME_RE.search(n):
+        return "piano"
+    if _TYPE_BASS_RE.search(n):
+        return "bass"
+    if _TYPE_SKIP_RE.search(n):
+        return ""
+    if _TYPE_GUITAR_RE.search(n):
+        return "guitar"
+    return ""
+
+
+def _merge_manifest_entry(old_entry, rebuilt: dict) -> dict:
+    """Merge a rebuilt manifest arrangement entry ONTO the existing entry
+    with the same id, so spec fields the editor doesn't author (``type``,
+    ``centOffset``, future additive keys) survive a full-snapshot save —
+    the format's unknown-key preservation rule (feedpak-spec §1.2). The
+    editor-owned keys (id/name/file/tuning/capo) always take the rebuilt
+    value. Previously the full-snapshot save path rebuilt every entry from
+    scratch and silently dropped everything else."""
+    out = dict(old_entry) if isinstance(old_entry, dict) else {}
+    out.update(rebuilt)
+    return out
+
+
 def _timeline_round_time(value) -> float:
     try:
         return round(float(value), 3)
@@ -1724,7 +1776,9 @@ def _arr_dict_to_wire(
 # shared core in slopsmith `lib/notation_lift.py` (factored out of the one-time
 # scripts/lift_keys_notation.py lifter), reached here the same way the rest of
 # this module reaches core helpers — `lib/` is on the host app's import path.
-_KEYS_NAME_RE = re.compile(r"\b(keys|piano|keyboard|synth)\b", re.IGNORECASE)
+# The keys-family name matcher (``_KEYS_NAME_RE``) is defined up by the manifest
+# type-inference helpers and shared here, so the sidecar and the ``type`` facet
+# always agree on what counts as a keys arrangement.
 _NOTATION_SAFE_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
@@ -3471,6 +3525,13 @@ def setup(app, context):
                 # removed or for safety on every save.
                 used_ids: set = set()
                 merged_arrangements = []
+                # Existing manifest entries by id: rebuilt entries merge onto
+                # these (see _merge_manifest_entry) so `type`/`centOffset`/
+                # unknown additive keys survive the full-snapshot save.
+                _old_by_id = {
+                    e.get("id"): e for e in old_entries
+                    if isinstance(e, dict) and e.get("id")
+                }
                 for i, ad in enumerate(all_arrangements):
                     raw_id = ad.get("id") or ""
                     if raw_id and raw_id not in used_ids:
@@ -3479,13 +3540,13 @@ def setup(app, context):
                         aid = _arrangement_id(ad.get("name", "arr"), used_ids)
                     used_ids.add(aid)
                     wire = _build_wire(ad, i == 0)
-                    _entry = {
+                    _entry = _merge_manifest_entry(_old_by_id.get(aid), {
                         "id": aid,
                         "name": ad.get("name", "arr"),
                         "file": f"arrangements/{aid}.json",
                         "tuning": list(ad.get("tuning", [0]*6)),
                         "capo": int(ad.get("capo", 0)),
-                    }
+                    })
                     # Carry any GP-import notation alongside the entry (NOT on
                     # it — keeping it off the manifest entry means it can never
                     # leak into manifest.yaml); the sidecar writer consumes it.
@@ -3502,6 +3563,13 @@ def setup(app, context):
             for item in merged_arrangements:
                 entry = item["entry"]
                 wire = item["wire"]
+                # Infer-once `type` stamping (both save paths flow through
+                # here): only when the entry has no type yet — an authored
+                # value is never clobbered, and ambiguous names stay untyped.
+                if isinstance(entry, dict) and not entry.get("type"):
+                    _t = _infer_arrangement_type(entry.get("name", ""))
+                    if _t:
+                        entry["type"] = _t
                 if wire is not None:
                     rel = entry.get("file") or f"arrangements/{entry.get('id', 'arr')}.json"
                     arr_path = (source_dir / rel).resolve()

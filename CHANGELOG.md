@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
+  arrangement entries.** The full-snapshot save path rebuilt every manifest
+  arrangement entry from scratch (`{id, name, file, tuning, capo}`), silently
+  dropping spec fields the editor doesn't author — `type` (§5.2), `centOffset`,
+  and any future additive key — on every save, violating the format's
+  unknown-key preservation rule (§1.2). Rebuilt entries now merge onto the
+  existing entry for the same id, with editor-owned keys taking the fresh
+  values. Tests: `tests/test_manifest_type_preserve.py`.
+
+### Added
+- **Infer-once arrangement `type` stamping.** On save, an arrangement entry with
+  no `type` gets one inferred from its display name (keys-family → `piano`, bass
+  names → `bass`, classic guitar roles → `guitar`) — conservative on purpose:
+  vocals/drums/ambiguous names stay untyped, and an authored `type` is never
+  clobbered. `type` is the queryable instrument facet the spec defines; display
+  names stay free labels — groundwork for safe track renaming in the Parts view.
+
 ### Changed
 - **Canvas repaints are coalesced to one per animation frame.** `draw()` was
   called imperatively from ~150 sites and each call repainted the whole
