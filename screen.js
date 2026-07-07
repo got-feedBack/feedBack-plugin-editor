@@ -4225,6 +4225,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleDrumDensity', label: 'Toggle drum row density (Full / Compact)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleFollow', label: 'Toggle follow playhead', group: 'View', status: 'ready', keys: { feedback: 'Shift+L', eof: 'Shift+L' } },
     { id: 'renamePart', label: 'Rename current part', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'movePartEarlier', label: 'Move current part earlier', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'movePartLater', label: 'Move current part later', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -5522,6 +5524,8 @@ function _editorRunEofCommand(cmd) {
     case 'toggleDrumDensity': return _editorToggleDrumDensity();
     case 'showTabPreview': return _editorShowTabPreview();
     case 'cycleViewMode': return _editorCycleViewMode();
+    case 'movePartEarlier': return _editorMovePart(-1);
+    case 'movePartLater': return _editorMovePart(+1);
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -7719,6 +7723,20 @@ function updateArrangementSelector() {
     const renameBtn = document.getElementById('editor-rename-arr-btn');
     if (renameBtn) {
         renameBtn.classList.toggle('hidden', !S.arrangements.length || !S.sessionId);
+    }
+
+    // Reorder buttons: only meaningful with 2+ parts; each end disables
+    // its direction so the affordance always tells the truth.
+    const upBtn = document.getElementById('editor-move-arr-earlier-btn');
+    const downBtn = document.getElementById('editor-move-arr-later-btn');
+    const many = S.arrangements.length > 1;
+    if (upBtn) {
+        upBtn.classList.toggle('hidden', !many);
+        upBtn.disabled = !many || S.currentArr <= 0;
+    }
+    if (downBtn) {
+        downBtn.classList.toggle('hidden', !many);
+        downBtn.disabled = !many || S.currentArr >= S.arrangements.length - 1;
     }
 }
 
@@ -12444,6 +12462,50 @@ function init() {
 
     draw();
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Reorder parts (DAW-workspace 2.2b) — move the current part one slot
+// earlier/later. Order persists: sloppak saves ship the CLIENT
+// S.arrangements array as the full snapshot, and the manifest merge
+// keys entries by id, so the new order lands on disk at the next save.
+// ════════════════════════════════════════════════════════════════════
+
+/* @pure:reorder-part:start */
+// Target index for a one-slot move, or -1 when it can't move (ends,
+// bad input). dir < 0 = earlier (toward index 0), dir > 0 = later.
+function _movePartTargetPure(from, dir, count) {
+    const f = Number(from), n = Number(count);
+    if (!Number.isInteger(f) || !Number.isInteger(n) || n < 2) return -1;
+    if (f < 0 || f >= n) return -1;
+    const to = f + (dir < 0 ? -1 : 1);
+    return (to < 0 || to >= n) ? -1 : to;
+}
+/* @pure:reorder-part:end */
+
+function _editorMovePart(dir) {
+    if (_recState !== 'idle') {
+        setStatus('Cannot reorder while recording. Stop the take first.');
+        return true;
+    }
+    const from = S.currentArr;
+    const to = _movePartTargetPure(from, dir, S.arrangements.length);
+    if (to < 0) return true;   // at an end / nothing to do
+    const [moved] = S.arrangements.splice(from, 1);
+    S.arrangements.splice(to, 0, moved);
+    // The move renumbers arrangement indices, so history commands tagged
+    // with the old indices would undo into the wrong part — same rationale
+    // as remove-arrangement: drop the stack when the model shifts under it.
+    // (Which is also why the move itself is not undoable — move it back.)
+    if (S.history) S.history.reset();
+    S.currentArr = to;
+    S.sel.clear();
+    updateArrangementSelector();
+    draw();
+    updateStatus();
+    setStatus(`Moved “${moved.name || 'part'}” ${dir < 0 ? 'earlier' : 'later'} — the order persists on save`);
+    return true;
+}
+window.editorMovePart = _editorMovePart;
 
 // ════════════════════════════════════════════════════════════════════
 // Remove arrangement
