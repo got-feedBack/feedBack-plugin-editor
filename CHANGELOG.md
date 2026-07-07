@@ -174,6 +174,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   focus editors. Mutually exclusive with drum-edit and Tempo Map modes,
   like they are with each other. Tests: `tests/parts_view.test.js`.
 ### Added
+- **Song key/scale + in-key highlight for the piano roll.** A Key control
+  (tonic + scale/mode) and an **In-key** toggle appear in the toolbar when a
+  keys arrangement is active. With the highlight on, out-of-key rows get a
+  neutral desaturating wash and out-of-key notes are dimmed in the piano roll
+  — so you can see at a glance what sits inside the key while transcribing,
+  with nothing hidden or flagged as wrong (no red; chromatic notes stay fully
+  visible and editable). Thirteen scales/modes ship: major, the seven diatonic
+  modes, harmonic/melodic minor, major/minor pentatonic, blues, and chromatic
+  (which shades nothing, for atonal passages). The key is a per-song editor
+  preference (localStorage, never the feedpak) and the highlight a global one;
+  both are view aids, not chart data. Groundwork for reading authored key
+  regions (keys.json) in a later pass. Tests: `tests/scale_membership.test.js`.
 - **Section edits are undoable.** Adding (Shift+M or the beat-bar right-click
   menu), renaming, and deleting a section mutated `S.sections` directly with
   no undo — a stray Delete on a section was unrecoverable, and Ctrl+Z after

@@ -82,6 +82,50 @@ const DPR = window.devicePixelRatio || 1;
 
 // ── Piano roll constants ────────────────────────────────────────────
 const PIANO_NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+/* @pure:scale:start */
+// Scale/mode membership as tonic-relative pitch-class sets (semitones above
+// the tonic). Used by the piano-roll in-key highlight; the harmony charrette
+// seat's table. `chromatic` includes everything (so a chromatic/atonal region
+// shades nothing). Genre span: major/minor + modes cover pop→classical→prog;
+// harmonic/melodic minor + pentatonic/blues cover the rest.
+const SCALE_INTERVALS = {
+    major:            [0, 2, 4, 5, 7, 9, 11],
+    minor:            [0, 2, 3, 5, 7, 8, 10],   // natural minor / aeolian
+    dorian:           [0, 2, 3, 5, 7, 9, 10],
+    phrygian:         [0, 1, 3, 5, 7, 8, 10],
+    lydian:           [0, 2, 4, 6, 7, 9, 11],
+    mixolydian:       [0, 2, 4, 5, 7, 9, 10],
+    locrian:          [0, 1, 3, 5, 6, 8, 10],
+    harmonic_minor:   [0, 2, 3, 5, 7, 8, 11],
+    melodic_minor:    [0, 2, 3, 5, 7, 9, 11],
+    major_pentatonic: [0, 2, 4, 7, 9],
+    minor_pentatonic: [0, 3, 5, 7, 10],
+    blues:            [0, 3, 5, 6, 7, 10],
+    chromatic:        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+};
+
+// Is pitch-class `pc` (0–11) in `scaleName` rooted at `tonicPc` (0–11)?
+// Unknown scale or non-finite inputs → true (treat as in-key, i.e. no
+// shading) so a bad state never paints the whole roll out-of-key.
+function _pcInScalePure(pc, tonicPc, scaleName) {
+    const intervals = SCALE_INTERVALS[scaleName];
+    if (!intervals) return true;
+    const p = Number(pc), t = Number(tonicPc);
+    if (!Number.isFinite(p) || !Number.isFinite(t)) return true;
+    const rel = ((Math.round(p - t) % 12) + 12) % 12;
+    return intervals.includes(rel);
+}
+/* @pure:scale:end */
+
+// Human labels for the scale picker (keys are the SCALE_INTERVALS ids).
+const SCALE_LABELS = {
+    major: 'Major', minor: 'Minor', dorian: 'Dorian', phrygian: 'Phrygian',
+    lydian: 'Lydian', mixolydian: 'Mixolydian', locrian: 'Locrian',
+    harmonic_minor: 'Harmonic minor', melodic_minor: 'Melodic minor',
+    major_pentatonic: 'Major pentatonic', minor_pentatonic: 'Minor pentatonic',
+    blues: 'Blues', chromatic: 'Chromatic',
+};
 const PIANO_OCTAVE_COLORS = [
     '#ff4466', '#ff8844', '#ffcc33', '#66dd55', '#44ccaa',
     '#44aaff', '#7766ff', '#cc55ff', '#ff55aa', '#aaaaaa',
@@ -1693,12 +1737,145 @@ function drawLanes(w) {
     }
 }
 
+// ── Song key / scale + in-key highlight (piano roll) ─────────────────
+// S.editorKey = { tonic: 0..11, scale: <SCALE_INTERVALS id> } | null. The
+// key is a per-song editor preference (localStorage keyed by S.filename,
+// never the feedpak — this is a view aid, not chart data). The highlight
+// on/off is a global editor preference. Neither is authoritative harmony
+// data; a later PR authors keys.json regions and this reads from them.
+let _editorKeyLoadedFor = null;
+
+function editorKeyHighlightEnabled() {
+    try { return localStorage.getItem('editorKeyHighlight') === '1'; }
+    catch (_) { return false; }
+}
+
+// Lazily load the saved key for the current song (called from the control
+// refresh, which runs every draw) so no song-load-path edit is needed.
+function _loadEditorKeyIfNeeded() {
+    if (_editorKeyLoadedFor === S.filename) return;
+    _editorKeyLoadedFor = S.filename;
+    S.editorKey = null;
+    // No filename yet (unsaved song): don't read a bare `editorKey:` slot —
+    // otherwise every unsaved song would share the same stored key.
+    if (!S.filename) return;
+    try {
+        const raw = localStorage.getItem('editorKey:' + (S.filename || ''));
+        if (raw) {
+            const k = JSON.parse(raw);
+            if (Number.isInteger(k.tonic) && SCALE_INTERVALS[k.scale]) {
+                S.editorKey = { tonic: k.tonic, scale: k.scale };
+            }
+        }
+    } catch (_) { /* ignore */ }
+}
+
+function _persistEditorKey() {
+    // No filename yet (unsaved song): don't write a bare `editorKey:` slot that
+    // every unsaved song would collide on; the in-memory key still applies.
+    if (!S.filename) return;
+    try {
+        const key = 'editorKey:' + (S.filename || '');
+        if (S.editorKey) localStorage.setItem(key, JSON.stringify(S.editorKey));
+        else localStorage.removeItem(key);
+    } catch (_) { /* ignore */ }
+}
+
+// The active highlight settings, or null when off / unset / invalid — the
+// single guard every render path consults, so a bad state can't paint.
+function _activeKeyHighlight() {
+    if (!editorKeyHighlightEnabled()) return null;
+    const k = S.editorKey;
+    if (!k || !Number.isInteger(k.tonic) || !SCALE_INTERVALS[k.scale]) return null;
+    return k;
+}
+
+window.editorSetKeyTonic = (v) => {
+    const tonic = parseInt(v, 10);
+    if (!(tonic >= 0 && tonic <= 11)) return;
+    S.editorKey = { tonic, scale: (S.editorKey && S.editorKey.scale) || 'major' };
+    _persistEditorKey();
+    _refreshKeyControls();
+    draw();
+};
+window.editorSetKeyScale = (v) => {
+    if (!SCALE_INTERVALS[v]) return;
+    S.editorKey = { tonic: (S.editorKey ? S.editorKey.tonic : 0), scale: v };
+    _persistEditorKey();
+    _refreshKeyControls();
+    draw();
+};
+function _editorToggleKeyHighlight() {
+    const next = !editorKeyHighlightEnabled();
+    try { localStorage.setItem('editorKeyHighlight', next ? '1' : '0'); } catch (_) {}
+    if (next && !S.editorKey) S.editorKey = { tonic: 0, scale: 'major' };
+    _persistEditorKey();
+    _refreshKeyControls();
+    draw();
+    setStatus(next
+        ? 'In-key highlight on — out-of-key rows are shaded in the piano roll'
+        : 'In-key highlight off');
+    return true;
+}
+window.editorToggleKeyHighlight = _editorToggleKeyHighlight;
+
+let _keyControlsPopulated = false;
+let _keyControlsState = '';
+function _refreshKeyControls() {
+    const group = document.getElementById('editor-key-group');
+    if (!group) return;
+    _loadEditorKeyIfNeeded();
+    // Populate the selects once.
+    if (!_keyControlsPopulated) {
+        const tonicSel = document.getElementById('editor-key-tonic');
+        const scaleSel = document.getElementById('editor-key-scale');
+        if (tonicSel && scaleSel) {
+            tonicSel.innerHTML = PIANO_NOTE_NAMES
+                .map((n, i) => `<option value="${i}">${n}</option>`).join('');
+            scaleSel.innerHTML = Object.keys(SCALE_INTERVALS)
+                .map(id => `<option value="${id}">${SCALE_LABELS[id] || id}</option>`).join('');
+            _keyControlsPopulated = true;
+        }
+    }
+    // The highlight applies to the piano roll, so only show the controls
+    // when a keys arrangement is active.
+    const visible = isKeysMode();
+    const on = editorKeyHighlightEnabled();
+    const tonic = S.editorKey ? S.editorKey.tonic : 0;
+    const scale = S.editorKey ? S.editorKey.scale : 'major';
+    const sig = `${visible}|${on}|${tonic}|${scale}`;
+    if (sig === _keyControlsState) return;
+    _keyControlsState = sig;
+    group.classList.toggle('hidden', !visible);
+    group.classList.toggle('flex', visible);
+    const tonicSel = document.getElementById('editor-key-tonic');
+    const scaleSel = document.getElementById('editor-key-scale');
+    if (tonicSel) tonicSel.value = String(tonic);
+    if (scaleSel) scaleSel.value = scale;
+    const btn = document.getElementById('editor-key-highlight-btn');
+    if (btn) {
+        btn.classList.toggle('bg-accent', on);
+        btn.classList.toggle('hover:bg-accent-light', on);
+        btn.classList.toggle('bg-dark-600', !on);
+        btn.classList.toggle('hover:bg-dark-500', !on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+}
+
 function drawPianoLanes(w) {
+    const hl = _activeKeyHighlight();
     for (let midi = pianoRange.lo; midi <= pianoRange.hi; midi++) {
         const y = midiToY(midi);
         const black = isBlackKey(midi);
         ctx.fillStyle = black ? '#0a0a1a' : '#0e0e22';
         ctx.fillRect(LABEL_W, y, w - LABEL_W, PIANO_LANE_H);
+
+        // Out-of-key rows get a neutral desaturating wash (never red —
+        // chromaticism isn't an error). In-key rows are left as drawn.
+        if (hl && !_pcInScalePure(midi % 12, hl.tonic, hl.scale)) {
+            ctx.fillStyle = 'rgba(20,20,34,0.55)';
+            ctx.fillRect(LABEL_W, y, w - LABEL_W, PIANO_LANE_H);
+        }
 
         // Octave boundary (C notes)
         if (midi % 12 === 0) {
@@ -1977,11 +2154,15 @@ function drawNotes(w) {
     const st = S.scrollX - 2;
     const et = S.scrollX + (w - LABEL_W) / S.zoom + 2;
     const keysMode = isKeysMode();
+    // Hoist the active-highlight lookup out of the per-note loop: it reads
+    // localStorage, so resolving it once per draw (not once per visible note)
+    // keeps drawNotes off the synchronous-storage path during playback/scroll.
+    const hl = keysMode ? _activeKeyHighlight() : null;
     for (let i = 0; i < nn.length; i++) {
         const n = nn[i];
         if (n.time + (n.sustain || 0) < st || n.time > et) continue;
         if (keysMode) {
-            _drawPianoNote(n, S.sel.has(i));
+            _drawPianoNote(n, S.sel.has(i), hl);
         } else {
             _drawNote(n, S.sel.has(i));
         }
@@ -2054,7 +2235,7 @@ function _drawNote(n, selected) {
     }
 }
 
-function _drawPianoNote(n, selected) {
+function _drawPianoNote(n, selected, hl) {
     const midi = noteToMidi(n.string, n.fret);
     if (midi < pianoRange.lo || midi > pianoRange.hi) return;
 
@@ -2065,8 +2246,14 @@ function _drawPianoNote(n, selected) {
     const octave = Math.floor(midi / 12);
     const color = PIANO_OCTAVE_COLORS[Math.min(octave, PIANO_OCTAVE_COLORS.length - 1)];
 
+    // In-key highlight: dim out-of-key notes (lower body alpha) so chromatic
+    // notes read as chromatic without being hidden or flagged as wrong.
+    // `hl` is resolved once per draw in drawNotes (see hoist there) and passed
+    // in, so this path never reads localStorage per note.
+    const outOfKey = !!hl && !_pcInScalePure(midi % 12, hl.tonic, hl.scale);
+
     // Body
-    ctx.fillStyle = color + 'cc';
+    ctx.fillStyle = color + (outOfKey ? '55' : 'cc');
     ctx.beginPath();
     ctx.roundRect(x, y, sw, h, 2);
     ctx.fill();
@@ -2227,7 +2414,8 @@ class EditHistory {
         // Invalidate the section-coverage memo: an in-place note-time move
         // keeps the notes array's identity + length, so the cheap cache key
         // can't see it — this generation bump is what forces a recompute.
-        _coverageEditGen++;
+        // typeof-guarded (like isKeysMode below): declared outside this @pure block.
+        if (typeof _coverageEditGen === 'number') _coverageEditGen++;
         // Keep the keys viewport in sync with the current note range so
         // multi-octave authoring works without manual range control.
         // expandOnly=true so adding a note outside the current viewport
@@ -3639,6 +3827,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
+    { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight (piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -4601,6 +4790,7 @@ function _editorRunEofCommand(cmd) {
     case 'toggleMetronome': return _editorToggleMetronome();
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return _editorTogglePartsView();
+    case 'toggleKeyHighlight': return _editorToggleKeyHighlight();
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -15402,6 +15592,7 @@ draw = function () {
     _refreshTempoScopeToggle();
     _refreshTempoSyncInspector();
     _refreshPartsViewButton();
+    _refreshKeyControls();
     return _origDraw.apply(this, arguments);
 };
 
