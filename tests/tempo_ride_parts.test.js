@@ -275,7 +275,7 @@ t('rebase: pure helper drops the removed index and shifts the higher ones down',
         { drum: false, arrs: new Set([0, 2, 3]) }, 1);
     assert.strictEqual(out.drum, false, 'drum flag preserved');
     assert.deepStrictEqual([...out.arrs].sort((a, b) => a - b), [0, 1, 2],
-        '0 stays, 1 (removed) dropped, 2→1, 3→2');
+        '0 (below removeIdx) stays, 2→1, 3→2; removeIdx 1 was not in the set');
     // pure — input Set untouched
 });
 
