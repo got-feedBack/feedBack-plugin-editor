@@ -1,0 +1,112 @@
+{
+  "meta": {
+    "title": "feedBack Song Editor \u2014 teaser v1.8",
+    "fps": 30,
+    "width": 1920,
+    "height": 1080,
+    "version_label": "v1.8",
+    "palette": {
+      "bg": "#0f172a",
+      "panel": "#1e293b",
+      "accent": "#38bdf8",
+      "accent2": "#f472b6",
+      "hero": "#facc15",
+      "text": "#f1f5f9",
+      "muted": "#94a3b8"
+    },
+    "notes": "Captions baked onto base stills by make_assets.py; timeline assembled by build_mlt.py and rendered with melt. LIVE-flagged segments use a still stand-in now; Byron records real footage per SHOTLIST.md."
+  },
+  "segments": [
+    {
+      "id": "00_intro",
+      "card": "intro",
+      "dur": 5.0,
+      "kicker": "feedBack",
+      "title": "Song Editor",
+      "sub": "Author it.  Audition it.  Repeat."
+    },
+    {
+      "id": "01_import",
+      "base": "08_new_dialog.png",
+      "dur": 6.0,
+      "kb": "in",
+      "title": "Drop a Guitar Pro file.",
+      "sub": "GP3\u2013GP8 with embedded audio, MIDI, MusicXML \u2014 auto-detected."
+    },
+    {
+      "id": "02_autosync",
+      "base": "01_establish.png",
+      "dur": 6.0,
+      "kb": "left",
+      "title": "Auto-synced to the track.",
+      "sub": "On a real, full-resolution min/max waveform.",
+      "badge": "NEW \u00b7 waveform"
+    },
+    {
+      "id": "03_authoring",
+      "base": "06_inspector.png",
+      "dur": 8.0,
+      "kb": "right",
+      "title": "Shape every note.",
+      "sub": "The inspector: bends, bend curves, techniques, teaching marks."
+    },
+    {
+      "id": "04_tempo",
+      "base": "04_tempomap.png",
+      "dur": 7.5,
+      "kb": "in",
+      "title": "Bend time to the beat.",
+      "sub": "EOF-style tempo map \u2014 drag a pole, BPM recalculates live."
+    },
+    {
+      "id": "05_waveform_detail",
+      "base": "03_zoom.png",
+      "dur": 4.0,
+      "kb": "in",
+      "title": "Sharp at any zoom.",
+      "sub": "The whole song down to a single peak."
+    },
+    {
+      "id": "06_drums",
+      "base": "09_drums_dialog.png",
+      "dur": 5.0,
+      "kb": "left",
+      "title": "Edit 18-piece drums.",
+      "sub": "A full drum grid, imported straight from the tab."
+    },
+    {
+      "id": "07_midi",
+      "base": "10_record_dialog.png",
+      "dur": 5.0,
+      "kb": "right",
+      "title": "Record MIDI, live.",
+      "sub": "Play your keys straight onto the chart."
+    },
+    {
+      "id": "08_tones",
+      "base": "11_tones_dialog.png",
+      "dur": 4.0,
+      "kb": "in",
+      "title": "Author tone slots.",
+      "sub": "Base + A/B/C/D, named your way."
+    },
+    {
+      "id": "09_hero",
+      "base": "05_loop3d_region.png",
+      "dur": 9.0,
+      "kb": "in",
+      "badge": "NEW \u00b7 Loop in 3D",
+      "title": "Pick a bar. Play it on the highway.",
+      "sub": "\u2026and land right back where you were editing.",
+      "live": "Byron records the full editor\u2192highway\u2192editor round-trip (SHOTLIST \u00a73)."
+    },
+    {
+      "id": "10_outro",
+      "card": "outro",
+      "dur": 5.0,
+      "kicker": "feedBack \u00b7 Song Editor",
+      "title": "Author. Audition. Repeat.",
+      "sub": "Self-hosted. Open. Yours."
+    }
+  ]
+}

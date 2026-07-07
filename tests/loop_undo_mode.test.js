@@ -53,7 +53,7 @@ function makeCmd(S) {
     const TempoMapCmd = new Function(
         'S', '_loopRelockAfterGridChange', '_renderLoopStrip', '_updateLoopIn3DBtn',
         '_captureScopedTimes', '_restoreScopedTimes', '_applyTempoRemap',
-        '_makeTimeRemap', '_tempoRetimeArrangements',
+        '_makeTimeRemap', '_tempoRideSet',
         '"use strict";' + cm[0] + '\nreturn TempoMapCmd;'
     )(
         S,
@@ -64,7 +64,7 @@ function makeCmd(S) {
         () => {},                                    // _restoreScopedTimes
         () => {},                                    // _applyTempoRemap
         () => (x => x),                              // _makeTimeRemap
-        () => []                                     // _tempoRetimeArrangements
+        () => ({ drum: true, arrs: [] })             // _tempoRideSet (frozen ride)
     );
     return { TempoMapCmd, relockMoved };
 }
