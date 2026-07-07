@@ -156,12 +156,18 @@ const S = {
     // downbeats ("sync points") to fit it to the audio; BPM is derived
     // from sync-point spacing. tempoSel/tempoHover index into S.beats.
     // tempoRideScope decides which notes re-time when the grid moves:
-    // 'drum' (only drum_tab hits) or 'all' (every arrangement). Hydrated
-    // from localStorage on init. Mode resets on song load.
+    // 'drum' (only drum_tab hits), 'all' (every arrangement), or 'custom'
+    // (the per-part checklist in tempoRideCustom). Presets hydrate from
+    // localStorage on init; 'custom' is session-only — its indices are
+    // song-shaped and would be meaningless in another song. Mode resets
+    // on song load.
     tempoMapMode: false,
     tempoSel: -1,
     tempoHover: -1,
     tempoRideScope: 'drum',
+    // {drum: bool, arrs: Set of S.arrangements indices} — only read when
+    // tempoRideScope === 'custom'.
+    tempoRideCustom: null,
 
     // View
     scrollX: 0,   // seconds
@@ -4293,7 +4299,10 @@ function _editorPromptTempoBeatCountAtSelection() {
 
 function _editorToggleTempoRideScope() {
     if (!S.tempoMapMode) return false;
-    S.tempoRideScope = S.tempoRideScope === 'all' ? 'drum' : 'all';
+    // Ctrl+T cycles the two presets; a 'custom' checklist steps back to
+    // 'drum' (the conservative preset) rather than silently mutating the
+    // user's hand-picked part set.
+    S.tempoRideScope = S.tempoRideScope === 'drum' ? 'all' : 'drum';
     try {
         localStorage.setItem('editor-tempomap-scope', S.tempoRideScope);
     } catch (_) { /* localStorage unavailable */ }
@@ -5936,6 +5945,11 @@ async function loadCDLC(filename) {
         S.tempoMapMode = false;
         S.tempoSel = -1;
         S.tempoHover = -1;
+        // Drop the per-part ride checklist: its indices are song-shaped.
+        // A 'custom' scope falls back to the conservative 'drum' preset —
+        // silently riding a different song's parts would be corrupting.
+        S.tempoRideCustom = null;
+        if (S.tempoRideScope === 'custom') S.tempoRideScope = 'drum';
         // Abandon any in-progress drag — the global mouse handlers act on
         // S.drag regardless of mode, so a stale drag would otherwise keep
         // mutating the newly-loaded song's data.
@@ -13211,7 +13225,7 @@ function _ensureTempoScopeToggle() {
         if (!wrap) return null;
         el = document.createElement('div');
         el.id = 'editor-tempo-scope';
-        el.className = 'absolute hidden items-center gap-1 px-2 py-1 '
+        el.className = 'absolute hidden flex-col gap-1 px-2 py-1 '
             + 'bg-dark-800 border border-gray-700 rounded text-xs z-10';
         el.style.right = '10px';
         el.style.bottom = '8px';
@@ -13221,15 +13235,34 @@ function _ensureTempoScopeToggle() {
         el.title = 'The beat grid and section markers always move with a '
             + 'tempo edit. This chooses which instrument notes re-time too.';
         el.innerHTML =
-            '<span class="text-gray-500 mr-1">Notes that ride the grid:</span>'
+            '<div class="flex items-center gap-1">'
+            + '<span class="text-gray-500 mr-1">Notes that ride the grid:</span>'
             + '<button type="button" data-scope="drum" class="px-2 py-0.5 rounded"></button>'
-            + '<button type="button" data-scope="all" class="px-2 py-0.5 rounded"></button>';
-        el.querySelectorAll('button').forEach(b => {
-            b.textContent = b.dataset.scope === 'drum' ? 'Drum tab' : 'All instruments';
+            + '<button type="button" data-scope="all" class="px-2 py-0.5 rounded"></button>'
+            + '<button type="button" data-scope="custom" class="px-2 py-0.5 rounded"></button>'
+            + '</div>'
+            + '<div id="editor-tempo-scope-parts" class="hidden flex-col gap-0.5 mt-1 '
+            + 'pt-1 border-t border-gray-700/70 max-h-40 overflow-y-auto"></div>';
+        el.querySelectorAll('button[data-scope]').forEach(b => {
+            b.textContent = b.dataset.scope === 'drum' ? 'Drum tab'
+                : b.dataset.scope === 'all' ? 'All instruments' : 'Per part…';
             b.onclick = () => {
                 S.tempoRideScope = b.dataset.scope;
+                if (b.dataset.scope === 'custom' && !S.tempoRideCustom) {
+                    // First open seeds the checklist to "everything rides"
+                    // so unchecking is the gesture — a part someone has
+                    // hand-verified is the exception, not the rule.
+                    S.tempoRideCustom = {
+                        drum: true,
+                        arrs: new Set((S.arrangements || []).map((_, i) => i)),
+                    };
+                }
                 try {
-                    localStorage.setItem('editor-tempomap-scope', S.tempoRideScope);
+                    // 'custom' is session-only: its indices are song-shaped,
+                    // so only the presets persist (hydration ignores the rest).
+                    if (b.dataset.scope !== 'custom') {
+                        localStorage.setItem('editor-tempomap-scope', S.tempoRideScope);
+                    }
                 } catch (_) { /* localStorage unavailable */ }
                 _refreshTempoScopeToggle();
                 _refreshTempoSyncInspector();
@@ -13241,6 +13274,54 @@ function _ensureTempoScopeToggle() {
     return el;
 }
 
+// Rebuild the per-part checklist rows (drum tab + one per arrangement).
+// Only called when the memo signature changed, so full rebuilds are cheap.
+function _renderTempoScopeParts(listEl) {
+    listEl.replaceChildren();
+    const c = S.tempoRideCustom || { drum: true, arrs: null };
+    const mkRow = (label, checked, onChange) => {
+        const row = document.createElement('label');
+        row.className = 'flex items-center gap-1.5 text-gray-300 cursor-pointer';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = checked;
+        cb.className = 'accent-amber-500';
+        cb.onchange = () => onChange(cb.checked);
+        const span = document.createElement('span');
+        span.className = 'truncate max-w-[11rem]';
+        span.textContent = label;
+        row.append(cb, span);
+        listEl.appendChild(row);
+    };
+    const commit = () => {
+        S.tempoRideScope = 'custom';
+        _tempoScopeToggleState = '';  // force re-render with the new checks
+        _refreshTempoScopeToggle();
+        _refreshTempoSyncInspector();
+        draw();
+    };
+    mkRow('Drum tab', c.drum !== false, (on) => {
+        const cur = S.tempoRideCustom
+            || (S.tempoRideCustom = { drum: true, arrs: new Set((S.arrangements || []).map((_, i) => i)) });
+        cur.drum = on;
+        commit();
+    });
+    (S.arrangements || []).forEach((arr, i) => {
+        if (!arr) return;
+        const name = arr.name || `Arrangement ${i + 1}`;
+        const checked = !(c.arrs instanceof Set) || c.arrs.has(i);
+        mkRow(name, checked, (on) => {
+            const cur = S.tempoRideCustom
+                || (S.tempoRideCustom = { drum: true, arrs: new Set((S.arrangements || []).map((_, k) => k)) });
+            if (!(cur.arrs instanceof Set)) {
+                cur.arrs = new Set((S.arrangements || []).map((_, k) => k));
+            }
+            if (on) cur.arrs.add(i); else cur.arrs.delete(i);
+            commit();
+        });
+    });
+}
+
 let _tempoScopeToggleState = '';  // memo signature; runs every draw()
 
 function _refreshTempoScopeToggle() {
@@ -13248,18 +13329,32 @@ function _refreshTempoScopeToggle() {
     if (!el) return;
     // Memoize on the only inputs that affect the control — _refreshTempo-
     // ScopeToggle runs on every draw() (every animation frame during
-    // playback), so skip the DOM writes when nothing changed.
-    const sig = `${!!S.tempoMapMode}|${S.tempoRideScope}`;
+    // playback), so skip the DOM writes when nothing changed. The custom
+    // checklist and the arrangement roster are part of the signature so a
+    // checkbox flip or an added/renamed part re-renders the rows.
+    const c = S.tempoRideCustom;
+    const customSig = c
+        ? `${c.drum !== false}:${c.arrs instanceof Set ? [...c.arrs].sort((a, b) => a - b).join(',') : '*'}`
+        : '';
+    const arrSig = (S.arrangements || []).map(a => (a && a.name) || '').join('|');
+    const sig = `${!!S.tempoMapMode}|${S.tempoRideScope}|${customSig}|${arrSig}`;
     if (sig === _tempoScopeToggleState) return;
     _tempoScopeToggleState = sig;
     el.classList.toggle('hidden', !S.tempoMapMode);
     el.classList.toggle('flex', !!S.tempoMapMode);
-    el.querySelectorAll('button').forEach(b => {
+    el.querySelectorAll('button[data-scope]').forEach(b => {
         const active = b.dataset.scope === S.tempoRideScope;
         b.className = 'px-2 py-0.5 rounded ' + (active
             ? 'bg-amber-600 text-white font-medium'
             : 'bg-dark-600 text-gray-400 hover:bg-dark-500');
     });
+    const list = el.querySelector('#editor-tempo-scope-parts');
+    if (list) {
+        const showList = !!S.tempoMapMode && S.tempoRideScope === 'custom';
+        list.classList.toggle('hidden', !showList);
+        list.classList.toggle('flex', showList);
+        if (showList) _renderTempoScopeParts(list);
+    }
 }
 
 // ── Tempo Map interaction ───────────────────────────────────────────
@@ -14148,23 +14243,59 @@ function _tempoRetimeArrangements() {
     return (S.arrangements || []).filter(Boolean);
 }
 
-// Apply `remap` to every timed object the scope re-times. Always
-// re-times drum_tab hits; 'all' additionally re-times the given
-// arrangements' notes/chords/anchors/handshapes/phrases + sections.
-function _applyTempoRemap(remap, scope, arrs) {
-    if (S.drumTab && Array.isArray(S.drumTab.hits)) {
+/* @pure:tempo-ride:start */
+// Resolve which parts ride a tempo edit. `candidateIdxs` are indices into
+// S.arrangements for the arrangements a tempo edit MAY re-time (already
+// archive-limited by _tempoRetimeArrangements). Returns {drum, idxs}:
+//   'drum'   → drum tab only (the legacy default);
+//   'all'    → drum tab + every candidate;
+//   'custom' → the per-part checklist ({drum, arrs:Set}); a missing/null
+//              checklist rides everything (the safe superset), and indices
+//              outside the candidate list are ignored — an archive save
+//              can't re-time an arrangement it would silently drop.
+function _tempoRideResolvePure(scope, custom, candidateIdxs) {
+    const idxs = Array.isArray(candidateIdxs) ? candidateIdxs.slice() : [];
+    if (scope === 'all') return { drum: true, idxs };
+    if (scope !== 'custom' || !custom) return { drum: true, idxs: [] };
+    const set = custom.arrs instanceof Set ? custom.arrs : null;
+    return {
+        drum: custom.drum !== false,
+        idxs: set ? idxs.filter(i => set.has(i)) : idxs,
+    };
+}
+/* @pure:tempo-ride:end */
+
+// Freeze the ride set for one tempo edit: whether drum_tab rides plus the
+// exact arrangement OBJECTS that re-time. TempoMapCmd captures this at
+// construction so capture / remap / restore agree even if the checklist
+// changes or the user switches arrangements before an undo.
+function _tempoRideSet() {
+    const candidates = _tempoRetimeArrangements();
+    const resolved = _tempoRideResolvePure(
+        S.tempoRideScope, S.tempoRideCustom,
+        candidates.map(a => (S.arrangements || []).indexOf(a)));
+    return {
+        drum: resolved.drum,
+        arrs: resolved.idxs.map(i => S.arrangements[i]).filter(Boolean),
+    };
+}
+
+// Apply `remap` to every timed object the ride set re-times: drum_tab hits
+// when ride.drum, the ride's arrangements' notes/chords/anchors/handshapes/
+// phrases, and — in EVERY ride — the section markers.
+function _applyTempoRemap(remap, ride) {
+    if (ride.drum && S.drumTab && Array.isArray(S.drumTab.hits)) {
         for (const h of S.drumTab.hits) {
             if (typeof h.t === 'number') h.t = _r3(remap(h.t));
         }
         S.drumTabDirty = true;
     }
-    // Sections mark song structure — they ride the grid in EVERY scope.
+    // Sections mark song structure — they ride the grid in EVERY ride.
     // The grid moved, so a section marker must follow its measure
     // regardless of which instruments' notes ride.
     for (const s of (S.sections || [])) {
         if (typeof s.start_time === 'number') s.start_time = _r3(remap(s.start_time));
     }
-    if (scope !== 'all') return;
     const remapNote = (o) => {
         if (typeof o.time !== 'number') return;
         const oldT = o.time;
@@ -14173,7 +14304,7 @@ function _applyTempoRemap(remap, scope, arrs) {
             o.sustain = Math.max(0, _r3(remap(oldT + o.sustain) - remap(oldT)));
         }
     };
-    for (const arr of (arrs || [])) {
+    for (const arr of (ride.arrs || [])) {
         if (!arr) continue;
         for (const n of (arr.notes || [])) remapNote(n);
         for (const ch of (arr.chords || [])) {
@@ -14202,8 +14333,8 @@ function _applyTempoRemap(remap, scope, arrs) {
     }
 }
 
-// Snapshot the exact times the scope re-times, so undo restores them
-// without inverse-remap rounding drift. `arrs` is the frozen list the
+// Snapshot the exact times the ride set re-times, so undo restores them
+// without inverse-remap rounding drift. `ride` is the frozen set the
 // owning TempoMapCmd will also remap and restore.
 // Each captured entry keeps a direct reference to the timed object
 // (`ref`) plus its pre-edit values — NOT an array index. Drum-hit and
@@ -14212,43 +14343,44 @@ function _applyTempoRemap(remap, scope, arrs) {
 // snapshot could restore times onto the wrong objects. Refs are stable
 // across reordering; objects added later simply aren't in the snapshot,
 // and a removed object's ref is harmlessly detached.
-function _captureScopedTimes(scope, arrs) {
+function _captureScopedTimes(ride) {
     const snap = { drum: null, arr: null, sections: null };
-    if (S.drumTab && Array.isArray(S.drumTab.hits)) {
+    if (ride.drum && S.drumTab && Array.isArray(S.drumTab.hits)) {
         snap.drum = S.drumTab.hits.map(h => ({ ref: h, t: h.t }));
     }
-    // Sections ride the grid in every scope — always snapshot them.
+    // Sections ride the grid in every ride — always snapshot them.
     snap.sections = (S.sections || []).map(s => ({ ref: s, start_time: s.start_time }));
-    if (scope === 'all') {
-        snap.arr = (arrs || []).map(arr => {
-            if (!arr) return null;
-            return {
-                notes: (arr.notes || []).map(n => ({ ref: n, time: n.time, sustain: n.sustain })),
-                chords: (arr.chords || []).map(ch => ({
-                    ref: ch, time: ch.time,
-                    notes: (ch.notes || []).map(cn => ({ ref: cn, time: cn.time, sustain: cn.sustain })),
-                })),
-                anchors: (arr.anchors || []).map(a => ({ ref: a, time: a.time })),
-                anchors_user: (arr.anchors_user || []).map(a => ({ ref: a, time: a.time })),
-                handshapes: (arr.handshapes || []).map(hs => ({
-                    ref: hs, start_time: hs.start_time, end_time: hs.end_time,
-                })),
-                phrases: (arr.phrases || []).map(p => ({ ref: p, time: p.time })),
-            };
-        });
-    }
+    snap.arr = (ride.arrs || []).map(arr => {
+        if (!arr) return null;
+        return {
+            notes: (arr.notes || []).map(n => ({ ref: n, time: n.time, sustain: n.sustain })),
+            chords: (arr.chords || []).map(ch => ({
+                ref: ch, time: ch.time,
+                notes: (ch.notes || []).map(cn => ({ ref: cn, time: cn.time, sustain: cn.sustain })),
+            })),
+            anchors: (arr.anchors || []).map(a => ({ ref: a, time: a.time })),
+            anchors_user: (arr.anchors_user || []).map(a => ({ ref: a, time: a.time })),
+            handshapes: (arr.handshapes || []).map(hs => ({
+                ref: hs, start_time: hs.start_time, end_time: hs.end_time,
+            })),
+            phrases: (arr.phrases || []).map(p => ({ ref: p, time: p.time })),
+        };
+    });
     return snap;
 }
 
-function _restoreScopedTimes(snap, scope) {
+// Restore everything a snapshot captured — the snapshot's own shape says
+// what rode (drum omitted when it didn't ride; arr holds only the ride's
+// arrangements), so no scope parameter is needed.
+function _restoreScopedTimes(snap) {
     if (snap.drum) {
         for (const e of snap.drum) { if (e.ref) e.ref.t = e.t; }
     }
-    // Sections ride in every scope — always restore them.
+    // Sections ride in every ride — always restore them.
     if (snap.sections) {
         for (const e of snap.sections) { if (e.ref) e.ref.start_time = e.start_time; }
     }
-    if (scope === 'all' && snap.arr) {
+    if (snap.arr) {
         for (const a of snap.arr) {
             if (!a) continue;
             for (const e of a.notes) {
@@ -14280,18 +14412,17 @@ function _restoreScopedTimes(snap, scope) {
     }
 }
 
-// Undo command for one tempo-map edit. Captures the scope AND the exact
-// arrangement objects it re-times at first exec, so capture / remap /
-// restore stay consistent even if the scope toggle is flipped or the
-// user switches arrangements between the edit and an undo.
+// Undo command for one tempo-map edit. Freezes the RIDE SET (drum flag +
+// the exact arrangement objects it re-times) at construction, so capture /
+// remap / restore stay consistent even if the ride checklist is changed or
+// the user switches arrangements between the edit and an undo.
 class TempoMapCmd {
     constructor(oldBeats, newBeats, label) {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
-        this.scope = S.tempoRideScope;
+        this.ride = _tempoRideSet();
         this.label = label || 'tempo';
         this.before = null;
-        this.arrs = null;
         // Snapshot of the loop selection captured on first exec so rollback can
         // restore it verbatim (see rollback).
         this.beforeBarSel = undefined;
@@ -14302,8 +14433,7 @@ class TempoMapCmd {
         // validates this before the command is ever created, so a
         // length-changing edit can't reach here (those use TempoGridCmd).
         if (!this.before) {
-            this.arrs = (this.scope === 'all') ? _tempoRetimeArrangements() : [];
-            this.before = _captureScopedTimes(this.scope, this.arrs);
+            this.before = _captureScopedTimes(this.ride);
         }
         // Snapshot the pre-edit loop selection BEFORE relocking (see rollback);
         // relock re-derives it from the new grid and is not self-inverse.
@@ -14311,13 +14441,12 @@ class TempoMapCmd {
             this.beforeBarSel = S.barSel ? { ...S.barSel } : null;
         }
         S.beats = this.newBeats.map(b => ({ ...b }));
-        _applyTempoRemap(_makeTimeRemap(this.oldBeats, this.newBeats),
-                         this.scope, this.arrs);
+        _applyTempoRemap(_makeTimeRemap(this.oldBeats, this.newBeats), this.ride);
         _loopRelockAfterGridChange();
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
-        _restoreScopedTimes(this.before, this.scope);
+        _restoreScopedTimes(this.before);
         // Restore the EXACT pre-edit loop selection rather than relocking
         // (relock is lossy — an undone tempo edit would otherwise move the loop).
         S.barSel = this.beforeBarSel ? { ...this.beforeBarSel } : null;
