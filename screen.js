@@ -7434,10 +7434,20 @@ _globalListeners.add(document, 'keydown', (e) => {
 // Audio / Playback
 // ════════════════════════════════════════════════════════════════════
 
+// Lazily create the shared AudioContext. Compose mode never decodes a
+// recording (loadAudio is the only other creation site), yet the transport
+// clock + metronome/guide voices still need a context to schedule on — make
+// one on demand. Call from a user gesture (decode / play) so the browser does
+// not hand back a permanently-suspended context.
+function _ensureAudioCtx() {
+    if (!S.audioCtx) S.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return S.audioCtx;
+}
+
 async function loadAudio(url) {
     if (!url) return;
     try {
-        if (!S.audioCtx) S.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        _ensureAudioCtx();
         const resp = await fetch(url);
         const buf = await resp.arrayBuffer();
         S.audioBuffer = await S.audioCtx.decodeAudioData(buf);
@@ -7596,13 +7606,58 @@ function _startAudioSourceAtCursor() {
     else S.audioSource.connect(S.audioCtx.destination);
     _mixApplyFirstPlayFade();
     S.audioSource.start(0, S.cursorTime);
+    _anchorTransportAtCursor();
+}
+
+// Anchor the transport clock at the current cursor: pin wall-time to the
+// AudioContext clock and chart-time to cursorTime, so playbackTick can derive
+// the cursor from the ctx clock. In buffered mode this rides alongside the
+// BufferSource; in compose mode it IS the whole clock (there is no source).
+// Every (re)start is a seek from the clap scheduler's perspective, so drop
+// already-queued voices and restart the window at the new cursor — otherwise
+// claps scheduled before a loop wrap / seek fire at their old positions
+// ("ghost claps").
+function _anchorTransportAtCursor() {
     S.playStartWall = S.audioCtx.currentTime;
     S.playStartTime = S.cursorTime;
-    // Every (re)start is a seek from the clap scheduler's perspective: drop
-    // already-queued voices and restart the window at the new cursor —
-    // without this, claps scheduled before a loop wrap / seek fire at their
-    // old positions ("ghost claps").
     _guideResetSchedule();
+}
+
+/* @pure:transport:start */
+// The transport clock (charrette §1.7): chart-time is where the cursor sits in
+// the song, derived from the AudioContext wall clock against the anchor pinned
+// at play/seek start. ONE formula, read by playbackTick, the guide scheduler,
+// and the record clock — buffered and buffer-less alike (a recording rides
+// this clock; it is not the source of time).
+function _transportChartTimePure(playStartTime, playStartWall, ctxNow) {
+    return playStartTime + (ctxNow - playStartWall);
+}
+
+// Compose-mode song length (charrette §1.7): with no recording, the GRID — not
+// an audio buffer — bounds the song. Prefer an explicit user length; else the
+// time of the last grid beat (timeOf(lastBeat)), extended if authored content
+// runs past the grid so a note beyond the last bar still plays out. Non-finite
+// or non-positive inputs collapse to 0.
+function _composeSongDurationPure(gridEndTime, contentEndTime, userLen) {
+    if (Number.isFinite(userLen) && userLen > 0) return userLen;
+    const g = Number.isFinite(gridEndTime) && gridEndTime > 0 ? gridEndTime : 0;
+    const c = Number.isFinite(contentEndTime) && contentEndTime > 0 ? contentEndTime : 0;
+    return Math.max(g, c);
+}
+/* @pure:transport:end */
+
+// Resolve compose-mode duration from live state: the grid end via the A1
+// converter (timeOf of the last beat), the last authored event on the active
+// surface, and an optional user-set length (S.composeLength). Buffered mode
+// never calls this — there S.duration is the recording's own length.
+function _composeSongDuration() {
+    const userLen = (typeof S.composeLength === 'number') ? S.composeLength : NaN;
+    const gridEnd = (S.beats && S.beats.length >= 2)
+        ? timeOf(S.beats, S.beats.length - 1)
+        : 0;
+    let contentEnd = 0;
+    for (const t of _guideSourceTimes()) if (t > contentEnd) contentEnd = t;
+    return _composeSongDurationPure(gridEnd, contentEnd, userLen);
 }
 
 function _restartPlaybackAt(t) {
@@ -7611,25 +7666,45 @@ function _restartPlaybackAt(t) {
         S.audioSource = null;
     }
     S.cursorTime = Math.max(0, Math.min(S.duration || Infinity, t));
-    _startAudioSourceAtCursor();
+    // Compose mode re-anchors the clock without a BufferSource — the guide/
+    // click scheduler is the only sound (charrette §1.7).
+    if (S.audioBuffer) _startAudioSourceAtCursor();
+    else _anchorTransportAtCursor();
 }
 
 function startPlayback() {
-    if (!S.audioBuffer || !S.audioCtx) return;
+    // Compose mode (no recording) still needs a context — for the transport
+    // clock and the metronome/guide voices that are its only sound. Make one
+    // on the play gesture; the decode path is the only other creation site.
+    _ensureAudioCtx();
+    if (!S.audioCtx) return;                        // no Web Audio available at all
+    const composing = !S.audioBuffer;
+    if (composing) {
+        // No buffer to bound the song: the grid defines its length (§1.7).
+        S.duration = _composeSongDuration();
+        if (!(S.duration > 0)) return;              // empty grid + no content — nothing to play
+    }
     if (S.audioCtx.state === 'suspended') S.audioCtx.resume();
     const region = _selectedLoopRegion();
     if (S.loopEnabled && region && (S.cursorTime < region.startTime || S.cursorTime >= region.endTime)) {
         S.cursorTime = region.startTime;
     }
-    // Every (re)start — including seeks, which route through here — begins
-    // an A/B cycle on the RECORDING pass, so the user always hears the real
-    // thing first from a fresh position. Reset BEFORE the first tick /
-    // scheduler sync so _guideTick can never schedule a guide pass off a
-    // stale phase, and so the first-play fade (in _startAudioSourceAtCursor)
-    // is the last automation written to the ref gain, not clobbered by this.
-    _abPhase = 'recording';
-    _abApplyRefGain();
-    _startAudioSourceAtCursor();
+    if (composing) {
+        // No reference recording ⇒ no A/B pass to arm; just anchor the clock so
+        // playbackTick advances the cursor and the guide/click scheduler (the
+        // only sound here) fires off the grid.
+        _anchorTransportAtCursor();
+    } else {
+        // Every (re)start — including seeks, which route through here — begins
+        // an A/B cycle on the RECORDING pass, so the user always hears the real
+        // thing first from a fresh position. Reset BEFORE the first tick /
+        // scheduler sync so _guideTick can never schedule a guide pass off a
+        // stale phase, and so the first-play fade (in _startAudioSourceAtCursor)
+        // is the last automation written to the ref gain, not clobbered by this.
+        _abPhase = 'recording';
+        _abApplyRefGain();
+        _startAudioSourceAtCursor();
+    }
     S.playing = true;
     updatePlayIcon();
     playbackTick();
@@ -7652,7 +7727,7 @@ function stopPlayback() {
 
 function playbackTick() {
     if (!S.playing) return;
-    S.cursorTime = S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
+    S.cursorTime = _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime);
     const loopRestart = _recState === 'recording'
         ? null
         : _loopPlaybackRestartTimePure(S.cursorTime, S.barSel, S.loopEnabled, S.duration);
@@ -8129,7 +8204,7 @@ function _guideTick() {
     const claps = _abClapsEnabledPure(_abActive(), _abPhase, editorGuideClapEnabled());
     const metro = editorMetronomeEnabled();
     if (!S.playing || !S.audioCtx || (!claps && !metro)) return;
-    const nowChart = S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
+    const nowChart = _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime);
     // Clamp the lookahead end to the loop-region end while looping, so no clap
     // is scheduled past the boundary before the rAF wrap cancels the window.
     const loopRegion = S.loopEnabled ? _normalizeLoopRegionPure(S.barSel, S.duration) : null;
@@ -8259,8 +8334,8 @@ function _guideTimerSync() {
     const want = S.playing
         && (editorGuideClapEnabled() || editorMetronomeEnabled() || _abActive());
     if (want && !_guideTimer) {
-        _guideScheduledUntil = S.playStartTime
-            + (S.audioCtx.currentTime - S.playStartWall);
+        _guideScheduledUntil = _transportChartTimePure(
+            S.playStartTime, S.playStartWall, S.audioCtx.currentTime);
         _guideTimer = setInterval(_guideTick, GUIDE_TICK_MS);
         _guideTick(); // fill the first window now, not one tick late
     } else if (!want && _guideTimer) {
@@ -15044,7 +15119,7 @@ const REC_COUNT_THROTTLE_MS = 80;          // max DOM update rate for the note c
 function chartTimeNow() {
     // editorStartRecordMidi guards against !S.audioCtx, so this only runs
     // during an active recording with a loaded audio context.
-    return S.playStartTime + (S.audioCtx.currentTime - S.playStartWall);
+    return _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime);
 }
 
 /* @pure:midi-adapter:start */

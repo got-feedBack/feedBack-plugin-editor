@@ -126,6 +126,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — so nothing leaks to the wire (proven end-to-end through
   `reconstructChords`). Tests: `tests/suggest_position.test.js`,
   `tests/suggest_position_wiring.test.js`, `tests/suggest_position_move.test.js`.
+- **Play, click, and guide with no recording (compose-mode transport).** The
+  transport used to dead-end without a loaded recording — `startPlayback()`
+  returned immediately, so a from-scratch song had no clock, metronome, or
+  guide claps. Now compose mode runs a **buffer-less transport**: the playhead
+  advances off the AudioContext clock with no audio source, the **grid** (not an
+  audio buffer) bounds the song — its length is the time of the last beat via
+  the A1 converter, extended if authored content runs past the last bar, or an
+  explicit length — and the already-grid-based metronome/guide scheduler becomes
+  the only sound, firing off the beat map with no audio present. Audio-present
+  playback is unchanged; the two share one clock. Internally the clock-advance
+  formula (`playStartTime + ctxNow − playStartWall`), previously copy-pasted at
+  four call sites, is now one pure `_transportChartTimePure`. Tests:
+  `tests/compose_transport.test.js`.
 - **Detect key from the notes.** A new **Detect** button in the key controls
   guesses the current part's key from its pitch-class content (the
   Krumhansl–Schmuckler algorithm — Pearson correlation against the standard
