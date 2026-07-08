@@ -70,9 +70,29 @@ def test_signature_denominator_is_folded_onto_downbeats():
     }
     out = _sanitize_midi_tempo_map(tm)
     assert out["beats"][0].get("den") == 8, "6/8 denominator folded onto bar-1 downbeat"
-    # A downbeat with no matching signature event is left as-is (defaults /4
-    # downstream), and interior beats never get a den.
+    # Carry-forward: a single 6/8 event persists onto bar 2 (and beyond), not
+    # just the exact-match downbeat — else bar 2 would save as 6/4.
+    assert out["beats"][2].get("den") == 8, "6/8 persists onto bar-2 downbeat"
+    # Interior beats never get a den.
     assert "den" not in out["beats"][1]
+
+
+def test_signature_denominator_change_carries_forward_per_span():
+    # 4/4 for bars 1-2, then 3/8 from bar 3 on. Each span inherits its own den;
+    # a bare change bar in between must not fall back to /4.
+    tm = {
+        "beats": [
+            {"time": 0.0, "measure": 1},
+            {"time": 1.0, "measure": 2},
+            {"time": 2.0, "measure": 3},
+            {"time": 3.0, "measure": 4},
+        ],
+        "tempos": [],
+        "time_signatures": [{"time": 0.0, "ts": [4, 4]}, {"time": 2.0, "ts": [3, 8]}],
+    }
+    out = _sanitize_midi_tempo_map(tm)
+    dens = [b.get("den") for b in out["beats"]]
+    assert dens == [4, 4, 8, 8], "denominators track their own signature span"
 
 
 def test_non_dict_and_missing_optional_lists_coerce():

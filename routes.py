@@ -361,26 +361,42 @@ def _build_song_timeline(beats: list, sections: list) -> dict | None:
 
 
 def _apply_timeline_signatures_to_beats(beats: list, time_signatures: list) -> list:
-    """Attach denominator hints from song_timeline events to downbeat rows."""
+    """Attach denominator hints from song_timeline events to downbeat rows.
+
+    A time-signature event applies from its own time FORWARD until the next
+    event — both song_timeline (`_build_song_timeline`) and core MIDI maps emit
+    one event per CHANGE, not one per bar — so every downbeat at or after an
+    event inherits that event's denominator (carry-forward). Downbeats before
+    the first event are left bare (default /4 downstream). Exact-match-only
+    folding would leave a persistent 7/8 as 7/8 on the change bar and /4 on
+    every following bar.
+    """
     if not beats or not isinstance(time_signatures, list):
         return beats
     out = [dict(b) if isinstance(b, dict) else b for b in beats]
-    downbeats = [
-        (i, _timeline_round_time(b.get("time", 0)))
-        for i, b in enumerate(out)
-        if isinstance(b, dict) and int(b.get("measure", -1) or -1) > 0
-    ]
+    events = []
     for ev in time_signatures:
         if not isinstance(ev, dict):
             continue
         ts = ev.get("ts")
         if not isinstance(ts, list) or len(ts) < 2:
             continue
-        den = _timeline_denominator(ts[1])
-        t = _timeline_round_time(ev.get("time", 0))
-        match = min(downbeats, key=lambda pair: abs(pair[1] - t), default=None)
-        if match and abs(match[1] - t) <= 0.001:
-            out[match[0]]["den"] = den
+        events.append((_timeline_round_time(ev.get("time", 0)), _timeline_denominator(ts[1])))
+    if not events:
+        return out
+    events.sort(key=lambda e: e[0])
+    for b in out:
+        if not (isinstance(b, dict) and int(b.get("measure", -1) or -1) > 0):
+            continue
+        bt = _timeline_round_time(b.get("time", 0))
+        den = None
+        for et, ed in events:
+            if et <= bt + 0.001:
+                den = ed
+            else:
+                break
+        if den is not None:
+            b["den"] = den
     return out
 
 
