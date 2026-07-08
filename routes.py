@@ -399,10 +399,17 @@ def _sanitize_midi_tempo_map(tm) -> dict:
     if not isinstance(beats, list) or not _timeline_downbeat_indices(beats):
         return {}
     tempos = tm.get("tempos")
-    sigs = tm.get("time_signatures")
+    sigs = tm.get("time_signatures") if isinstance(tm.get("time_signatures"), list) else []
+    # Fold time-signature denominators onto the downbeat rows so the adopted
+    # grid carries `den` inline — the editor's canonical, per-downbeat home for
+    # the denominator (`_build_song_timeline` / the frontend read `beat.den`,
+    # not this list). Without this, a core map that conveys a non-4 denominator
+    # only in `time_signatures` (leaving downbeats bare) would adopt/save as /4.
+    # No-op when sigs is empty or a downbeat already carries a matching den.
+    beats = _apply_timeline_signatures_to_beats(beats, sigs)
     return {
         "tempos": tempos if isinstance(tempos, list) else [],
-        "time_signatures": sigs if isinstance(sigs, list) else [],
+        "time_signatures": sigs,
         "beats": beats,
     }
 

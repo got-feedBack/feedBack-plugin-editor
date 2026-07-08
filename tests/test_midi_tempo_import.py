@@ -52,6 +52,29 @@ def test_single_downbeat_still_offered():
     assert out and len(out["beats"]) == 2
 
 
+def test_signature_denominator_is_folded_onto_downbeats():
+    # Regression (Codex): core may convey the denominator only in
+    # `time_signatures`, leaving the downbeat row bare. The editor's canonical
+    # home for the denominator is `beat.den`; the frontend + _build_song_timeline
+    # read that, not the list. Adopting the grid must land `den` on the downbeat
+    # or a 6/8 map saves as 6/4. FAILS pre-fix (den never folded).
+    tm = {
+        "beats": [
+            {"time": 0.0, "measure": 1},          # downbeat, NO inline den
+            {"time": 0.5, "measure": -1},
+            {"time": 1.0, "measure": 2},          # downbeat, NO inline den
+            {"time": 1.5, "measure": -1},
+        ],
+        "tempos": [],
+        "time_signatures": [{"time": 0.0, "ts": [6, 8]}],
+    }
+    out = _sanitize_midi_tempo_map(tm)
+    assert out["beats"][0].get("den") == 8, "6/8 denominator folded onto bar-1 downbeat"
+    # A downbeat with no matching signature event is left as-is (defaults /4
+    # downstream), and interior beats never get a den.
+    assert "den" not in out["beats"][1]
+
+
 def test_non_dict_and_missing_optional_lists_coerce():
     assert _sanitize_midi_tempo_map(None) == {}
     assert _sanitize_midi_tempo_map("nope") == {}
