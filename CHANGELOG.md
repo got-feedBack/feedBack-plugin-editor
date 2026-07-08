@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The piano roll's left axis is now a real keyboard.** In keys/piano view
+  the note-label column is drawn as an actual keyboard laid on its side —
+  white/black keys shaded like the real thing (black keys inset from the front
+  edge so the white tails read between them), C rows labelled with their octave,
+  and separators only where two white keys meet (E–F, B–C). **Click a key to
+  hear its pitch**: a gentle, hearing-safe audition voice (soft attack, low
+  peak, routed through the master limiter, ~⅓-second decay) plays the row's
+  equal-tempered pitch. Left-click only, so right-click still opens the context
+  menu; it never adds or selects a note, and it's silent until the audio
+  context is running (autoplay-gated). String view is unchanged. Tests:
+  `tests/keyboard_gutter.test.js`.
 - **Parts can be renamed (undoable).** A ✏ button next to the arrangement
   selector (registry command `renamePart`) renames the current part
   through a new `RenameArrangementCmd` — full undo/redo, selector text

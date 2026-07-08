@@ -1014,6 +1014,24 @@ function pianoLaneCount() { return pianoRange.hi - pianoRange.lo + 1; }
 
 function midiToNote(midi) { return PIANO_NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1); }
 function isBlackKey(midi) { const pc = midi % 12; return pc===1||pc===3||pc===6||pc===8||pc===10; }
+/* @pure:midi-freq:start */
+// Equal-tempered frequency (Hz) of a MIDI note: A4 (69) = 440. Used by the
+// keyboard-gutter audition (click a key → hear its pitch). Returns 0 for a
+// non-finite input so a caller never schedules a NaN-frequency oscillator.
+function midiToFreq(midi) {
+    const m = Number(midi);
+    if (!Number.isFinite(m)) return 0;
+    return 440 * Math.pow(2, (m - 69) / 12);
+}
+
+// Is (x, y) inside the piano keyboard gutter — the LABEL_W-wide column beside
+// the roll's pitch lanes? Used to route a click to pitch audition instead of
+// the note-edit pipeline. Half-open on every edge so it never overlaps the
+// note area (x >= labelW) or the waveform/beat strips above/below.
+function _inKeyboardGutterPure(x, y, labelW, waveformTop, laneBottom) {
+    return x >= 0 && x < labelW && y >= waveformTop && y < laneBottom;
+}
+/* @pure:midi-freq:end */
 
 function noteToMidi(string, fret) { return string * 24 + fret; }
 function midiToString(midi) { return Math.floor(midi / 24); }
@@ -2390,24 +2408,54 @@ function drawLabels(w) {
     }
 }
 
+// The left axis of the piano roll is drawn as an actual keyboard gutter: one
+// key per MIDI row, white/black shaded like a real keyboard laid on its side,
+// C rows labelled with their octave. It's clickable (see onMouseDown) to
+// audition the pitch. Black keys are inset from the front (right) edge so the
+// white keys' tails read between them, exactly as on a side-on keyboard.
+const _GUTTER_BLACK_INSET = 0.42;  // fraction of LABEL_W the black key leaves as white tail on the right
 function drawPianoLabels() {
-    // MIDI note labels on the left axis
     ctx.font = '8px monospace';
-    ctx.textAlign = 'center';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
+    const blackW = LABEL_W * (1 - _GUTTER_BLACK_INSET);
     for (let midi = pianoRange.lo; midi <= pianoRange.hi; midi++) {
         const y = midiToY(midi);
-        ctx.fillStyle = '#0a0a1a';
+        const black = isBlackKey(midi);
+        // White base for every row (the black key's tail shows on the right).
+        ctx.fillStyle = '#c9c9d6';
         ctx.fillRect(0, y, LABEL_W, PIANO_LANE_H);
-
-        // Only label C notes and F notes to avoid clutter
-        if (midi % 12 === 0 || midi % 12 === 5) {
-            const octave = Math.floor(midi / 12) - 1;
-            const color = PIANO_OCTAVE_COLORS[Math.min(octave + 1, PIANO_OCTAVE_COLORS.length - 1)];
-            ctx.fillStyle = color;
-            ctx.fillText(midiToNote(midi), LABEL_W / 2, y + PIANO_LANE_H / 2);
+        if (black) {
+            // Black key: a darker bar from the back (left) edge, leaving the
+            // white tail on the right — the side-on keyboard read.
+            ctx.fillStyle = '#1b1b2a';
+            ctx.fillRect(0, y, blackW, PIANO_LANE_H);
+        }
+        // Row separators only between two adjacent WHITE keys (E–F, B–C) — the
+        // spots a real keyboard has no black key between, so the boundary needs
+        // a drawn line to read as two distinct keys.
+        if (!black && !isBlackKey(midi + 1) && midi < pianoRange.hi) {
+            ctx.strokeStyle = '#9a9aac';
+            ctx.lineWidth = 0.5;
+            ctx.beginPath();
+            ctx.moveTo(0, y + 0.5);
+            ctx.lineTo(LABEL_W, y + 0.5);
+            ctx.stroke();
+        }
+        // Label C rows with their octave (e.g. C4), on the white tail so it
+        // stays legible whether or not the row is a black key.
+        if (midi % 12 === 0 && PIANO_LANE_H >= 7) {
+            ctx.fillStyle = '#3a3a4a';
+            ctx.fillText(midiToNote(midi), LABEL_W - blackW + 2, y + PIANO_LANE_H / 2);
         }
     }
+    // Front-edge divider so the keyboard reads as a panel distinct from the grid.
+    ctx.strokeStyle = '#2a2a55';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(LABEL_W - 0.5, WAVEFORM_H);
+    ctx.lineTo(LABEL_W - 0.5, midiToY(pianoRange.lo) + PIANO_LANE_H);
+    ctx.stroke();
 }
 
 function drawNotes(w) {
@@ -3691,6 +3739,18 @@ function onMouseDown(e) {
     if (S.partsViewMode) {
         _partsViewOnMouseDown(e, x, y);
         return;
+    }
+
+    // Keyboard gutter (keys/piano view): a click in the left key column
+    // auditions that row's pitch — no selection, no edit. Left button only so
+    // right-click still opens the context menu. Ignored in String view (the
+    // gutter shows string labels there, not keys).
+    if (e.button === 0 && isKeysMode()) {
+        const laneBottom = WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H;
+        if (_inKeyboardGutterPure(x, y, LABEL_W, WAVEFORM_H, laneBottom)) {
+            _auditionPitch(yToMidi(y));
+            return;
+        }
     }
 
     // Tone lane sits in the top TONE_LANE_H px (an overlay on the
@@ -7131,6 +7191,37 @@ function _editBlipAt() {
     osc.stop(when + 0.05);
     _guideVoices.push({ osc, gain: g, until: when + 0.05 });
     // Same bounded-bookkeeping rule as the scheduler tick.
+    if (_guideVoices.length > 64) {
+        const nowCtx = ctx.currentTime;
+        _guideVoices = _guideVoices.filter(v => v.until > nowCtx);
+    }
+}
+
+// Audition one pitch for the keyboard gutter (click a piano key → hear it).
+// A gentle, hearing-safe voice through the master limiter (soft attack, ~0.28
+// peak, ~320 ms decay) — the same envelope shape as the edit blip but pitched
+// and a touch longer, so it reads as a note rather than a tick. No-op when the
+// context isn't running (autoplay-gated) or the pitch is out of audible range.
+function _auditionPitch(midi) {
+    if (!S.audioCtx || S.audioCtx.state !== 'running') return;
+    const freq = midiToFreq(midi);
+    if (!(freq > 0) || freq > 20000) return;
+    const bus = _ensureMasterBus();
+    if (!bus) return;
+    const ctx = S.audioCtx;
+    const when = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.28, when + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 0.32);
+    osc.connect(g);
+    g.connect(bus.limiter);
+    osc.start(when);
+    osc.stop(when + 0.34);
+    _guideVoices.push({ osc, gain: g, until: when + 0.34 });
     if (_guideVoices.length > 64) {
         const nowCtx = ctx.currentTime;
         _guideVoices = _guideVoices.filter(v => v.until > nowCtx);
