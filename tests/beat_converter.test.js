@@ -220,5 +220,53 @@ t('zero-width gaps are guarded — finite results, never a divide-by-zero', () =
     assert.strictEqual(v, 1);
 });
 
+// ── 6. Exact ties: the converter has NO drift; snap tie-break is a benign ULP ─
+// Review of #133 (Codex) flagged beats [0,0.5,1.1], subs=3, t=1.0: old inline
+// snap returns 0.9, the shipped beat-domain snap returns 1.1. This is NOT a
+// mapping drift — it is a floating-point tie-break at an EXACT arithmetic tie
+// (t=1.0 is equidistant from the 0.9 and 1.1 subdivision lines, so BOTH are
+// valid nearest-subdivision snaps). One ULP either side the two agree. Pinning
+// the real invariants here so a future refactor that actually breaks the mapping
+// (swapped args, lost offset, off-by-one beat index) fails loudly.
+const tie = [{ time: 0 }, { time: 0.5 }, { time: 1.1 }];
+
+t('converter is an EXACT inverse even at the reported tie input (no drift)', () => {
+    close(timeOf(tie, beatOf(tie, 1.0)), 1.0);      // round-trips exactly
+    close(beatOf(tie, timeOf(tie, beatOf(tie, 1.0))), beatOf(tie, 1.0));
+});
+
+t('snap tie-break splits ONLY at the exact tie; agrees one ULP either side', () => {
+    // the divergence is measure-zero: nudging off the exact midpoint re-converges
+    close(newSnap(tie, 1.0 - 1e-6, 3), legacySnap(tie, 1.0 - 1e-6, 3));
+    close(newSnap(tie, 1.0 + 1e-6, 3), legacySnap(tie, 1.0 + 1e-6, 3));
+    // at the exact tie the shipped snap picks a valid nearest subdivision (0.9 or 1.1)
+    const s = newSnap(tie, 1.0, 3);
+    assert.ok(Math.abs(s - 0.9) < 1e-9 || Math.abs(s - 1.1) < 1e-9,
+        `tie snap must land on a subdivision line, got ${s}`);
+});
+
+t('snap is IDEMPOTENT — re-snapping an already-snapped time never moves it', () => {
+    // the real re-snap path (screen.js: oldTimes.map(snapTime)); a non-idempotent
+    // snap would creep note times on every edit. Beat-domain snap must be stable.
+    for (const subs of [1, 2, 3, 4, 8, 16]) {
+        for (let x = -0.5; x <= 3.5; x += 0.0011) {
+            const s = newSnap(drift, x, subs);
+            close(newSnap(drift, s, subs), s, 1e-9);
+        }
+    }
+});
+
+t('snap never jumps more than one subdivision away from the input', () => {
+    for (const subs of [2, 3, 4, 8]) {
+        for (let x = 0.01; x < 2.99; x += 0.013) {
+            const s = newSnap(drift, x, subs);
+            const gapBeat = Math.min(Math.floor(beatOf(drift, x)), drift.length - 2);
+            const gapWidth = drift[gapBeat + 1].time - drift[gapBeat].time;
+            assert.ok(Math.abs(s - x) <= gapWidth / subs + 1e-9,
+                `snap moved ${Math.abs(s - x)} (> one ${gapWidth / subs} subdivision) at t=${x}`);
+        }
+    }
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
