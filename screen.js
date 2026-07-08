@@ -122,7 +122,7 @@ function _pcInScalePure(pc, tonicPc, scaleName) {
 // Scale-degree label for a pitch class relative to a tonic (semitones above
 // the tonic, 0 = root). Flats for the chromatic degrees (the common Nashville/
 // relative convention). Display/teaching only — never grades.
-const _SCALE_DEGREE_LABELS = ['1', '♭2', '2', '♭3', '3', '4', '♭5', '5', '♯5', '6', '♭7', '7'];
+const _SCALE_DEGREE_LABELS = ['1', '♭2', '2', '♭3', '3', '4', '♭5', '5', '♭6', '6', '♭7', '7'];
 function _scaleDegreeSemisPure(pc, tonicPc) {
     const p = Number(pc), t = Number(tonicPc);
     if (!Number.isFinite(p) || !Number.isFinite(t)) return -1;

@@ -42,7 +42,17 @@ t('the full chromatic label row (flats for the in-betweens)', () => {
     const labels = [];
     for (let pc = 0; pc < 12; pc++) labels.push(D._scaleDegreeLabelPure(pc, 0));
     assert.deepStrictEqual(labels,
-        ['1', '♭2', '2', '♭3', '3', '4', '♭5', '5', '♯5', '6', '♭7', '7']);
+        ['1', '♭2', '2', '♭3', '3', '4', '♭5', '5', '♭6', '6', '♭7', '7']);
+});
+
+t('every chromatic degree honours the stated flat convention (no stray sharps)', () => {
+    // Regression for #131: index 8 was mislabelled ♯5, contradicting the
+    // documented flat/Nashville convention shared by ♭2/♭3/♭5/♭7. In the key
+    // of C, pitch class 8 (Ab) is the ♭6, not the ♯5.
+    assert.strictEqual(D._scaleDegreeLabelPure(8, 0), '♭6', 'pc 8 over C is ♭6, not ♯5');
+    for (const label of D._SCALE_DEGREE_LABELS) {
+        assert.ok(!label.includes('♯'), `chromatic label ${label} must use a flat, not a sharp`);
+    }
 });
 
 t('a real key: A major → the note A is the root, E is the 5th, C# the 3rd', () => {
