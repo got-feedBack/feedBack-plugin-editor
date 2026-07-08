@@ -7468,34 +7468,67 @@ function updateMeasureDisplay() {
 // recognised one. Fretted parts resolve to sounding pitch (capo/tuning-aware),
 // keys parts use their packed pitch. Blank when nothing sounds; "—" when notes
 // sound but form no named chord. Never edits anything.
+// Cross-frame memo. updateTimeDisplay() (hence this) runs on every playback
+// requestAnimationFrame, but the chord only changes when the playhead crosses a
+// note boundary — never between them. Recomputing the O(N) sounding-set scan
+// per frame is the same per-frame O(N) trap the section-coverage strip avoids,
+// so cache the readout plus the [lo,hi) interval it holds over (from
+// _soundingIntervalPure) and skip the scan while the cursor stays inside it and
+// nothing relevant changed (see _chordCacheHitPure). Edits bump
+// `_coverageEditGen` (the shared edit-generation, via EditHistory._afterEdit);
+// a song load/replace installs a fresh notes array WITHOUT a gen bump (caught by
+// the notes-array identity check); and a live note drag (move OR sustain
+// resize) mutates notes in place without a gen bump, so any active drag rescans.
+let _chordCache = { gen: -1, arr: -1, notesRef: null, lo: NaN, hi: NaN, text: '', title: '' };
 function updateChordDisplay() {
     const el = document.getElementById('editor-chord-display');
     if (!el) return;
+    const eligible = !!(S.arrangements && S.arrangements.length
+        && !S.drumEditMode && !S.tempoMapMode);
+    const t = S.cursorTime || 0;
+    const gen = typeof _coverageEditGen === 'number' ? _coverageEditGen : 0;
+    const ns = eligible ? notes() : null;
+    // Any in-place note-mutating drag (move retimes, resize re-sustains) skips
+    // the cache — neither bumps the edit generation until mouseUp commits.
+    const dragging = !!S.drag;
     let text = '';
     let title = 'Chord at the playhead';
-    if (S.arrangements && S.arrangements.length && !S.drumEditMode && !S.tempoMapMode) {
-        const rctx = typeof _rollPitchCtx === 'function' ? _rollPitchCtx() : null;
-        const sounding = _notesSoundingAtPure(notes(), S.cursorTime || 0, 0.05, 0.03);
-        const midis = [];
-        for (const n of sounding) {
-            const m = _rollMidiForNote(n, rctx);
-            if (Number.isFinite(m)) midis.push(m);
-        }
-        if (midis.length) {
-            const pcs = _pcSetFromMidisPure(midis);
-            const bassPc = ((Math.round(Math.min(...midis)) % 12) + 12) % 12;
-            const chord = _identifyChordPure(pcs, bassPc, PIANO_NOTE_NAMES);
-            if (chord) {
-                text = chord.name;
-                title = `${midis.length} note${midis.length === 1 ? '' : 's'} sounding → ${chord.name}`;
-            } else {
-                text = '—';
-                title = `${midis.length} notes sounding (no named chord)`;
+    if (eligible) {
+        if (_chordCacheHitPure(_chordCache, { gen, arr: S.currentArr, notesRef: ns, t, dragging })) {
+            text = _chordCache.text;
+            title = _chordCache.title;
+        } else {
+            const rctx = typeof _rollPitchCtx === 'function' ? _rollPitchCtx() : null;
+            const sounding = _notesSoundingAtPure(ns, t, 0.05, 0.03);
+            const midis = [];
+            for (const n of sounding) {
+                const m = _rollMidiForNote(n, rctx);
+                if (Number.isFinite(m)) midis.push(m);
+            }
+            if (midis.length) {
+                const pcs = _pcSetFromMidisPure(midis);
+                const bassPc = ((Math.round(Math.min(...midis)) % 12) + 12) % 12;
+                const chord = _identifyChordPure(pcs, bassPc, PIANO_NOTE_NAMES);
+                if (chord) {
+                    text = chord.name;
+                    title = `${midis.length} note${midis.length === 1 ? '' : 's'} sounding → ${chord.name}`;
+                } else {
+                    text = '—';
+                    title = `${midis.length} notes sounding (no named chord)`;
+                }
+            }
+            // Cache the readout and the interval it holds over. A live drag's
+            // in-place note edits aren't reflected in `gen`, so don't cache them
+            // — the next frame must rescan while the drag continues.
+            if (!dragging) {
+                const iv = _soundingIntervalPure(ns, t, 0.05, 0.03);
+                _chordCache = { gen, arr: S.currentArr, notesRef: ns, lo: iv.lo, hi: iv.hi, text, title };
             }
         }
     }
-    el.textContent = text;
-    el.title = title;
+    // Skip the DOM write when unchanged — avoids per-frame layout/title churn.
+    if (el.textContent !== text) el.textContent = text;
+    if (el.title !== title) el.title = title;
 }
 function updateTimeDisplay() {
     const el = document.getElementById('editor-time-display');
@@ -9029,6 +9062,49 @@ function _notesSoundingAtPure(notesArr, t, minDur, eps) {
         if (on <= t + e && off >= t - e) out.push(n);
     }
     return out;
+}
+
+// The open time interval around `t` on which _notesSoundingAtPure returns the
+// SAME membership — used to memoize the playhead chord readout so it recomputes
+// only when the cursor crosses a note boundary, not on every playback frame.
+// Each note contributes exactly two membership boundaries (`on - eps` and
+// `off + eps`); between consecutive boundaries the sounding set is invariant.
+// Returns { lo, hi } with lo/hi the nearest boundaries strictly below/above t
+// (±Infinity when unbounded). When t sits exactly on a boundary the set can
+// change on either side, so a degenerate { lo: t, hi: t } is returned to force
+// a recompute at that instant — correctness over the micro-optimisation.
+function _soundingIntervalPure(notesArr, t, minDur, eps) {
+    let lo = -Infinity, hi = Infinity, onBoundary = false;
+    if (!Array.isArray(notesArr)) return { lo, hi };
+    const e = Number.isFinite(eps) ? eps : 0.03;
+    const md = Number.isFinite(minDur) ? minDur : 0.05;
+    for (const n of notesArr) {
+        const on = Number(n.time);
+        if (!Number.isFinite(on)) continue;
+        const off = on + Math.max(Number(n.sustain) || 0, md);
+        const bounds = [on - e, off + e];
+        for (const b of bounds) {
+            if (b === t) onBoundary = true;
+            else if (b > t) { if (b < hi) hi = b; }
+            else if (b > lo) lo = b;
+        }
+    }
+    return onBoundary ? { lo: t, hi: t } : { lo, hi };
+}
+
+// Whether the chord readout memo (_chordCache) is still valid for the current
+// frame. A hit requires: no active drag (a live move/resize mutates note
+// time/sustain in place WITHOUT an edit-generation bump, so any drag must
+// rescan); the same edit generation and arrangement index; the SAME notes-array
+// identity (a song load/replace installs a fresh array without bumping the gen —
+// the identity check catches it, mirroring the section-coverage memo); and a
+// cursor time strictly inside the cached stable interval (lo, hi).
+function _chordCacheHitPure(cache, key) {
+    if (!cache || !key || key.dragging) return false;
+    return key.gen === cache.gen
+        && key.arr === cache.arr
+        && key.notesRef === cache.notesRef
+        && key.t > cache.lo && key.t < cache.hi;
 }
 /* @pure:chord-id:end */
 

@@ -29,7 +29,7 @@ function t(name, fn) {
 }
 
 const C = new Function('"use strict";' + NOTE_NAMES_SRC + extractBlock('chord-id')
-    + '\nreturn { _pcSetFromMidisPure, _identifyChordPure, _notesSoundingAtPure, PIANO_NOTE_NAMES };')();
+    + '\nreturn { _pcSetFromMidisPure, _identifyChordPure, _notesSoundingAtPure, _soundingIntervalPure, _chordCacheHitPure, PIANO_NOTE_NAMES };')();
 const name = (pcs, bass) => {
     const c = C._identifyChordPure(pcs, bass === undefined ? -1 : bass, C.PIANO_NOTE_NAMES);
     return c ? c.name : null;
@@ -125,6 +125,89 @@ t('a real fretted E major voicing (E B E G# B E) names as E', () => {
     const pcs = C._pcSetFromMidisPure(midis);  // {E, G#, B} = {4, 8, 11}
     const bass = ((Math.min(...midis) % 12) + 12) % 12;  // E = 4
     assert.strictEqual(C._identifyChordPure(pcs, bass, C.PIANO_NOTE_NAMES).name, 'E');
+});
+
+// ── memoization interval (per-frame recompute guard) ─────────────────
+// _soundingIntervalPure returns the [lo,hi] window over which the sounding set
+// is invariant, so updateChordDisplay recomputes only at note boundaries — not
+// on every playback frame. These fail on the pre-fix branch (the helper and the
+// memo it feeds did not exist).
+
+t('_soundingIntervalPure: stable window inside a ringing note', () => {
+    // note at 1.0 sustain 0.5, eps 0.03 md 0.05 → membership window [0.97, 1.53]
+    const notes = [S(1.0, 0.5), S(3.0, 1.0)];   // 2nd → [2.97, 4.03]
+    const iv = C._soundingIntervalPure(notes, 1.2, 0.05, 0.03);
+    assert.ok(Math.abs(iv.lo - 0.97) < 1e-9, 'lo = onset-eps of the ringing note');
+    assert.ok(Math.abs(iv.hi - 1.53) < 1e-9, 'hi = offset+eps of the ringing note');
+});
+
+t('_soundingIntervalPure: stable window inside a silent gap', () => {
+    const notes = [S(1.0, 0.5), S(3.0, 1.0)];
+    const iv = C._soundingIntervalPure(notes, 2.0, 0.05, 0.03);
+    assert.ok(Math.abs(iv.lo - 1.53) < 1e-9, 'lo = prior note offset+eps');
+    assert.ok(Math.abs(iv.hi - 2.97) < 1e-9, 'hi = next note onset-eps');
+});
+
+t('_soundingIntervalPure: degenerate on an exact boundary (forces recompute)', () => {
+    const notes = [S(1.0, 0.5)];
+    const iv = C._soundingIntervalPure(notes, 0.97, 0.05, 0.03);   // exactly onset-eps
+    assert.strictEqual(iv.lo, iv.hi, 'lo === hi on a boundary');
+    assert.strictEqual(iv.lo, 0.97);
+});
+
+t('_soundingIntervalPure: unbounded on empty / non-array', () => {
+    assert.deepStrictEqual(C._soundingIntervalPure([], 5, 0.05, 0.03), { lo: -Infinity, hi: Infinity });
+    assert.deepStrictEqual(C._soundingIntervalPure(null, 5), { lo: -Infinity, hi: Infinity });
+});
+
+t('_soundingIntervalPure invariant: the set never changes across (lo,hi)', () => {
+    // The core memo contract: for any query time strictly inside the returned
+    // interval, the sounding set equals the set at the probe time.
+    const notes = [S(1.0, 0.5), S(1.1, 0.6), S(3.0, 1.0)];
+    const key = arr => arr.map(n => n.time + ':' + n.sustain).sort().join('|');
+    for (const probe of [0.5, 1.05, 1.3, 1.65, 2.5, 3.5, 5.0]) {
+        const iv = C._soundingIntervalPure(notes, probe, 0.05, 0.03);
+        if (!(iv.lo < iv.hi)) continue;   // degenerate boundary probe
+        const base = key(C._notesSoundingAtPure(notes, probe, 0.05, 0.03));
+        const mid = (Math.max(iv.lo, probe - 10) + Math.min(iv.hi, probe + 10)) / 2;
+        for (const q of [probe, mid, (probe + iv.lo) / 2 || probe]) {
+            if (q <= iv.lo || q >= iv.hi) continue;
+            assert.strictEqual(key(C._notesSoundingAtPure(notes, q, 0.05, 0.03)), base,
+                `set stable at q=${q} within (${iv.lo},${iv.hi})`);
+        }
+    }
+});
+
+// ── memo cache-hit validity (invalidation on load / arr swap / drag) ──
+// _chordCacheHitPure gates reuse of the readout. These pin the invalidation
+// rules that a naive gen+arr+interval key would miss — they fail on the
+// pre-fix branch (the helper, the notes-identity guard, and the widened drag
+// bypass did not exist).
+
+const CACHE = { gen: 5, arr: 0, notesRef: ['ns'], lo: 1.0, hi: 2.0, text: 'C', title: 'x' };
+const hitKey = (over) => Object.assign(
+    { gen: 5, arr: 0, notesRef: CACHE.notesRef, t: 1.5, dragging: false }, over || {});
+
+t('_chordCacheHitPure: hit when gen/arr/notesRef match and t is inside (lo,hi)', () => {
+    assert.strictEqual(C._chordCacheHitPure(CACHE, hitKey()), true);
+});
+
+t('_chordCacheHitPure: MISS on a fresh notes array (song load / replace)', () => {
+    // loadCDLC installs a new arrangements array WITHOUT bumping the gen — the
+    // identity check is the only thing that catches it.
+    assert.strictEqual(C._chordCacheHitPure(CACHE, hitKey({ notesRef: ['different'] })), false);
+});
+
+t('_chordCacheHitPure: MISS during any drag (move retime OR sustain resize)', () => {
+    assert.strictEqual(C._chordCacheHitPure(CACHE, hitKey({ dragging: true })), false);
+});
+
+t('_chordCacheHitPure: MISS on gen bump, arr swap, or cursor outside interval', () => {
+    assert.strictEqual(C._chordCacheHitPure(CACHE, hitKey({ gen: 6 })), false, 'edit bumped gen');
+    assert.strictEqual(C._chordCacheHitPure(CACHE, hitKey({ arr: 1 })), false, 'arrangement switched');
+    assert.strictEqual(C._chordCacheHitPure(CACHE, hitKey({ t: 2.0 })), false, 't on hi boundary (exclusive)');
+    assert.strictEqual(C._chordCacheHitPure(CACHE, hitKey({ t: 0.5 })), false, 't below lo');
+    assert.strictEqual(C._chordCacheHitPure(null, hitKey()), false, 'no cache');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
