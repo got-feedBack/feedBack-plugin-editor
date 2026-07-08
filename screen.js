@@ -14389,12 +14389,24 @@ function _midiTempoToBeatsPure(tempoMap) {
     return out;
 }
 
+// Does an imported MIDI carry a grid worth offering? Matches the backend
+// gate (routes.py `_sanitize_midi_tempo_map` / `test_single_downbeat_still_
+// offered`): at least ONE numbered downbeat. Deliberately looser than
+// `_hasProjectGridPure` (which needs 2 to call an EXISTING project timeline
+// "a grid") — a single-bar MIDI (a common drum/loop export) still carries a
+// real tempo + time signature worth adopting onto an empty project, and the
+// backend already ships it. Reusing the 2-downbeat project threshold here
+// silently dropped those maps despite the server offering them.
+function _midiOffersGridPure(tempoMap) {
+    return _midiTempoToBeatsPure(tempoMap).some(b => b.measure > 0);
+}
+
 // The default Use-vs-Keep choice, or null when there is nothing to offer.
-// Nothing to offer = the MIDI carries no usable grid (< 2 downbeats after
-// sanitizing). Otherwise KEEP when the project already has a grid (never
+// Nothing to offer = the MIDI carries no usable grid (no numbered downbeat
+// after sanitizing). Otherwise KEEP when the project already has a grid (never
 // silently stomp an audio-aligned timeline), USE the MIDI when it doesn't.
 function _midiTempoDefaultChoicePure(projectBeats, tempoMap) {
-    if (!_hasProjectGridPure(_midiTempoToBeatsPure(tempoMap))) return null;
+    if (!_midiOffersGridPure(tempoMap)) return null;
     return _hasProjectGridPure(projectBeats) ? 'keep' : 'midi';
 }
 

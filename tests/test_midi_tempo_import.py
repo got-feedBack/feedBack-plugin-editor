@@ -100,6 +100,43 @@ def test_happy_path_is_gated_through_sanitize(monkeypatch):
     assert _safe_midi_tempo_map("empty.mid", 0) == {}
 
 
+def test_beats_ride_the_audio_offset(monkeypatch):
+    # Regression (Codex): the note converters place notes at raw + audio_offset,
+    # but convert_midi_tempo_map emits the grid at raw MIDI times. The wrapper
+    # must shift the grid by the same offset or adopting it (Use) leaves bars
+    # audio_offset seconds away from the just-imported notes. FAILS pre-fix:
+    # _safe_midi_tempo_map ignored (took no) audio_offset.
+    _install_fake_core(monkeypatch, lambda path, idx: _grid(2))
+    out = _safe_midi_tempo_map("ok.mid", 0, 1.5)
+    assert out["beats"][0]["time"] == 1.5, "bar-1 downbeat (raw t=0) shifted by offset"
+    assert out["beats"][2]["time"] == 2.5, "bar-2 downbeat (raw t=1) shifted by offset"
+    # measure labels + den survive the shift untouched
+    assert out["beats"][0]["measure"] == 1 and out["beats"][0]["den"] == 4
+    assert out["tempos"][0]["time"] == 1.5
+    assert out["time_signatures"][0]["time"] == 1.5
+
+
+def test_zero_offset_leaves_grid_untouched(monkeypatch):
+    _install_fake_core(monkeypatch, lambda path, idx: _grid(2))
+    out = _safe_midi_tempo_map("ok.mid", 0, 0.0)
+    assert out["beats"][0]["time"] == 0.0 and out["beats"][2]["time"] == 1.0
+    # default (offset omitted) also means no shift — back-compat with callers
+    out2 = _safe_midi_tempo_map("ok.mid", 0)
+    assert out2["beats"][0]["time"] == 0.0
+
+
+def test_negative_offset_shifts_grid_backward(monkeypatch):
+    _install_fake_core(monkeypatch, lambda path, idx: _grid(1))
+    out = _safe_midi_tempo_map("ok.mid", 0, -0.25)
+    assert out["beats"][0]["time"] == -0.25
+
+
+def test_non_finite_offset_is_ignored(monkeypatch):
+    _install_fake_core(monkeypatch, lambda path, idx: _grid(1))
+    out = _safe_midi_tempo_map("ok.mid", 0, float("nan"))
+    assert out["beats"][0]["time"] == 0.0, "a non-finite offset must not poison the grid"
+
+
 def test_track_index_is_forwarded(monkeypatch):
     seen = {}
     def capture(path, idx):

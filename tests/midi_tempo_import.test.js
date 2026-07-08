@@ -44,7 +44,7 @@ function t(name, fn) {
 
 const P = new Function(
     '"use strict";' + extractBlock('midi-tempo-choice')
-    + '\nreturn { _hasProjectGridPure, _midiTempoToBeatsPure, '
+    + '\nreturn { _hasProjectGridPure, _midiTempoToBeatsPure, _midiOffersGridPure, '
     + '_midiTempoDefaultChoicePure, _midiTempoSummaryPure };'
 )();
 
@@ -113,6 +113,26 @@ t('null (no dialog) when the MIDI carries no usable grid', () => {
     assert.strictEqual(P._midiTempoDefaultChoicePure([], { beats: [] }), null);
     assert.strictEqual(P._midiTempoDefaultChoicePure(grid(4).beats, { beats: [{ measure: -1 }] }), null);
     assert.strictEqual(P._midiTempoDefaultChoicePure([], null), null);
+});
+
+// Regression (Codex #2): the frontend gate for "does the MIDI offer a grid"
+// must match the backend (routes.py `_sanitize_midi_tempo_map` gates on ONE
+// numbered downbeat — see test_single_downbeat_still_offered). Reusing the
+// 2-downbeat _hasProjectGridPure threshold silently dropped single-bar MIDIs
+// the server had already shipped. FAILS on pre-fix code (returned null).
+t('_midiOffersGridPure: a single numbered downbeat is enough (matches backend)', () => {
+    assert.strictEqual(P._midiOffersGridPure(grid(1)), true, 'one bar is offerable');
+    assert.strictEqual(P._midiOffersGridPure(grid(3)), true);
+    assert.strictEqual(P._midiOffersGridPure({ beats: [{ time: 0, measure: -1 }] }), false, 'no downbeat');
+    assert.strictEqual(P._midiOffersGridPure({ beats: [] }), false);
+    assert.strictEqual(P._midiOffersGridPure(null), false);
+});
+
+t('single-bar MIDI still offers a choice (frontend/backend gate parity)', () => {
+    assert.strictEqual(P._midiTempoDefaultChoicePure([], grid(1)), 'midi',
+        'a 1-downbeat MIDI passes the backend sanitize gate; the frontend must offer USE too');
+    assert.strictEqual(P._midiTempoDefaultChoicePure(grid(4).beats, grid(1)), 'keep',
+        'a single-bar MIDI over an existing project grid still defaults to KEEP');
 });
 
 // ── summary string ───────────────────────────────────────────────────
