@@ -1069,18 +1069,13 @@ function updatePianoRange(expandOnly = false) {
 function snapTime(t) {
     const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
     if (!sv || S.beats.length < 2) return t;
-    // Find surrounding beat
-    let bi = 0;
-    for (let i = 0; i < S.beats.length - 1; i++) {
-        if (S.beats[i].time <= t) bi = i; else break;
-    }
-    const bt = S.beats[bi].time;
-    const nt = bi < S.beats.length - 1 ? S.beats[bi + 1].time : bt + 0.5;
-    const bd = nt - bt;
+    // Snap in the beat domain, then convert back (charrette §1.1):
+    // snap = timeOf(round(beatOf(t)·subs)/subs). Sharing the converter makes the
+    // snap grid exactly the tempo-map grid — identical to the old inline
+    // surrounding-gap subdivide (round(β·subs) keeps the whole-beat part fixed
+    // and quantises the fraction), incl. the pre-first / past-last extrapolation.
     const subs = _editorSnapSubdivisionsPure(sv);
-    const sd = bd / subs;
-    const idx = Math.round((t - bt) / sd);
-    return bt + idx * sd;
+    return timeOf(S.beats, Math.round(beatOf(S.beats, t) * subs) / subs);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -16261,26 +16256,75 @@ function _finalizeActiveDrag() {
 
 // ── Notes ride the grid — piecewise-linear time remapper ────────────
 
-// Build remap(t): maps an absolute time from the old beat grid to the
-// new one by linear interpolation within the corresponding segment.
-// A segment whose endpoints didn't move maps identically, so edits to
-// one measure leave the rest of the song untouched.
+/* @pure:beat-converter:start */
+// The one tempo-map converter (charrette §1.1): musical beat-coordinate ⇄
+// seconds over a time-sorted grid `beats` ([{time,…},…] where the array index i
+// IS the integer beat coordinate — consecutive entries are consecutive beats).
+// This is the interior math the flex remapper (_makeTimeRemap) and snapTime
+// already computed inline; extracted + named so there is ONE implementation
+// that every musical-time quantity (ruler, snap, loop, playhead, notes) reads.
+//
+//   beatOf(beats, t): seconds → fractional beat. Within a gap it is the exact
+//                     inverse of timeOf; before the first / after the last beat
+//                     it extrapolates along that gap's local tempo, so the two
+//                     stay inverses outside the grid too.
+//   timeOf(beats, β): fractional beat → seconds, the mirror.
+//
+// A degenerate grid (< 2 beats) has no tempo map, so both are the identity and
+// notes stay seconds-primary (charrette §1.3.4). Non-finite input and zero-width
+// gaps are guarded (pass the input through / collapse to the gap's left edge).
+function beatOf(beats, t) {
+    if (!Array.isArray(beats) || beats.length < 2 || !Number.isFinite(t)) return t;
+    const n = beats.length;
+    if (t <= beats[0].time) {
+        const g = beats[1].time - beats[0].time;              // first gap's tempo
+        return g > 1e-9 ? (t - beats[0].time) / g : 0;
+    }
+    if (t >= beats[n - 1].time) {
+        const g = beats[n - 1].time - beats[n - 2].time;      // last gap's tempo
+        return g > 1e-9 ? (n - 1) + (t - beats[n - 1].time) / g : n - 1;
+    }
+    let lo = 0, hi = n - 1;                                    // interior: bisect to the gap
+    while (lo < hi) {
+        const m = (lo + hi + 1) >> 1;
+        if (beats[m].time <= t) lo = m; else hi = m - 1;
+    }
+    const span = beats[lo + 1].time - beats[lo].time;
+    return span > 1e-9 ? lo + (t - beats[lo].time) / span : lo;
+}
+
+function timeOf(beats, beat) {
+    if (!Array.isArray(beats) || beats.length < 2 || !Number.isFinite(beat)) return beat;
+    const n = beats.length;
+    if (beat <= 0) {
+        const g = beats[1].time - beats[0].time;              // extrapolate before beat 0
+        return beats[0].time + beat * g;
+    }
+    if (beat >= n - 1) {
+        const g = beats[n - 1].time - beats[n - 2].time;      // extrapolate past the last beat
+        return beats[n - 1].time + (beat - (n - 1)) * g;
+    }
+    const i = Math.floor(beat);
+    const f = beat - i;
+    return beats[i].time + f * (beats[i + 1].time - beats[i].time);
+}
+/* @pure:beat-converter:end */
+
+// Build remap(t): maps an absolute time from the old beat grid to the new one.
+// Interior times ride the grid through the shared converter — remap IS
+// `t ↦ timeOf(newBeats, beatOf(oldBeats, t))` within the grid (charrette §1.1),
+// so a segment whose endpoints didn't move maps identically and an edit to one
+// measure leaves the rest of the song untouched. Outside the grid it keeps the
+// legacy constant-shift-by-endpoint-move, so this extraction is behaviour-
+// identical on the tails too (beat-primary reproject — A2 — revisits out-of-grid
+// objects; this PR is a pure refactor).
 function _makeTimeRemap(oldBeats, newBeats) {
-    const ot = oldBeats.map(b => b.time);
-    const nt = newBeats.map(b => b.time);
-    const n = ot.length;
+    const n = oldBeats.length;
     return function remap(t) {
         if (n === 0) return t;
-        if (t <= ot[0]) return t + (nt[0] - ot[0]);
-        if (t >= ot[n - 1]) return t + (nt[n - 1] - ot[n - 1]);
-        let lo = 0, hi = n - 1;
-        while (lo < hi) {
-            const m = (lo + hi + 1) >> 1;
-            if (ot[m] <= t) lo = m; else hi = m - 1;
-        }
-        const span = ot[lo + 1] - ot[lo];
-        const frac = span > 1e-9 ? (t - ot[lo]) / span : 0;
-        return nt[lo] + frac * (nt[lo + 1] - nt[lo]);
+        if (t <= oldBeats[0].time) return t + (newBeats[0].time - oldBeats[0].time);
+        if (t >= oldBeats[n - 1].time) return t + (newBeats[n - 1].time - oldBeats[n - 1].time);
+        return timeOf(newBeats, beatOf(oldBeats, t));
     };
 }
 
