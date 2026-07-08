@@ -4213,6 +4213,12 @@ function onDblClick(e) {
         : WAVEFORM_H + lanes() * LANE_H;
     if (y < WAVEFORM_H || y > laneBottom) return;
 
+    // The keyboard gutter (keys/piano view) is audition-only — see onMouseDown.
+    // A double-click there must NOT open the Add Note dialog; the gutter never
+    // adds or selects a note. String view has no key gutter, so this is scoped
+    // to keys mode where laneBottom already equals the gutter's lower edge.
+    if (keysMode && _inKeyboardGutterPure(x, y, LABEL_W, WAVEFORM_H, laneBottom)) return;
+
     const idx = hitNote(x, y);
     if (idx >= 0) return; // double-click on existing note = no-op
 
