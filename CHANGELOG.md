@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Drum editor: advisory playability lint.** The drum grid now flags
+  physically impossible simultaneities with a small amber warning triangle on
+  the offending hits plus a count in the editor HUD. Two rules, evaluated per
+  near-simultaneous cluster: **3+ stick-struck pieces at one instant** (a
+  drummer has two hands — feet, i.e. kick and hi-hat pedal, don't count toward
+  the limit) and a **contradictory hi-hat state** (open hat together with a
+  closed hat or a foot chick — the foot can't be up and down at once).
+  Strictly **advisory** — it never blocks, never auto-fixes, and never mutates
+  a hit; a fast roll or a flam pair stays clear because only hits within ~12 ms
+  cluster. Computed once per draw over the already-sorted hits, drum-editor
+  mode only. Tests: `tests/drum_limb_lint.test.js`.
 - **Parts can be renamed (undoable).** A ✏ button next to the arrangement
   selector (registry command `renamePart`) renames the current part
   through a new `RenameArrangementCmd` — full undo/redo, selector text
