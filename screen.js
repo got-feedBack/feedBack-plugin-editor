@@ -278,20 +278,12 @@ const S = {
 
     // Tempo Map mode — EOF-style: drag the song-wide beat grid's measure
     // downbeats ("sync points") to fit it to the audio; BPM is derived
-    // from sync-point spacing. tempoSel/tempoHover index into S.beats.
-    // tempoRideScope decides which notes re-time when the grid moves:
-    // 'drum' (only drum_tab hits), 'all' (every arrangement), or 'custom'
-    // (the per-part checklist in tempoRideCustom). Presets hydrate from
-    // localStorage on init; 'custom' is session-only — its indices are
-    // song-shaped and would be meaningless in another song. Mode resets
-    // on song load.
+    // from sync-point spacing. tempoSel/tempoHover index into S.beats. Under
+    // beat-primary a grid edit reprojects EVERY part from its beat, so there
+    // is no "which parts ride" choice to make. Mode resets on song load.
     tempoMapMode: false,
     tempoSel: -1,
     tempoHover: -1,
-    tempoRideScope: 'drum',
-    // {drum: bool, arrs: Set of S.arrangements indices} — only read when
-    // tempoRideScope === 'custom'.
-    tempoRideCustom: null,
 
     // View
     scrollX: 0,   // seconds
@@ -4595,7 +4587,6 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'tempoInsertSync', label: 'Insert sync point at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
     { id: 'tempoDeleteSync', label: 'Delete selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
     { id: 'tempoToggleSyncLock', label: 'Split or lock selected sync point', group: 'Tempo map', status: 'planned', keys: { feedback: 'S (Tempo Map)', eof: 'S (Tempo Map)' } },
-    { id: 'tempoToggleRideScope', label: 'Toggle Tempo Map note ride scope', group: 'Tempo map', status: 'ready', keys: { feedback: 'Ctrl+T (Tempo Map)', eof: 'Ctrl+T (Tempo Map)' } },
     { id: 'tempoFullDialog', label: 'Open full tempo dialog', group: 'Tempo map', status: 'planned', keys: { feedback: 'Alt+T (Tempo Map)', eof: 'Alt+T (Tempo Map)' } },
     { id: 'tempoRebuildGrid', label: 'Rebuild visible beat grid', group: 'Tempo map', status: 'planned', keys: { feedback: 'Ctrl+Shift+T (Tempo Map)', eof: 'Ctrl+Shift+T (Tempo Map)' } },
     { id: 'toggleGridDisplay', label: 'Toggle grid display density', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Shift+G', eof: 'Shift+G' } },
@@ -4633,7 +4624,6 @@ function _editorEofCommandForKeyPure(e, mode) {
         if (plain && key === 'd') return 'tempoBeatUnit';
         if (plain && key === 's') return 'tempoToggleSyncLock';
         if (shift && key === 't') return 'setTimeSignature';
-        if (ctrl && key === 't') return 'tempoToggleRideScope';
         if (alt && key === 't') return 'tempoFullDialog';
         if (ctrlShift && key === 't') return 'tempoRebuildGrid';
         if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
@@ -4756,7 +4746,6 @@ function _editorFeedbackCommandForKeyPure(e, mode) {
         if (plain && key === 'd') return 'tempoBeatUnit';
         if (plain && key === 's') return 'tempoToggleSyncLock';
         if (shift && key === 't') return 'setTimeSignature';
-        if (ctrl && key === 't') return 'tempoToggleRideScope';
         if (alt && key === 't') return 'tempoFullDialog';
         if (ctrlShift && key === 't') return 'tempoRebuildGrid';
         if (plain && (key === 'i' || e.key === 'Insert')) return 'tempoInsertSync';
@@ -5751,23 +5740,6 @@ function _editorPromptTempoBeatCountAtSelection() {
     return true;
 }
 
-function _editorToggleTempoRideScope() {
-    if (!S.tempoMapMode) return false;
-    // Ctrl+T cycles the two presets; a 'custom' checklist steps back to
-    // 'drum' (the conservative preset) rather than silently mutating the
-    // user's hand-picked part set.
-    S.tempoRideScope = S.tempoRideScope === 'drum' ? 'all' : 'drum';
-    try {
-        localStorage.setItem('editor-tempomap-scope', S.tempoRideScope);
-    } catch (_) { /* localStorage unavailable */ }
-    _refreshTempoScopeToggle();
-    _refreshTempoSyncInspector();
-    draw();
-    setStatus(S.tempoRideScope === 'all'
-        ? 'Tempo Map edits retime notes for all instruments.'
-        : 'Tempo Map edits retime drum tab notes only.');
-    return true;
-}
 function _editorPromptTempoBeatUnitAtSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
         setStatus('Select a Tempo Map sync point first.');
@@ -5899,7 +5871,6 @@ function _editorRunEofCommand(cmd) {
     case 'tempoInsertSync': return _editorInsertTempoSyncAtCursor();
     case 'tempoDeleteSync': return _editorDeleteTempoSyncSelection();
     case 'tempoToggleSyncLock': return _editorUnsupportedEofCommand('Sync-point split/lock');
-    case 'tempoToggleRideScope': return _editorToggleTempoRideScope();
     case 'tempoFullDialog': return _editorUnsupportedEofCommand('Full tempo dialog');
     case 'tempoRebuildGrid': return _editorUnsupportedEofCommand('Beat-grid rebuild');
     case 'toggleGridDisplay': return _editorUnsupportedEofCommand('Grid display toggle');
@@ -7950,11 +7921,6 @@ async function loadCDLC(filename) {
         S.tempoMapMode = false;
         S.tempoSel = -1;
         S.tempoHover = -1;
-        // Drop the per-part ride checklist: its indices are song-shaped.
-        // A 'custom' scope falls back to the conservative 'drum' preset —
-        // silently riding a different song's parts would be corrupting.
-        S.tempoRideCustom = null;
-        if (S.tempoRideScope === 'custom') S.tempoRideScope = 'drum';
         // Drop loop A/B — session-only state; carrying a muted-reference
         // phase into another song would read as a playback bug. Refresh the
         // audio + UI too: clearing the flags alone would leave a guide-pass
@@ -7988,6 +7954,9 @@ async function loadCDLC(filename) {
 
         // Flatten chord notes into main notes array for unified editing
         flattenChords();
+        // Beat-primary (§1.3): lift note.beat from the loaded seconds against
+        // the loaded grid, so beat is the truth from load onward.
+        _liftAllBeats(S.beats);
         if (isKeysMode()) updatePianoRange();
 
         // Update UI
@@ -8504,7 +8473,8 @@ function _buildSaveBody(forceFullSnapshot) {
     if (S.drumTabDirty && S.drumTab !== undefined && S.drumTab !== null) {
         body.drum_tab = S.drumTab;
     }
-    return body;
+    // Beat-primary: strip the runtime beat cache so the wire stays seconds-only.
+    return _stripBeatsFromSaveBody(body);
 }
 
 async function saveCDLC() {
@@ -9664,7 +9634,7 @@ window.editorSetTempoSignatureDenominator = (val) => {
 // Rigidly shift all of ONE arrangement's time-bearing fields by `delta` seconds:
 // notes, chords (+ their notes), source + authored anchors, handshape spans, and
 // phrase windows. Sustains are durations, so they do NOT move. Field set mirrors
-// the tempo-remap walk (_captureScopedTimes / the remap apply). Pure — node-tested.
+// the beat-primary walk (_eachTimed / _reprojectAll). Pure — node-tested.
 function _shiftArrangementTimes(arr, delta) {
     if (!arr) return;
     for (const n of (arr.notes || [])) {
@@ -12541,6 +12511,8 @@ window.editorApplyCreateResult = async (data) => {
     _resetOffsetUI();
 
     flattenChords();
+    // Beat-primary (§1.3): lift note.beat from the loaded seconds.
+    _liftAllBeats(S.beats);
     if (isKeysMode()) updatePianoRange();
 
     document.getElementById('editor-song-title').textContent =
@@ -12949,12 +12921,6 @@ function init() {
 
     _editorLoadShortcutProfile();
 
-    // Restore the Tempo Map "apply to" scope preference.
-    try {
-        const sc = localStorage.getItem('editor-tempomap-scope');
-        if (sc === 'drum' || sc === 'all') S.tempoRideScope = sc;
-    } catch (_) { /* localStorage unavailable */ }
-
     // Canvas-level listeners die with the canvas node on re-injection;
     // only document/window-level ones must go through the tracked registry.
     canvas.addEventListener('mousedown', onMouseDown);
@@ -13229,10 +13195,6 @@ window.editorRemoveArrangement = async () => {
     // reconstructChords() reset (#18): drop the stack when the model shifts
     // under it.
     if (S.history) S.history.reset();
-    // The splice renumbers arrangements, so rebase the per-part tempo-ride
-    // checklist too — its stored indices would otherwise ride the wrong
-    // (out-of-scope) arrangement on the next tempo edit.
-    S.tempoRideCustom = _rebaseTempoRideForRemoval(S.tempoRideCustom, removeIdx);
     S.currentArr = Math.min(removeIdx, S.arrangements.length - 1);
     S.sel.clear();
     flattenChords();
@@ -16287,152 +16249,6 @@ function _refreshTempoMapButton() {
     }
 }
 
-// ── Scope toggle — a DOM control overlaid on the canvas, shown only
-// in tempo-map mode. (DOM rather than canvas-drawn: a clickable
-// control is more robust and gets native hit-testing for free.)
-
-function _ensureTempoScopeToggle() {
-    let el = document.getElementById('editor-tempo-scope');
-    if (!el) {
-        const wrap = document.getElementById('editor-canvas-wrap');
-        if (!wrap) return null;
-        el = document.createElement('div');
-        el.id = 'editor-tempo-scope';
-        el.className = 'absolute hidden flex-col gap-1 px-2 py-1 '
-            + 'bg-dark-800 border border-gray-700 rounded text-xs z-10';
-        el.style.right = '10px';
-        el.style.bottom = '8px';
-        // The beat grid and section markers always move with a tempo
-        // edit; this toggle only picks which instrument NOTES re-time —
-        // hence "Notes that ride the grid", not "Apply tempo edits to".
-        el.title = 'The beat grid and section markers always move with a '
-            + 'tempo edit. This chooses which instrument notes re-time too.';
-        el.innerHTML =
-            '<div class="flex items-center gap-1">'
-            + '<span class="text-gray-500 mr-1">Notes that ride the grid:</span>'
-            + '<button type="button" data-scope="drum" class="px-2 py-0.5 rounded"></button>'
-            + '<button type="button" data-scope="all" class="px-2 py-0.5 rounded"></button>'
-            + '<button type="button" data-scope="custom" class="px-2 py-0.5 rounded"></button>'
-            + '</div>'
-            + '<div id="editor-tempo-scope-parts" class="hidden flex-col gap-0.5 mt-1 '
-            + 'pt-1 border-t border-gray-700/70 max-h-40 overflow-y-auto"></div>';
-        el.querySelectorAll('button[data-scope]').forEach(b => {
-            b.textContent = b.dataset.scope === 'drum' ? 'Drum tab'
-                : b.dataset.scope === 'all' ? 'All instruments' : 'Per part…';
-            b.onclick = () => {
-                S.tempoRideScope = b.dataset.scope;
-                if (b.dataset.scope === 'custom' && !S.tempoRideCustom) {
-                    // First open seeds the checklist to "everything rides"
-                    // so unchecking is the gesture — a part someone has
-                    // hand-verified is the exception, not the rule.
-                    S.tempoRideCustom = {
-                        drum: true,
-                        arrs: new Set((S.arrangements || []).map((_, i) => i)),
-                    };
-                }
-                try {
-                    // 'custom' is session-only: its indices are song-shaped,
-                    // so only the presets persist (hydration ignores the rest).
-                    if (b.dataset.scope !== 'custom') {
-                        localStorage.setItem('editor-tempomap-scope', S.tempoRideScope);
-                    }
-                } catch (_) { /* localStorage unavailable */ }
-                _refreshTempoScopeToggle();
-                _refreshTempoSyncInspector();
-                draw();
-            };
-        });
-        wrap.appendChild(el);
-    }
-    return el;
-}
-
-// Rebuild the per-part checklist rows (drum tab + one per arrangement).
-// Only called when the memo signature changed, so full rebuilds are cheap.
-function _renderTempoScopeParts(listEl) {
-    listEl.replaceChildren();
-    const c = S.tempoRideCustom || { drum: true, arrs: null };
-    const mkRow = (label, checked, onChange) => {
-        const row = document.createElement('label');
-        row.className = 'flex items-center gap-1.5 text-gray-300 cursor-pointer';
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.checked = checked;
-        cb.className = 'accent-amber-500';
-        cb.onchange = () => onChange(cb.checked);
-        const span = document.createElement('span');
-        span.className = 'truncate max-w-[11rem]';
-        span.textContent = label;
-        row.append(cb, span);
-        listEl.appendChild(row);
-    };
-    const commit = () => {
-        S.tempoRideScope = 'custom';
-        // Don't tear down and rebuild the rows here: the browser already
-        // reflects this checkbox flip in the DOM, and the model was just
-        // updated to match, so a replaceChildren() would only drop keyboard
-        // focus off the box the user is toggling. Structural changes (mode,
-        // scope, roster) still rebuild via _refreshTempoScopeToggle's memo.
-        _refreshTempoScopeToggle();
-        _refreshTempoSyncInspector();
-        draw();
-    };
-    mkRow('Drum tab', c.drum !== false, (on) => {
-        const cur = S.tempoRideCustom
-            || (S.tempoRideCustom = { drum: true, arrs: new Set((S.arrangements || []).map((_, i) => i)) });
-        cur.drum = on;
-        commit();
-    });
-    (S.arrangements || []).forEach((arr, i) => {
-        if (!arr) return;
-        const name = arr.name || `Arrangement ${i + 1}`;
-        const checked = !(c.arrs instanceof Set) || c.arrs.has(i);
-        mkRow(name, checked, (on) => {
-            const cur = S.tempoRideCustom
-                || (S.tempoRideCustom = { drum: true, arrs: new Set((S.arrangements || []).map((_, k) => k)) });
-            if (!(cur.arrs instanceof Set)) {
-                cur.arrs = new Set((S.arrangements || []).map((_, k) => k));
-            }
-            if (on) cur.arrs.add(i); else cur.arrs.delete(i);
-            commit();
-        });
-    });
-}
-
-let _tempoScopeToggleState = '';  // memo signature; runs every draw()
-
-function _refreshTempoScopeToggle() {
-    const el = _ensureTempoScopeToggle();
-    if (!el) return;
-    // Memoize on the STRUCTURAL inputs that change which rows exist —
-    // _refreshTempoScopeToggle runs on every draw() (every animation frame
-    // during playback), so skip the DOM writes when nothing changed. The
-    // per-part CHECK STATE is deliberately NOT in the signature: a checkbox
-    // flip is already reflected in the DOM and the model, so rebuilding the
-    // rows for it would only drop keyboard focus (see commit() above). A
-    // changed roster (add/remove/rename) or first-time custom seeding does
-    // change the signature and rebuilds the rows.
-    const arrSig = (S.arrangements || []).map(a => (a && a.name) || '').join('|');
-    const sig = `${!!S.tempoMapMode}|${S.tempoRideScope}|${!!S.tempoRideCustom}|${arrSig}`;
-    if (sig === _tempoScopeToggleState) return;
-    _tempoScopeToggleState = sig;
-    el.classList.toggle('hidden', !S.tempoMapMode);
-    el.classList.toggle('flex', !!S.tempoMapMode);
-    el.querySelectorAll('button[data-scope]').forEach(b => {
-        const active = b.dataset.scope === S.tempoRideScope;
-        b.className = 'px-2 py-0.5 rounded ' + (active
-            ? 'bg-amber-600 text-white font-medium'
-            : 'bg-dark-600 text-gray-400 hover:bg-dark-500');
-    });
-    const list = el.querySelector('#editor-tempo-scope-parts');
-    if (list) {
-        const showList = !!S.tempoMapMode && S.tempoRideScope === 'custom';
-        list.classList.toggle('hidden', !showList);
-        list.classList.toggle('flex', showList);
-        if (showList) _renderTempoScopeParts(list);
-    }
-}
-
 // ── Tempo Map interaction ───────────────────────────────────────────
 
 // Return the S.beats index of the sync-point pole (a downbeat) nearest
@@ -16808,10 +16624,17 @@ class TempoGridCmd {
             this.beforeBarSel = S.barSel ? { ...S.barSel } : null;
         }
         S.beats = this.newBeats.map(b => ({ ...b }));
+        // Grid re-INDEXES (insert/delete sync-point, time-sig): note SECONDS
+        // stay put, but a note's beat coordinate changed (a beat was added /
+        // removed before it), so re-lift beats from the unchanged seconds
+        // against the new grid. No reproject — seconds don't move here.
+        _liftAllBeats(S.beats);
         _loopRelockAfterGridChange();
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
+        // Seconds are unchanged; re-lift beats back onto the old indexing.
+        _liftAllBeats(S.beats);
         // Restore the EXACT pre-edit loop selection rather than relocking
         // (relock is not self-inverse — a bar loop [2,4] would resurface as
         // [1,6] after edit+undo).
@@ -17364,243 +17187,169 @@ function _makeTimeRemap(oldBeats, newBeats) {
 
 const _r3 = v => Math.round(v * 1000) / 1000;
 
-// The arrangements an 'all'-scope tempo edit re-times. archive saves only
-// persist the active arrangement (_buildSaveBody ships body.arrangements
-// for sloppak only), so re-timing a non-active arrangement on a archive
-// would be silently lost on reload — limit archive to the active one.
-// A TempoMapCmd freezes this list at construction so capture / remap /
-// restore all agree even if the user switches arrangements later.
-function _tempoRetimeArrangements() {
-    if (S.format === 'archive') {
-        const a = S.arrangements[S.currentArr];
-        return a ? [a] : [];
-    }
-    return (S.arrangements || []).filter(Boolean);
-}
+// (The ride-scope resolver — _tempoRetimeArrangements / _tempoRideResolvePure /
+// _rebaseTempoRideForRemoval / _tempoRideSet — is gone. Under beat-primary a
+// grid flex reprojects EVERY part from its beat, so "which parts ride" is no
+// longer a correctness choice and the per-part picker was removed.)
 
-/* @pure:tempo-ride:start */
-// Resolve which parts ride a tempo edit. `candidateIdxs` are indices into
-// S.arrangements for the arrangements a tempo edit MAY re-time (already
-// archive-limited by _tempoRetimeArrangements). Returns {drum, idxs}:
-//   'drum'   → drum tab only (the legacy default);
-//   'all'    → drum tab + every candidate;
-//   'custom' → the per-part checklist ({drum, arrs:Set}); a missing/null
-//              checklist rides everything (the safe superset), and indices
-//              outside the candidate list are ignored — an archive save
-//              can't re-time an arrangement it would silently drop.
-function _tempoRideResolvePure(scope, custom, candidateIdxs) {
-    const idxs = Array.isArray(candidateIdxs) ? candidateIdxs.slice() : [];
-    if (scope === 'all') return { drum: true, idxs };
-    if (scope !== 'custom' || !custom) return { drum: true, idxs: [] };
-    const set = custom.arrs instanceof Set ? custom.arrs : null;
-    return {
-        drum: custom.drum !== false,
-        idxs: set ? idxs.filter(i => set.has(i)) : idxs,
-    };
-}
-
-// Rebase the per-part ride checklist when the arrangement at `removeIdx`
-// is spliced out of S.arrangements. The checklist stores arrangement
-// INDICES, and a splice renumbers every part after removeIdx, so without
-// this the checked set would slide onto its neighbours — riding a part the
-// user explicitly unchecked (or dropping one they checked). That is exactly
-// the out-of-scope corruption the per-part scope exists to prevent. Indices
-// below removeIdx are unaffected, the removed index is dropped, and indices
-// above it shift down by one. Pure: returns a fresh Set, never mutates.
-function _rebaseTempoRideForRemoval(custom, removeIdx) {
-    if (!custom || !(custom.arrs instanceof Set)) return custom;
-    const rebased = new Set();
-    for (const idx of custom.arrs) {
-        if (idx < removeIdx) rebased.add(idx);
-        else if (idx > removeIdx) rebased.add(idx - 1);
-        // idx === removeIdx → the removed part, dropped.
+// ── Beat-primary note model (charrette §1.3) ────────────────────────
+// note.beat (a float) is the truth; note.time (seconds) is a cache =
+// timeOf(S.beats, beat). Walk EVERY timed object in the song exactly once, so
+// lift / reproject / save-strip can never disagree about the set — drum hits,
+// sections, and per arrangement: notes, chords + chord notes, anchors,
+// anchors_user, handshapes (start+end), phrases. `visit(obj, tf, endKind)`:
+//   tf      — the object's seconds field: 'time' | 'start_time' | 't'
+//   endKind — 'none' (a point), 'sustain' (note: time+sustain → beatEnd),
+//             or 'span' (handshape: end_time → beatEnd)
+// The start-beat field is always `beat`; a duration's end-beat is `beatEnd`.
+// Both are runtime-only caches — _buildSaveBody strips them off the wire.
+function _eachTimed(visit) {
+    if (S.drumTab && Array.isArray(S.drumTab.hits)) {
+        for (const h of S.drumTab.hits) visit(h, 't', 'none');
     }
-    return { drum: custom.drum, arrs: rebased };
-}
-/* @pure:tempo-ride:end */
-
-// Freeze the ride set for one tempo edit: whether drum_tab rides plus the
-// exact arrangement OBJECTS that re-time. TempoMapCmd captures this at
-// construction so capture / remap / restore agree even if the checklist
-// changes or the user switches arrangements before an undo.
-function _tempoRideSet() {
-    const candidates = _tempoRetimeArrangements();
-    const resolved = _tempoRideResolvePure(
-        S.tempoRideScope, S.tempoRideCustom,
-        candidates.map(a => (S.arrangements || []).indexOf(a)));
-    return {
-        drum: resolved.drum,
-        arrs: resolved.idxs.map(i => S.arrangements[i]).filter(Boolean),
-    };
-}
-
-// Apply `remap` to every timed object the ride set re-times: drum_tab hits
-// when ride.drum, the ride's arrangements' notes/chords/anchors/handshapes/
-// phrases, and — in EVERY ride — the section markers.
-function _applyTempoRemap(remap, ride) {
-    if (ride.drum && S.drumTab && Array.isArray(S.drumTab.hits)) {
-        for (const h of S.drumTab.hits) {
-            if (typeof h.t === 'number') h.t = _r3(remap(h.t));
-        }
-        S.drumTabDirty = true;
-    }
-    // Sections mark song structure — they ride the grid in EVERY ride.
-    // The grid moved, so a section marker must follow its measure
-    // regardless of which instruments' notes ride.
-    for (const s of (S.sections || [])) {
-        if (typeof s.start_time === 'number') s.start_time = _r3(remap(s.start_time));
-    }
-    const remapNote = (o) => {
-        if (typeof o.time !== 'number') return;
-        const oldT = o.time;
-        o.time = _r3(remap(oldT));
-        if (typeof o.sustain === 'number' && o.sustain > 0) {
-            o.sustain = Math.max(0, _r3(remap(oldT + o.sustain) - remap(oldT)));
-        }
-    };
-    for (const arr of (ride.arrs || [])) {
+    for (const s of (S.sections || [])) visit(s, 'start_time', 'none');
+    for (const arr of (S.arrangements || [])) {
         if (!arr) continue;
-        for (const n of (arr.notes || [])) remapNote(n);
+        for (const n of (arr.notes || [])) visit(n, 'time', 'sustain');
         for (const ch of (arr.chords || [])) {
-            if (typeof ch.time === 'number') ch.time = _r3(remap(ch.time));
-            for (const cn of (ch.notes || [])) remapNote(cn);
+            visit(ch, 'time', 'none');
+            for (const cn of (ch.notes || [])) visit(cn, 'time', 'sustain');
         }
-        for (const a of (arr.anchors || [])) {
-            if (typeof a.time === 'number') a.time = _r3(remap(a.time));
-        }
-        // PR3d: the authored anchor list lives in `arr.anchors_user`
-        // and is what the backend ships when non-empty. Remap it
-        // alongside the legacy `arr.anchors` so an "all"-scope tempo
-        // edit doesn't leave the two lists out of sync.
-        for (const a of (arr.anchors_user || [])) {
-            if (typeof a.time === 'number') a.time = _r3(remap(a.time));
-        }
-        for (const hs of (arr.handshapes || [])) {
-            // Wire fields are start_time / end_time (lib/song.py
-            // hand_shape_to_wire) — not the camelCase note fields.
-            if (typeof hs.start_time === 'number') hs.start_time = _r3(remap(hs.start_time));
-            if (typeof hs.end_time === 'number') hs.end_time = _r3(remap(hs.end_time));
-        }
-        for (const ph of (arr.phrases || [])) {
-            if (typeof ph.time === 'number') ph.time = _r3(remap(ph.time));
-        }
+        for (const a of (arr.anchors || [])) visit(a, 'time', 'none');
+        for (const a of (arr.anchors_user || [])) visit(a, 'time', 'none');
+        for (const hs of (arr.handshapes || [])) visit(hs, 'start_time', 'span');
+        for (const ph of (arr.phrases || [])) visit(ph, 'time', 'none');
     }
 }
 
-// Snapshot the exact times the ride set re-times, so undo restores them
-// without inverse-remap rounding drift. `ride` is the frozen set the
-// owning TempoMapCmd will also remap and restore.
-// Each captured entry keeps a direct reference to the timed object
-// (`ref`) plus its pre-edit values — NOT an array index. Drum-hit and
-// note arrays get re-sorted by edits outside undo history (e.g.
-// _drumEditorAddHit / AddNoteCmd sort by time), so an index-keyed
-// snapshot could restore times onto the wrong objects. Refs are stable
-// across reordering; objects added later simply aren't in the snapshot,
-// and a removed object's ref is harmlessly detached.
-function _captureScopedTimes(ride) {
-    const snap = { drum: null, arr: null, sections: null };
-    if (ride.drum && S.drumTab && Array.isArray(S.drumTab.hits)) {
-        snap.drum = S.drumTab.hits.map(h => ({ ref: h, t: h.t }));
-    }
-    // Sections ride the grid in every ride — always snapshot them.
-    snap.sections = (S.sections || []).map(s => ({ ref: s, start_time: s.start_time }));
-    snap.arr = (ride.arrs || []).map(arr => {
-        if (!arr) return null;
-        return {
-            notes: (arr.notes || []).map(n => ({ ref: n, time: n.time, sustain: n.sustain })),
-            chords: (arr.chords || []).map(ch => ({
-                ref: ch, time: ch.time,
-                notes: (ch.notes || []).map(cn => ({ ref: cn, time: cn.time, sustain: cn.sustain })),
-            })),
-            anchors: (arr.anchors || []).map(a => ({ ref: a, time: a.time })),
-            anchors_user: (arr.anchors_user || []).map(a => ({ ref: a, time: a.time })),
-            handshapes: (arr.handshapes || []).map(hs => ({
-                ref: hs, start_time: hs.start_time, end_time: hs.end_time,
-            })),
-            phrases: (arr.phrases || []).map(p => ({ ref: p, time: p.time })),
-        };
+// Lift beats from seconds against `fromBeats` (beat = beatOf(time)). Runs on
+// load and at the start of every grid edit — capturing any note edits made
+// since the previous one — so a stale beat can never survive into a reproject.
+function _liftAllBeats(fromBeats) {
+    _eachTimed((o, tf, endKind) => {
+        if (typeof o[tf] !== 'number') return;
+        o.beat = beatOf(fromBeats, o[tf]);
+        if (endKind === 'sustain') {
+            if (typeof o.sustain === 'number' && o.sustain > 0) {
+                o.beatEnd = beatOf(fromBeats, o[tf] + o.sustain);
+            } else {
+                delete o.beatEnd;
+            }
+        } else if (endKind === 'span') {
+            if (typeof o.end_time === 'number') o.beatEnd = beatOf(fromBeats, o.end_time);
+            else delete o.beatEnd;
+        }
     });
-    return snap;
 }
 
-// Restore everything a snapshot captured — the snapshot's own shape says
-// what rode (drum omitted when it didn't ride; arr holds only the ride's
-// arrangements), so no scope parameter is needed.
-function _restoreScopedTimes(snap) {
-    if (snap.drum) {
-        for (const e of snap.drum) { if (e.ref) e.ref.t = e.t; }
-    }
-    // Sections ride in every ride — always restore them.
-    if (snap.sections) {
-        for (const e of snap.sections) { if (e.ref) e.ref.start_time = e.start_time; }
-    }
-    if (snap.arr) {
-        for (const a of snap.arr) {
-            if (!a) continue;
-            for (const e of a.notes) {
-                if (!e.ref) continue;
-                e.ref.time = e.time;
-                e.ref.sustain = e.sustain;
+// Reproject seconds from the stored beats against `toBeats` (time =
+// timeOf(beat)). TOTAL by construction — every timed object, every part — which
+// is what makes a grid flex structurally incapable of drifting a note off its
+// beat (the old ride-scope corruption class is gone: reproject no longer
+// chooses which parts move). Sustain/handshape spans reproject via beatEnd,
+// reproducing the old remap's endpoint arithmetic to the millisecond. An object
+// with no stored beat is skipped (defensive — lift always precedes reproject
+// within a command). Marks the drum tab dirty when it re-times, as the old
+// remap did.
+function _reprojectAll(toBeats) {
+    let drumMoved = false;
+    _eachTimed((o, tf, endKind) => {
+        if (typeof o.beat !== 'number') return;
+        const start = timeOf(toBeats, o.beat);
+        o[tf] = _r3(start);
+        if (endKind === 'sustain') {
+            if (typeof o.beatEnd === 'number') {
+                o.sustain = Math.max(0, _r3(timeOf(toBeats, o.beatEnd) - start));
             }
-            for (const e of a.chords) {
-                if (e.ref) e.ref.time = e.time;
-                for (const cn of e.notes) {
-                    if (!cn.ref) continue;
-                    cn.ref.time = cn.time;
-                    cn.ref.sustain = cn.sustain;
-                }
-            }
-            for (const e of a.anchors) { if (e.ref) e.ref.time = e.time; }
-            // PR3d: restore the authored anchor list too (was
-            // snapshotted alongside `anchors` above).
-            if (a.anchors_user) {
-                for (const e of a.anchors_user) { if (e.ref) e.ref.time = e.time; }
-            }
-            for (const e of a.handshapes) {
-                if (!e.ref) continue;
-                if (e.start_time !== undefined) e.ref.start_time = e.start_time;
-                if (e.end_time !== undefined) e.ref.end_time = e.end_time;
-            }
-            for (const e of a.phrases) { if (e.ref) e.ref.time = e.time; }
+        } else if (endKind === 'span') {
+            if (typeof o.beatEnd === 'number') o.end_time = _r3(timeOf(toBeats, o.beatEnd));
         }
-    }
+        if (tf === 't') drumMoved = true;
+    });
+    if (drumMoved) S.drumTabDirty = true;
 }
 
-// Undo command for one tempo-map edit. Freezes the RIDE SET (drum flag +
-// the exact arrangement objects it re-times) at construction, so capture /
-// remap / restore stay consistent even if the ride checklist is changed or
-// the user switches arrangements between the edit and an undo.
+// ── Save-strip: keep the beat cache OFF the wire ────────────────────
+// beat / beatEnd are runtime-only (charrette §1.9: seconds stay the wire
+// truth, beats are re-derived on load). _buildSaveBody ships live note/chord/
+// section objects, so strip the cache into shallow clones just before the body
+// goes out — the live objects keep their beats for continued editing.
+function _stripBeat(o) {
+    if (!o || typeof o !== 'object') return o;
+    const { beat, beatEnd, ...rest } = o;
+    return rest;
+}
+function _stripBeatsList(list) {
+    return Array.isArray(list) ? list.map(_stripBeat) : list;
+}
+function _stripChordBeats(ch) {
+    const s = _stripBeat(ch);
+    if (Array.isArray(s.notes)) s.notes = s.notes.map(_stripBeat);
+    return s;
+}
+function _stripArrangementBeats(a) {
+    if (!a || typeof a !== 'object') return a;
+    const out = { ...a };
+    if (Array.isArray(out.notes)) out.notes = out.notes.map(_stripBeat);
+    if (Array.isArray(out.chords)) out.chords = out.chords.map(_stripChordBeats);
+    if (Array.isArray(out.anchors)) out.anchors = out.anchors.map(_stripBeat);
+    if (Array.isArray(out.anchors_user)) out.anchors_user = out.anchors_user.map(_stripBeat);
+    if (Array.isArray(out.handshapes)) out.handshapes = out.handshapes.map(_stripBeat);
+    if (Array.isArray(out.phrases)) out.phrases = out.phrases.map(_stripBeat);
+    return out;
+}
+function _stripBeatsFromSaveBody(body) {
+    if (Array.isArray(body.notes)) body.notes = _stripBeatsList(body.notes);
+    if (Array.isArray(body.chords)) body.chords = body.chords.map(_stripChordBeats);
+    if (Array.isArray(body.sections)) body.sections = _stripBeatsList(body.sections);
+    if (Array.isArray(body.anchors_user)) body.anchors_user = _stripBeatsList(body.anchors_user);
+    if (Array.isArray(body.handshapes)) body.handshapes = _stripBeatsList(body.handshapes);
+    if (Array.isArray(body.arrangements)) body.arrangements = body.arrangements.map(_stripArrangementBeats);
+    if (body.drum_tab && Array.isArray(body.drum_tab.hits)) {
+        body.drum_tab = { ...body.drum_tab, hits: _stripBeatsList(body.drum_tab.hits) };
+    }
+    return body;
+}
+
+// (The hand-rolled _captureScopedTimes / _restoreScopedTimes ride-snapshot
+// machinery is gone: beat is invariant across a flex, so TempoMapCmd rollback
+// reprojects seconds from the stored beat — an exact inverse, no snapshot.)
+
+// Undo command for one tempo-map edit (times move, beat indexing fixed).
+// Beat is invariant across the flex: exec lifts every object's beat from the
+// OLD grid (capturing any note edits made since the last grid change), swaps
+// the grid, then reprojects seconds from those beats; rollback reprojects the
+// SAME stored beats against the old grid — an exact inverse, which is why the
+// old capture/restore snapshot machinery is gone. Reproject is TOTAL: every
+// part rides its beat, so no note can be left behind on a stale second (the old
+// ride-scope corruption class).
 class TempoMapCmd {
     constructor(oldBeats, newBeats, label) {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
-        this.ride = _tempoRideSet();
         this.label = label || 'tempo';
-        this.before = null;
         // Snapshot of the loop selection captured on first exec so rollback can
         // restore it verbatim (see rollback).
         this.beforeBarSel = undefined;
     }
     exec() {
-        // Invariant: oldBeats / newBeats have equal length — TempoMapCmd
-        // only carries time-shift (drag) edits. _tempoMapOnDragEnd
-        // validates this before the command is ever created, so a
-        // length-changing edit can't reach here (those use TempoGridCmd).
-        if (!this.before) {
-            this.before = _captureScopedTimes(this.ride);
-        }
+        // Invariant: oldBeats / newBeats have equal length — TempoMapCmd only
+        // carries time-shift (drag) edits. _tempoMapOnDragEnd validates this
+        // before the command is created, so a length-changing edit can't reach
+        // here (those use TempoGridCmd).
         // Snapshot the pre-edit loop selection BEFORE relocking (see rollback);
         // relock re-derives it from the new grid and is not self-inverse.
         if (this.beforeBarSel === undefined) {
             this.beforeBarSel = S.barSel ? { ...S.barSel } : null;
         }
+        _liftAllBeats(this.oldBeats);
         S.beats = this.newBeats.map(b => ({ ...b }));
-        _applyTempoRemap(_makeTimeRemap(this.oldBeats, this.newBeats), this.ride);
+        _reprojectAll(S.beats);
         _loopRelockAfterGridChange();
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
-        _restoreScopedTimes(this.before);
+        _reprojectAll(S.beats);
         // Restore the EXACT pre-edit loop selection rather than relocking
         // (relock is lossy — an undone tempo edit would otherwise move the loop).
         S.barSel = this.beforeBarSel ? { ...this.beforeBarSel } : null;
@@ -18628,7 +18377,6 @@ draw = function () {
     _refreshDrumEditButton();
     _refreshDrumDensityButton();
     _refreshTempoMapButton();
-    _refreshTempoScopeToggle();
     _refreshTempoSyncInspector();
     _refreshPartsViewButton();
     _refreshKeyControls();

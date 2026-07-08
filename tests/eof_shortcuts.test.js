@@ -103,7 +103,9 @@ t('exposes ready and planned shortcut command rows', () => {
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatMinus').key, '[ (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatUnit').key, 'D (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoSetBpm').key, 'B (Tempo Map)');
-    assert.strictEqual(rows.find(r => r.id === 'tempoToggleRideScope').key, 'Ctrl+T (Tempo Map)');
+    // tempoToggleRideScope removed with the ride-scope picker (beat-primary
+    // reprojects every part, so there is no ride choice) — its Ctrl+T is free.
+    assert.strictEqual(rows.find(r => r.id === 'tempoToggleRideScope'), undefined);
     assert.strictEqual(rows.find(r => r.id === 'tempoRebuildGrid').status, 'planned');
 });
 
@@ -179,7 +181,8 @@ t('maps FeedBack Native Tempo Map commands by active mode', () => {
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('d'), 'tempoMap'), 'tempoBeatUnit');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('s'), 'tempoMap'), 'tempoToggleSyncLock');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('t', { shift: true }), 'tempoMap'), 'setTimeSignature');
-    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('t', { ctrl: true }), 'tempoMap'), 'tempoToggleRideScope');
+    // Ctrl+T is unbound in Tempo Map mode now that the ride-scope toggle is gone.
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('t', { ctrl: true }), 'tempoMap'), null);
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('t', { alt: true }), 'tempoMap'), 'tempoFullDialog');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('t', { ctrl: true, shift: true }), 'tempoMap'), 'tempoRebuildGrid');
     assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('Delete'), 'tempoMap'), 'tempoDeleteSync');
@@ -206,7 +209,9 @@ t('maps EOF Tempo Map commands by active mode', () => {
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('d'), 'tempoMap'), 'tempoBeatUnit');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('s'), 'tempoMap'), 'tempoToggleSyncLock');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('t', { shift: true }), 'tempoMap'), 'setTimeSignature');
-    assert.strictEqual(api._editorEofCommandForKeyPure(ev('t', { ctrl: true }), 'tempoMap'), 'tempoToggleRideScope');
+    // Ctrl+T no longer has a Tempo-Map meaning (ride-scope toggle removed); in
+    // the EOF profile it now falls through to the general 't' → toggleTap.
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('t', { ctrl: true }), 'tempoMap'), 'toggleTap');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('t', { alt: true }), 'tempoMap'), 'tempoFullDialog');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('t', { ctrl: true, shift: true }), 'tempoMap'), 'tempoRebuildGrid');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('Insert'), 'tempoMap'), 'tempoInsertSync');

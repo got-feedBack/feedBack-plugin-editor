@@ -52,19 +52,15 @@ function makeCmd(S) {
     const relockMoved = { startTime: 1, endTime: 6, mode: 'bar' };
     const TempoMapCmd = new Function(
         'S', '_loopRelockAfterGridChange', '_renderLoopStrip', '_updateLoopIn3DBtn',
-        '_captureScopedTimes', '_restoreScopedTimes', '_applyTempoRemap',
-        '_makeTimeRemap', '_tempoRideSet',
+        '_liftAllBeats', '_reprojectAll',
         '"use strict";' + cm[0] + '\nreturn TempoMapCmd;'
     )(
         S,
         () => { S.barSel = { ...relockMoved }; },   // lossy relock: moves the loop
         () => {},                                    // _renderLoopStrip
         () => {},                                    // _updateLoopIn3DBtn
-        () => ({ times: 'captured' }),               // _captureScopedTimes
-        () => {},                                    // _restoreScopedTimes
-        () => {},                                    // _applyTempoRemap
-        () => (x => x),                              // _makeTimeRemap
-        () => ({ drum: true, arrs: [] })             // _tempoRideSet (frozen ride)
+        () => {},                                    // _liftAllBeats (no-op: this test checks loop/barSel undo)
+        () => {}                                     // _reprojectAll
     );
     return { TempoMapCmd, relockMoved };
 }
