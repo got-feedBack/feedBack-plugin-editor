@@ -24,6 +24,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tests: `tests/beat_converter.test.js`.
 
 ### Added
+- **The piano roll's left axis is now a real keyboard.** In keys/piano view
+  the note-label column is drawn as an actual keyboard laid on its side —
+  white/black keys shaded like the real thing (black keys inset from the front
+  edge so the white tails read between them), C rows labelled with their octave,
+  and separators only where two white keys meet (E–F, B–C). **Click a key to
+  hear its pitch**: a gentle, hearing-safe audition voice (soft attack, low
+  peak, routed through the master limiter, ~⅓-second decay) plays the row's
+  equal-tempered pitch. Left-click only, so right-click still opens the context
+  menu; it never adds or selects a note, and it's silent until the audio
+  context is running (autoplay-gated). String view is unchanged. Tests:
+  `tests/keyboard_gutter.test.js`.
 - **Piano roll: cycle a fretted note through its same-pitch positions
   (Shift+↑/↓).** A fretted part shown in the piano roll is read-only — the
   roll's Y axis is pitch, so the string axis that Shift+↑/↓ walks in String
