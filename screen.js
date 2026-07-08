@@ -982,7 +982,7 @@ function isKeysMode() {
 function _rollReadOnly() { return isKeysMode() && !isKeysArr(); }
 
 function _rollLockNotice() {
-    setStatus('Piano roll is read-only for fretted parts — switch to String view to edit (suggest-position editing is coming)');
+    setStatus('Piano roll is read-only for fretted parts — Shift+↑/↓ cycles same-pitch positions; switch to String view to edit (suggest-position editing is coming)');
 }
 
 // Sounding-pitch context for showing a FRETTED part in the roll — hoisted
@@ -2445,7 +2445,7 @@ function drawNotes(w) {
         if (n.time + (n.sustain || 0) < st || n.time > et) continue;
         if (keysMode) {
             const midi = _rollMidiForNote(n, rctx);
-            if (midi !== null) _drawPianoNote(n, S.sel.has(i), hl, midi);
+            if (midi !== null) _drawPianoNote(n, S.sel.has(i), hl, midi, !!rctx);
         } else {
             _drawNote(n, S.sel.has(i), ghl);
         }
@@ -2530,7 +2530,7 @@ function _drawNote(n, selected, ghl) {
     }
 }
 
-function _drawPianoNote(n, selected, hl, midi) {
+function _drawPianoNote(n, selected, hl, midi, fretted) {
     // `midi` is resolved by the caller through _rollMidiForNote — keys
     // packing or fretted sounding pitch — so this renderer never guesses.
     if (midi === undefined) midi = noteToMidi(n.string, n.fret);
@@ -2541,7 +2541,14 @@ function _drawPianoNote(n, selected, hl, midi) {
     const sw = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
     const h = PIANO_LANE_H - 2;
     const octave = Math.floor(midi / 12);
-    const color = PIANO_OCTAVE_COLORS[Math.min(octave, PIANO_OCTAVE_COLORS.length - 1)];
+    // Fretted-in-roll notes wear their STRING's lane color, not the octave
+    // color: the Y axis already says the pitch, so the color's job is to
+    // say WHERE the pitch is played — which is exactly what the Shift+↑/↓
+    // position cycle changes, making a cycle step visible as a color flip
+    // at a fixed Y (VA.5).
+    const color = fretted
+        ? colorForLane(strToLane(n.string))
+        : PIANO_OCTAVE_COLORS[Math.min(octave, PIANO_OCTAVE_COLORS.length - 1)];
 
     // In-key highlight: dim out-of-key notes (lower body alpha) so chromatic
     // notes read as chromatic without being hidden or flagged as wrong.
@@ -2567,13 +2574,17 @@ function _drawPianoNote(n, selected, hl, midi) {
     ctx.roundRect(x, y, sw, h, 2);
     ctx.stroke();
 
-    // Note name (only if enough space)
+    // Note name — or, for fretted-in-roll, the s·f position chip (the
+    // note name is redundant with the Y axis there; string·fret is the
+    // one fact the roll would otherwise hide). Raw string index, matching
+    // the Strings modal's "String N" labels.
     if (sw >= 20 && h >= 8) {
         ctx.fillStyle = '#000';
         ctx.font = `bold ${Math.min(9, h - 1)}px monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(midiToNote(midi), x + Math.min(sw, 24) / 2, y + h / 2);
+        const label = fretted ? (n.string + '·' + n.fret) : midiToNote(midi);
+        ctx.fillText(label, x + Math.min(sw, 24) / 2, y + h / 2);
     }
 }
 
@@ -2683,8 +2694,13 @@ class EditHistory {
         // pass through even while a fretted part is shown in the roll —
         // otherwise switching an unrelated part to the roll would freeze
         // tempo/drum editing. typeof-guarded so extracted-test envs without
-        // the view layer are unaffected.
-        if (cmd.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+        // the view layer are unaffected. `pitchPreserving` commands (the
+        // VA.5 position cycle) are the one deliberate carve-out: they can
+        // never change what a note SOUNDS like — only which string/fret
+        // plays it — so the "no silent pitch writes" contract the lock
+        // protects is unbreakable by construction. Nothing else opts out.
+        if (cmd.songScope !== true && cmd.pitchPreserving !== true
+            && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
             if (typeof _rollLockNotice === 'function') _rollLockNotice();
             return;
         }
@@ -2711,8 +2727,10 @@ class EditHistory {
         // above has already switched to the command's arrangement, so this
         // evaluates read-only against the part the rollback would touch.
         // Song-scope commands (drum/tempo) don't touch the fretted chart and
-        // undo normally.
-        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+        // undo normally; pitchPreserving commands (VA.5 position cycle)
+        // can't change pitch and round-trip freely (see exec).
+        if (c.songScope !== true && c.pitchPreserving !== true
+            && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
             if (typeof _rollLockNotice === 'function') _rollLockNotice();
             return;
         }
@@ -2724,8 +2742,10 @@ class EditHistory {
         const c = this.redo[this.redo.length - 1];
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
         // Read-only roll (V4): re-exec of a NOTE-scope command writes the
-        // fretted chart that is read-only in the roll — same lock as doUndo.
-        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+        // fretted chart that is read-only in the roll — same lock (and same
+        // pitchPreserving carve-out) as doUndo.
+        if (c.songScope !== true && c.pitchPreserving !== true
+            && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
             if (typeof _rollLockNotice === 'function') _rollLockNotice();
             return;
         }
@@ -3263,6 +3283,47 @@ function _canMoveString(direction) {
     return true;
 }
 
+/* @pure:position-cycle:start */
+// Every {string, fret} on this arrangement that SOUNDS the same pitch as
+// (stringIdx, fret) — the cycle set for pitch-preserving position moves
+// (VA.5). The pitch comparison deliberately uses the capo-less absolute
+// pitch: both sides live on the same arrangement so the capo cancels —
+// the same pairing _absolutePitch/_soundingPitchPure document (#115);
+// adding the capo to both sides would change nothing, adding it to one
+// would be the double-count bug those comments warn about. Candidates are
+// integer frets 0–24 on existing strings, ordered low string → high; the
+// note's own position is always a member, so steppers walk the list order
+// and wrap. Returns [] when the source position is malformed.
+function _cyclePositionCandidatesPure(openMidi, tuning, laneCount, stringIdx, fret) {
+    if (!Array.isArray(openMidi) || openMidi[stringIdx] === undefined) return [];
+    const f = Number(fret);
+    if (!Number.isInteger(f)) return [];
+    const offAt = s => (Array.isArray(tuning) && tuning[s] !== undefined)
+        ? (Number(tuning[s]) || 0)
+        : 0;
+    const pitch = openMidi[stringIdx] + offAt(stringIdx) + f;
+    const out = [];
+    for (let s = 0; s < laneCount; s++) {
+        if (openMidi[s] === undefined) continue;
+        const tf = pitch - openMidi[s] - offAt(s);
+        if (Number.isInteger(tf) && tf >= 0 && tf <= 24) out.push({ string: s, fret: tf });
+    }
+    return out;
+}
+
+// One cycle step through the candidate list: +1 = next-higher string
+// index (wrapping), −1 = previous. Null = nothing to do — the note has a
+// single valid position, or its current position isn't in the list
+// (corrupt data; refusing beats guessing).
+function _cycleStepPure(candidates, curString, curFret, direction) {
+    if (!Array.isArray(candidates) || candidates.length < 2) return null;
+    const i = candidates.findIndex(c => c.string === curString && c.fret === curFret);
+    if (i < 0) return null;
+    const len = candidates.length;
+    return candidates[(i + (direction > 0 ? 1 : -1) + len) % len];
+}
+/* @pure:position-cycle:end */
+
 // Undo-able command: move a set of notes to adjacent strings, adjusting
 // frets to preserve absolute pitch.  `moves` is an array of
 // { index, oldString, oldFret, newString, newFret }.
@@ -3340,6 +3401,53 @@ function _execMoveString(direction) {
     _editBlipAt();
     draw();
     _renderInspector();
+}
+
+// Shift+↑/↓ in the piano roll on a FRETTED part (VA.5): cycle each
+// selected note independently through its valid same-pitch positions.
+// The roll's Y axis is pitch, so the string axis those keys move along in
+// String view doesn't exist here — cycling is what "move up/down" honestly
+// means. A confirmed-by-choice write that can never change pitch, so the
+// command carries `pitchPreserving` and passes the read-only-roll lock
+// (see EditHistory.exec); everything else stays locked until the
+// suggest-position writer lands. Single-position notes are skipped, not
+// refused — a multi-select cycles what it can.
+function _execCyclePosition(direction) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return true; }
+    if (isKeysArr()) return true;           // keys DATA: no positions to cycle
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return true;
+    const laneCount = _stringCountFor(arr);
+    const rawTuning = Array.isArray(arr.tuning) ? arr.tuning : [];
+    const tuning = rawTuning.slice(0, laneCount);
+    while (tuning.length < laneCount) tuning.push(0);
+    const openMidi = _openMidiForArr(arr, laneCount);
+    const nn = notes();
+    const moves = [];
+    for (const idx of idxs) {
+        const n = nn[idx];
+        if (!n) continue;
+        const next = _cycleStepPure(
+            _cyclePositionCandidatesPure(openMidi, tuning, laneCount, n.string, n.fret),
+            n.string, n.fret, direction);
+        if (!next) continue;
+        moves.push({
+            index: idx,
+            oldString: n.string,
+            oldFret: n.fret,
+            newString: next.string,
+            newFret: next.fret,
+        });
+    }
+    if (!moves.length) { setStatus('No alternate positions for the selection.'); return true; }
+    const cmd = new MoveToStringCmd(moves);
+    cmd.pitchPreserving = true;
+    S.history.exec(cmd);
+    _editBlipAt();
+    draw();
+    _renderInspector();
+    return true;
 }
 
 // Extend an arrangement's string count by one. `position` is 'low' for
@@ -4254,8 +4362,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'unpitchedSlide', label: 'Edit unpitched slide', group: 'Notes', status: 'ready', keys: { feedback: 'U', eof: 'Ctrl+U' } },
     { id: 'moveStringUp', label: 'Move selection up one string', group: 'Notes', status: 'ready', keys: { feedback: 'Up', eof: 'Up' } },
     { id: 'moveStringDown', label: 'Move selection down one string', group: 'Notes', status: 'ready', keys: { feedback: 'Down', eof: 'Down' } },
-    { id: 'transposeStringUp', label: 'Move selection up preserving pitch', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Up', eof: 'Shift+Up' } },
-    { id: 'transposeStringDown', label: 'Move selection down preserving pitch', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Down', eof: 'Shift+Down' } },
+    { id: 'transposeStringUp', label: 'Move selection up preserving pitch (cycles positions in the roll)', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Up', eof: 'Shift+Up' } },
+    { id: 'transposeStringDown', label: 'Move selection down preserving pitch (cycles positions in the roll)', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Down', eof: 'Shift+Down' } },
     { id: 'slideUp', label: 'Pitched slide up', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+Up', eof: 'Ctrl+Up' } },
     { id: 'slideDown', label: 'Pitched slide down', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+Down', eof: 'Ctrl+Down' } },
     { id: 'toggleHammerOn', label: 'Toggle hammer-on', group: 'Techniques', status: 'ready', keys: { feedback: 'H', eof: 'H' } },
@@ -5550,8 +5658,15 @@ function _editorRunEofCommand(cmd) {
     case 'moveStringDown': return _execMoveStringSameFret(-1);
     case 'slideUp': return _editorSetPitchedSlideByStep(+1);
     case 'slideDown': return _editorSetPitchedSlideByStep(-1);
-    case 'transposeStringUp': _execMoveString(+1); return true;
-    case 'transposeStringDown': _execMoveString(-1); return true;
+    // In the roll on a fretted part the string axis Shift+↑/↓ walks in
+    // String view doesn't exist (Y is pitch), so the same keys cycle the
+    // selection through valid same-pitch POSITIONS instead (VA.5).
+    case 'transposeStringUp':
+        if (_rollReadOnly()) return _execCyclePosition(+1);
+        _execMoveString(+1); return true;
+    case 'transposeStringDown':
+        if (_rollReadOnly()) return _execCyclePosition(-1);
+        _execMoveString(-1); return true;
     case 'toggleHammerOn': return _editorToggleTechnique('hammer_on');
     case 'togglePullOff': return _editorToggleTechnique('pull_off');
     case 'toggleTap': return _editorToggleTechnique('tap');
