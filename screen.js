@@ -982,7 +982,7 @@ function isKeysMode() {
 function _rollReadOnly() { return isKeysMode() && !isKeysArr(); }
 
 function _rollLockNotice() {
-    setStatus('Piano roll is read-only for fretted parts — switch to String view to edit (suggest-position editing is coming)');
+    setStatus('Piano roll is read-only for fretted parts — Shift+↑/↓ cycles same-pitch positions; switch to String view to edit (suggest-position editing is coming)');
 }
 
 // Sounding-pitch context for showing a FRETTED part in the roll — hoisted
@@ -1014,6 +1014,24 @@ function pianoLaneCount() { return pianoRange.hi - pianoRange.lo + 1; }
 
 function midiToNote(midi) { return PIANO_NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1); }
 function isBlackKey(midi) { const pc = midi % 12; return pc===1||pc===3||pc===6||pc===8||pc===10; }
+/* @pure:midi-freq:start */
+// Equal-tempered frequency (Hz) of a MIDI note: A4 (69) = 440. Used by the
+// keyboard-gutter audition (click a key → hear its pitch). Returns 0 for a
+// non-finite input so a caller never schedules a NaN-frequency oscillator.
+function midiToFreq(midi) {
+    const m = Number(midi);
+    if (!Number.isFinite(m)) return 0;
+    return 440 * Math.pow(2, (m - 69) / 12);
+}
+
+// Is (x, y) inside the piano keyboard gutter — the LABEL_W-wide column beside
+// the roll's pitch lanes? Used to route a click to pitch audition instead of
+// the note-edit pipeline. Half-open on every edge so it never overlaps the
+// note area (x >= labelW) or the waveform/beat strips above/below.
+function _inKeyboardGutterPure(x, y, labelW, waveformTop, laneBottom) {
+    return x >= 0 && x < labelW && y >= waveformTop && y < laneBottom;
+}
+/* @pure:midi-freq:end */
 
 function noteToMidi(string, fret) { return string * 24 + fret; }
 function midiToString(midi) { return Math.floor(midi / 24); }
@@ -1069,18 +1087,13 @@ function updatePianoRange(expandOnly = false) {
 function snapTime(t) {
     const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
     if (!sv || S.beats.length < 2) return t;
-    // Find surrounding beat
-    let bi = 0;
-    for (let i = 0; i < S.beats.length - 1; i++) {
-        if (S.beats[i].time <= t) bi = i; else break;
-    }
-    const bt = S.beats[bi].time;
-    const nt = bi < S.beats.length - 1 ? S.beats[bi + 1].time : bt + 0.5;
-    const bd = nt - bt;
+    // Snap in the beat domain, then convert back (charrette §1.1):
+    // snap = timeOf(round(beatOf(t)·subs)/subs). Sharing the converter makes the
+    // snap grid exactly the tempo-map grid — identical to the old inline
+    // surrounding-gap subdivide (round(β·subs) keeps the whole-beat part fixed
+    // and quantises the fraction), incl. the pre-first / past-last extrapolation.
     const subs = _editorSnapSubdivisionsPure(sv);
-    const sd = bd / subs;
-    const idx = Math.round((t - bt) / sd);
-    return bt + idx * sd;
+    return timeOf(S.beats, Math.round(beatOf(S.beats, t) * subs) / subs);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -2390,24 +2403,54 @@ function drawLabels(w) {
     }
 }
 
+// The left axis of the piano roll is drawn as an actual keyboard gutter: one
+// key per MIDI row, white/black shaded like a real keyboard laid on its side,
+// C rows labelled with their octave. It's clickable (see onMouseDown) to
+// audition the pitch. Black keys are inset from the front (right) edge so the
+// white keys' tails read between them, exactly as on a side-on keyboard.
+const _GUTTER_BLACK_INSET = 0.42;  // fraction of LABEL_W the black key leaves as white tail on the right
 function drawPianoLabels() {
-    // MIDI note labels on the left axis
     ctx.font = '8px monospace';
-    ctx.textAlign = 'center';
+    ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
+    const blackW = LABEL_W * (1 - _GUTTER_BLACK_INSET);
     for (let midi = pianoRange.lo; midi <= pianoRange.hi; midi++) {
         const y = midiToY(midi);
-        ctx.fillStyle = '#0a0a1a';
+        const black = isBlackKey(midi);
+        // White base for every row (the black key's tail shows on the right).
+        ctx.fillStyle = '#c9c9d6';
         ctx.fillRect(0, y, LABEL_W, PIANO_LANE_H);
-
-        // Only label C notes and F notes to avoid clutter
-        if (midi % 12 === 0 || midi % 12 === 5) {
-            const octave = Math.floor(midi / 12) - 1;
-            const color = PIANO_OCTAVE_COLORS[Math.min(octave + 1, PIANO_OCTAVE_COLORS.length - 1)];
-            ctx.fillStyle = color;
-            ctx.fillText(midiToNote(midi), LABEL_W / 2, y + PIANO_LANE_H / 2);
+        if (black) {
+            // Black key: a darker bar from the back (left) edge, leaving the
+            // white tail on the right — the side-on keyboard read.
+            ctx.fillStyle = '#1b1b2a';
+            ctx.fillRect(0, y, blackW, PIANO_LANE_H);
+        }
+        // Row separators only between two adjacent WHITE keys (E–F, B–C) — the
+        // spots a real keyboard has no black key between, so the boundary needs
+        // a drawn line to read as two distinct keys.
+        if (!black && !isBlackKey(midi + 1) && midi < pianoRange.hi) {
+            ctx.strokeStyle = '#9a9aac';
+            ctx.lineWidth = 0.5;
+            ctx.beginPath();
+            ctx.moveTo(0, y + 0.5);
+            ctx.lineTo(LABEL_W, y + 0.5);
+            ctx.stroke();
+        }
+        // Label C rows with their octave (e.g. C4), on the white tail so it
+        // stays legible whether or not the row is a black key.
+        if (midi % 12 === 0 && PIANO_LANE_H >= 7) {
+            ctx.fillStyle = '#3a3a4a';
+            ctx.fillText(midiToNote(midi), LABEL_W - blackW + 2, y + PIANO_LANE_H / 2);
         }
     }
+    // Front-edge divider so the keyboard reads as a panel distinct from the grid.
+    ctx.strokeStyle = '#2a2a55';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(LABEL_W - 0.5, WAVEFORM_H);
+    ctx.lineTo(LABEL_W - 0.5, midiToY(pianoRange.lo) + PIANO_LANE_H);
+    ctx.stroke();
 }
 
 function drawNotes(w) {
@@ -2445,7 +2488,7 @@ function drawNotes(w) {
         if (n.time + (n.sustain || 0) < st || n.time > et) continue;
         if (keysMode) {
             const midi = _rollMidiForNote(n, rctx);
-            if (midi !== null) _drawPianoNote(n, S.sel.has(i), hl, midi);
+            if (midi !== null) _drawPianoNote(n, S.sel.has(i), hl, midi, !!rctx);
         } else {
             _drawNote(n, S.sel.has(i), ghl);
         }
@@ -2530,7 +2573,7 @@ function _drawNote(n, selected, ghl) {
     }
 }
 
-function _drawPianoNote(n, selected, hl, midi) {
+function _drawPianoNote(n, selected, hl, midi, fretted) {
     // `midi` is resolved by the caller through _rollMidiForNote — keys
     // packing or fretted sounding pitch — so this renderer never guesses.
     if (midi === undefined) midi = noteToMidi(n.string, n.fret);
@@ -2541,7 +2584,14 @@ function _drawPianoNote(n, selected, hl, midi) {
     const sw = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
     const h = PIANO_LANE_H - 2;
     const octave = Math.floor(midi / 12);
-    const color = PIANO_OCTAVE_COLORS[Math.min(octave, PIANO_OCTAVE_COLORS.length - 1)];
+    // Fretted-in-roll notes wear their STRING's lane color, not the octave
+    // color: the Y axis already says the pitch, so the color's job is to
+    // say WHERE the pitch is played — which is exactly what the Shift+↑/↓
+    // position cycle changes, making a cycle step visible as a color flip
+    // at a fixed Y (VA.5).
+    const color = fretted
+        ? colorForLane(strToLane(n.string))
+        : PIANO_OCTAVE_COLORS[Math.min(octave, PIANO_OCTAVE_COLORS.length - 1)];
 
     // In-key highlight: dim out-of-key notes (lower body alpha) so chromatic
     // notes read as chromatic without being hidden or flagged as wrong.
@@ -2567,13 +2617,17 @@ function _drawPianoNote(n, selected, hl, midi) {
     ctx.roundRect(x, y, sw, h, 2);
     ctx.stroke();
 
-    // Note name (only if enough space)
+    // Note name — or, for fretted-in-roll, the s·f position chip (the
+    // note name is redundant with the Y axis there; string·fret is the
+    // one fact the roll would otherwise hide). Raw string index, matching
+    // the Strings modal's "String N" labels.
     if (sw >= 20 && h >= 8) {
         ctx.fillStyle = '#000';
         ctx.font = `bold ${Math.min(9, h - 1)}px monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(midiToNote(midi), x + Math.min(sw, 24) / 2, y + h / 2);
+        const label = fretted ? (n.string + '·' + n.fret) : midiToNote(midi);
+        ctx.fillText(label, x + Math.min(sw, 24) / 2, y + h / 2);
     }
 }
 
@@ -2683,8 +2737,13 @@ class EditHistory {
         // pass through even while a fretted part is shown in the roll —
         // otherwise switching an unrelated part to the roll would freeze
         // tempo/drum editing. typeof-guarded so extracted-test envs without
-        // the view layer are unaffected.
-        if (cmd.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+        // the view layer are unaffected. `pitchPreserving` commands (the
+        // VA.5 position cycle) are the one deliberate carve-out: they can
+        // never change what a note SOUNDS like — only which string/fret
+        // plays it — so the "no silent pitch writes" contract the lock
+        // protects is unbreakable by construction. Nothing else opts out.
+        if (cmd.songScope !== true && cmd.pitchPreserving !== true
+            && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
             if (typeof _rollLockNotice === 'function') _rollLockNotice();
             return;
         }
@@ -2711,8 +2770,10 @@ class EditHistory {
         // above has already switched to the command's arrangement, so this
         // evaluates read-only against the part the rollback would touch.
         // Song-scope commands (drum/tempo) don't touch the fretted chart and
-        // undo normally.
-        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+        // undo normally; pitchPreserving commands (VA.5 position cycle)
+        // can't change pitch and round-trip freely (see exec).
+        if (c.songScope !== true && c.pitchPreserving !== true
+            && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
             if (typeof _rollLockNotice === 'function') _rollLockNotice();
             return;
         }
@@ -2724,8 +2785,10 @@ class EditHistory {
         const c = this.redo[this.redo.length - 1];
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
         // Read-only roll (V4): re-exec of a NOTE-scope command writes the
-        // fretted chart that is read-only in the roll — same lock as doUndo.
-        if (c.songScope !== true && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
+        // fretted chart that is read-only in the roll — same lock (and same
+        // pitchPreserving carve-out) as doUndo.
+        if (c.songScope !== true && c.pitchPreserving !== true
+            && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
             if (typeof _rollLockNotice === 'function') _rollLockNotice();
             return;
         }
@@ -3263,6 +3326,47 @@ function _canMoveString(direction) {
     return true;
 }
 
+/* @pure:position-cycle:start */
+// Every {string, fret} on this arrangement that SOUNDS the same pitch as
+// (stringIdx, fret) — the cycle set for pitch-preserving position moves
+// (VA.5). The pitch comparison deliberately uses the capo-less absolute
+// pitch: both sides live on the same arrangement so the capo cancels —
+// the same pairing _absolutePitch/_soundingPitchPure document (#115);
+// adding the capo to both sides would change nothing, adding it to one
+// would be the double-count bug those comments warn about. Candidates are
+// integer frets 0–24 on existing strings, ordered low string → high; the
+// note's own position is always a member, so steppers walk the list order
+// and wrap. Returns [] when the source position is malformed.
+function _cyclePositionCandidatesPure(openMidi, tuning, laneCount, stringIdx, fret) {
+    if (!Array.isArray(openMidi) || openMidi[stringIdx] === undefined) return [];
+    const f = Number(fret);
+    if (!Number.isInteger(f)) return [];
+    const offAt = s => (Array.isArray(tuning) && tuning[s] !== undefined)
+        ? (Number(tuning[s]) || 0)
+        : 0;
+    const pitch = openMidi[stringIdx] + offAt(stringIdx) + f;
+    const out = [];
+    for (let s = 0; s < laneCount; s++) {
+        if (openMidi[s] === undefined) continue;
+        const tf = pitch - openMidi[s] - offAt(s);
+        if (Number.isInteger(tf) && tf >= 0 && tf <= 24) out.push({ string: s, fret: tf });
+    }
+    return out;
+}
+
+// One cycle step through the candidate list: +1 = next-higher string
+// index (wrapping), −1 = previous. Null = nothing to do — the note has a
+// single valid position, or its current position isn't in the list
+// (corrupt data; refusing beats guessing).
+function _cycleStepPure(candidates, curString, curFret, direction) {
+    if (!Array.isArray(candidates) || candidates.length < 2) return null;
+    const i = candidates.findIndex(c => c.string === curString && c.fret === curFret);
+    if (i < 0) return null;
+    const len = candidates.length;
+    return candidates[(i + (direction > 0 ? 1 : -1) + len) % len];
+}
+/* @pure:position-cycle:end */
+
 // Undo-able command: move a set of notes to adjacent strings, adjusting
 // frets to preserve absolute pitch.  `moves` is an array of
 // { index, oldString, oldFret, newString, newFret }.
@@ -3340,6 +3444,53 @@ function _execMoveString(direction) {
     _editBlipAt();
     draw();
     _renderInspector();
+}
+
+// Shift+↑/↓ in the piano roll on a FRETTED part (VA.5): cycle each
+// selected note independently through its valid same-pitch positions.
+// The roll's Y axis is pitch, so the string axis those keys move along in
+// String view doesn't exist here — cycling is what "move up/down" honestly
+// means. A confirmed-by-choice write that can never change pitch, so the
+// command carries `pitchPreserving` and passes the read-only-roll lock
+// (see EditHistory.exec); everything else stays locked until the
+// suggest-position writer lands. Single-position notes are skipped, not
+// refused — a multi-select cycles what it can.
+function _execCyclePosition(direction) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus('Select notes first'); return true; }
+    if (isKeysArr()) return true;           // keys DATA: no positions to cycle
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return true;
+    const laneCount = _stringCountFor(arr);
+    const rawTuning = Array.isArray(arr.tuning) ? arr.tuning : [];
+    const tuning = rawTuning.slice(0, laneCount);
+    while (tuning.length < laneCount) tuning.push(0);
+    const openMidi = _openMidiForArr(arr, laneCount);
+    const nn = notes();
+    const moves = [];
+    for (const idx of idxs) {
+        const n = nn[idx];
+        if (!n) continue;
+        const next = _cycleStepPure(
+            _cyclePositionCandidatesPure(openMidi, tuning, laneCount, n.string, n.fret),
+            n.string, n.fret, direction);
+        if (!next) continue;
+        moves.push({
+            index: idx,
+            oldString: n.string,
+            oldFret: n.fret,
+            newString: next.string,
+            newFret: next.fret,
+        });
+    }
+    if (!moves.length) { setStatus('No alternate positions for the selection.'); return true; }
+    const cmd = new MoveToStringCmd(moves);
+    cmd.pitchPreserving = true;
+    S.history.exec(cmd);
+    _editBlipAt();
+    draw();
+    _renderInspector();
+    return true;
 }
 
 // Extend an arrangement's string count by one. `position` is 'low' for
@@ -3691,6 +3842,18 @@ function onMouseDown(e) {
     if (S.partsViewMode) {
         _partsViewOnMouseDown(e, x, y);
         return;
+    }
+
+    // Keyboard gutter (keys/piano view): a click in the left key column
+    // auditions that row's pitch — no selection, no edit. Left button only so
+    // right-click still opens the context menu. Ignored in String view (the
+    // gutter shows string labels there, not keys).
+    if (e.button === 0 && isKeysMode()) {
+        const laneBottom = WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H;
+        if (_inKeyboardGutterPure(x, y, LABEL_W, WAVEFORM_H, laneBottom)) {
+            _auditionPitch(yToMidi(y));
+            return;
+        }
     }
 
     // Tone lane sits in the top TONE_LANE_H px (an overlay on the
@@ -4153,6 +4316,12 @@ function onDblClick(e) {
         : WAVEFORM_H + lanes() * LANE_H;
     if (y < WAVEFORM_H || y > laneBottom) return;
 
+    // The keyboard gutter (keys/piano view) is audition-only — see onMouseDown.
+    // A double-click there must NOT open the Add Note dialog; the gutter never
+    // adds or selects a note. String view has no key gutter, so this is scoped
+    // to keys mode where laneBottom already equals the gutter's lower edge.
+    if (keysMode && _inKeyboardGutterPure(x, y, LABEL_W, WAVEFORM_H, laneBottom)) return;
+
     const idx = hitNote(x, y);
     if (idx >= 0) return; // double-click on existing note = no-op
 
@@ -4225,6 +4394,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleDrumDensity', label: 'Toggle drum row density (Full / Compact)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleFollow', label: 'Toggle follow playhead', group: 'View', status: 'ready', keys: { feedback: 'Shift+L', eof: 'Shift+L' } },
     { id: 'renamePart', label: 'Rename current part', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'movePartEarlier', label: 'Move current part earlier', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'movePartLater', label: 'Move current part later', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
@@ -4254,8 +4425,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'unpitchedSlide', label: 'Edit unpitched slide', group: 'Notes', status: 'ready', keys: { feedback: 'U', eof: 'Ctrl+U' } },
     { id: 'moveStringUp', label: 'Move selection up one string', group: 'Notes', status: 'ready', keys: { feedback: 'Up', eof: 'Up' } },
     { id: 'moveStringDown', label: 'Move selection down one string', group: 'Notes', status: 'ready', keys: { feedback: 'Down', eof: 'Down' } },
-    { id: 'transposeStringUp', label: 'Move selection up preserving pitch', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Up', eof: 'Shift+Up' } },
-    { id: 'transposeStringDown', label: 'Move selection down preserving pitch', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Down', eof: 'Shift+Down' } },
+    { id: 'transposeStringUp', label: 'Move selection up preserving pitch (cycles positions in the roll)', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Up', eof: 'Shift+Up' } },
+    { id: 'transposeStringDown', label: 'Move selection down preserving pitch (cycles positions in the roll)', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+Down', eof: 'Shift+Down' } },
     { id: 'slideUp', label: 'Pitched slide up', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+Up', eof: 'Ctrl+Up' } },
     { id: 'slideDown', label: 'Pitched slide down', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+Down', eof: 'Ctrl+Down' } },
     { id: 'toggleHammerOn', label: 'Toggle hammer-on', group: 'Techniques', status: 'ready', keys: { feedback: 'H', eof: 'H' } },
@@ -5522,6 +5693,8 @@ function _editorRunEofCommand(cmd) {
     case 'toggleDrumDensity': return _editorToggleDrumDensity();
     case 'showTabPreview': return _editorShowTabPreview();
     case 'cycleViewMode': return _editorCycleViewMode();
+    case 'movePartEarlier': return _editorMovePart(-1);
+    case 'movePartLater': return _editorMovePart(+1);
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
     case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
     case 'importMidi': _editorOpenImportMidi(); return true;
@@ -5550,8 +5723,15 @@ function _editorRunEofCommand(cmd) {
     case 'moveStringDown': return _execMoveStringSameFret(-1);
     case 'slideUp': return _editorSetPitchedSlideByStep(+1);
     case 'slideDown': return _editorSetPitchedSlideByStep(-1);
-    case 'transposeStringUp': _execMoveString(+1); return true;
-    case 'transposeStringDown': _execMoveString(-1); return true;
+    // In the roll on a fretted part the string axis Shift+↑/↓ walks in
+    // String view doesn't exist (Y is pitch), so the same keys cycle the
+    // selection through valid same-pitch POSITIONS instead (VA.5).
+    case 'transposeStringUp':
+        if (_rollReadOnly()) return _execCyclePosition(+1);
+        _execMoveString(+1); return true;
+    case 'transposeStringDown':
+        if (_rollReadOnly()) return _execCyclePosition(-1);
+        _execMoveString(-1); return true;
     case 'toggleHammerOn': return _editorToggleTechnique('hammer_on');
     case 'togglePullOff': return _editorToggleTechnique('pull_off');
     case 'toggleTap': return _editorToggleTechnique('tap');
@@ -7136,6 +7316,37 @@ function _editBlipAt() {
         _guideVoices = _guideVoices.filter(v => v.until > nowCtx);
     }
 }
+
+// Audition one pitch for the keyboard gutter (click a piano key → hear it).
+// A gentle, hearing-safe voice through the master limiter (soft attack, ~0.28
+// peak, ~320 ms decay) — the same envelope shape as the edit blip but pitched
+// and a touch longer, so it reads as a note rather than a tick. No-op when the
+// context isn't running (autoplay-gated) or the pitch is out of audible range.
+function _auditionPitch(midi) {
+    if (!S.audioCtx || S.audioCtx.state !== 'running') return;
+    const freq = midiToFreq(midi);
+    if (!(freq > 0) || freq > 20000) return;
+    const bus = _ensureMasterBus();
+    if (!bus) return;
+    const ctx = S.audioCtx;
+    const when = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.28, when + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 0.32);
+    osc.connect(g);
+    g.connect(bus.limiter);
+    osc.start(when);
+    osc.stop(when + 0.34);
+    _guideVoices.push({ osc, gain: g, until: when + 0.34 });
+    if (_guideVoices.length > 64) {
+        const nowCtx = ctx.currentTime;
+        _guideVoices = _guideVoices.filter(v => v.until > nowCtx);
+    }
+}
 /* @pure:audio-bus:end */
 
 // Event times for the active editing surface: the drum grid claps drum hits,
@@ -7719,6 +7930,25 @@ function updateArrangementSelector() {
     const renameBtn = document.getElementById('editor-rename-arr-btn');
     if (renameBtn) {
         renameBtn.classList.toggle('hidden', !S.arrangements.length || !S.sessionId);
+    }
+
+    // Reorder buttons: only meaningful with 2+ parts, and only where the
+    // new order actually persists. The order rides to disk on the FULL
+    // arrangement snapshot, which `_buildSaveBody` ships only for sloppak
+    // saves — an archive save writes just the active arrangement keyed by
+    // `arrangement_index`, so a reorder there is silently lost (worse, the
+    // stale index re-targets the wrong part). Gate to sloppak sessions,
+    // exactly like +Keys / Record, so the affordance never lies.
+    const upBtn = document.getElementById('editor-move-arr-earlier-btn');
+    const downBtn = document.getElementById('editor-move-arr-later-btn');
+    const canReorder = S.arrangements.length > 1 && !!S.sessionId && S.format === 'sloppak';
+    if (upBtn) {
+        upBtn.classList.toggle('hidden', !canReorder);
+        upBtn.disabled = !canReorder || S.currentArr <= 0;
+    }
+    if (downBtn) {
+        downBtn.classList.toggle('hidden', !canReorder);
+        downBtn.disabled = !canReorder || S.currentArr >= S.arrangements.length - 1;
     }
 }
 
@@ -12446,6 +12676,60 @@ function init() {
 }
 
 // ════════════════════════════════════════════════════════════════════
+// Reorder parts (DAW-workspace 2.2b) — move the current part one slot
+// earlier/later. Order persists: sloppak saves ship the CLIENT
+// S.arrangements array as the full snapshot, and the manifest merge
+// keys entries by id, so the new order lands on disk at the next save.
+// ════════════════════════════════════════════════════════════════════
+
+/* @pure:reorder-part:start */
+// Target index for a one-slot move, or -1 when it can't move (ends,
+// bad input). dir < 0 = earlier (toward index 0), dir > 0 = later.
+function _movePartTargetPure(from, dir, count) {
+    const f = Number(from), n = Number(count);
+    if (!Number.isInteger(f) || !Number.isInteger(n) || n < 2) return -1;
+    if (f < 0 || f >= n) return -1;
+    const to = f + (dir < 0 ? -1 : 1);
+    return (to < 0 || to >= n) ? -1 : to;
+}
+/* @pure:reorder-part:end */
+
+function _editorMovePart(dir) {
+    if (_recState !== 'idle') {
+        setStatus('Cannot reorder while recording. Stop the take first.');
+        return true;
+    }
+    // The reorder persists only through the full-snapshot sloppak save
+    // (see updateArrangementSelector's button gate). On an archive save
+    // `_buildSaveBody` ships just the active arrangement keyed by index,
+    // so a client-side reorder would be lost — or re-target the wrong
+    // part via the now-stale `arrangement_index`. Refuse here too so the
+    // command palette / keyboard paths can't bypass the hidden buttons.
+    if (S.format !== 'sloppak') {
+        setStatus('Reordering parts is only available for Sloppak songs.');
+        return true;
+    }
+    const from = S.currentArr;
+    const to = _movePartTargetPure(from, dir, S.arrangements.length);
+    if (to < 0) return true;   // at an end / nothing to do
+    const [moved] = S.arrangements.splice(from, 1);
+    S.arrangements.splice(to, 0, moved);
+    // The move renumbers arrangement indices, so history commands tagged
+    // with the old indices would undo into the wrong part — same rationale
+    // as remove-arrangement: drop the stack when the model shifts under it.
+    // (Which is also why the move itself is not undoable — move it back.)
+    if (S.history) S.history.reset();
+    S.currentArr = to;
+    S.sel.clear();
+    updateArrangementSelector();
+    draw();
+    updateStatus();
+    setStatus(`Moved “${moved.name || 'part'}” ${dir < 0 ? 'earlier' : 'later'} — the order persists on save`);
+    return true;
+}
+window.editorMovePart = _editorMovePart;
+
+// ════════════════════════════════════════════════════════════════════
 // Remove arrangement
 // ════════════════════════════════════════════════════════════════════
 
@@ -12809,13 +13093,17 @@ window.editorDoAddDrums = async () => {
         // an unrelated redraw.
         updateArrangementSelector();
         draw();
-        // Surface the warning + manual-mapping UI only when there are
-        // actual notes to triage — gate on droppedCount rather than
-        // unmapped.length so an empty/zero-count row can't open a
+        // Offer the MIDI's own tempo/time-signature grid first (DAW 3.2;
+        // no-op for GP imports or a gridless MIDI), then chain the unmapped-
+        // notes triage so the two dialogs never stack. Surface the manual-
+        // mapping UI only when there are actual notes to triage — gate on
+        // droppedCount, not unmapped.length, so an empty row can't open a
         // hollow dialog.
-        if (droppedCount > 0) {
-            _showDrumImportUnmappedModal(unmapped);
-        }
+        _maybeOfferMidiTempoMap(data.tempo_map, () => {
+            if (droppedCount > 0) {
+                _showDrumImportUnmappedModal(unmapped);
+            }
+        });
     } catch (e) {
         statusEl.textContent = 'Failed: ' + e.message;
         goBtn.disabled = false;
@@ -12826,26 +13114,91 @@ window.editorDoAddDrums = async () => {
 // Strings (tuning) editor — add/remove strings on the active arrangement
 // ════════════════════════════════════════════════════════════════════
 
-// Range per role. Bass extends low-then-high (4 → 5 add low B → 6 add high
-// C); guitar extends low-only (6 → 7 low B → 8 low F#).
+/* @pure:string-tuning:start */
+// Range per role. Bass 4–6 (add low B, then high C). Guitar 6–8 (add low
+// B, then low F#). These floors/ceilings are NOT free policy: the pitch
+// and label model (`_openMidiForArr` / `laneLabels`) can only represent a
+// FIXED set of extended shapes — guitar strings are prepended at the low
+// end, bass adds low B at the 5th then high C at the 6th. A guitar below
+// 6 or a string added at the "wrong" end has no consistent open-pitch or
+// label, so `_stringCountFor` would re-snap the count and silently
+// re-interpret every note index. The modal therefore offers each add/
+// remove only at the end the model supports (see `_addPositionPure` /
+// `_removePositionPure`); direct per-string tuning entry below covers the
+// exotic tunings (drop/open/re-entrant) that changing the COUNT cannot.
+function _stringsRangePure(isBass) {
+    return isBass ? { min: 4, max: 6 } : { min: 6, max: 8 };
+}
+
+// The only END an add may touch for a given role + current count, or null
+// when the arrangement is at its ceiling. Mirrors the fixed extension
+// order baked into `_openMidiForArr`/`laneLabels`: bass grows low (4→5)
+// then high (5→6); guitar grows low (6→7→8). Adding at any other end
+// yields a count/label/pitch shape the renderer can't represent, so the
+// modal never offers it. Pure — role + count in, position out.
+function _addPositionPure(isBass, cur) {
+    if (isBass) {
+        if (cur === 4) return 'low';   // 4→5 adds low B
+        if (cur === 5) return 'high';  // 5→6 adds high C
+        return null;                   // 6-string bass is the ceiling
+    }
+    if (cur === 6 || cur === 7) return 'low';  // 6→7 low B, 7→8 low F#
+    return null;                               // 8-string guitar is the ceiling
+}
+
+// The only END a remove may touch — the inverse of `_addPositionPure`, so
+// removing always peels the string the last add appended and the count
+// collapses back to a shape the model can represent. null at the floor.
+function _removePositionPure(isBass, cur) {
+    if (isBass) {
+        if (cur === 6) return 'high';  // 6→5 peels high C
+        if (cur === 5) return 'low';   // 5→4 peels low B
+        return null;                   // 4-string bass is the floor
+    }
+    if (cur === 7 || cur === 8) return 'low';  // 8→7, 7→6 peel the low ext
+    return null;                               // 6-string guitar is the floor
+}
+
+// Clamp a per-string tuning offset (semitones from that lane's standard
+// pitch). ±36 covers everything real — a re-entrant banjo drone sits far
+// above its lane position, an octave-down 8-string far below — while a
+// junk value can never author NaN into the wire tuning array.
+function _stringTuningClampPure(v) {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(-36, Math.min(36, n));
+}
+
+// Undoable per-string tuning edit — the modal's direct-entry rows. Holds
+// the target arrangement INDEX (undo can fire after an arrangement
+// switch) plus the exact old offset; lane count never changes, so no
+// resize is involved.
+class SetStringTuningCmd {
+    constructor(arrIdx, stringIdx, newOffset) {
+        this.arrIdx = arrIdx;
+        this.stringIdx = stringIdx;
+        this.newOffset = _stringTuningClampPure(newOffset);
+        const arr = S.arrangements[arrIdx];
+        const t = (arr && arr.tuning) || [];
+        this.oldOffset = Number.isFinite(Number(t[stringIdx])) ? Number(t[stringIdx]) : 0;
+    }
+    _arr() { return S.arrangements[this.arrIdx]; }
+    _set(v) {
+        const arr = this._arr();
+        if (!arr) return;
+        if (!Array.isArray(arr.tuning)) arr.tuning = [];
+        while (arr.tuning.length <= this.stringIdx) arr.tuning.push(0);
+        arr.tuning[this.stringIdx] = v;
+    }
+    exec() { this._set(this.newOffset); }
+    rollback() { this._set(this.oldOffset); }
+}
+/* @pure:string-tuning:end */
+
 function _stringsRangeForActive() {
     const arr = S.arrangements[S.currentArr];
     const isBass = arr && /bass/i.test(arr.name || '');
-    return isBass
-        ? { min: 4, max: 6, defaultPos: 'low' }
-        : { min: 6, max: 8, defaultPos: 'low' };
-}
-
-function _nextAddPosition(arr, isBass) {
-    // Use `_stringCountFor(arr)` so the result is anchored to the
-    // passed arrangement (not whichever one is currently visible).
-    // It already disambiguates RS-XML padding from a genuine
-    // extended count — without that, a 4-string bass with padded
-    // length-6 tuning would be treated as "5→6 high-C add" instead
-    // of the expected "4→5 low-B".
-    const cur = _stringCountFor(arr);
-    if (isBass && cur === 5) return 'high';  // 5→6 bass adds high C
-    return 'low';
+    return _stringsRangePure(!!isBass);
 }
 
 function _notesOnString(arr, idx) {
@@ -12883,48 +13236,72 @@ function _renderStringsModal() {
         // surface `lbl` values that aren't already HTML-safe.
         // Display low → high so it reads naturally; `tuning` is also
         // low → high in RS XML order, so iterating tuning matches.
+        // Each row carries a DIRECT-ENTRY offset input (semitones from
+        // that lane's standard pitch), so any tuning — drop, open,
+        // banjo's re-entrant drone — is typable, not just reachable
+        // through presets. Edits go through SetStringTuningCmd (undoable).
         list.textContent = '';
         for (let i = 0; i < labels.length; i++) {
             const lbl = labels[i];
             const rawOff = tuning[i];
             const off = Number.isFinite(Number(rawOff)) ? Number(rawOff) : 0;
-            const offTxt = off === 0 ? '0' : (off > 0 ? `+${off}` : `${off}`);
             const row = document.createElement('div');
-            row.className = 'flex justify-between bg-dark-800 rounded px-2 py-1';
+            row.className = 'flex items-center justify-between bg-dark-800 rounded px-2 py-1';
             const left = document.createElement('span');
             left.textContent = `String ${i} (${lbl})`;
-            const right = document.createElement('span');
-            right.className = 'text-gray-500';
-            right.textContent = `${offTxt} st`;
+            const right = document.createElement('label');
+            right.className = 'flex items-center gap-1 text-gray-500';
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = '-36';
+            input.max = '36';
+            input.step = '1';
+            // The wrapping <label>'s only text is the "st" unit, so without
+            // this a screen reader announces the field as just "st spinbutton"
+            // with no indication of which string it retunes.
+            input.setAttribute('aria-label', `String ${i} (${lbl}) tuning offset in semitones`);
+            input.value = String(off);
+            input.className = 'w-14 bg-dark-700 border border-gray-700 rounded px-1 py-0.5 text-xs text-gray-300 outline-none text-center';
+            input.title = 'Semitones from this lane’s standard pitch (e.g. -2 = whole-step down; a re-entrant drone can sit far above)';
+            input.onchange = () => window.editorSetStringTuning(i, input.value);
+            const unit = document.createElement('span');
+            unit.textContent = 'st';
+            right.appendChild(input);
+            right.appendChild(unit);
             row.appendChild(left);
             row.appendChild(right);
             list.appendChild(row);
         }
     }
 
-    const addBtn = document.getElementById('editor-strings-add');
-    const removeBtn = document.getElementById('editor-strings-remove');
-    const warn = document.getElementById('editor-strings-warning');
     const curCount = labels.length;  // === lanes()
-    if (addBtn) addBtn.disabled = curCount >= max;
-    if (removeBtn) {
-        // Only the most-recently-added low/high string is removable, and
-        // only if no notes live on it. For 6-bass, that's the high C
-        // (last index). For everything else it's the low extension
-        // (index 0). We mirror the add-position logic.
-        const pos = curCount === 6 && isBass ? 'high' : 'low';
-        const targetIdx = pos === 'low' ? 0 : curCount - 1;
-        const blockers = _notesOnString(arr, targetIdx);
-        const atFloor = curCount <= min;
-        removeBtn.disabled = atFloor || blockers > 0;
-        if (warn) {
-            if (atFloor) {
-                warn.textContent = `Already at the minimum ${min} strings.`;
-            } else if (blockers > 0) {
-                warn.textContent = `${blockers} note${blockers === 1 ? '' : 's'} on string ${targetIdx} — delete or move them before removing.`;
-            } else {
-                warn.textContent = '';
-            }
+    const warn = document.getElementById('editor-strings-warning');
+    // Enable each end ONLY where the pitch/label model can represent the
+    // resulting shape (see `_addPositionPure`/`_removePositionPure`). A
+    // guitar has no valid high string and a 4/5-string guitar has no valid
+    // low removal, so offering those ends would silently corrupt note
+    // indices — hence a hard per-end gate, not a blanket ceiling/floor.
+    const addPos = _addPositionPure(!!isBass, curCount);
+    const removePos = _removePositionPure(!!isBass, curCount);
+    const addLow = document.getElementById('editor-strings-add-low');
+    const addHigh = document.getElementById('editor-strings-add-high');
+    if (addLow) addLow.disabled = addPos !== 'low';
+    if (addHigh) addHigh.disabled = addPos !== 'high';
+    // The removable end still refuses to drop a string that carries notes,
+    // so removal can never silently discard chart content.
+    const removableIdx = removePos === 'low' ? 0 : (removePos === 'high' ? curCount - 1 : -1);
+    const blockers = removableIdx >= 0 ? _notesOnString(arr, removableIdx) : 0;
+    const removeLow = document.getElementById('editor-strings-remove-low');
+    const removeHigh = document.getElementById('editor-strings-remove-high');
+    if (removeLow) removeLow.disabled = removePos !== 'low' || blockers > 0;
+    if (removeHigh) removeHigh.disabled = removePos !== 'high' || blockers > 0;
+    if (warn) {
+        if (!removePos) {
+            warn.textContent = `Already at the minimum ${min} strings.`;
+        } else if (blockers > 0) {
+            warn.textContent = `${blockers} note${blockers === 1 ? '' : 's'} on the ${removePos} string — delete or move them before removing.`;
+        } else {
+            warn.textContent = '';
         }
     }
 }
@@ -12941,42 +13318,61 @@ window.editorHideStringsModal = () => {
     document.getElementById('editor-strings-modal').classList.add('hidden');
 };
 
-window.editorAddString = () => {
+window.editorAddString = (pos) => {
     const arr = S.arrangements[S.currentArr];
     if (!arr) return;
     const isBass = /bass/i.test(arr.name || '');
-    const { max } = _stringsRangeForActive();
     // Compute the count directly from the active arrangement rather
     // than going through `lanes()` — the latter consults a per-draw
     // cache and our intent here is explicitly "what is this
     // arrangement's current string count?", independent of draw state.
-    if (_stringCountFor(arr) >= max) return;
-    const pos = _nextAddPosition(arr, isBass);
+    const cur = _stringCountFor(arr);
+    // Only ever add at the END the pitch/label model supports for this
+    // role + count. A mismatched request (guitar high, bass low at 5, …)
+    // is rejected outright rather than silently coerced, because adding
+    // at the unsupported end re-snaps the count and re-labels every note.
+    const valid = _addPositionPure(isBass, cur);
+    if (!valid || pos !== valid) return;
     // The command's exec() calls _resizeForLaneChange() itself, which
     // covers undo/redo too — no need to duplicate the resize here.
-    S.history.exec(new AddStringCmd(S.currentArr, pos));
+    S.history.exec(new AddStringCmd(S.currentArr, valid));
     _renderStringsModal();
     draw();
     updateStatus();
 };
 
-window.editorRemoveString = () => {
+window.editorRemoveString = (pos) => {
     const arr = S.arrangements[S.currentArr];
     if (!arr) return;
     const isBass = /bass/i.test(arr.name || '');
-    const { min } = _stringsRangeForActive();
     // Same reasoning as editorAddString — anchor on `arr` directly
     // rather than the cached `lanes()`.
     const cur = _stringCountFor(arr);
-    if (cur <= min) return;
-    // Mirror the position logic from add: 6-bass removes high (last),
-    // everything else removes the low extension (index 0).
-    const pos = cur === 6 && isBass ? 'high' : 'low';
-    const targetIdx = pos === 'low' ? 0 : cur - 1;
+    // Only remove the END the model can collapse back to a representable
+    // shape (the inverse of the add order). Any other end would leave the
+    // count at a value the labels/pitches no longer match.
+    const valid = _removePositionPure(isBass, cur);
+    if (!valid || pos !== valid) return;
+    const targetIdx = valid === 'low' ? 0 : cur - 1;
     if (_notesOnString(arr, targetIdx) > 0) return;  // UI button is disabled too
     // The command's exec() handles the resize internally (covers
     // undo/redo too); see editorAddString.
-    S.history.exec(new RemoveStringCmd(S.currentArr, pos));
+    S.history.exec(new RemoveStringCmd(S.currentArr, valid));
+    _renderStringsModal();
+    draw();
+    updateStatus();
+};
+
+window.editorSetStringTuning = (stringIdx, value) => {
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return;
+    const i = Number(stringIdx);
+    if (!Number.isInteger(i) || i < 0 || i >= _stringCountFor(arr)) return;
+    const cmd = new SetStringTuningCmd(S.currentArr, i, value);
+    // Skip no-op edits (blur without change re-fires onchange in some
+    // browsers) so the undo stack doesn't collect empty steps.
+    if (cmd.newOffset === cmd.oldOffset) { _renderStringsModal(); return; }
+    S.history.exec(cmd);
     _renderStringsModal();
     draw();
     updateStatus();
@@ -13252,7 +13648,13 @@ window.editorDoAddKeys = async () => {
             });
             if (!ok) { allOk = false; break; }
         }
-        if (!allOk) goBtn.disabled = false;
+        if (!allOk) {
+            goBtn.disabled = false;
+        } else {
+            // Offer the MIDI's own tempo/time-signature grid (DAW 3.2). No-op
+            // for the GP path (no tempo_map) or a gridless MIDI.
+            _maybeOfferMidiTempoMap(data.tempo_map);
+        }
     } catch (e) {
         statusEl.textContent = 'Failed: ' + e.message;
         goBtn.disabled = false;
@@ -14449,6 +14851,163 @@ const _GM_PERC_NAMES = {
 // auto-map to one of the 18 drum pieces. Show them with a per-row dropdown
 // so the user can drop them or hand-map each one. Synthesizes hits client-
 // side from the times the server captured — no second server round-trip.
+/* @pure:midi-tempo-choice:start */
+// A "project grid" is present once the timeline has at least two numbered
+// downbeats (measure > 0) — i.e. the song already has bars, whether authored
+// or audio-aligned. Below that the timeline is effectively empty (a lone
+// implied bar), so an imported MIDI's own grid is strictly more information.
+function _hasProjectGridPure(beats) {
+    if (!Array.isArray(beats)) return false;
+    let downbeats = 0;
+    for (const b of beats) {
+        if (b && (Number(b.measure) || -1) > 0 && ++downbeats >= 2) return true;
+    }
+    return false;
+}
+
+// Sanitize a core `tempo_map.beats` (feedback #796 shape) into editor beat
+// rows: keep only finite-time rows carrying {time, measure[, den]} — `den`
+// only on real downbeats that have one — and drop anything malformed. Rows
+// stay in source order (core emits ascending time). Returns [] for a missing
+// or gridless map.
+function _midiTempoToBeatsPure(tempoMap) {
+    const raw = tempoMap && Array.isArray(tempoMap.beats) ? tempoMap.beats : [];
+    const out = [];
+    for (const b of raw) {
+        if (!b || !Number.isFinite(Number(b.time))) continue;
+        const measure = Number.isFinite(Number(b.measure)) ? Number(b.measure) : -1;
+        const row = { time: Number(b.time), measure };
+        if (measure > 0 && Number.isFinite(Number(b.den))) row.den = Number(b.den);
+        out.push(row);
+    }
+    return out;
+}
+
+// Does an imported MIDI carry a grid worth offering? Matches the backend
+// gate (routes.py `_sanitize_midi_tempo_map` / `test_single_downbeat_still_
+// offered`): at least ONE numbered downbeat. Deliberately looser than
+// `_hasProjectGridPure` (which needs 2 to call an EXISTING project timeline
+// "a grid") — a single-bar MIDI (a common drum/loop export) still carries a
+// real tempo + time signature worth adopting onto an empty project, and the
+// backend already ships it. Reusing the 2-downbeat project threshold here
+// silently dropped those maps despite the server offering them.
+function _midiOffersGridPure(tempoMap) {
+    return _midiTempoToBeatsPure(tempoMap).some(b => b.measure > 0);
+}
+
+// The default Use-vs-Keep choice, or null when there is nothing to offer.
+// Nothing to offer = the MIDI carries no usable grid (no numbered downbeat
+// after sanitizing). Otherwise KEEP when the project already has a grid (never
+// silently stomp an audio-aligned timeline), USE the MIDI when it doesn't.
+function _midiTempoDefaultChoicePure(projectBeats, tempoMap) {
+    if (!_midiOffersGridPure(tempoMap)) return null;
+    return _hasProjectGridPure(projectBeats) ? 'keep' : 'midi';
+}
+
+// Short human summary of a MIDI grid for the dialog: bar count + the first
+// time signature + the first tempo (with an ellipsis when either changes).
+// Defensive against partial maps.
+function _midiTempoSummaryPure(tempoMap) {
+    const beats = _midiTempoToBeatsPure(tempoMap);
+    const bars = beats.filter(b => b.measure > 0).length;
+    const sigs = tempoMap && Array.isArray(tempoMap.time_signatures) ? tempoMap.time_signatures : [];
+    const tempos = tempoMap && Array.isArray(tempoMap.tempos) ? tempoMap.tempos : [];
+    const parts = [`${bars} bar${bars === 1 ? '' : 's'}`];
+    const ts = sigs.length && Array.isArray(sigs[0].ts) ? sigs[0].ts : null;
+    if (ts && Number.isFinite(Number(ts[0])) && Number.isFinite(Number(ts[1]))) {
+        parts.push(`${ts[0]}/${ts[1]}${sigs.length > 1 ? '…' : ''}`);
+    }
+    if (tempos.length && Number.isFinite(Number(tempos[0].bpm))) {
+        parts.push(`${Math.round(Number(tempos[0].bpm))} BPM${tempos.length > 1 ? '…' : ''}`);
+    }
+    return parts.join(' · ');
+}
+/* @pure:midi-tempo-choice:end */
+
+// After a MIDI keys/drums import, offer to adopt the file's own tempo / time-
+// signature / beat grid as the project timeline (DAW roadmap 3.2). Calls
+// `onDone` immediately (no dialog) when the MIDI carried no usable grid, so
+// callers can chain the unmapped-notes triage after it unconditionally. The
+// radio defaults per `_midiTempoDefaultChoicePure` — Keep when a project grid
+// already exists, Use when it doesn't — and never overwrites silently either
+// way. Applying runs through the existing `TempoGridCmd`, so it is one
+// undoable step that re-locks the loop onto the new grid.
+function _maybeOfferMidiTempoMap(tempoMap, onDone) {
+    const done = typeof onDone === 'function' ? onDone : () => {};
+    const dflt = _midiTempoDefaultChoicePure(S.beats, tempoMap);
+    if (!dflt) { done(); return; }
+    const midiBeats = _midiTempoToBeatsPure(tempoMap);
+
+    document.getElementById('editor-midi-tempo-modal')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'editor-midi-tempo-modal';
+    modal.className = 'fixed inset-0 bg-black/70 z-50 flex items-center justify-center';
+    const inner = document.createElement('div');
+    inner.className = 'bg-dark-800 border border-gray-700 rounded-lg p-6 max-w-lg w-full mx-4';
+
+    const title = document.createElement('h3');
+    title.className = 'text-lg font-semibold mb-2';
+    title.textContent = 'Use this MIDI’s timing?';
+    inner.appendChild(title);
+
+    const intro = document.createElement('p');
+    intro.className = 'text-sm text-gray-400 mb-4';
+    intro.textContent = `This MIDI carries its own tempo map (${_midiTempoSummaryPure(tempoMap)}). `
+        + (dflt === 'keep'
+            ? 'Your project already has a timeline — keep it, or replace it with the MIDI’s. Imported notes stay accurate either way.'
+            : 'Your project has no bars yet — use the MIDI’s grid, or keep the current (empty) timing. Imported notes stay accurate either way.');
+    inner.appendChild(intro);
+
+    const mk = (val, label, desc) => {
+        const lab = document.createElement('label');
+        lab.className = 'flex items-start gap-2 text-sm text-gray-200 py-1 cursor-pointer';
+        const rb = document.createElement('input');
+        rb.type = 'radio'; rb.name = 'midi-tempo-choice'; rb.value = val;
+        rb.className = 'accent-blue-500 mt-0.5';
+        if (val === dflt) rb.checked = true;
+        const span = document.createElement('span');
+        span.innerHTML = `<span class="text-gray-100">${label}</span>`
+            + `<span class="block text-xs text-gray-500">${desc}</span>`;
+        lab.appendChild(rb); lab.appendChild(span);
+        return lab;
+    };
+    const group = document.createElement('div');
+    group.className = 'mb-4';
+    group.appendChild(mk('midi', 'Use MIDI tempo map', 'Replace the project timeline with the bars and tempos from this file.'));
+    group.appendChild(mk('keep', 'Keep project timing', 'Leave the current timeline untouched; only add the imported part.'));
+    inner.appendChild(group);
+
+    const buttons = document.createElement('div');
+    buttons.className = 'flex justify-end gap-2';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded';
+    cancelBtn.textContent = 'Skip';
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded';
+    applyBtn.textContent = 'Apply';
+
+    const close = () => { modal.remove(); done(); };
+    cancelBtn.onclick = close;   // Skip = keep project timing, whatever the radio shows
+    applyBtn.onclick = () => {
+        const sel = modal.querySelector('input[name="midi-tempo-choice"]:checked');
+        if (sel && sel.value === 'midi' && midiBeats.length) {
+            S.history.exec(new TempoGridCmd(S.beats, midiBeats, 'MIDI tempo map'));
+            draw();
+            setStatus(`Applied the MIDI tempo map (${_midiTempoSummaryPure(tempoMap)}) — save to persist`);
+        }
+        close();
+    };
+    buttons.appendChild(cancelBtn);
+    buttons.appendChild(applyBtn);
+    inner.appendChild(buttons);
+
+    // Keep Space/Delete/etc. from leaking to the global editor handler while
+    // the modal is up (mirrors the unmapped-notes modal).
+    modal.addEventListener('keydown', (e) => e.stopPropagation());
+    modal.appendChild(inner);
+    document.body.appendChild(modal);
+}
+
 function _showDrumImportUnmappedModal(unmapped) {
     document.getElementById('editor-drum-unmapped-modal')?.remove();
 
@@ -15905,6 +16464,15 @@ class TempoGridCmd {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
         this.label = label || 'grid';
+        // The beat grid is SONG-level state (like drum_tab), not per-
+        // arrangement — so it opts out of the read-only-roll lock (a fretted
+        // part shown in the piano roll must not freeze tempo editing) and undo
+        // tags it -1 rather than to whatever arrangement happened to be active.
+        // The EditHistory comment already lists "tempo grid" as song-scope;
+        // this makes the class match that contract. Without it, applying an
+        // imported MIDI's tempo map right after a drums import (active part
+        // still fretted-in-roll) would be silently blocked.
+        this.songScope = true;
         // Snapshot of the loop selection captured on first exec so rollback can
         // restore it verbatim (see rollback).
         this.beforeBarSel = undefined;
@@ -16401,26 +16969,75 @@ function _finalizeActiveDrag() {
 
 // ── Notes ride the grid — piecewise-linear time remapper ────────────
 
-// Build remap(t): maps an absolute time from the old beat grid to the
-// new one by linear interpolation within the corresponding segment.
-// A segment whose endpoints didn't move maps identically, so edits to
-// one measure leave the rest of the song untouched.
+/* @pure:beat-converter:start */
+// The one tempo-map converter (charrette §1.1): musical beat-coordinate ⇄
+// seconds over a time-sorted grid `beats` ([{time,…},…] where the array index i
+// IS the integer beat coordinate — consecutive entries are consecutive beats).
+// This is the interior math the flex remapper (_makeTimeRemap) and snapTime
+// already computed inline; extracted + named so there is ONE implementation
+// that every musical-time quantity (ruler, snap, loop, playhead, notes) reads.
+//
+//   beatOf(beats, t): seconds → fractional beat. Within a gap it is the exact
+//                     inverse of timeOf; before the first / after the last beat
+//                     it extrapolates along that gap's local tempo, so the two
+//                     stay inverses outside the grid too.
+//   timeOf(beats, β): fractional beat → seconds, the mirror.
+//
+// A degenerate grid (< 2 beats) has no tempo map, so both are the identity and
+// notes stay seconds-primary (charrette §1.3.4). Non-finite input and zero-width
+// gaps are guarded (pass the input through / collapse to the gap's left edge).
+function beatOf(beats, t) {
+    if (!Array.isArray(beats) || beats.length < 2 || !Number.isFinite(t)) return t;
+    const n = beats.length;
+    if (t <= beats[0].time) {
+        const g = beats[1].time - beats[0].time;              // first gap's tempo
+        return g > 1e-9 ? (t - beats[0].time) / g : 0;
+    }
+    if (t >= beats[n - 1].time) {
+        const g = beats[n - 1].time - beats[n - 2].time;      // last gap's tempo
+        return g > 1e-9 ? (n - 1) + (t - beats[n - 1].time) / g : n - 1;
+    }
+    let lo = 0, hi = n - 1;                                    // interior: bisect to the gap
+    while (lo < hi) {
+        const m = (lo + hi + 1) >> 1;
+        if (beats[m].time <= t) lo = m; else hi = m - 1;
+    }
+    const span = beats[lo + 1].time - beats[lo].time;
+    return span > 1e-9 ? lo + (t - beats[lo].time) / span : lo;
+}
+
+function timeOf(beats, beat) {
+    if (!Array.isArray(beats) || beats.length < 2 || !Number.isFinite(beat)) return beat;
+    const n = beats.length;
+    if (beat <= 0) {
+        const g = beats[1].time - beats[0].time;              // extrapolate before beat 0
+        return beats[0].time + beat * g;
+    }
+    if (beat >= n - 1) {
+        const g = beats[n - 1].time - beats[n - 2].time;      // extrapolate past the last beat
+        return beats[n - 1].time + (beat - (n - 1)) * g;
+    }
+    const i = Math.floor(beat);
+    const f = beat - i;
+    return beats[i].time + f * (beats[i + 1].time - beats[i].time);
+}
+/* @pure:beat-converter:end */
+
+// Build remap(t): maps an absolute time from the old beat grid to the new one.
+// Interior times ride the grid through the shared converter — remap IS
+// `t ↦ timeOf(newBeats, beatOf(oldBeats, t))` within the grid (charrette §1.1),
+// so a segment whose endpoints didn't move maps identically and an edit to one
+// measure leaves the rest of the song untouched. Outside the grid it keeps the
+// legacy constant-shift-by-endpoint-move, so this extraction is behaviour-
+// identical on the tails too (beat-primary reproject — A2 — revisits out-of-grid
+// objects; this PR is a pure refactor).
 function _makeTimeRemap(oldBeats, newBeats) {
-    const ot = oldBeats.map(b => b.time);
-    const nt = newBeats.map(b => b.time);
-    const n = ot.length;
+    const n = oldBeats.length;
     return function remap(t) {
         if (n === 0) return t;
-        if (t <= ot[0]) return t + (nt[0] - ot[0]);
-        if (t >= ot[n - 1]) return t + (nt[n - 1] - ot[n - 1]);
-        let lo = 0, hi = n - 1;
-        while (lo < hi) {
-            const m = (lo + hi + 1) >> 1;
-            if (ot[m] <= t) lo = m; else hi = m - 1;
-        }
-        const span = ot[lo + 1] - ot[lo];
-        const frac = span > 1e-9 ? (t - ot[lo]) / span : 0;
-        return nt[lo] + frac * (nt[lo + 1] - nt[lo]);
+        if (t <= oldBeats[0].time) return t + (newBeats[0].time - oldBeats[0].time);
+        if (t >= oldBeats[n - 1].time) return t + (newBeats[n - 1].time - oldBeats[n - 1].time);
+        return timeOf(newBeats, beatOf(oldBeats, t));
     };
 }
 
