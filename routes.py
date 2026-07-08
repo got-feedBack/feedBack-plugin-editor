@@ -384,6 +384,57 @@ def _apply_timeline_signatures_to_beats(beats: list, time_signatures: list) -> l
     return out
 
 
+def _sanitize_midi_tempo_map(tm) -> dict:
+    """Gate + shape a core ``convert_midi_tempo_map`` result for the client.
+
+    Returns ``{tempos, time_signatures, beats}`` only when the map carries a
+    grid worth offering — at least one numbered downbeat (``measure > 0``) in
+    ``beats`` — otherwise ``{}``. A gridless or non-dict map yields ``{}`` so
+    the frontend shows no Use-vs-Keep choice. Pure (no I/O), so the gating is
+    unit-testable without a real ``.mid`` or a core import.
+    """
+    if not isinstance(tm, dict):
+        return {}
+    beats = tm.get("beats")
+    if not isinstance(beats, list) or not _timeline_downbeat_indices(beats):
+        return {}
+    tempos = tm.get("tempos")
+    sigs = tm.get("time_signatures")
+    return {
+        "tempos": tempos if isinstance(tempos, list) else [],
+        "time_signatures": sigs if isinstance(sigs, list) else [],
+        "beats": beats,
+    }
+
+
+def _safe_midi_tempo_map(midi_path: str, track_index: int) -> dict:
+    """The `.mid`'s own tempo/time-signature/beat grid, or ``{}``.
+
+    Wraps core ``convert_midi_tempo_map`` (feedback #796) so the editor can
+    offer the MIDI's timing as the project grid on import (DAW 3.2). Returns
+    ``_sanitize_midi_tempo_map``'s output — or ``{}`` when the running core
+    predates the function (older hosts) or extraction fails, so a keys/drums
+    import never 500s just because timing couldn't be read. ``track_index``
+    matters only for SMF type-2 (independent timelines); type 0/1 ignore it and
+    merge, exactly as the note converters do. Must be called while
+    ``midi_path`` still exists — both MIDI import endpoints rmtree the temp dir
+    right after converting.
+    """
+    try:
+        from lib.midi_import import convert_midi_tempo_map
+    except ImportError:
+        return {}
+    try:
+        tm = convert_midi_tempo_map(midi_path, track_index)
+    except Exception as _tm_err:  # never fail the import over timing
+        import logging as _elog
+        _elog.getLogger("slopsmith.plugin.editor").debug(
+            "tempo-map extraction failed for %s: %s", midi_path, _tm_err
+        )
+        return {}
+    return _sanitize_midi_tempo_map(tm)
+
+
 def _load_song_timeline(source_dir: Path, manifest: dict) -> dict | None:
     rel = (manifest or {}).get("song_timeline")
     if not rel or not isinstance(rel, str):
@@ -5430,6 +5481,10 @@ def setup(app, context):
             return JSONResponse({"error": "track_index must be an integer"}, 400)
 
         def _convert():
+            # Read the MIDI's own tempo/sig/beat grid in the SAME worker (the
+            # temp dir is rmtree'd right after this returns) so the client can
+            # offer it as the project grid (DAW 3.2). Empty {} when unavailable.
+            tempo_map = _safe_midi_tempo_map(midi_path, track_index)
             wire = convert_midi_track_to_keys_wire(
                 midi_path, track_index, audio_offset, "Keys",
                 channel_filter=channel_filter,
@@ -5466,10 +5521,10 @@ def setup(app, context):
                         "link_next": False,
                     },
                 })
-            return arr_data
+            return arr_data, tempo_map
 
         try:
-            arr_data = await asyncio.get_event_loop().run_in_executor(None, _convert)
+            arr_data, tempo_map = await asyncio.get_event_loop().run_in_executor(None, _convert)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -5483,7 +5538,7 @@ def setup(app, context):
             import warnings
             warnings.warn(f"Could not clean up MIDI temp dir: {_cleanup_err}")
 
-        return {"arrangement": arr_data}
+        return {"arrangement": arr_data, "tempo_map": tempo_map}
 
     # ── Convert GP tracks to arrangement and open in editor ──────────
 
@@ -6583,18 +6638,23 @@ def setup(app, context):
         supports = _supports_unmapped(convert_drum_track_from_midi)
 
         def _convert():
+            # Read the MIDI's grid in the same worker (temp dir is rmtree'd
+            # right after) so the client can offer it as timing (DAW 3.2).
+            tempo_map = _safe_midi_tempo_map(midi_path, track_index)
             if supports:
-                return convert_drum_track_from_midi(
+                tab = convert_drum_track_from_midi(
                     midi_path, track_index, audio_offset, arr_name,
                     out_unmapped=unmapped,
                 )
-            return convert_drum_track_from_midi(
-                midi_path, track_index, audio_offset, arr_name,
-            )
+            else:
+                tab = convert_drum_track_from_midi(
+                    midi_path, track_index, audio_offset, arr_name,
+                )
+            return tab, tempo_map
 
         _midi_tmp_dir = Path(midi_path).parent
         try:
-            drum_tab = await asyncio.get_event_loop().run_in_executor(None, _convert)
+            drum_tab, tempo_map = await asyncio.get_event_loop().run_in_executor(None, _convert)
         except ValueError as e:
             # convert_drum_track_from_midi raises ValueError for client input
             # errors (track_index out of range, non-finite audio_offset) —
@@ -6626,7 +6686,7 @@ def setup(app, context):
             _safe_unmapped_entry(m, rec)
             for m, rec in sorted(unmapped.items())
         ]
-        return {"drum_tab": drum_tab, "unmapped": unmapped_list}
+        return {"drum_tab": drum_tab, "unmapped": unmapped_list, "tempo_map": tempo_map}
 
     # ── Remove arrangement from session ────────────────────────────
 

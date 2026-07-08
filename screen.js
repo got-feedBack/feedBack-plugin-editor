@@ -12809,13 +12809,17 @@ window.editorDoAddDrums = async () => {
         // an unrelated redraw.
         updateArrangementSelector();
         draw();
-        // Surface the warning + manual-mapping UI only when there are
-        // actual notes to triage — gate on droppedCount rather than
-        // unmapped.length so an empty/zero-count row can't open a
+        // Offer the MIDI's own tempo/time-signature grid first (DAW 3.2;
+        // no-op for GP imports or a gridless MIDI), then chain the unmapped-
+        // notes triage so the two dialogs never stack. Surface the manual-
+        // mapping UI only when there are actual notes to triage — gate on
+        // droppedCount, not unmapped.length, so an empty row can't open a
         // hollow dialog.
-        if (droppedCount > 0) {
-            _showDrumImportUnmappedModal(unmapped);
-        }
+        _maybeOfferMidiTempoMap(data.tempo_map, () => {
+            if (droppedCount > 0) {
+                _showDrumImportUnmappedModal(unmapped);
+            }
+        });
     } catch (e) {
         statusEl.textContent = 'Failed: ' + e.message;
         goBtn.disabled = false;
@@ -13252,7 +13256,13 @@ window.editorDoAddKeys = async () => {
             });
             if (!ok) { allOk = false; break; }
         }
-        if (!allOk) goBtn.disabled = false;
+        if (!allOk) {
+            goBtn.disabled = false;
+        } else {
+            // Offer the MIDI's own tempo/time-signature grid (DAW 3.2). No-op
+            // for the GP path (no tempo_map) or a gridless MIDI.
+            _maybeOfferMidiTempoMap(data.tempo_map);
+        }
     } catch (e) {
         statusEl.textContent = 'Failed: ' + e.message;
         goBtn.disabled = false;
@@ -14347,6 +14357,151 @@ const _GM_PERC_NAMES = {
 // auto-map to one of the 18 drum pieces. Show them with a per-row dropdown
 // so the user can drop them or hand-map each one. Synthesizes hits client-
 // side from the times the server captured — no second server round-trip.
+/* @pure:midi-tempo-choice:start */
+// A "project grid" is present once the timeline has at least two numbered
+// downbeats (measure > 0) — i.e. the song already has bars, whether authored
+// or audio-aligned. Below that the timeline is effectively empty (a lone
+// implied bar), so an imported MIDI's own grid is strictly more information.
+function _hasProjectGridPure(beats) {
+    if (!Array.isArray(beats)) return false;
+    let downbeats = 0;
+    for (const b of beats) {
+        if (b && (Number(b.measure) || -1) > 0 && ++downbeats >= 2) return true;
+    }
+    return false;
+}
+
+// Sanitize a core `tempo_map.beats` (feedback #796 shape) into editor beat
+// rows: keep only finite-time rows carrying {time, measure[, den]} — `den`
+// only on real downbeats that have one — and drop anything malformed. Rows
+// stay in source order (core emits ascending time). Returns [] for a missing
+// or gridless map.
+function _midiTempoToBeatsPure(tempoMap) {
+    const raw = tempoMap && Array.isArray(tempoMap.beats) ? tempoMap.beats : [];
+    const out = [];
+    for (const b of raw) {
+        if (!b || !Number.isFinite(Number(b.time))) continue;
+        const measure = Number.isFinite(Number(b.measure)) ? Number(b.measure) : -1;
+        const row = { time: Number(b.time), measure };
+        if (measure > 0 && Number.isFinite(Number(b.den))) row.den = Number(b.den);
+        out.push(row);
+    }
+    return out;
+}
+
+// The default Use-vs-Keep choice, or null when there is nothing to offer.
+// Nothing to offer = the MIDI carries no usable grid (< 2 downbeats after
+// sanitizing). Otherwise KEEP when the project already has a grid (never
+// silently stomp an audio-aligned timeline), USE the MIDI when it doesn't.
+function _midiTempoDefaultChoicePure(projectBeats, tempoMap) {
+    if (!_hasProjectGridPure(_midiTempoToBeatsPure(tempoMap))) return null;
+    return _hasProjectGridPure(projectBeats) ? 'keep' : 'midi';
+}
+
+// Short human summary of a MIDI grid for the dialog: bar count + the first
+// time signature + the first tempo (with an ellipsis when either changes).
+// Defensive against partial maps.
+function _midiTempoSummaryPure(tempoMap) {
+    const beats = _midiTempoToBeatsPure(tempoMap);
+    const bars = beats.filter(b => b.measure > 0).length;
+    const sigs = tempoMap && Array.isArray(tempoMap.time_signatures) ? tempoMap.time_signatures : [];
+    const tempos = tempoMap && Array.isArray(tempoMap.tempos) ? tempoMap.tempos : [];
+    const parts = [`${bars} bar${bars === 1 ? '' : 's'}`];
+    const ts = sigs.length && Array.isArray(sigs[0].ts) ? sigs[0].ts : null;
+    if (ts && Number.isFinite(Number(ts[0])) && Number.isFinite(Number(ts[1]))) {
+        parts.push(`${ts[0]}/${ts[1]}${sigs.length > 1 ? '…' : ''}`);
+    }
+    if (tempos.length && Number.isFinite(Number(tempos[0].bpm))) {
+        parts.push(`${Math.round(Number(tempos[0].bpm))} BPM${tempos.length > 1 ? '…' : ''}`);
+    }
+    return parts.join(' · ');
+}
+/* @pure:midi-tempo-choice:end */
+
+// After a MIDI keys/drums import, offer to adopt the file's own tempo / time-
+// signature / beat grid as the project timeline (DAW roadmap 3.2). Calls
+// `onDone` immediately (no dialog) when the MIDI carried no usable grid, so
+// callers can chain the unmapped-notes triage after it unconditionally. The
+// radio defaults per `_midiTempoDefaultChoicePure` — Keep when a project grid
+// already exists, Use when it doesn't — and never overwrites silently either
+// way. Applying runs through the existing `TempoGridCmd`, so it is one
+// undoable step that re-locks the loop onto the new grid.
+function _maybeOfferMidiTempoMap(tempoMap, onDone) {
+    const done = typeof onDone === 'function' ? onDone : () => {};
+    const dflt = _midiTempoDefaultChoicePure(S.beats, tempoMap);
+    if (!dflt) { done(); return; }
+    const midiBeats = _midiTempoToBeatsPure(tempoMap);
+
+    document.getElementById('editor-midi-tempo-modal')?.remove();
+    const modal = document.createElement('div');
+    modal.id = 'editor-midi-tempo-modal';
+    modal.className = 'fixed inset-0 bg-black/70 z-50 flex items-center justify-center';
+    const inner = document.createElement('div');
+    inner.className = 'bg-dark-800 border border-gray-700 rounded-lg p-6 max-w-lg w-full mx-4';
+
+    const title = document.createElement('h3');
+    title.className = 'text-lg font-semibold mb-2';
+    title.textContent = 'Use this MIDI’s timing?';
+    inner.appendChild(title);
+
+    const intro = document.createElement('p');
+    intro.className = 'text-sm text-gray-400 mb-4';
+    intro.textContent = `This MIDI carries its own tempo map (${_midiTempoSummaryPure(tempoMap)}). `
+        + (dflt === 'keep'
+            ? 'Your project already has a timeline — keep it, or replace it with the MIDI’s. Imported notes stay accurate either way.'
+            : 'Your project has no bars yet — use the MIDI’s grid, or keep the current (empty) timing. Imported notes stay accurate either way.');
+    inner.appendChild(intro);
+
+    const mk = (val, label, desc) => {
+        const lab = document.createElement('label');
+        lab.className = 'flex items-start gap-2 text-sm text-gray-200 py-1 cursor-pointer';
+        const rb = document.createElement('input');
+        rb.type = 'radio'; rb.name = 'midi-tempo-choice'; rb.value = val;
+        rb.className = 'accent-blue-500 mt-0.5';
+        if (val === dflt) rb.checked = true;
+        const span = document.createElement('span');
+        span.innerHTML = `<span class="text-gray-100">${label}</span>`
+            + `<span class="block text-xs text-gray-500">${desc}</span>`;
+        lab.appendChild(rb); lab.appendChild(span);
+        return lab;
+    };
+    const group = document.createElement('div');
+    group.className = 'mb-4';
+    group.appendChild(mk('midi', 'Use MIDI tempo map', 'Replace the project timeline with the bars and tempos from this file.'));
+    group.appendChild(mk('keep', 'Keep project timing', 'Leave the current timeline untouched; only add the imported part.'));
+    inner.appendChild(group);
+
+    const buttons = document.createElement('div');
+    buttons.className = 'flex justify-end gap-2';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded';
+    cancelBtn.textContent = 'Skip';
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded';
+    applyBtn.textContent = 'Apply';
+
+    const close = () => { modal.remove(); done(); };
+    cancelBtn.onclick = close;   // Skip = keep project timing, whatever the radio shows
+    applyBtn.onclick = () => {
+        const sel = modal.querySelector('input[name="midi-tempo-choice"]:checked');
+        if (sel && sel.value === 'midi' && midiBeats.length) {
+            S.history.exec(new TempoGridCmd(S.beats, midiBeats, 'MIDI tempo map'));
+            draw();
+            setStatus(`Applied the MIDI tempo map (${_midiTempoSummaryPure(tempoMap)}) — save to persist`);
+        }
+        close();
+    };
+    buttons.appendChild(cancelBtn);
+    buttons.appendChild(applyBtn);
+    inner.appendChild(buttons);
+
+    // Keep Space/Delete/etc. from leaking to the global editor handler while
+    // the modal is up (mirrors the unmapped-notes modal).
+    modal.addEventListener('keydown', (e) => e.stopPropagation());
+    modal.appendChild(inner);
+    document.body.appendChild(modal);
+}
+
 function _showDrumImportUnmappedModal(unmapped) {
     document.getElementById('editor-drum-unmapped-modal')?.remove();
 
@@ -15765,6 +15920,15 @@ class TempoGridCmd {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
         this.label = label || 'grid';
+        // The beat grid is SONG-level state (like drum_tab), not per-
+        // arrangement — so it opts out of the read-only-roll lock (a fretted
+        // part shown in the piano roll must not freeze tempo editing) and undo
+        // tags it -1 rather than to whatever arrangement happened to be active.
+        // The EditHistory comment already lists "tempo grid" as song-scope;
+        // this makes the class match that contract. Without it, applying an
+        // imported MIDI's tempo map right after a drums import (active part
+        // still fretted-in-roll) would be silently blocked.
+        this.songScope = true;
         // Snapshot of the loop selection captured on first exec so rollback can
         // restore it verbatim (see rollback).
         this.beforeBarSel = undefined;

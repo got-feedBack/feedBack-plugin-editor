@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **MIDI import can adopt the file's own tempo map.** Importing a `.mid` as
+  keys or drums used to bake note times but throw the file's tempo and
+  time-signature grid away — every import landed with an implied 4/4 and no
+  bars. Now the keys/drums MIDI import reads the SMF's real grid (via core's
+  `convert_midi_tempo_map`, feedback #796) and, when it carries one, offers a
+  **Use MIDI tempo map / Keep project timing** choice. The default is honest,
+  never silent: **Use** when the project has no bars yet, **Keep** when a
+  timeline already exists (so an audio-aligned grid is never stomped). Applying
+  runs through the existing `TempoGridCmd` — one undoable step that re-locks the
+  loop onto the new grid — and imported notes stay accurate either way. Degrades
+  cleanly: a gridless MIDI, a GP import, or an older host without the core
+  function simply shows no prompt. On a drum import the timing choice is offered
+  before the unmapped-notes triage so the two dialogs never stack. As part of
+  this, `TempoGridCmd` is now correctly **song-scoped** (like the drum commands),
+  so a grid edit is no longer blocked when a fretted part happens to be shown
+  read-only in the piano roll. Tests: `tests/midi_tempo_import.test.js`,
+  `tests/test_midi_tempo_import.py`.
 - **Parts can be renamed (undoable).** A ✏ button next to the arrangement
   selector (registry command `renamePart`) renames the current part
   through a new `RenameArrangementCmd` — full undo/redo, selector text
