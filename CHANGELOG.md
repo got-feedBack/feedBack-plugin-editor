@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tests: `tests/beat_converter.test.js`.
 
 ### Added
+- **Scale-degree overlay on fretted notes.** With the in-key highlight on, each
+  note in String view now shows a small scale-degree label in its top-right
+  corner (`1`, `♭3`, `5`, `♭7`, …) relative to the current key, coloured by
+  role so the **1/3/5/7 harmonic skeleton pops** (root gold, thirds sky, fifth
+  green, sevenths violet) and passing tones read neutral. Out-of-key notes
+  still show their chromatic degree, dimmed — so a fretted line reads as scale
+  degrees at a glance. Capo- and tuning-aware (uses the same sounding pitch as
+  the in-key shading); shown only while the highlight is active, and never for
+  a note whose pitch can't be resolved. Display-only — it never edits the chart
+  or the authored `sd` teaching mark. Tests: `tests/scale_degree.test.js`.
 - **Chord-at-cursor readout.** A small chord name now appears next to the
   measure display, naming the notes sounding at the playhead — `C`, `Am`,
   `Gmaj7`, `D#6`, `Csus4`, `E5` (power chord), and so on. Fretted parts resolve

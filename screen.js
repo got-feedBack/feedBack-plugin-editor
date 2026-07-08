@@ -118,6 +118,34 @@ function _pcInScalePure(pc, tonicPc, scaleName) {
 }
 /* @pure:scale:end */
 
+/* @pure:scale-degree:start */
+// Scale-degree label for a pitch class relative to a tonic (semitones above
+// the tonic, 0 = root). Flats for the chromatic degrees (the common Nashville/
+// relative convention). Display/teaching only — never grades.
+const _SCALE_DEGREE_LABELS = ['1', '♭2', '2', '♭3', '3', '4', '♭5', '5', '♭6', '6', '♭7', '7'];
+function _scaleDegreeSemisPure(pc, tonicPc) {
+    const p = Number(pc), t = Number(tonicPc);
+    if (!Number.isFinite(p) || !Number.isFinite(t)) return -1;
+    return (((Math.round(p) - Math.round(t)) % 12) + 12) % 12;
+}
+function _scaleDegreeLabelPure(pc, tonicPc) {
+    const s = _scaleDegreeSemisPure(pc, tonicPc);
+    return s < 0 ? '' : _SCALE_DEGREE_LABELS[s];
+}
+// Degree → accent colour: root gold, thirds sky, fifth green, sevenths violet,
+// every other tone a neutral tint — a chord-tone-leaning palette so the 1/3/5/7
+// harmonic skeleton pops against passing tones.
+function _scaleDegreeColorPure(semis) {
+    switch (semis) {
+        case 0: return '#fbbf24';            // root
+        case 3: case 4: return '#38bdf8';    // 3rd (min / maj)
+        case 7: return '#34d399';            // 5th
+        case 10: case 11: return '#a78bfa';  // 7th (min / maj)
+        default: return '#cbd5e1';           // other scale / chromatic tones
+    }
+}
+/* @pure:scale-degree:end */
+
 // Human labels for the scale picker (keys are the SCALE_INTERVALS ids).
 const SCALE_LABELS = {
     major: 'Major', minor: 'Minor', dorian: 'Dorian', phrygian: 'Phrygian',
@@ -2507,11 +2535,12 @@ function _drawNote(n, selected, ghl) {
     // uses the SOUNDING pitch (tuning + capo + fret); an unresolvable
     // pitch stays fully lit rather than falsely flagged.
     let outOfKey = false;
+    let degMidi = null;   // sounding pitch, hoisted for the scale-degree overlay
     if (ghl) {
-        const midi = _soundingPitchPure(
+        degMidi = _soundingPitchPure(
             ghl.openMidi, ghl.tuning, ghl.capo, n.string, n.fret);
-        outOfKey = midi !== null
-            && !_pcInScalePure(((midi % 12) + 12) % 12, ghl.hl.tonic, ghl.hl.scale);
+        outOfKey = degMidi !== null
+            && !_pcInScalePure(((degMidi % 12) + 12) % 12, ghl.hl.tonic, ghl.hl.scale);
     }
 
     // Body
@@ -2538,6 +2567,22 @@ function _drawNote(n, selected, ghl) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(String(n.fret), x + Math.min(sw, MIN_NOTE_W) / 2, y + h / 2);
+
+    // Scale-degree overlay (only when the key highlight is active): a small
+    // degree label in the note's top-right, coloured by role so the 1/3/5/7
+    // skeleton pops. Out-of-key notes still show their chromatic degree,
+    // dimmed — so a fretted line reads as scale degrees at a glance. Skipped
+    // when the sounding pitch is unresolvable (degMidi null).
+    if (ghl && degMidi !== null) {
+        const semis = _scaleDegreeSemisPure(((degMidi % 12) + 12) % 12, ghl.hl.tonic);
+        if (semis >= 0) {
+            ctx.fillStyle = _scaleDegreeColorPure(semis) + (outOfKey ? '99' : 'ff');
+            ctx.font = '7px monospace';
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'top';
+            ctx.fillText(_SCALE_DEGREE_LABELS[semis], x + Math.min(sw, MIN_NOTE_W) - 2, y + 1);
+        }
+    }
 
     // Technique badges
     const techs = n.techniques || {};
