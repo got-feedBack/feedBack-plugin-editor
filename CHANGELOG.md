@@ -24,6 +24,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tests: `tests/beat_converter.test.js`.
 
 ### Added
+- **Piano roll: cycle a fretted note through its same-pitch positions
+  (Shift+↑/↓).** A fretted part shown in the piano roll is read-only — the
+  roll's Y axis is pitch, so the string axis that Shift+↑/↓ walks in String
+  view doesn't exist there. Rather than leave those keys dead, they now
+  cycle the selected note(s) through every `{string, fret}` that sounds the
+  **same pitch** on this arrangement's tuning (integer frets 0–24, ordered
+  low string → high, wrapping). It only ever changes WHERE a pitch is
+  played, never the pitch, so it runs through the existing `MoveToStringCmd`
+  (one undo step, full round-trip) and is the one deliberate carve-out from
+  the read-only-roll lock — flagged `pitchPreserving`, everything else stays
+  locked until suggest-position editing lands. Multi-select cycles each note
+  independently and skips notes with only one position; a corrupt or
+  out-of-range position refuses rather than guessing. Fretted notes in the
+  roll now render in their **string's lane color** with an `s·f` position
+  chip (instead of the octave color + note name, both redundant with the Y
+  axis), so a cycle step is visible as a color flip at a fixed height.
+  Tuning-aware: Drop-D, capo (cancels — chart frets are capo-relative on
+  both sides), and re-entrant tunings all enumerate correctly. Tests:
+  `tests/roll_position_cycle.test.js`.
 - **MIDI import can adopt the file's own tempo map.** Importing a `.mid` as
   keys or drums used to bake note times but throw the file's tempo and
   time-signature grid away — every import landed with an implied 4/4 and no
