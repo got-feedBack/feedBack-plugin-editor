@@ -20,6 +20,8 @@
         <select id="editor-arrangement" class="bg-dark-700 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none" onchange="editorSelectArrangement(this.value)" style="display:none">
         </select>
         <button id="editor-rename-arr-btn" onclick="editorRenameArrangement()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs text-gray-500 hover:text-white transition hidden" title="Rename current part (display label — undoable; the instrument kind can't change here)">✏</button>
+        <button id="editor-move-arr-earlier-btn" onclick="editorMovePart(-1)" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs text-gray-500 hover:text-white transition hidden disabled:opacity-40 disabled:cursor-not-allowed" title="Move current part earlier in the list (persists on save; clears undo history)">‹</button>
+        <button id="editor-move-arr-later-btn" onclick="editorMovePart(1)" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs text-gray-500 hover:text-white transition hidden disabled:opacity-40 disabled:cursor-not-allowed" title="Move current part later in the list (persists on save; clears undo history)">›</button>
         <button id="editor-remove-arr-btn" onclick="editorRemoveArrangement()" class="px-2 py-1 bg-dark-600 hover:bg-red-900 rounded text-xs text-gray-500 hover:text-red-300 transition hidden" title="Remove current arrangement">&times;</button>
     </div>
 
@@ -721,21 +723,39 @@
             <div id="editor-strings-summary" class="text-xs text-gray-400"></div>
             <div id="editor-strings-list" class="space-y-1 text-xs font-mono"></div>
             <div class="flex gap-2">
-                <button id="editor-strings-add" onclick="editorAddString()"
-                    class="flex-1 px-3 py-2 bg-amber-800 hover:bg-amber-700 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed">
-                    + Add string
+                <button id="editor-strings-add-low" onclick="editorAddString('low')"
+                    class="flex-1 px-3 py-2 bg-amber-800 hover:bg-amber-700 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Add a string at the low end (guitar low B/F#, bass low B); existing notes keep their lanes">
+                    + Add low
                 </button>
-                <button id="editor-strings-remove" onclick="editorRemoveString()"
-                    class="flex-1 px-3 py-2 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed">
-                    − Remove string
+                <button id="editor-strings-add-high" onclick="editorAddString('high')"
+                    class="flex-1 px-3 py-2 bg-amber-800 hover:bg-amber-700 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Add a string at the high end (6-string bass high C)">
+                    + Add high
+                </button>
+            </div>
+            <div class="flex gap-2">
+                <button id="editor-strings-remove-low" onclick="editorRemoveString('low')"
+                    class="flex-1 px-3 py-2 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Remove the lowest string (only when no notes live on it)">
+                    − Remove low
+                </button>
+                <button id="editor-strings-remove-high" onclick="editorRemoveString('high')"
+                    class="flex-1 px-3 py-2 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Remove the highest string (only when no notes live on it)">
+                    − Remove high
                 </button>
             </div>
             <p id="editor-strings-warning" class="text-[11px] text-amber-300"></p>
             <p class="text-[11px] text-gray-600">
-                Guitar arrangements support 6–8 strings; bass supports 4–6.
-                Extra strings are added at the low end (guitar low B/F#,
-                bass low B); 6-string bass also adds high C. Going above
-                6/4 will require saving as Sloppak.
+                Guitar arrangements support 6–8 strings (added low: B, then
+                F#); bass 4–6 (low B, then high C). Each add/remove button
+                is enabled only at the end that matches the instrument's
+                extended-range layout. To retune a string — drop, open, or
+                a re-entrant/octave setup — type its offset (semitones from
+                the lane's standard pitch) directly in the row; that never
+                changes the string count. Going above 6/4 strings requires
+                saving as Sloppak.
             </p>
         </div>
     </div>

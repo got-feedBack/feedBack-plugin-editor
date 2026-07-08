@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **One tempo-map converter: `beatOf` / `timeOf`.** The musical-beat ⇄
+  seconds math that the flex remapper (`_makeTimeRemap`) and `snapTime`
+  each computed inline is now a single extracted `@pure:beat-converter`
+  pair — `beatOf(beats, t)` (seconds → fractional beat) and
+  `timeOf(beats, β)` (the inverse), exact inverses within a grid gap,
+  extrapolating along the first/last gap's local tempo outside the grid,
+  and the identity when the grid has fewer than two beats. `_makeTimeRemap`
+  now routes interior times through the converter (it *is*
+  `timeOf(new, beatOf(old, t))` within the grid) while preserving its
+  legacy constant-shift on the tails, and `snapTime` snaps in the beat
+  domain (`timeOf(round(beatOf(t)·subs)/subs)`). A pure refactor with **no
+  behaviour change** — the shared, tested converter is the foundation the
+  beat-primary note model and the Logic-style ruler/LCD read from next.
+  Tests: `tests/beat_converter.test.js`.
+
 ### Added
 - **Piano roll: cycle a fretted note through its same-pitch positions
   (Shift+↑/↓).** A fretted part shown in the piano roll is read-only — the
@@ -27,6 +43,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tuning-aware: Drop-D, capo (cancels — chart frets are capo-relative on
   both sides), and re-entrant tunings all enumerate correctly. Tests:
   `tests/roll_position_cycle.test.js`.
+- **MIDI import can adopt the file's own tempo map.** Importing a `.mid` as
+  keys or drums used to bake note times but throw the file's tempo and
+  time-signature grid away — every import landed with an implied 4/4 and no
+  bars. Now the keys/drums MIDI import reads the SMF's real grid (via core's
+  `convert_midi_tempo_map`, feedback #796) and, when it carries one, offers a
+  **Use MIDI tempo map / Keep project timing** choice. The default is honest,
+  never silent: **Use** when the project has no bars yet, **Keep** when a
+  timeline already exists (so an audio-aligned grid is never stomped). Applying
+  runs through the existing `TempoGridCmd` — one undoable step that re-locks the
+  loop onto the new grid — and imported notes stay accurate either way. Degrades
+  cleanly: a gridless MIDI, a GP import, or an older host without the core
+  function simply shows no prompt. On a drum import the timing choice is offered
+  before the unmapped-notes triage so the two dialogs never stack. As part of
+  this, `TempoGridCmd` is now correctly **song-scoped** (like the drum commands),
+  so a grid edit is no longer blocked when a fretted part happens to be shown
+  read-only in the piano roll. Tests: `tests/midi_tempo_import.test.js`,
+  `tests/test_midi_tempo_import.py`.
 - **Parts can be renamed (undoable).** A ✏ button next to the arrangement
   selector (registry command `renamePart`) renames the current part
   through a new `RenameArrangementCmd` — full undo/redo, selector text
@@ -127,6 +160,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Key controls now show for any pitched arrangement, not just keys.
   Tests: `tests/fret_key_highlight.test.js` (including the capo-flips-
   membership case an uncapoed resolver gets wrong).
+- **Parts can be reordered.** New ‹ / › buttons next to the arrangement
+  selector (registry commands `movePartEarlier` / `movePartLater`) move
+  the current part one slot at a time; each end disables its direction so
+  the affordance always tells the truth. The order persists — sloppak
+  saves ship the client arrangement array as the full snapshot and the
+  manifest merge keys entries by id. Reordering renumbers arrangement
+  indices, so the undo history resets (the same rationale as
+  remove-arrangement — which is also why a move isn't undoable: move it
+  back). Blocked mid-recording (a take pins its arrangement index).
+  Tests: `tests/reorder_part.test.js`.
 
 ### Fixed
 - **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
@@ -257,6 +300,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through when the server captured them (`velocities` index-aligned with
   `times`; older cores simply omit it) instead of pushing `v:100`.
   Tests: `tests/drum_velocity.test.js`.
+- **The Strings modal is tuning-aware: per-string tuning entry + explicit
+  add/remove ends.** Each string row gains a **direct offset input**
+  (semitones from the lane's standard pitch, ±36, undoable via the new
+  `SetStringTuningCmd` which captures its target arrangement so undo
+  survives an arrangement switch), so drop tunings, open tunings, and
+  **re-entrant/octave setups** are typable without changing the string
+  count. Add/remove is now surfaced as separate low/high buttons, but each
+  is enabled **only at the end the instrument's extended-range model
+  supports** (guitar grows low B→F#; bass grows low B then high C) — adding
+  or removing at the unsupported end silently re-snapped the string count
+  and re-labelled every note, so those combinations are refused in both the
+  UI and the handlers. Removal still refuses any end string that carries
+  notes. Tests: `tests/strings_modal.test.js`.
 - **Drum edits are undoable.** Click-add, drag-move (time and lane), Delete,
   and the G/F/K ghost/flam/choke toggles now run through the editor's shared
   undo history via four new command classes (`AddDrumHitCmd`,
