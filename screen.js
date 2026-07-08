@@ -14349,6 +14349,35 @@ function _drumConflictIndexSetPure(hits, epsilon) {
 }
 /* @pure:drum-limb-lint:end */
 
+// Cross-frame memo for the advisory limb-lint. The pure clusterer is O(n) and
+// the drum draw loop is already O(n), but re-clustering EVERY frame (playback,
+// idle repaint) is the exact per-frame-recompute bug the section-coverage strip
+// hit — so cache the conflict list behind the edit generation (bumped by
+// EditHistory._afterEdit on every commit/undo/redo) plus the hits array
+// identity+length. Two subtleties this guards:
+//   • LIVE drum-move drag: `_drumEditorOnDragMove` mutates hit `.t` in place and
+//     only RE-SORTS on drop (`_drumEditorOnDragEnd`), so mid-drag the array is
+//     transiently unsorted. The clusterer assumes time-sorted input, so running
+//     it then can flash spurious/missed markers. It's advisory, so we simply
+//     PAUSE the lint for the drag's duration (return no conflicts) and let it
+//     re-appear correctly on drop — never mark a transiently-unsorted array.
+//   • add/remove change hits.length; an in-place move commits with an edit-gen
+//     bump — so the cheap key catches every real change without a deep scan.
+let _drumLintCache = { key: null, hitsRef: null, value: [] };
+function _drumLimbConflicts(hits) {
+    // Live drum-move drag → hits unsorted in place; advisory lint pauses.
+    if (typeof S !== 'undefined' && S.drag && S.drag.type === 'drum-move') return [];
+    const gen = (typeof _coverageEditGen === 'number') ? _coverageEditGen : 0;
+    const key = gen + '|' + (Array.isArray(hits) ? hits.length : -1);
+    if (key !== _drumLintCache.key || _drumLintCache.hitsRef !== hits) {
+        _drumLintCache = {
+            key, hitsRef: hits,
+            value: _drumLimbConflictsPure(hits, DRUM_LIMB_EPSILON),
+        };
+    }
+    return _drumLintCache.value;
+}
+
 // Density pref (editor localStorage, never pack data) + a memoized lane
 // table so per-frame draw/hit paths never rebuild it.
 let _drumDensityCache = null;
@@ -14703,10 +14732,11 @@ function _drumEditorDraw(w, h) {
     }
 
     // ── Playability lint (advisory) ───────────────────────────────────
-    // Conflicted-hit index set, computed once per draw over the (already
-    // time-sorted) hits — a single O(n) pass, drum-editor-mode only, so it
-    // never touches the guitar/keys draw path. Never blocks or auto-fixes.
-    const _lintConflicts = _drumLimbConflictsPure(hits, DRUM_LIMB_EPSILON);
+    // Conflicted-hit index set from the MEMOIZED limb-lint — the O(n) cluster
+    // pass runs only when the hits actually change (edit-gen + array id/len),
+    // not on every repaint, and pauses during a live drum-move drag (unsorted
+    // hits). Drum-editor-mode only; never touches guitar/keys; never mutates.
+    const _lintConflicts = _drumLimbConflicts(hits);
     const _conflictIdx = new Set();
     for (const c of _lintConflicts) for (const idx of c.indices) _conflictIdx.add(idx);
 

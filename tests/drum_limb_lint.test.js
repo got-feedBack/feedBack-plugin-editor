@@ -152,5 +152,110 @@ t('_drumConflictIndexSetPure flattens every conflicted index, skips clean hits',
     assert.deepStrictEqual([...set].sort((a, b) => a - b), [2, 3, 4]);
 });
 
+// ── STATEFUL memo wrapper (`_drumLimbConflicts`) ─────────────────────
+// The pure clusterer is well-covered above; the real bugs live in the
+// draw-loop integration (per-frame recompute + the sorted-input assumption
+// vs. a live drum-move drag that mutates times in place before re-sorting).
+// The wrapper reads browser globals (S, _coverageEditGen), so we extract it
+// by brace-matching and eval it over injected fakes. These FAIL on pre-fix
+// code: the wrapper didn't exist and the draw called the pure fn directly.
+
+// Extract `let _drumLintCache … function _drumLimbConflicts(hits){…}` and run
+// it with the pure block + a mutable fake S / _coverageEditGen in scope.
+function buildWrapper() {
+    const cacheAt = src.indexOf('let _drumLintCache');
+    const fnAt = src.indexOf('function _drumLimbConflicts(hits) {', cacheAt);
+    if (cacheAt < 0 || fnAt < 0) {
+        throw new Error('stateful _drumLimbConflicts wrapper not found (pre-fix?)');
+    }
+    const open = src.indexOf('{', fnAt);
+    let depth = 0, end = -1;
+    for (let i = open; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}' && --depth === 0) { end = i + 1; break; }
+    }
+    const wrapperSrc = src.slice(cacheAt, end);
+    return new Function(
+        '"use strict";'
+        + 'let S = { drag: null };'
+        + 'let _coverageEditGen = 0;'
+        + extractBlock('drum-limb-lint')
+        + wrapperSrc
+        + '\nreturn {'
+        + '  fn: _drumLimbConflicts,'
+        + '  setDrag: d => { S.drag = d; },'
+        + '  setGen: g => { _coverageEditGen = g; },'
+        + '};'
+    )();
+}
+
+t('memo wrapper flags the same conflicts as the pure fn when idle (no drag)', () => {
+    const W = buildWrapper();
+    const hits = [H(1, 'snare'), H(1, 'hh_closed'), H(1, 'crash_l')];
+    const got = W.fn(hits);
+    assert.strictEqual(got.length, 1);
+    assert.deepStrictEqual(got[0].reasons, ['hands']);
+});
+
+t('same edit-gen + same hits → memoized (identical reference, no recompute)', () => {
+    const W = buildWrapper();
+    const hits = [H(1, 'snare'), H(1, 'hh_closed'), H(1, 'crash_l')];
+    const a = W.fn(hits);
+    const b = W.fn(hits);
+    assert.strictEqual(a, b, 'second call must return the cached array, not re-cluster');
+});
+
+t('bumping the edit generation invalidates the memo', () => {
+    const W = buildWrapper();
+    const hits = [H(1, 'snare'), H(1, 'hh_closed'), H(1, 'crash_l')];
+    const a = W.fn(hits);
+    W.setGen(1);
+    const b = W.fn(hits);
+    assert.notStrictEqual(a, b, 'an edit-gen bump must force a fresh cluster pass');
+    assert.deepStrictEqual(b[0].reasons, ['hands'], 'and the fresh result is still correct');
+});
+
+t('LIVE drum-move drag pauses the lint — a transiently-unsorted array is never mismarked', () => {
+    const W = buildWrapper();
+    // Mid-drag the hits array is NOT re-sorted: a late-time hit can sit BEFORE
+    // early-time ones. The clusterer anchors on the first element, so a
+    // descending order sweeps unrelated hits into one bogus cluster. Pin that
+    // the RAW pure pass over this order yields a spurious 'hands' conflict…
+    const unsorted = [H(1.10, 'ride'), H(1.00, 'snare'), H(1.005, 'crash_l')];
+    const spurious = L._drumLimbConflictsPure(unsorted);
+    assert.ok(spurious.length >= 1 && spurious[0].reasons.includes('hands'),
+        'unsorted order clusters non-simultaneous hits → false positive (the bug)');
+    // …and that the same hits, correctly sorted, are actually clean.
+    const sorted = [H(1.00, 'snare'), H(1.005, 'crash_l'), H(1.10, 'ride')];
+    assert.deepStrictEqual(L._drumLimbConflictsPure(sorted), [],
+        'sorted, these are two clusters of <=2 hands — no real conflict');
+    // The wrapper, during a drum-move drag, must return NO conflicts (paused),
+    // never the spurious markers the raw pass would draw on the unsorted array.
+    W.setDrag({ type: 'drum-move' });
+    assert.deepStrictEqual(W.fn(unsorted), [], 'advisory lint pauses during a live drum-move drag');
+    // Drag done → lint resumes (and this array, once dropped, is re-sorted).
+    W.setDrag(null);
+    W.setGen(1);
+    assert.deepStrictEqual(W.fn(sorted), [], 'after drop, sorted hits lint clean');
+});
+
+// ── Source locks: the draw path uses the MEMO, not a per-frame pure pass ──
+
+t('the drum draw loop calls the memoized wrapper, not the O(n) pure fn', () => {
+    const fnStart = src.indexOf('function _drumEditorDraw');
+    assert.ok(fnStart >= 0, '_drumEditorDraw must exist');
+    const nextFn = src.indexOf('\nfunction ', fnStart + 1);
+    const body = src.slice(fnStart, nextFn === -1 ? undefined : nextFn);
+    assert.ok(/_drumLimbConflicts\(hits\)/.test(body),
+        'draw must call the memoized _drumLimbConflicts(hits)');
+    assert.ok(!/_drumLimbConflictsPure\(/.test(body),
+        'draw must NOT re-cluster with the pure helper every frame');
+});
+
+t('the lint memo keys on the shared edit-generation counter', () => {
+    assert.ok(/_coverageEditGen[\s\S]*?_drumLintCache|_drumLintCache[\s\S]*?_coverageEditGen/.test(src),
+        'the drum-lint memo must invalidate on the edit generation');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
