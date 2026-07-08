@@ -160,6 +160,19 @@ t('_drumConflictIndexSetPure flattens every conflicted index, skips clean hits',
 // by brace-matching and eval it over injected fakes. These FAIL on pre-fix
 // code: the wrapper didn't exist and the draw called the pure fn directly.
 
+// Brace-match a function body from the `function name(` at `fnStart` — returns
+// the source through the matching close brace. Robust to nested/inner
+// `function ` declarations (a plain `\nfunction ` boundary is not).
+function braceEnd(fnStart) {
+    const open = src.indexOf('{', fnStart);
+    let depth = 0;
+    for (let i = open; i < src.length; i++) {
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}' && --depth === 0) return i + 1;
+    }
+    return -1;
+}
+
 // Extract `let _drumLintCache … function _drumLimbConflicts(hits){…}` and run
 // it with the pure block + a mutable fake S / _coverageEditGen in scope.
 function buildWrapper() {
@@ -168,12 +181,7 @@ function buildWrapper() {
     if (cacheAt < 0 || fnAt < 0) {
         throw new Error('stateful _drumLimbConflicts wrapper not found (pre-fix?)');
     }
-    const open = src.indexOf('{', fnAt);
-    let depth = 0, end = -1;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) { end = i + 1; break; }
-    }
+    const end = braceEnd(fnAt);
     const wrapperSrc = src.slice(cacheAt, end);
     return new Function(
         '"use strict";'
@@ -233,9 +241,9 @@ t('LIVE drum-move drag pauses the lint — a transiently-unsorted array is never
     // never the spurious markers the raw pass would draw on the unsorted array.
     W.setDrag({ type: 'drum-move' });
     assert.deepStrictEqual(W.fn(unsorted), [], 'advisory lint pauses during a live drum-move drag');
-    // Drag done → lint resumes (and this array, once dropped, is re-sorted).
+    // Drag done → lint resumes. `sorted` is a fresh array reference, so the
+    // wrapper's hitsRef check re-clusters it on its own (no gen bump needed).
     W.setDrag(null);
-    W.setGen(1);
     assert.deepStrictEqual(W.fn(sorted), [], 'after drop, sorted hits lint clean');
 });
 
@@ -244,17 +252,23 @@ t('LIVE drum-move drag pauses the lint — a transiently-unsorted array is never
 t('the drum draw loop calls the memoized wrapper, not the O(n) pure fn', () => {
     const fnStart = src.indexOf('function _drumEditorDraw');
     assert.ok(fnStart >= 0, '_drumEditorDraw must exist');
-    const nextFn = src.indexOf('\nfunction ', fnStart + 1);
-    const body = src.slice(fnStart, nextFn === -1 ? undefined : nextFn);
+    const body = src.slice(fnStart, braceEnd(fnStart));  // brace-matched body
     assert.ok(/_drumLimbConflicts\(hits\)/.test(body),
         'draw must call the memoized _drumLimbConflicts(hits)');
     assert.ok(!/_drumLimbConflictsPure\(/.test(body),
         'draw must NOT re-cluster with the pure helper every frame');
 });
 
-t('the lint memo keys on the shared edit-generation counter', () => {
-    assert.ok(/_coverageEditGen[\s\S]*?_drumLintCache|_drumLintCache[\s\S]*?_coverageEditGen/.test(src),
-        'the drum-lint memo must invalidate on the edit generation');
+t('the lint memo key is built from the shared edit-generation counter', () => {
+    // Assert _coverageEditGen participates in the CACHE KEY inside the wrapper
+    // itself — not merely that the two identifiers sit near each other in src.
+    const fnStart = src.indexOf('function _drumLimbConflicts(hits) {');
+    assert.ok(fnStart >= 0, '_drumLimbConflicts wrapper must exist');
+    const body = src.slice(fnStart, braceEnd(fnStart));
+    assert.ok(/_coverageEditGen/.test(body),
+        'the wrapper must read _coverageEditGen');
+    assert.ok(/const key\s*=[\s\S]*?gen/.test(body),
+        'the memo key must incorporate the edit generation');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
