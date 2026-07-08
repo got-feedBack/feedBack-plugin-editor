@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **One tempo-map converter: `beatOf` / `timeOf`.** The musical-beat ⇄
+  seconds math that the flex remapper (`_makeTimeRemap`) and `snapTime`
+  each computed inline is now a single extracted `@pure:beat-converter`
+  pair — `beatOf(beats, t)` (seconds → fractional beat) and
+  `timeOf(beats, β)` (the inverse), exact inverses within a grid gap,
+  extrapolating along the first/last gap's local tempo outside the grid,
+  and the identity when the grid has fewer than two beats. `_makeTimeRemap`
+  now routes interior times through the converter (it *is*
+  `timeOf(new, beatOf(old, t))` within the grid) while preserving its
+  legacy constant-shift on the tails, and `snapTime` snaps in the beat
+  domain (`timeOf(round(beatOf(t)·subs)/subs)`). A pure refactor with **no
+  behaviour change** — the shared, tested converter is the foundation the
+  beat-primary note model and the Logic-style ruler/LCD read from next.
+  Tests: `tests/beat_converter.test.js`.
+
 ### Added
 - **MIDI import can adopt the file's own tempo map.** Importing a `.mid` as
   keys or drums used to bake note times but throw the file's tempo and

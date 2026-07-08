@@ -67,6 +67,9 @@ assert.ok(r3m, '_r3 must exist');
 const pipelineSrc = [
     rideBlock,
     r3m[0],
+    // _makeTimeRemap rides the grid through the shared beat-converter (A1),
+    // so the converter must be in scope for the real remap to run.
+    extractBlock('beat-converter'),
     extractFn('_tempoRetimeArrangements'),
     extractFn('_tempoRideSet'),
     extractFn('_makeTimeRemap'),
