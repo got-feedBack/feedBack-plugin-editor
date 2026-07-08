@@ -130,6 +130,7 @@
             <select id="editor-key-tonic" onchange="editorSetKeyTonic(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Song key (tonic)"></select>
             <select id="editor-key-scale" onchange="editorSetKeyScale(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Scale / mode"></select>
             <button id="editor-key-highlight-btn" onclick="editorToggleKeyHighlight()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Dim out-of-key notes — fretted lanes resolve pitch from tuning + capo; the piano roll also shades out-of-key rows" aria-pressed="false">In-key</button>
+            <button id="editor-key-detect-btn" onclick="editorDetectKey()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Guess the key from this part's notes (Krumhansl profiles) and set it — a suggestion, editable in the picker">Detect</button>
         </div>
 
         <div class="h-4 w-px bg-gray-700"></div>
