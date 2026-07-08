@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Detect key from the notes.** A new **Detect** button in the key controls
+  guesses the current part's key from its pitch-class content (the
+  Krumhansl–Schmuckler algorithm — Pearson correlation against the standard
+  major/minor key profiles) and sets it, turning the in-key highlight on so the
+  result is visible. Duration-weighted (a held note counts more than a passing
+  one, with a small floor so staccato still registers) and capo/tuning-aware for
+  fretted parts. It's a **suggestion, not authoritative** — the tonic/scale
+  pickers stay editable — and it says nothing when a part has no notes or no
+  tonal centre. Tests: `tests/key_detect.test.js`.
 - **Parts can be renamed (undoable).** A ✏ button next to the arrangement
   selector (registry command `renamePart`) renames the current part
   through a new `RenameArrangementCmd` — full undo/redo, selector text

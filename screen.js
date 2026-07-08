@@ -118,6 +118,59 @@ function _pcInScalePure(pc, tonicPc, scaleName) {
 }
 /* @pure:scale:end */
 
+/* @pure:key-detect:start */
+// Krumhansl–Kessler key profiles — the relative weight a tonal centre gives
+// each scale degree (index 0 = tonic). Used to guess a chart's key from its
+// pitch-class content. Standard, well-cited values; ranking only, so their
+// absolute scale doesn't matter.
+const _KK_MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+const _KK_MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+
+// Best-fit key for a 12-bin pitch-class weight histogram (bin 0 = C). This is
+// the Krumhansl–Schmuckler algorithm: score all 24 major/minor keys by the
+// PEARSON CORRELATION of the histogram with the tonic-rotated profile, and
+// return the winner as {tonic, scale, score} (`scale` is a SCALE_INTERVALS id,
+// 'major' | 'minor'). Correlation (not a raw dot product) is what makes the
+// comparison fair ACROSS modes — the two profiles have different magnitudes, so
+// a dot product would systematically favour one; and it makes a profile score a
+// perfect 1.0 against its own key. Ties break toward major (scored first).
+// Returns null for an empty or perfectly flat histogram (no tonal centre), so
+// the caller shows nothing rather than a bogus C major. Pure — no note/DOM.
+function _detectKeyPure(pcWeights) {
+    if (!Array.isArray(pcWeights) || pcWeights.length < 12) return null;
+    const x = new Array(12);
+    let sum = 0, total = 0;
+    for (let i = 0; i < 12; i++) {
+        const w = Number(pcWeights[i]);
+        const v = (Number.isFinite(w) && w > 0) ? w : 0;
+        x[i] = v; sum += v; total += v;
+    }
+    if (total <= 0) return null;
+    const xbar = sum / 12;
+    let xden = 0;
+    for (let i = 0; i < 12; i++) xden += (x[i] - xbar) * (x[i] - xbar);
+    xden = Math.sqrt(xden);
+    if (xden <= 0) return null;   // flat histogram — no tonal centre to find
+    let best = null;
+    const modes = [['major', _KK_MAJOR_PROFILE], ['minor', _KK_MINOR_PROFILE]];
+    for (const [scale, profile] of modes) {
+        const pbar = profile.reduce((a, b) => a + b, 0) / 12;
+        let pden = 0;
+        for (let i = 0; i < 12; i++) pden += (profile[i] - pbar) * (profile[i] - pbar);
+        pden = Math.sqrt(pden);
+        for (let tonic = 0; tonic < 12; tonic++) {
+            let num = 0;
+            for (let pc = 0; pc < 12; pc++) {
+                num += (x[pc] - xbar) * (profile[((pc - tonic) % 12 + 12) % 12] - pbar);
+            }
+            const score = num / (xden * pden);
+            if (!best || score > best.score) best = { tonic, scale, score };
+        }
+    }
+    return best;
+}
+/* @pure:key-detect:end */
+
 // Human labels for the scale picker (keys are the SCALE_INTERVALS ids).
 const SCALE_LABELS = {
     major: 'Major', minor: 'Minor', dorian: 'Dorian', phrygian: 'Phrygian',
@@ -2006,6 +2059,37 @@ function _editorToggleKeyHighlight() {
     return true;
 }
 window.editorToggleKeyHighlight = _editorToggleKeyHighlight;
+
+// Detect the active arrangement's key from its pitch-class content (DAW 4.17)
+// and set it as the editor key, turning the in-key highlight on so the result
+// is visible. A best-guess suggestion, not authoritative — the picker stays
+// editable. Duration-weighted (a held note counts more than a passing one),
+// with a small floor so staccato notes still register. Fretted parts resolve
+// to sounding pitch (capo/tuning-aware); keys parts use their packed pitch.
+window.editorDetectKey = () => {
+    if (!S.arrangements || !S.arrangements.length) { setStatus('No arrangement to analyse'); return; }
+    const nn = notes();
+    if (!nn.length) { setStatus('No notes yet — add some before detecting a key'); return; }
+    const rctx = typeof _rollPitchCtx === 'function' ? _rollPitchCtx() : null;
+    const weights = new Array(12).fill(0);
+    let counted = 0;
+    for (const n of nn) {
+        const midi = _rollMidiForNote(n, rctx);
+        if (!Number.isFinite(midi)) continue;
+        const pc = ((Math.round(midi) % 12) + 12) % 12;
+        weights[pc] += Math.max(Number(n.sustain) || 0, 0.1);
+        counted++;
+    }
+    const res = counted ? _detectKeyPure(weights) : null;
+    if (!res) { setStatus('Could not detect a key from this part'); return; }
+    S.editorKey = { tonic: res.tonic, scale: res.scale };
+    try { localStorage.setItem('editorKeyHighlight', '1'); } catch (_) { /* private mode */ }
+    _persistEditorKey();
+    _refreshKeyControls();
+    draw();
+    const label = (typeof SCALE_LABELS !== 'undefined' && SCALE_LABELS[res.scale]) || res.scale;
+    setStatus(`Detected key: ${PIANO_NOTE_NAMES[res.tonic]} ${label} — adjust in the picker if it's off`);
+};
 
 // ── Per-part view switcher (String · Piano roll) ─────────────────────
 let _viewSwitchState = '';
