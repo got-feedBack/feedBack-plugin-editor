@@ -14678,6 +14678,108 @@ function _drumLaneIdxForPiecePure(pieceId, laneTable) {
 }
 /* @pure:drum-density:end */
 
+/* @pure:drum-limb-lint:start */
+// The two kit pieces played with the FEET (the rest are stick/hand pieces).
+// A drummer has two hands, so at most two hand pieces can sound at one instant.
+const DRUM_FEET_PIECES = new Set(['kick', 'hh_pedal']);
+// Hits closer than this (seconds) count as one instant. Tight enough that a
+// fast roll or a flam pair (~30 ms) stays separate, loose enough to catch hits
+// authored/imported onto the same grid tick with tiny rounding differences.
+const DRUM_LIMB_EPSILON = 0.012;
+
+// Physical-feasibility conflicts in a drum tab — ADVISORY ONLY, never blocks
+// (the drum sibling of the fretted playability lint; DAW doc F5.4). Two rules,
+// evaluated per near-simultaneous cluster (hits within `epsilon` of the
+// cluster's first hit):
+//   • 'hands' — more than TWO stick-struck (non-foot) pieces at one instant:
+//     3+ simultaneous hand pieces needs 3+ hands.
+//   • 'hihat' — a contradictory hi-hat state at one instant: hh_open with
+//     hh_closed (can't be both), or hh_open with hh_pedal (the foot can't be
+//     up-for-open and down-on-the-pedal at once).
+// Feet (kick, hh_pedal) never count toward the hand limit; two feet + two
+// hands is the playable ceiling. Returns one entry per conflicted cluster:
+// {time, indices, pieces, reasons}. `hits` is assumed time-sorted (the editor
+// keeps S.drumTab.hits sorted); hits with a non-finite time are skipped.
+function _drumLimbConflictsPure(hits, epsilon) {
+    const eps = Number.isFinite(epsilon) ? epsilon : DRUM_LIMB_EPSILON;
+    const out = [];
+    if (!Array.isArray(hits)) return out;
+    const n = hits.length;
+    let i = 0;
+    while (i < n) {
+        const t0 = hits[i] && Number(hits[i].t);
+        if (!Number.isFinite(t0)) { i++; continue; }
+        // Cluster [i, j): every following hit within eps of the cluster START
+        // (bounded from t0, so a long roll never chains into one giant cluster).
+        let j = i + 1;
+        while (j < n) {
+            const tj = Number(hits[j].t);
+            if (!Number.isFinite(tj) || tj - t0 >= eps) break;
+            j++;
+        }
+        if (j - i >= 2) {
+            const indices = [];
+            const pieces = [];
+            const handPieces = new Set();
+            const present = new Set();
+            for (let k = i; k < j; k++) {
+                indices.push(k);
+                const p = hits[k].p;
+                pieces.push(p);
+                present.add(p);
+                if (!DRUM_FEET_PIECES.has(p)) handPieces.add(p);
+            }
+            const reasons = [];
+            if (handPieces.size > 2) reasons.push('hands');
+            if (present.has('hh_open') && (present.has('hh_closed') || present.has('hh_pedal'))) {
+                reasons.push('hihat');
+            }
+            if (reasons.length) out.push({ time: t0, indices, pieces, reasons });
+        }
+        i = j > i ? j : i + 1;
+    }
+    return out;
+}
+
+// Flatten conflicts to the Set of conflicted hit indices (for the renderer).
+function _drumConflictIndexSetPure(hits, epsilon) {
+    const set = new Set();
+    for (const c of _drumLimbConflictsPure(hits, epsilon)) {
+        for (const idx of c.indices) set.add(idx);
+    }
+    return set;
+}
+/* @pure:drum-limb-lint:end */
+
+// Cross-frame memo for the advisory limb-lint. The pure clusterer is O(n) and
+// the drum draw loop is already O(n), but re-clustering EVERY frame (playback,
+// idle repaint) is the exact per-frame-recompute bug the section-coverage strip
+// hit — so cache the conflict list behind the edit generation (bumped by
+// EditHistory._afterEdit on every commit/undo/redo) plus the hits array
+// identity+length. Two subtleties this guards:
+//   • LIVE drum-move drag: `_drumEditorOnDragMove` mutates hit `.t` in place and
+//     only RE-SORTS on drop (`_drumEditorOnDragEnd`), so mid-drag the array is
+//     transiently unsorted. The clusterer assumes time-sorted input, so running
+//     it then can flash spurious/missed markers. It's advisory, so we simply
+//     PAUSE the lint for the drag's duration (return no conflicts) and let it
+//     re-appear correctly on drop — never mark a transiently-unsorted array.
+//   • add/remove change hits.length; an in-place move commits with an edit-gen
+//     bump — so the cheap key catches every real change without a deep scan.
+let _drumLintCache = { key: null, hitsRef: null, value: [] };
+function _drumLimbConflicts(hits) {
+    // Live drum-move drag → hits unsorted in place; advisory lint pauses.
+    if (typeof S !== 'undefined' && S.drag && S.drag.type === 'drum-move') return [];
+    const gen = (typeof _coverageEditGen === 'number') ? _coverageEditGen : 0;
+    const key = gen + '|' + (Array.isArray(hits) ? hits.length : -1);
+    if (key !== _drumLintCache.key || _drumLintCache.hitsRef !== hits) {
+        _drumLintCache = {
+            key, hitsRef: hits,
+            value: _drumLimbConflictsPure(hits, DRUM_LIMB_EPSILON),
+        };
+    }
+    return _drumLintCache.value;
+}
+
 // Density pref (editor localStorage, never pack data) + a memoized lane
 // table so per-frame draw/hit paths never rebuild it.
 let _drumDensityCache = null;
@@ -15188,6 +15290,15 @@ function _drumEditorDraw(w, h) {
         ctx.stroke();
     }
 
+    // ── Playability lint (advisory) ───────────────────────────────────
+    // Conflicted-hit index set from the MEMOIZED limb-lint — the O(n) cluster
+    // pass runs only when the hits actually change (edit-gen + array id/len),
+    // not on every repaint, and pauses during a live drum-move drag (unsorted
+    // hits). Drum-editor-mode only; never touches guitar/keys; never mutates.
+    const _lintConflicts = _drumLimbConflicts(hits);
+    const _conflictIdx = new Set();
+    for (const c of _lintConflicts) for (const idx of c.indices) _conflictIdx.add(idx);
+
     // ── Hits ──────────────────────────────────────────────────────────
     for (let i = 0; i < hits.length; i++) {
         const h = hits[i];
@@ -15292,6 +15403,24 @@ function _drumEditorDraw(w, h) {
             ctx.lineWidth = 1;
             ctx.beginPath(); ctx.arc(cx, cy, 2, 0, Math.PI * 2); ctx.stroke();
         }
+
+        // Playability advisory: a small amber warning triangle above a hit
+        // that participates in a physically-impossible simultaneity (3+ hands
+        // or a contradictory hi-hat state). Advisory only — the hit is drawn
+        // and editable exactly as normal.
+        if (_conflictIdx.has(i)) {
+            const wy = cy - DRUM_LANE_H / 2 + 4;
+            ctx.fillStyle = '#facc15';
+            ctx.strokeStyle = '#0a0a1a';
+            ctx.lineWidth = 0.75;
+            ctx.beginPath();
+            ctx.moveTo(cx, wy - 3);
+            ctx.lineTo(cx + 3.2, wy + 3);
+            ctx.lineTo(cx - 3.2, wy + 3);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+        }
     }
 
     // ── Cursor ────────────────────────────────────────────────────────
@@ -15313,7 +15442,18 @@ function _drumEditorDraw(w, h) {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     const hud = `Drum editor — ${hits.length} hits, ${S.drumSel.size} selected. Click empty: add. Drag empty: select box. Click hit: select. Del: remove. G/F/K: ghost/flam/choke. A/N: accent/normal. Alt+drag or Shift+↑/↓: velocity.`;
-    ctx.fillText(hud, LABEL_W + 6, WAVEFORM_H + _drumPieceCount() * DRUM_LANE_H + 6);
+    const hudY = WAVEFORM_H + _drumPieceCount() * DRUM_LANE_H + 6;
+    ctx.fillText(hud, LABEL_W + 6, hudY);
+    // Advisory playability count on its own line — amber, non-blocking. Wording
+    // stays gentle (these are hints for the human, not errors).
+    if (_lintConflicts.length) {
+        const spots = _lintConflicts.length;
+        ctx.fillStyle = '#facc15';
+        ctx.fillText(
+            `⚠ ${spots} playability ${spots === 1 ? 'hint' : 'hints'}: `
+            + `a spot needs 3+ hands or an impossible hi-hat state (advisory — nothing is blocked).`,
+            LABEL_W + 6, hudY + 15);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════
