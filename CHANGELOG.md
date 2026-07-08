@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Chord-at-cursor readout.** A small chord name now appears next to the
+  measure display, naming the notes sounding at the playhead — `C`, `Am`,
+  `Gmaj7`, `D#6`, `Csus4`, `E5` (power chord), and so on. Fretted parts resolve
+  to sounding pitch (capo- and tuning-aware), keys parts use their packed
+  pitch; octave doublings collapse to one chord. It requires an **exact** match
+  from a common triad/seventh/sus/power-chord vocabulary, so it only shows a
+  name when it's certain (`—` when notes sound but form no named chord, blank
+  when nothing sounds), and the **bass note breaks genuine ties** (a Cm7 voiced
+  over E♭ reads as D#6). Purely a read-only readout — it never edits anything.
+  Tests: `tests/chord_at_cursor.test.js`.
 - **Parts can be renamed (undoable).** A ✏ button next to the arrangement
   selector (registry command `renamePart`) renames the current part
   through a new `RenameArrangementCmd` — full undo/redo, selector text

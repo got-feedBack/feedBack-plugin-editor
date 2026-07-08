@@ -7462,6 +7462,41 @@ function updateMeasureDisplay() {
         ? 'No measure grid available'
         : `Measure ${r.measure}, time signature ${r.numerator}/${r.denominator}`;
 }
+
+// Read-only chord readout at the playhead (DAW 4.17): the pitch classes of the
+// notes sounding at S.cursorTime, identified into a chord name when they form a
+// recognised one. Fretted parts resolve to sounding pitch (capo/tuning-aware),
+// keys parts use their packed pitch. Blank when nothing sounds; "—" when notes
+// sound but form no named chord. Never edits anything.
+function updateChordDisplay() {
+    const el = document.getElementById('editor-chord-display');
+    if (!el) return;
+    let text = '';
+    let title = 'Chord at the playhead';
+    if (S.arrangements && S.arrangements.length && !S.drumEditMode && !S.tempoMapMode) {
+        const rctx = typeof _rollPitchCtx === 'function' ? _rollPitchCtx() : null;
+        const sounding = _notesSoundingAtPure(notes(), S.cursorTime || 0, 0.05, 0.03);
+        const midis = [];
+        for (const n of sounding) {
+            const m = _rollMidiForNote(n, rctx);
+            if (Number.isFinite(m)) midis.push(m);
+        }
+        if (midis.length) {
+            const pcs = _pcSetFromMidisPure(midis);
+            const bassPc = ((Math.round(Math.min(...midis)) % 12) + 12) % 12;
+            const chord = _identifyChordPure(pcs, bassPc, PIANO_NOTE_NAMES);
+            if (chord) {
+                text = chord.name;
+                title = `${midis.length} note${midis.length === 1 ? '' : 's'} sounding → ${chord.name}`;
+            } else {
+                text = '—';
+                title = `${midis.length} notes sounding (no named chord)`;
+            }
+        }
+    }
+    el.textContent = text;
+    el.title = title;
+}
 function updateTimeDisplay() {
     const el = document.getElementById('editor-time-display');
     if (!el) return;
@@ -7472,6 +7507,7 @@ function updateTimeDisplay() {
     };
     el.textContent = fmt(S.cursorTime) + ' / ' + fmt(S.duration);
     updateMeasureDisplay();
+    updateChordDisplay();
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -8915,6 +8951,87 @@ function _editorMeasureSignatureReadoutPure(beats, time, selectedIdx) {
     return { label: `M${measure} ${numerator}/${den}`, measure, numerator, denominator: den };
 }
 /* @pure:measure-readout:end */
+
+/* @pure:chord-id:start */
+// Chord vocabulary as root-relative pitch-class sets (semitones above the
+// root). Grouped by size; within a size, order breaks nothing (an exact set
+// match at a given size is unambiguous except for the m7/6 and symmetric
+// aug/dim7 cases, which the bass note disambiguates below). Display/teaching
+// only — never grades.
+const CHORD_FORMULAS = [
+    { suffix: 'maj7',  pcs: [0, 4, 7, 11] },
+    { suffix: '7',     pcs: [0, 4, 7, 10] },
+    { suffix: 'm7',    pcs: [0, 3, 7, 10] },
+    { suffix: 'mMaj7', pcs: [0, 3, 7, 11] },
+    { suffix: 'm7b5',  pcs: [0, 3, 6, 10] },
+    { suffix: 'dim7',  pcs: [0, 3, 6, 9] },
+    { suffix: '6',     pcs: [0, 4, 7, 9] },
+    { suffix: 'm6',    pcs: [0, 3, 7, 9] },
+    { suffix: '',      pcs: [0, 4, 7] },      // major triad
+    { suffix: 'm',     pcs: [0, 3, 7] },      // minor triad
+    { suffix: 'dim',   pcs: [0, 3, 6] },
+    { suffix: 'aug',   pcs: [0, 4, 8] },
+    { suffix: 'sus4',  pcs: [0, 5, 7] },
+    { suffix: 'sus2',  pcs: [0, 2, 7] },
+    { suffix: '5',     pcs: [0, 7] },         // power chord (dyad)
+];
+
+// Unique, sorted pitch-class set (0–11) from a list of MIDI numbers.
+function _pcSetFromMidisPure(midis) {
+    const set = new Set();
+    for (const m of midis || []) {
+        const v = Number(m);
+        if (Number.isFinite(v)) set.add(((Math.round(v) % 12) + 12) % 12);
+    }
+    return [...set].sort((a, b) => a - b);
+}
+
+// Identify a chord from a pitch-class set. Requires an EXACT match (the pcs
+// equal some root's chord set) — no partial guessing, so the readout only
+// appears when it's certain. `bassPc` (the lowest sounding pitch class, or -1)
+// breaks the genuine ties: m7-vs-6 (Cm7 and Eb6 are the same four pcs) and the
+// symmetric aug / dim7 (which spell at several roots). A single pc returns the
+// note name; an empty set returns null. Root names come from `noteNames`.
+function _identifyChordPure(pcs, bassPc, noteNames) {
+    const names = noteNames || PIANO_NOTE_NAMES;
+    const set = Array.isArray(pcs) ? [...new Set(pcs)].sort((a, b) => a - b) : [];
+    if (set.length === 0) return null;
+    if (set.length === 1) return { root: set[0], suffix: '', name: names[set[0]] };
+    const present = new Set(set);
+    const matches = [];
+    for (const f of CHORD_FORMULAS) {
+        if (f.pcs.length !== set.length) continue;
+        for (let root = 0; root < 12; root++) {
+            let ok = true;
+            for (const iv of f.pcs) {
+                if (!present.has((root + iv) % 12)) { ok = false; break; }
+            }
+            if (ok) matches.push({ root, suffix: f.suffix });
+        }
+    }
+    if (!matches.length) return null;
+    const best = matches.find(m => m.root === bassPc) || matches[0];
+    return { root: best.root, suffix: best.suffix, name: names[best.root] + best.suffix };
+}
+
+// Notes sounding at time `t`: onset at/before t (within eps) and still ringing
+// (onset + max(sustain, minDur) ≥ t − eps). Pure over the note list, so a
+// zero-sustain note still registers briefly at its onset.
+function _notesSoundingAtPure(notesArr, t, minDur, eps) {
+    const out = [];
+    if (!Array.isArray(notesArr)) return out;
+    const e = Number.isFinite(eps) ? eps : 0.03;
+    const md = Number.isFinite(minDur) ? minDur : 0.05;
+    for (const n of notesArr) {
+        const on = Number(n.time);
+        if (!Number.isFinite(on)) continue;
+        const off = on + Math.max(Number(n.sustain) || 0, md);
+        if (on <= t + e && off >= t - e) out.push(n);
+    }
+    return out;
+}
+/* @pure:chord-id:end */
+
 function updateBPMDisplay() {
     const el = document.getElementById('editor-bpm');
     if (!el || S.beats.length < 2) return;
