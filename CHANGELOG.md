@@ -108,6 +108,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Key controls now show for any pitched arrangement, not just keys.
   Tests: `tests/fret_key_highlight.test.js` (including the capo-flips-
   membership case an uncapoed resolver gets wrong).
+- **Parts can be reordered.** New ‹ / › buttons next to the arrangement
+  selector (registry commands `movePartEarlier` / `movePartLater`) move
+  the current part one slot at a time; each end disables its direction so
+  the affordance always tells the truth. The order persists — sloppak
+  saves ship the client arrangement array as the full snapshot and the
+  manifest merge keys entries by id. Reordering renumbers arrangement
+  indices, so the undo history resets (the same rationale as
+  remove-arrangement — which is also why a move isn't undoable: move it
+  back). Blocked mid-recording (a take pins its arrangement index).
+  Tests: `tests/reorder_part.test.js`.
 
 ### Fixed
 - **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
