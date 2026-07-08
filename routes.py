@@ -361,27 +361,136 @@ def _build_song_timeline(beats: list, sections: list) -> dict | None:
 
 
 def _apply_timeline_signatures_to_beats(beats: list, time_signatures: list) -> list:
-    """Attach denominator hints from song_timeline events to downbeat rows."""
+    """Attach denominator hints from song_timeline events to downbeat rows.
+
+    A time-signature event applies from its own time FORWARD until the next
+    event — both song_timeline (`_build_song_timeline`) and core MIDI maps emit
+    one event per CHANGE, not one per bar — so every downbeat at or after an
+    event inherits that event's denominator (carry-forward). Downbeats before
+    the first event are left bare (default /4 downstream). Exact-match-only
+    folding would leave a persistent 7/8 as 7/8 on the change bar and /4 on
+    every following bar.
+    """
     if not beats or not isinstance(time_signatures, list):
         return beats
     out = [dict(b) if isinstance(b, dict) else b for b in beats]
-    downbeats = [
-        (i, _timeline_round_time(b.get("time", 0)))
-        for i, b in enumerate(out)
-        if isinstance(b, dict) and int(b.get("measure", -1) or -1) > 0
-    ]
+    events = []
     for ev in time_signatures:
         if not isinstance(ev, dict):
             continue
         ts = ev.get("ts")
         if not isinstance(ts, list) or len(ts) < 2:
             continue
-        den = _timeline_denominator(ts[1])
-        t = _timeline_round_time(ev.get("time", 0))
-        match = min(downbeats, key=lambda pair: abs(pair[1] - t), default=None)
-        if match and abs(match[1] - t) <= 0.001:
-            out[match[0]]["den"] = den
+        events.append((_timeline_round_time(ev.get("time", 0)), _timeline_denominator(ts[1])))
+    if not events:
+        return out
+    events.sort(key=lambda e: e[0])
+    for b in out:
+        if not (isinstance(b, dict) and int(b.get("measure", -1) or -1) > 0):
+            continue
+        bt = _timeline_round_time(b.get("time", 0))
+        den = None
+        for et, ed in events:
+            if et <= bt + 0.001:
+                den = ed
+            else:
+                break
+        if den is not None:
+            b["den"] = den
     return out
+
+
+def _sanitize_midi_tempo_map(tm) -> dict:
+    """Gate + shape a core ``convert_midi_tempo_map`` result for the client.
+
+    Returns ``{tempos, time_signatures, beats}`` only when the map carries a
+    grid worth offering — at least one numbered downbeat (``measure > 0``) in
+    ``beats`` — otherwise ``{}``. A gridless or non-dict map yields ``{}`` so
+    the frontend shows no Use-vs-Keep choice. Pure (no I/O), so the gating is
+    unit-testable without a real ``.mid`` or a core import.
+    """
+    if not isinstance(tm, dict):
+        return {}
+    beats = tm.get("beats")
+    if not isinstance(beats, list) or not _timeline_downbeat_indices(beats):
+        return {}
+    tempos = tm.get("tempos")
+    sigs = tm.get("time_signatures") if isinstance(tm.get("time_signatures"), list) else []
+    # Fold time-signature denominators onto the downbeat rows so the adopted
+    # grid carries `den` inline — the editor's canonical, per-downbeat home for
+    # the denominator (`_build_song_timeline` / the frontend read `beat.den`,
+    # not this list). Without this, a core map that conveys a non-4 denominator
+    # only in `time_signatures` (leaving downbeats bare) would adopt/save as /4.
+    # No-op when sigs is empty or a downbeat already carries a matching den.
+    beats = _apply_timeline_signatures_to_beats(beats, sigs)
+    return {
+        "tempos": tempos if isinstance(tempos, list) else [],
+        "time_signatures": sigs,
+        "beats": beats,
+    }
+
+
+def _shift_midi_tempo_map(tm: dict, offset: float) -> dict:
+    """Shift every ``time`` in a sanitized tempo map by ``offset`` seconds.
+
+    The core converters place the MIDI's notes into the session timeline at
+    ``raw + audio_offset``, but ``convert_midi_tempo_map`` emits its grid at the
+    raw MIDI times. Adopting an unshifted grid would leave the bars
+    ``audio_offset`` seconds away from the very notes just imported (the Use
+    path would misalign downbeats from the content). Applying the SAME offset
+    the note converters use keeps bars and notes on one mapping. A zero /
+    non-finite offset (the common empty-project import) returns the map
+    untouched.
+    """
+    if not tm or not offset or not math.isfinite(offset):
+        return tm
+
+    def _shift_rows(rows):
+        out = []
+        for r in rows if isinstance(rows, list) else []:
+            if isinstance(r, dict) and isinstance(r.get("time"), (int, float)) \
+                    and not isinstance(r.get("time"), bool):
+                out.append({**r, "time": r["time"] + offset})
+            else:
+                out.append(r)
+        return out
+
+    return {
+        "tempos": _shift_rows(tm.get("tempos")),
+        "time_signatures": _shift_rows(tm.get("time_signatures")),
+        "beats": _shift_rows(tm.get("beats")),
+    }
+
+
+def _safe_midi_tempo_map(midi_path: str, track_index: int, audio_offset: float = 0.0) -> dict:
+    """The `.mid`'s own tempo/time-signature/beat grid, or ``{}``.
+
+    Wraps core ``convert_midi_tempo_map`` (feedback #796) so the editor can
+    offer the MIDI's timing as the project grid on import (DAW 3.2). Returns
+    ``_sanitize_midi_tempo_map``'s output — shifted by ``audio_offset`` so the
+    grid lands in the same absolute-time space as the imported notes (the note
+    converters place notes at ``raw + audio_offset``; the grid must ride the
+    same offset or adopting it misaligns bars from the content) — or ``{}``
+    when the running core predates the function (older hosts) or extraction
+    fails, so a keys/drums import never 500s just because timing couldn't be
+    read. ``track_index`` matters only for SMF type-2 (independent timelines);
+    type 0/1 ignore it and merge, exactly as the note converters do. Must be
+    called while ``midi_path`` still exists — both MIDI import endpoints rmtree
+    the temp dir right after converting.
+    """
+    try:
+        from lib.midi_import import convert_midi_tempo_map
+    except ImportError:
+        return {}
+    try:
+        tm = convert_midi_tempo_map(midi_path, track_index)
+    except Exception as _tm_err:  # never fail the import over timing
+        import logging as _elog
+        _elog.getLogger("slopsmith.plugin.editor").debug(
+            "tempo-map extraction failed for %s: %s", midi_path, _tm_err
+        )
+        return {}
+    return _shift_midi_tempo_map(_sanitize_midi_tempo_map(tm), audio_offset)
 
 
 def _load_song_timeline(source_dir: Path, manifest: dict) -> dict | None:
@@ -5430,6 +5539,11 @@ def setup(app, context):
             return JSONResponse({"error": "track_index must be an integer"}, 400)
 
         def _convert():
+            # Read the MIDI's own tempo/sig/beat grid in the SAME worker (the
+            # temp dir is rmtree'd right after this returns) so the client can
+            # offer it as the project grid (DAW 3.2). Shifted by audio_offset to
+            # match where the notes below land. Empty {} when unavailable.
+            tempo_map = _safe_midi_tempo_map(midi_path, track_index, audio_offset)
             wire = convert_midi_track_to_keys_wire(
                 midi_path, track_index, audio_offset, "Keys",
                 channel_filter=channel_filter,
@@ -5466,10 +5580,10 @@ def setup(app, context):
                         "link_next": False,
                     },
                 })
-            return arr_data
+            return arr_data, tempo_map
 
         try:
-            arr_data = await asyncio.get_event_loop().run_in_executor(None, _convert)
+            arr_data, tempo_map = await asyncio.get_event_loop().run_in_executor(None, _convert)
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -5483,7 +5597,7 @@ def setup(app, context):
             import warnings
             warnings.warn(f"Could not clean up MIDI temp dir: {_cleanup_err}")
 
-        return {"arrangement": arr_data}
+        return {"arrangement": arr_data, "tempo_map": tempo_map}
 
     # ── Convert GP tracks to arrangement and open in editor ──────────
 
@@ -6583,18 +6697,24 @@ def setup(app, context):
         supports = _supports_unmapped(convert_drum_track_from_midi)
 
         def _convert():
+            # Read the MIDI's grid in the same worker (temp dir is rmtree'd
+            # right after) so the client can offer it as timing (DAW 3.2).
+            # Shifted by audio_offset to match the imported drum-hit times.
+            tempo_map = _safe_midi_tempo_map(midi_path, track_index, audio_offset)
             if supports:
-                return convert_drum_track_from_midi(
+                tab = convert_drum_track_from_midi(
                     midi_path, track_index, audio_offset, arr_name,
                     out_unmapped=unmapped,
                 )
-            return convert_drum_track_from_midi(
-                midi_path, track_index, audio_offset, arr_name,
-            )
+            else:
+                tab = convert_drum_track_from_midi(
+                    midi_path, track_index, audio_offset, arr_name,
+                )
+            return tab, tempo_map
 
         _midi_tmp_dir = Path(midi_path).parent
         try:
-            drum_tab = await asyncio.get_event_loop().run_in_executor(None, _convert)
+            drum_tab, tempo_map = await asyncio.get_event_loop().run_in_executor(None, _convert)
         except ValueError as e:
             # convert_drum_track_from_midi raises ValueError for client input
             # errors (track_index out of range, non-finite audio_offset) —
@@ -6626,7 +6746,7 @@ def setup(app, context):
             _safe_unmapped_entry(m, rec)
             for m, rec in sorted(unmapped.items())
         ]
-        return {"drum_tab": drum_tab, "unmapped": unmapped_list}
+        return {"drum_tab": drum_tab, "unmapped": unmapped_list, "tempo_map": tempo_map}
 
     # ── Remove arrangement from session ────────────────────────────
 
