@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The per-module hook objects collapse into one `src/host.js` (R2, step 17).**
+  `history.js`, `drum.js` and `annotation-lanes.js` each grew their own
+  `setXHooks()` for the same reason — they need a few `main.js` symbols that
+  cannot be imported back without a cycle. By the fourth module the same four
+  callbacks (`draw`, `hideContextMenu`, `snapTime`, `editorPromptText`) were
+  being threaded through three separate hook objects. They now read a single
+  shared `host` object, wired once by `main.js`. A new module needs no new
+  plumbing: import `host`, call `host.draw()`.
+  No behaviour change. The `draw` thunk stays — it is what keeps the hook
+  pointed at the live binding rather than the pre-wrapper function — and
+  `host.js`'s header now carries that warning where the next person will read it.
+
 ### Fixed
 
 - **Hook callbacks captured the pre-wrapper `draw`.** `draw` is reassigned near

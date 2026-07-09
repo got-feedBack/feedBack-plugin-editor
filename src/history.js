@@ -12,9 +12,9 @@
 //
 // main.js coupling is three symbols — `_historyEnsureArr`, `draw`,
 // `updateStatus` — and importing them would close a cycle (main.js imports this
-// module). They arrive through setHistoryHooks() instead, the same shape as
-// canvas.js's setCanvas() and geometry.js's setLaneMetrics().
+// module). They arrive through the shared `host` object in src/host.js.
 // ════════════════════════════════════════════════════════════════════
+import { host } from './host.js';
 import { S, bumpEditGen } from './state.js';
 import { isKeysMode, updatePianoRange, _rollReadOnly, _rollLockNotice } from './keys.js';
 
@@ -22,16 +22,6 @@ import { isKeysMode, updatePianoRange, _rollReadOnly, _rollLockNotice } from './
 // the stack held every command since the last save/load. Oldest entries drop
 // first; 500 comfortably exceeds any realistic between-saves editing run.
 export const MAX_UNDO = 500;
-
-// Defaults keep the class usable before main.js wires it up (and in tests that
-// only exercise the stack): ensureArr never refuses, the UI callbacks no-op.
-const _hooks = {
-    ensureArr: () => true,
-    draw: () => {},
-    updateStatus: () => {},
-};
-
-export function setHistoryHooks(hooks) { Object.assign(_hooks, hooks); }
 
 // A NOTE-scope command is refused while a fretted part is shown in the
 // read-only piano roll (V4). Three carve-outs pass:
@@ -78,7 +68,7 @@ export class EditHistory {
         // Peek-then-pop: if the command belongs to another arrangement,
         // ensureArr switches to it (or refuses when it's gone) BEFORE the
         // command leaves the stack, so a refused undo loses nothing.
-        if (!_hooks.ensureArr(c)) return;
+        if (!host.ensureArr(c)) return;
         // Rolling a NOTE-scope command back would write the fretted chart shown
         // read-only in the roll, bypassing the exec/drag lock. Refuse — peek
         // only, so the command stays on the stack. ensureArr above has already
@@ -86,13 +76,13 @@ export class EditHistory {
         // part the rollback would actually touch.
         if (_locked(c)) return;
         this.undo.pop(); c.rollback(); this.redo.push(c);
-        this._afterEdit(); this._ui(); _hooks.draw(); _hooks.updateStatus();
+        this._afterEdit(); this._ui(); host.draw(); host.updateStatus();
     }
 
     doRedo() {
         if (!this.redo.length) return;
         const c = this.redo[this.redo.length - 1];
-        if (!_hooks.ensureArr(c)) return;
+        if (!host.ensureArr(c)) return;
         // Re-exec of a NOTE-scope command writes the read-only chart: same lock.
         if (_locked(c)) return;
         this.redo.pop(); c.exec(); this.undo.push(c);
@@ -100,7 +90,7 @@ export class EditHistory {
         // without this a redo-heavy session could grow it past the bound that
         // exec()/doUndo already enforce. Oldest drops first, mirroring exec().
         if (this.undo.length > MAX_UNDO) this.undo.shift();
-        this._afterEdit(); this._ui(); _hooks.draw(); _hooks.updateStatus();
+        this._afterEdit(); this._ui(); host.draw(); host.updateStatus();
     }
 
     // #18: drop the whole stack when the model is rebuilt under us (the save /

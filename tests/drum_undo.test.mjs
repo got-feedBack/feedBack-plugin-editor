@@ -26,9 +26,10 @@
 import assert from 'node:assert';
 import {
     AddDrumHitCmd, DeleteDrumHitsCmd, MoveDrumHitsCmd, ToggleDrumArticulationCmd,
-    _drumSortAndRemapSel, setDrumHooks,
+    _drumSortAndRemapSel,
 } from '../src/drum.js';
 import { EditHistory } from '../src/history.js';
+import { setHostHooks } from '../src/host.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 
 
@@ -44,7 +45,7 @@ function makeEnv() {
         currentArr: 0,
     });
     const calls = { selector: 0 };
-    setDrumHooks({ updateArrangementSelector: () => { calls.selector++; } });
+    setHostHooks({ updateArrangementSelector: () => { calls.selector++; } });
     trackHooks();
     const env = { AddDrumHitCmd, DeleteDrumHitsCmd, MoveDrumHitsCmd,
                   ToggleDrumArticulationCmd, _drumSortAndRemapSel };

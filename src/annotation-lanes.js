@@ -10,8 +10,8 @@
 // main.js keeps the canvas event routing (deciding which strip is under the
 // cursor) and forwards to the on*LaneMouse* handlers here. Four of its symbols
 // travel the other way — draw, hideContextMenu, snapTime, _editorPromptText —
-// and would close a cycle, so they arrive through setLaneHooks(), the same
-// shape as history.js's setHistoryHooks() and drum.js's setDrumHooks().
+// and would close a cycle, so they arrive through the shared `host` object in
+// src/host.js.
 //
 // snapTime stays in main.js because its onset-snap path reaches _ensureOnsets
 // and the onset cache; _editorPromptText stays because it owns a modal and the
@@ -32,18 +32,10 @@ import { _beatBarTopY } from './draw.js';
 import {
     ANCHOR_LANE_H, BEAT_H, HS_LANE_H, LABEL_W, TONE_LANE_H, timeToX, xToTime,
 } from './geometry.js';
+import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S } from './state.js';
 import { setStatus } from './ui.js';
-
-const _hooks = {
-    draw: () => {},
-    hideContextMenu: () => {},
-    snapTime: (t) => t,
-    _editorPromptText: async () => null,
-};
-
-export function setLaneHooks(hooks) { Object.assign(_hooks, hooks); }
 
 // ─── Tone-lane slot data (PR3c) ────────────────────────────────────
 export const _TONE_SLOT_DEFAULTS = ['Clean', 'Drive', 'Lead', 'Crunch', 'Effect'];
@@ -424,7 +416,7 @@ export function onToneLaneMouseDown(e, x) {
             origT: hit.t,
             change: hit,
         };
-        _hooks.draw();
+        host.draw();
         return true;
     }
     // Empty area click — place a new change snapped to the grid. The
@@ -433,7 +425,7 @@ export function onToneLaneMouseDown(e, x) {
     // `AddToneChangeCmd.exec` via `_bumpTonesDirty(+1)`. Read via
     // `_readToneSnapshot` here so the slot lookup doesn't mutate
     // state for a click outside any marker.
-    const t = _hooks.snapTime(Math.max(0, xToTime(x)));
+    const t = host.snapTime(Math.max(0, xToTime(x)));
     if (t < 0) return false;
     const snap = _readToneSnapshot(arr);
     const nonBase = snap.slots.filter(s => s !== snap.base);
@@ -454,7 +446,7 @@ export function onToneLaneMouseDown(e, x) {
     const change = { t, name: pick };
     S.history.exec(new AddToneChangeCmd(S.currentArr, change));
     S.toneSel = change;
-    _hooks.draw();
+    host.draw();
     return true;
 }
 
@@ -467,11 +459,11 @@ export function onToneLaneMouseMove(e, x) {
     // live drag — the commit on mouseup goes through
     // `MoveToneChangeCmd` which sorts once, and sorting on every
     // mousemove was O(n log n) per frame on big arrangements.
-    const newT = _hooks.snapTime(Math.max(0, xToTime(x)));
+    const newT = host.snapTime(Math.max(0, xToTime(x)));
     S.drag.change.t = newT;
     // Selection is by ref, so the deferred sort doesn't invalidate it.
     S.toneSel = S.drag.change;
-    _hooks.draw();
+    host.draw();
     return true;
 }
 
@@ -492,7 +484,7 @@ export function onToneLaneMouseUp() {
             S.history.exec(new MoveToneChangeCmd(S.currentArr, change, origT, newT));
         }
     }
-    _hooks.draw();
+    host.draw();
     return true;
 }
 
@@ -546,7 +538,7 @@ export function onToneLaneContextMenu(e, x) {
             btn.appendChild(baseTag);
         }
         btn.onclick = () => {
-            _hooks.hideContextMenu();
+            host.hideContextMenu();
             const oldName = change.name;
             if (oldName === slot) return;
             // Slot rename via single-name rebind. Wrap in a command so
@@ -559,7 +551,7 @@ export function onToneLaneContextMenu(e, x) {
                 exec() { this._change.name = this._new; _bumpTonesDirty(this._arr, +1); },
                 rollback() { this._change.name = this._old; _bumpTonesDirty(this._arr, -1); },
             });
-            _hooks.draw();
+            host.draw();
         };
         menu.appendChild(btn);
     }
@@ -572,14 +564,14 @@ export function onToneLaneContextMenu(e, x) {
     delBtn.className = 'w-full text-left px-3 py-1 text-xs hover:bg-dark-500 text-rose-300';
     delBtn.textContent = 'Delete tone change';
     delBtn.onclick = () => {
-        _hooks.hideContextMenu();
+        host.hideContextMenu();
         // Use the captured `menuArrIdx` rather than the live
         // `S.currentArr` so a mid-menu arrangement switch can't
         // route the delete (and its dirty-counter bump) to the wrong
         // arrangement.
         S.history.exec(new RemoveToneChangeCmd(menuArrIdx, change));
         S.toneSel = null;
-        _hooks.draw();
+        host.draw();
     };
     menu.appendChild(delBtn);
 
@@ -670,7 +662,7 @@ export function editorApplyTonesModal() {
     }
     S.history.exec(new RenameToneSlotsCmd(S.currentArr, newSlots, newBase));
     editorHideTonesModal();
-    _hooks.draw();
+    host.draw();
 }
 
 // Show the Tones… toolbar button once a song is loaded (matches the
@@ -1129,13 +1121,13 @@ export function onAnchorLaneMouseDown(e, x, y) {
             origTime: target.time,
             anchor: target,
         };
-        _hooks.draw();
+        host.draw();
         return true;
     }
     // Empty area click — place a new anchor at the snapped time with
     // a sensible default (fret 1, width 4). The right-click context
     // menu lets the user edit fret/width afterwards.
-    const t = _hooks.snapTime(Math.max(0, xToTime(x)));
+    const t = host.snapTime(Math.max(0, xToTime(x)));
     if (t < 0) return false;
     const anchor = { time: t, fret: 1, width: 4 };
     const userList = Array.isArray(arr.anchors_user) ? arr.anchors_user : null;
@@ -1152,7 +1144,7 @@ export function onAnchorLaneMouseDown(e, x, y) {
         S.history.exec(new PromoteAnchorsCmd(S.currentArr, autoList, null, anchor));
     }
     S.anchorSel = anchor;
-    _hooks.draw();
+    host.draw();
     return true;
 }
 
@@ -1162,9 +1154,9 @@ export function onAnchorLaneMouseMove(e, x) {
     if (!arr) return false;
     // Same perf trick as the tone-lane drag — update `.time` in-place
     // for live feedback; defer the sort to mouseup (MoveAnchorCmd).
-    S.drag.anchor.time = _hooks.snapTime(Math.max(0, xToTime(x)));
+    S.drag.anchor.time = host.snapTime(Math.max(0, xToTime(x)));
     S.anchorSel = S.drag.anchor;
-    _hooks.draw();
+    host.draw();
     return true;
 }
 
@@ -1181,7 +1173,7 @@ export function onAnchorLaneMouseUp() {
             S.history.exec(new MoveAnchorCmd(S.currentArr, anchor, origTime, newTime));
         }
     }
-    _hooks.draw();
+    host.draw();
     return true;
 }
 
@@ -1207,12 +1199,12 @@ export function onAnchorLaneContextMenu(e, x, y) {
     editBtn.className = 'w-full text-left px-3 py-1 text-xs hover:bg-dark-500';
     editBtn.textContent = `Edit fret/width (currently ${hit.fret}+${hit.width})`;
     editBtn.onclick = async () => {
-        _hooks.hideContextMenu();
-        const fretStr = await _hooks._editorPromptText({
+        host.hideContextMenu();
+        const fretStr = await host.editorPromptText({
             title: 'Edit Anchor', label: 'Hand-position fret — index finger (1–24)', value: String(hit.fret),
         });
         if (fretStr === null) return;
-        const widthStr = await _hooks._editorPromptText({
+        const widthStr = await host.editorPromptText({
             title: 'Edit Anchor', label: 'Hand span (frets, 1–24)', value: String(hit.width),
         });
         if (widthStr === null) return;
@@ -1228,7 +1220,7 @@ export function onAnchorLaneContextMenu(e, x, y) {
         S.history.exec(new EditAnchorFretWidthCmd(
             menuArrIdx, hit, hit.fret, hit.width, newFret, newWidth,
         ));
-        _hooks.draw();
+        host.draw();
     };
     menu.appendChild(editBtn);
 
@@ -1240,10 +1232,10 @@ export function onAnchorLaneContextMenu(e, x, y) {
     delBtn.className = 'w-full text-left px-3 py-1 text-xs hover:bg-dark-500 text-rose-300';
     delBtn.textContent = 'Delete anchor';
     delBtn.onclick = () => {
-        _hooks.hideContextMenu();
+        host.hideContextMenu();
         S.history.exec(new RemoveAnchorCmd(menuArrIdx, hit));
         S.anchorSel = null;
-        _hooks.draw();
+        host.draw();
     };
     menu.appendChild(delBtn);
 
@@ -1590,26 +1582,26 @@ export function onHandshapeLaneMouseDown(e, x, y) {
         S.drag = {
             type: 'handshape', mode, hs: hit.hs,
             origStart: hit.hs.start_time, origEnd: hit.hs.end_time,
-            startX: x, grabTime: _hooks.snapTime(Math.max(0, xToTime(x))),
+            startX: x, grabTime: host.snapTime(Math.max(0, xToTime(x))),
         };
-        _hooks.draw();
+        host.draw();
         return true;
     }
     // Empty lane → begin a create drag. arp defaults true (arpeggio framing is
     // the dominant case the highway renders).
-    const t = _hooks.snapTime(Math.max(0, xToTime(x)));
+    const t = host.snapTime(Math.max(0, xToTime(x)));
     S.handshapeSel = null;
     S.drag = {
         type: 'handshape', mode: 'create', anchorTime: t,
         hs: { start_time: t, end_time: t, arp: true },
     };
-    _hooks.draw();
+    host.draw();
     return true;
 }
 
 export function onHandshapeLaneMouseMove(e, x) {
     if (!S.drag || S.drag.type !== 'handshape') return false;
-    const t = _hooks.snapTime(Math.max(0, xToTime(x)));
+    const t = host.snapTime(Math.max(0, xToTime(x)));
     const d = S.drag;
     if (d.mode === 'create') {
         d.hs.start_time = Math.min(d.anchorTime, t);
@@ -1626,7 +1618,7 @@ export function onHandshapeLaneMouseMove(e, x) {
         d.hs.start_time = s;
         d.hs.end_time = s + span;
     }
-    _hooks.draw();
+    host.draw();
     return true;
 }
 
@@ -1655,7 +1647,7 @@ export function onHandshapeLaneMouseUp() {
             S.history.exec(new Cmd(S.currentArr, d.hs, d.origStart, d.origEnd, newStart, newEnd));
         }
     }
-    _hooks.draw();
+    host.draw();
     return true;
 }
 
@@ -1676,9 +1668,9 @@ export function onHandshapeLaneContextMenu(e, x, y) {
     arpBtn.className = 'w-full text-left px-3 py-1 text-xs hover:bg-dark-500';
     arpBtn.textContent = hs.arp ? 'Make held chord shape' : 'Make arpeggio';
     arpBtn.onclick = () => {
-        _hooks.hideContextMenu();
+        host.hideContextMenu();
         S.history.exec(new ToggleHandshapeArpCmd(menuArrIdx, hs));
-        _hooks.draw();
+        host.draw();
     };
     menu.appendChild(arpBtn);
 
@@ -1702,11 +1694,11 @@ export function onHandshapeLaneContextMenu(e, x, y) {
                 + (idx === hs.chord_id ? ' text-sky-300' : '');
             b.textContent = (idx === hs.chord_id ? '• ' : '') + label;
             b.onclick = () => {
-                _hooks.hideContextMenu();
+                host.hideContextMenu();
                 if (idx !== hs.chord_id) {
                     S.history.exec(new SetHandshapeChordCmd(menuArrIdx, hs, hs.chord_id, idx));
                 }
-                _hooks.draw();
+                host.draw();
             };
             menu.appendChild(b);
         });
@@ -1720,10 +1712,10 @@ export function onHandshapeLaneContextMenu(e, x, y) {
     delBtn.className = 'w-full text-left px-3 py-1 text-xs hover:bg-dark-500 text-rose-300';
     delBtn.textContent = 'Delete handshape';
     delBtn.onclick = () => {
-        _hooks.hideContextMenu();
+        host.hideContextMenu();
         S.history.exec(new RemoveHandshapeCmd(menuArrIdx, hs));
         S.handshapeSel = null;
-        _hooks.draw();
+        host.draw();
     };
     menu.appendChild(delBtn);
 
