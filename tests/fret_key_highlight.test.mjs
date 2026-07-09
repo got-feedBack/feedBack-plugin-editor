@@ -1,26 +1,22 @@
-'use strict';
 /*
- * Tests for the fretted-lane in-key highlight (@pure:fret-pitch +
- * @pure:scale composed): sounding pitch = openMidi + tuning offset +
- * CAPO + fret, capo added exactly ONCE — the guitar-charrette seat's
- * flagged double-count trap. The convention (chart frets are
- * capo-relative) is core's: lib/song.py pitch_from_base, shared by the
- * tuner and the highway's scale-degree derivation.
+ * Tests for the fretted-lane in-key highlight (@pure:fret-pitch composed with
+ * src/theory.js): sounding pitch = openMidi + tuning offset + CAPO + fret,
+ * capo added exactly ONCE — the guitar-charrette seat's flagged double-count
+ * trap. The convention (chart frets are capo-relative) is core's:
+ * lib/song.py pitch_from_base, shared by the tuner and the highway's
+ * scale-degree derivation.
  *
  * Also pins the division of labor: _absolutePitch (string-moves) still
  * OMITS capo — it compares two pitches on one arrangement where the capo
  * cancels — so composing the two can never double-count.
  *
- * These fail on main: _soundingPitchPure doesn't exist and _drawNote has
- * no key treatment.
- *
- * Run: node tests/fret_key_highlight.test.js
+ * Run: node tests/fret_key_highlight.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { _pcInScalePure } from '../src/theory.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const re = new RegExp(
@@ -36,8 +32,8 @@ function extractBlock(name) {
 // string, regex, or comment — a naive brace count would miscount those.
 // Safe here because the only function extracted is `_absolutePitch`, a
 // three-line pure arithmetic helper with no such tokens. If that ever
-// changes, export the pure helpers from src/main.js and import them instead
-// of parsing source text.
+// changes, move the pure helpers into a src/ module and import them instead
+// of parsing source text (as _pcInScalePure already is).
 function extractFn(name) {
     const start = src.indexOf('function ' + name);
     assert.ok(start >= 0, `function ${name} must exist`);
@@ -50,14 +46,12 @@ function extractFn(name) {
     throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-const env = new Function(
+const { _soundingPitchPure, _absolutePitch } = new Function(
     '"use strict";'
     + extractBlock('fret-pitch') + '\n'
-    + extractBlock('scale') + '\n'
     + extractFn('_absolutePitch') + '\n'
-    + 'return { _soundingPitchPure, _pcInScalePure, _absolutePitch };'
+    + 'return { _soundingPitchPure, _absolutePitch };'
 )();
-const { _soundingPitchPure, _pcInScalePure, _absolutePitch } = env;
 
 const GUITAR = [40, 45, 50, 55, 59, 64]; // E A D G B E
 const STD = [0, 0, 0, 0, 0, 0];
@@ -120,7 +114,7 @@ t('capo flips membership: the SAME chart fret changes keys with the capo', () =>
     // G major (tonic 7). A-string fret 1 = A# — out of key uncapoed...
     assert.strictEqual(outOfKey(GUITAR, STD, 0, 1, 1, 7, 'major'), true);
     // ...but with capo 1 the same chart fret sounds B — in key. Ignoring
-    // the capo (main's only helper) would keep flagging it.
+    // the capo would keep flagging it.
     assert.strictEqual(outOfKey(GUITAR, STD, 1, 1, 1, 7, 'major'), false);
 });
 
