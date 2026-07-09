@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 8b — the keys / piano-roll model (R2).**
+  `src/keys.js` (`main.js` 20,127 → 19,963, under 20k): which view a part opens in
+  (`viewFor`, `isKeysMode`, `isKeysArr`, `_rollReadOnly`) and the persisted
+  per-part preference behind it, plus the roll's own MIDI⇄y geometry
+  (`midiToY`/`yToMidi`, `pianoLaneCount`, `noteToMidi` and friends, `midiToFreq`,
+  `PIANO_OCTAVE_COLORS`, `KEYS_PATTERN`) and the sounding-pitch context that lets a
+  fretted part render read-only in the roll (`_rollPitchCtx`, `_rollMidiForNote`).
+  `_rollLockNotice` stays behind — it calls `setStatus`.
+  `PIANO_LANE_H` and `pianoRange` follow the step-5 rule rather than step-4's: they
+  are reassigned, but their sole writer `updatePianoRange` moved with them, so they
+  are live `export let` bindings — no container, no rename, and importers get a
+  `TypeError` if they try to write.
+  Four more suites leave the slicer path. `view_switcher` is the notable one: it
+  used to re-evaluate `_viewPrefs`/`viewFor`/`isKeysArr`/`updatePianoRange` from
+  source inside a sandbox with a fabricated `S` and a stub `localStorage`. It now
+  drives the real module against the real `S`, installs the stub on `globalThis`,
+  and reads `pianoRange` back through the namespace — which is what proves the live
+  binding updates for importers.
+
 - **ES-module migration, step 8a — the open-string pitch model (R2).** The
   string→pitch half of the lane model joins `src/lanes.js`: `_GUITAR_OPEN_MIDI` /
   `_BASS_OPEN_MIDI` (module-private), `_openMidiForArr`, and the

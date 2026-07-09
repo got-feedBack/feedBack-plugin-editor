@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Tests for the undoable part rename (@pure:rename-arr block + the real
  * RenameArrangementCmd): renames are display-label edits, undoable, and
@@ -9,13 +8,13 @@
  * `type`/unknown keys across saves). These fail on main, where none of
  * this exists.
  *
- * Run: node tests/rename_part.test.js
+ * Run: node tests/rename_part.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { KEYS_PATTERN } from '../src/keys.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const re = new RegExp(
@@ -38,8 +37,7 @@ function extractClass(name) {
     }
     throw new Error(`unbalanced braces extracting ${name}`);
 }
-const KEYS_PATTERN_SRC = (src.match(/const KEYS_PATTERN = [^\n]+\n/) || [null])[0];
-assert.ok(KEYS_PATTERN_SRC, 'KEYS_PATTERN must exist');
+
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -49,10 +47,11 @@ function t(name, fn) {
 
 // ── Pure: kind inference + rename guard ──────────────────────────────
 
-const P = new Function(
-    '"use strict";' + KEYS_PATTERN_SRC + extractBlock('rename-arr')
+// KEYS_PATTERN is a real import now; @pure:rename-arr is still in src/main.js.
+const P = new Function('KEYS_PATTERN',
+    '"use strict";' + extractBlock('rename-arr')
     + '\nreturn { _arrKindPure, _arrSaveKindPure, _renameGuardPure };'
-)();
+)(KEYS_PATTERN);
 
 t('kind inference mirrors the layout rules: keys > drums > bass > guitar', () => {
     assert.strictEqual(P._arrKindPure('Piano'), 'keys');

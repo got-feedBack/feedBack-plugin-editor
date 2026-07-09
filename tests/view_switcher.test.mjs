@@ -1,7 +1,8 @@
 /*
  * Tests for the per-part view switcher + universal read-first piano roll
- * (@pure:view-pref block, the isKeysMode/isKeysArr split, _rollMidiForNote,
- * the sounding-pitch piano range, and the EditHistory read-only-roll gate).
+ * (src/keys.js: view-pref resolution, the isKeysMode/isKeysArr split,
+ * _rollMidiForNote, the sounding-pitch piano range; plus the EditHistory
+ * read-only-roll gate, which is still sliced out of src/main.js).
  *
  * The view became a per-part CHOICE instead of a function of the part's
  * name: fretted parts may opt into the piano roll (read-first — rendering
@@ -12,8 +13,15 @@
  */
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { _soundingPitchPure } from '../src/lanes.js';
+import * as keys from '../src/keys.js';
+import {
+    _partViewKeyPure, _rollMidiForNote, _viewForPure, isKeysArr, isKeysMode,
+    noteToMidi, updatePianoRange, viewFor,
+} from '../src/keys.js';
+import { LC } from '../src/lanes.js';
+import { S } from '../src/state.js';
 
+// Only @pure:edit-history is still sliced — it lives in src/main.js.
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
@@ -26,19 +34,6 @@ function extractBlock(name) {
     }
     return m[0];
 }
-function extractFn(name) {
-    const start = src.indexOf('function ' + name);
-    assert.ok(start >= 0, `function ${name} must exist`);
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-    }
-    throw new Error(`unbalanced braces extracting ${name}`);
-}
-const KEYS_PATTERN_SRC = (src.match(/const KEYS_PATTERN = [^\n]+\n/) || [null])[0];
-assert.ok(KEYS_PATTERN_SRC, 'KEYS_PATTERN must exist');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -48,10 +43,7 @@ function t(name, fn) {
 
 // ── Pure: view resolution + pref keying ──────────────────────────────
 
-const P = new Function(
-    '"use strict";' + KEYS_PATTERN_SRC + extractBlock('view-pref')
-    + '\nreturn { _partViewKeyPure, _viewForPure };'
-)();
+const P = { _partViewKeyPure, _viewForPure };
 
 t('keys-named parts are piano-locked regardless of any stored pref', () => {
     assert.strictEqual(P._viewForPure('Piano', undefined), 'piano');
@@ -75,27 +67,30 @@ t('pref key prefers a stable id over the display name', () => {
 
 // ── Stateful: prefs + predicates over stub localStorage ──────────────
 
-function makeViewEnv(S, seed = {}) {
+// keys.js reads the real `S` and the ambient `localStorage`. Install a stub on
+// globalThis (module code resolves it at call time) and seed the real S, instead
+// of re-evaluating the module's source inside a sandbox.
+function makeViewEnv(seedS, seed = {}) {
     const map = new Map(Object.entries(seed));
-    const ls = {
+    globalThis.localStorage = {
         getItem: k => (map.has(k) ? map.get(k) : null),
         setItem: (k, v) => { map.set(k, String(v)); },
         removeItem: k => { map.delete(k); },
-        map,
     };
-    const envSrc = '"use strict";'
-        + KEYS_PATTERN_SRC + extractBlock('view-pref')
-        + '\nlet _viewPrefCache = null;\nlet _viewPrefFor = null;\n'
-        + extractFn('_viewPrefs') + '\n' + extractFn('_viewPrefsSave') + '\n'
-        + extractFn('viewFor') + '\n' + extractFn('isKeysArr') + '\n'
-        + extractFn('isKeysMode') + '\n' + extractFn('_rollReadOnly') + '\n'
-        + 'return { viewFor, isKeysArr, isKeysMode, _rollReadOnly, _viewPrefs, _viewPrefsSave };';
-    return { env: new Function('S', 'localStorage', envSrc)(S, ls), ls, S };
+    Object.assign(S, seedS);
+    LC.active = false;
+    // `_viewPrefs` memoizes per `S.filename`; bounce the key so a fresh seed is
+    // actually read rather than served from the previous test's cache.
+    const real = S.filename;
+    S.filename = '\u0000reset';
+    keys._viewPrefs();
+    S.filename = real;
+    return { env: keys, ls: { map }, S };
 }
 
 t('per-song pref round-trip: override honored, other songs unaffected', () => {
-    const S = { filename: 'song.sloppak', currentArr: 0, arrangements: [{ id: 'lead', name: 'Lead' }] };
-    const { env, ls } = makeViewEnv(S, {
+    const seed = { filename: 'song.sloppak', currentArr: 0, arrangements: [{ id: 'lead', name: 'Lead' }] };
+    const { env, ls, S } = makeViewEnv(seed, {
         'editorViewPref:song.sloppak': '{"lead":"piano"}',
         'editorViewPref:other.sloppak': '{"lead":"piano"}',
     });
@@ -110,8 +105,8 @@ t('per-song pref round-trip: override honored, other songs unaffected', () => {
 });
 
 t('id-keyed pref survives a display rename; keys parts never become read-only', () => {
-    const S = { filename: 's.sloppak', currentArr: 0, arrangements: [{ id: 'a1', name: 'Lead' }] };
-    const { env } = makeViewEnv(S, { 'editorViewPref:s.sloppak': '{"a1":"piano"}' });
+    const seed = { filename: 's.sloppak', currentArr: 0, arrangements: [{ id: 'a1', name: 'Lead' }] };
+    const { env, S } = makeViewEnv(seed, { 'editorViewPref:s.sloppak': '{"a1":"piano"}' });
     S.arrangements[0].name = 'Renamed Solo';
     assert.strictEqual(env.viewFor(S.arrangements[0]), 'piano', 'stable id keeps the pref');
     S.arrangements[0].name = 'Piano';   // becomes a keys part by name
@@ -121,20 +116,14 @@ t('id-keyed pref survives a display rename; keys parts never become read-only', 
 });
 
 t('junk stored JSON never breaks resolution', () => {
-    const S = { filename: 'x.sloppak', currentArr: 0, arrangements: [{ id: 'a', name: 'Lead' }] };
-    const { env } = makeViewEnv(S, { 'editorViewPref:x.sloppak': '[not json' });
+    const seed = { filename: 'x.sloppak', currentArr: 0, arrangements: [{ id: 'a', name: 'Lead' }] };
+    const { env, S } = makeViewEnv(seed, { 'editorViewPref:x.sloppak': '[not json' });
     assert.strictEqual(env.viewFor(S.arrangements[0]), 'string');
 });
 
 // ── Sounding-pitch mapping in the roll ───────────────────────────────
 
-// `_soundingPitchPure` moved to src/lanes.js — inject the REAL one; noteToMidi
-// and _rollMidiForNote are still in src/main.js, so they are still sliced.
-const M = new Function('_soundingPitchPure',
-    '"use strict";'
-    + '\n' + extractFn('noteToMidi') + '\n' + extractFn('_rollMidiForNote')
-    + '\nreturn { _rollMidiForNote, noteToMidi };'
-)(_soundingPitchPure);
+const M = { _rollMidiForNote, noteToMidi };
 const GUITAR_CTX = {
     openMidi: [40, 45, 50, 55, 59, 64],
     tuning: [0, 0, 0, 0, 0, 0],
@@ -148,28 +137,35 @@ t('_rollMidiForNote: keys packing without a ctx, sounding pitch with one', () =>
 });
 
 t('piano range fits FRETTED parts to sounding pitch, not the wire packing', () => {
-    const rangeSrc = '"use strict";'
-        + extractFn('noteToMidi') + '\n' + extractFn('_rollMidiForNote') + '\n'
-        + 'let pianoRange = { lo: 36, hi: 96 };\nlet PIANO_LANE_H = 10;\n'
-        + extractFn('updatePianoRange') + '\n'
-        + 'return (notesArr, rctx) => {'
-        + '  globalThis.__vsNotes = notesArr; globalThis.__vsCtx = rctx;'
-        + '  updatePianoRange();'
-        + '  return pianoRange;'
-        + '};';
-    const run = new Function(
-        'notes', '_rollPitchCtx', '_soundingPitchPure',
-        rangeSrc
-    )(() => globalThis.__vsNotes, () => globalThis.__vsCtx, _soundingPitchPure);
-    // Open low E (sounding 40) + high-e fret 0 (sounding 64), no capo.
-    const r = run(
-        [{ string: 0, fret: 0 }, { string: 5, fret: 0 }],
-        { openMidi: [40, 45, 50, 55, 59, 64], tuning: [0, 0, 0, 0, 0, 0], capo: 0 });
-    assert.strictEqual(r.lo, Math.max(0, Math.floor(40 / 12) * 12 - 6), 'floor from sounding 40');
-    assert.strictEqual(r.hi, Math.min(143, Math.ceil(65 / 12) * 12 + 5), 'ceiling from sounding 64');
-    // The packing would have put string 5 fret 0 at 120 — assert we did NOT.
-    assert.ok(r.hi < 100, 'range must come from sounding pitch, not string*24+fret');
-    delete globalThis.__vsNotes; delete globalThis.__vsCtx;
+    // updatePianoRange is the SOLE writer of `pianoRange` / `PIANO_LANE_H`; both
+    // are exported `let`s. Read them back through the namespace to prove the live
+    // binding updates for importers (a destructured copy would go stale).
+    S.arrangements = [{
+        name: 'Lead', tuning: [0, 0, 0, 0, 0, 0], chords: [],
+        // Open low E (sounding 40) and open high e (sounding 64), no capo.
+        notes: [{ string: 0, fret: 0 }, { string: 5, fret: 0 }],
+    }];
+    S.currentArr = 0;
+    LC.active = false;
+    updatePianoRange();
+
+    assert.strictEqual(keys.pianoRange.lo, Math.max(0, Math.floor(40 / 12) * 12 - 6),
+        'floor from sounding 40');
+    assert.strictEqual(keys.pianoRange.hi, Math.min(143, Math.ceil(65 / 12) * 12 + 5),
+        'ceiling from sounding 64');
+    // The wire packing would have put string 5 fret 0 at 5*24+0 = 120.
+    assert.ok(keys.pianoRange.hi < 100, 'range comes from sounding pitch, not string*24+fret');
+    assert.ok(keys.PIANO_LANE_H > 0, 'lane height re-derived alongside the range');
+});
+
+t('a KEYS part uses the wire packing, not sounding pitch', () => {
+    S.arrangements = [{ name: 'Keys', tuning: [], chords: [], notes: [{ string: 2, fret: 5 }] }];
+    S.currentArr = 0;
+    LC.active = false;
+    updatePianoRange();
+    const midi = noteToMidi(2, 5);   // 53
+    assert.ok(keys.pianoRange.lo <= midi && midi <= keys.pianoRange.hi,
+        'the packed pitch sits inside the derived range');
 });
 
 // ── The read-only-roll gate in EditHistory ───────────────────────────
