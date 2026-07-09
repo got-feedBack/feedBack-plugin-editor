@@ -2,9 +2,9 @@
  * E2 (PR-B) integration test for handshape authoring → save round-trip.
  *
  * The two pieces that carry the logic run for real: the chord-template helpers
- * are imported from src/chords.js, and `_handshapeSpanFrets` — still in
- * src/main.js — is extracted by brace-matching (it's self-contained: only uses
- * its args + Array/Object/Number).
+ * are imported from src/chords.js, and `_handshapeSpanFrets` from
+ * src/annotation-lanes.js (it's self-contained: only uses its args +
+ * Array/Object/Number).
  * It then replays the authoring path (AddHandshapeCmd._resolve: voicing ->
  * find-or-create template -> chord_id) and the save path (reconstructChords:
  * rebuild templates from same-time chords -> remap handshape chord_ids), and
@@ -14,31 +14,11 @@
  * Run: node tests/handshape_authoring.test.mjs
  */
 import assert from 'node:assert';
-import fs from 'node:fs';
-// The chord-template helpers are real imports now; `_handshapeSpanFrets` still
-// lives in src/main.js, so it is still pulled out by brace matching.
+import { _handshapeSpanFrets } from '../src/annotation-lanes.js';
 import {
     _buildPreservedTemplates, _fretKeyForL, buildHandshapeChordIdMap,
     relinkChordTemplate, remapHandshapeChordIds,
 } from '../src/chords.js';
-
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-
-// ── extract `function _handshapeSpanFrets(...) { ... }` by brace matching ────
-function extractFn(name) {
-    const start = src.indexOf('function ' + name);
-    if (start < 0) throw new Error('function ' + name + ' not found');
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(start, i + 1); }
-    }
-    throw new Error('unbalanced braces for ' + name);
-}
-const _handshapeSpanFrets = new Function(
-    '"use strict";' + extractFn('_handshapeSpanFrets') + '\nreturn _handshapeSpanFrets;'
-)();
 
 let pass = 0, fail = 0;
 function t(name, fn) {

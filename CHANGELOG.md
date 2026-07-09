@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Hook callbacks captured the pre-wrapper `draw`.** `draw` is reassigned near
+  the bottom of `main.js` to a wrapper that refreshes seven toolbar buttons
+  before repainting. `setHistoryHooks()` and `setDrumHooks()` were handed the
+  bare identifier, so they froze the ORIGINAL function at wiring time and every
+  undo, redo and drum-density toggle skipped those refreshes. The canvas still
+  repainted, which is why nothing looked obviously wrong — the visible symptom
+  was the drum-density button keeping its old "Rows: Full" label after the grid
+  had already collapsed to Compact. All three hook sites now take a thunk that
+  resolves the live binding at call time. Introduced by the `history.js` and
+  `drum.js` extractions; found by Codex on review of the next one.
+
 ### Changed
+
+- **The annotation lanes now live in `src/annotation-lanes.js` (R2, step 16).**
+  1,678 lines — the tone lane, the anchor lane and the handshape lane, which
+  were a contiguous tail of the `main.js` IIFE. `main.js` is down to 16,078.
+  They travel together because they lean on each other: the handshape lane
+  positions itself off `_anchorLaneTopY`, and both it and the anchor lane share
+  `_currentAnchorArr`. `main.js` keeps the canvas event routing and forwards to
+  the `on*LaneMouse*` handlers.
+  Four of its symbols travel back — `draw`, `hideContextMenu`, `snapTime`,
+  `_editorPromptText` — and arrive through `setLaneHooks()`. `snapTime` stays
+  behind because its onset-snap path reaches the onset cache; `_editorPromptText`
+  stays because it owns a modal and the shared `_editorPromptCancel` handle.
+  `TONE_LANE_H` moved to `geometry.js`, joining `ANCHOR_LANE_H` and `HS_LANE_H`.
+  The tones modal's three `window.*` handlers became exported functions that
+  `main.js` re-attaches — a top-level `window.x =` throws when the module is
+  imported under node.
+
 
 - **The drum editor now lives in `src/drum.js` (R2, step 15).** 714 lines out of
   `src/main.js`, which is down to 17,757 — the largest single lift of the split
