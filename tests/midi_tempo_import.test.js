@@ -156,10 +156,10 @@ t('_midiTempoSummaryPure: ellipsis when timing changes, defensive on partial map
 t('TempoGridCmd sets songScope so a grid can apply while a fretted part is in the roll', () => {
     const env = new Function(
         'S', 'draw', 'updateStatus', '_loopRelockAfterGridChange', '_renderLoopStrip',
-        '_updateLoopIn3DBtn',
+        '_updateLoopIn3DBtn', '_liftAllBeats',
         '"use strict";' + extractClass('TempoGridCmd') + '\nreturn { TempoGridCmd };'
     )(
-        { beats: [], barSel: null }, () => {}, () => {}, () => {}, () => {}, () => {},
+        { beats: [], barSel: null }, () => {}, () => {}, () => {}, () => {}, () => {}, () => {},
     );
     const cmd = new env.TempoGridCmd([], grid(2).beats, 'MIDI tempo map');
     assert.strictEqual(cmd.songScope, true,
@@ -170,9 +170,9 @@ t('TempoGridCmd round-trips S.beats: exec sets the new grid, rollback restores',
     const S = { beats: [{ time: 0, measure: 1 }], barSel: null };
     const env = new Function(
         'S', 'draw', 'updateStatus', '_loopRelockAfterGridChange', '_renderLoopStrip',
-        '_updateLoopIn3DBtn',
+        '_updateLoopIn3DBtn', '_liftAllBeats',
         '"use strict";' + extractClass('TempoGridCmd') + '\nreturn { TempoGridCmd };'
-    )(S, () => {}, () => {}, () => {}, () => {}, () => {});
+    )(S, () => {}, () => {}, () => {}, () => {}, () => {}, () => {});
     const before = JSON.parse(JSON.stringify(S.beats));
     const newBeats = grid(2).beats;
     const cmd = new env.TempoGridCmd(S.beats, newBeats, 'MIDI tempo map');
