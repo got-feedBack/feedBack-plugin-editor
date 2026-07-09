@@ -1195,6 +1195,26 @@ function snapTime(t) {
     return timeOf(S.beats, Math.round(beatOf(S.beats, t) * subs) / subs);
 }
 
+/* @pure:group-time-delta:start */
+// The time delta to apply to a WHOLE dragged selection. Snapping each note's
+// absolute time independently (`snapFn(origTime + dtRaw)` per note) quantises
+// every note to its own nearest grid line — it destroys the selection's internal
+// timing and makes a small group drag look like "only a few notes moved" (only
+// the ones already near a grid line cross it). Instead: snap the PRIMARY (grabbed)
+// note's target once, take that as the single group delta, and clamp it so the
+// earliest note can't cross t=0 — so the whole group moves rigidly, snaps as a
+// unit, and keeps its internal spacing. `snapFn` is injected (pure/testable).
+function _groupTimeDeltaPure(origTimes, primaryOrig, dtRaw, snapFn) {
+    const base = Number.isFinite(primaryOrig) ? primaryOrig
+        : (Array.isArray(origTimes) && origTimes.length ? origTimes[0] : 0);
+    let dt = snapFn(base + dtRaw) - base;
+    let earliest = Infinity;
+    if (Array.isArray(origTimes)) for (const t of origTimes) if (t < earliest) earliest = t;
+    if (Number.isFinite(earliest) && earliest + dt < 0) dt = -earliest;
+    return dt;
+}
+/* @pure:group-time-delta:end */
+
 // ════════════════════════════════════════════════════════════════════
 // Note accessors
 // ════════════════════════════════════════════════════════════════════
@@ -4136,6 +4156,9 @@ function onMouseDown(e) {
         S.drag = {
             type: 'move',
             startX: x, startY: y,
+            // The grabbed note's original time anchors the group snap so the
+            // whole selection moves as a rigid unit (see _groupTimeDeltaPure).
+            primaryOrigTime: nn[idx].time,
             origTimes: selArr.map(i => nn[i].time),
             origStrings: selArr.map(i => nn[i].string),
             origFrets: selArr.map(i => nn[i].fret),
@@ -4302,16 +4325,27 @@ function _onMouseMoveBody(e, x, y, L) {
     if (S.drag.type === 'move') {
         S.drag.moved = true;
         const nn = notes();
-        const dt = (x - S.drag.startX) / S.zoom;
+        const dtRaw = (x - S.drag.startX) / S.zoom;
         const dy = y - S.drag.startY;
+        // One snapped time delta for the WHOLE selection (see _groupTimeDeltaPure):
+        // snap the grabbed note once and move every selected note by the SAME
+        // delta, so the group stays rigid and small drags move all of it — not
+        // just the notes that happened to sit near a grid line.
+        //
+        // Grid lock/unlock, the way DAWs do it (verified: Ableton — hold Alt to
+        // temporarily disable snap; Logic — Ctrl-Shift for off-grid tick steps):
+        // by default the group is LOCKED to the grid; hold Alt while dragging to
+        // move it FREE of the grid. Only the time grid is bypassed — vertical
+        // stays semitone/string-quantized (no between-pitch notes), like every DAW.
+        const snapFn = e.altKey ? (t => t) : snapTime;
+        const snappedDt = _groupTimeDeltaPure(
+            S.drag.origTimes, S.drag.primaryOrigTime, dtRaw, snapFn);
 
         if (isKeysMode()) {
             const dMidi = -Math.round(dy / PIANO_LANE_H);
             for (let i = 0; i < S.drag.indices.length; i++) {
                 const ni = S.drag.indices[i];
-                let newTime = S.drag.origTimes[i] + dt;
-                newTime = snapTime(Math.max(0, newTime));
-                nn[ni].time = newTime;
+                nn[ni].time = S.drag.origTimes[i] + snappedDt;
 
                 const origMidi = noteToMidi(S.drag.origStrings[i], S.drag.origFrets[i]);
                 const newMidi = Math.max(0, Math.min(143, origMidi + dMidi));
@@ -4322,9 +4356,7 @@ function _onMouseMoveBody(e, x, y, L) {
             const dLanes = Math.round(dy / LANE_H);
             for (let i = 0; i < S.drag.indices.length; i++) {
                 const ni = S.drag.indices[i];
-                let newTime = S.drag.origTimes[i] + dt;
-                newTime = snapTime(Math.max(0, newTime));
-                nn[ni].time = newTime;
+                nn[ni].time = S.drag.origTimes[i] + snappedDt;
 
                 const origLane = strToLane(S.drag.origStrings[i]);
                 // Reuse the locally-cached `L` from onMouseMove instead of
