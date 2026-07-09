@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Suggest-position WRITE-PATH wiring — P6 / VA.3 (design V4).
  *
@@ -21,13 +20,18 @@
  * These reference P6 wiring absent on main (the marks, the write path, the
  * `suggestResolved` lock carve-out), so the suite fails on main.
  *
- * Run: node tests/suggest_position_wiring.test.js
+ * Run: node tests/suggest_position_wiring.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { reconstructChords } from '../src/chords.js';
+import { LC, lanes } from '../src/lanes.js';
+import { S as realS } from '../src/state.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+// The suggest blocks and the roll-add helpers still live in src/main.js and are
+// still sliced; `reconstructChords` moved to src/chords.js and is imported, so
+// section 6 drives it against the REAL `S` rather than a fabricated one.
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     // Lenient start: some blocks carry trailing prose after `:start` (e.g.
@@ -221,13 +225,17 @@ t('the read-only-roll lock still blocks an ordinary (unflagged) command', () => 
 });
 
 // ── 6. WIRE PURITY through the real reconstructChords (solo AND chord) ─────────
+// reconstructChords closes over the real `S` (src/state.js) and the real
+// `lanes()`, so drive those instead of a sandbox. The fixture arrangement is a
+// 6-string guitar part ('Lead', notes on strings 0-3), so lanes() computes 6 —
+// exactly what the old `() => 6` stub asserted by fiat.
 function makeReconstruct() {
-    const S = { currentArr: 0, arrangements: [null], history: { reset() {} } };
-    const fullSrc = '"use strict";' + extractBlock('chord-relink')
-        + '\n' + extractFn('reconstructChords')
-        + '\nreturn { reconstructChords };';
-    const { reconstructChords } = new Function('S', 'lanes', fullSrc)(S, () => 6);
-    return { S, reconstructChords };
+    realS.arrangements = [null];
+    realS.currentArr = 0;
+    realS.history = { reset() {} };
+    realS.handshapeSel = null;
+    LC.active = false;   // no draw frame is open; lanes() must really compute
+    return { S: realS, reconstructChords };
 }
 
 t('a suggested add leaves NO field on the wire — solo and chord survive reconstructChords clean', () => {
@@ -241,6 +249,9 @@ t('a suggested add leaves NO field on the wire — solo and chord survive recons
             { time: 1, string: 1, fret: 2, sustain: 0, techniques: {} },       // chord member
         ],
     };
+    // Pin the premise of using the real lanes() instead of the old `() => 6`
+    // stub: this fixture really is a 6-lane part.
+    assert.strictEqual(lanes(), 6, 'the fixture is a 6-string guitar arrangement');
     reconstructChords();
     const arr = S.arrangements[0];
     assert.strictEqual(arr.notes.length, 1, 'the solo stays a solo');

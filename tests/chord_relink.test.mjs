@@ -1,36 +1,18 @@
-'use strict';
 /*
- * E0 regression test for the chord-template re-link logic in src/main.js.
+ * E0 regression test for the chord-template re-link logic in src/chords.js.
  *
- * src/main.js is a single browser IIFE (no module exports), so this test
- * extracts the `@pure:chord-relink` marked block — which is self-contained and
- * browser-free — and eval's it in isolation. Tests the real source, no drift.
+ * Drives the real exports of src/chords.js — the chord-template re-link helpers
+ * are pure (no DOM, no S), so they import directly. No source-text slicing.
  *
- * Run: node tests/chord_relink.test.js
+ * Run: node tests/chord_relink.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:chord-relink:start[\s\S]*?@pure:chord-relink:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:chord-relink block not found in src/main.js');
-    process.exit(1);
-}
-const api = new Function(
-    '"use strict";' + m[0] +
-    '\nreturn { relinkChordTemplate, _fretKeyForL, _normFingers, _buildPreservedTemplates,' +
-    ' buildHandshapeChordIdMap, remapHandshapeChordIds, dropOrphanedHandshapes,' +
-    ' _normChordFn, _mergeChordFn, _groupFn,' +
-    ' _sanitizeCaged, _sanitizeGuideTones, _parseGuideTones };'
-)();
-const {
-    relinkChordTemplate, _normFingers, _buildPreservedTemplates,
-    buildHandshapeChordIdMap, remapHandshapeChordIds, dropOrphanedHandshapes,
-    _normChordFn, _mergeChordFn, _groupFn,
-    _sanitizeCaged, _sanitizeGuideTones, _parseGuideTones,
-} = api;
+import assert from 'node:assert';
+import {
+    _buildPreservedTemplates, _fretKeyForL, _groupFn, _mergeChordFn, _normChordFn,
+    _normFingers, _parseGuideTones, _sanitizeCaged, _sanitizeGuideTones,
+    buildHandshapeChordIdMap, dropOrphanedHandshapes, relinkChordTemplate,
+    remapHandshapeChordIds,
+} from '../src/chords.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {
