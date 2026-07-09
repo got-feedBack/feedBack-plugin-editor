@@ -160,7 +160,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pitchPreserving = true` so they pass the edit lock and round-trip
   through undo/redo. Lets you tighten an imported fretted note's duration
   without switching to String view; the lock still blocks every
-  pitch/position write. Tests: `tests/roll_edge_resize.test.js`.
+  pitch/position write. A group edge-drag now applies the drag delta to
+  each chord member's *own* original ring-out (`sustain_i =
+  clamp(origSustain_i + delta)`) instead of flattening every member to one
+  value — so an imported chord whose members had different durations (e.g.
+  bass 1.0, top 0.5) keeps its relative shape, and each member clamps
+  independently at its own next same-string onset (one member can stop at
+  its collision limit while the others keep extending).
+  Tests: `tests/roll_edge_resize.test.js`, `tests/chord_resize.test.js`.
 - **Detect key from the notes.** A new **Detect** button in the key controls
   guesses the current part's key from its pitch-class content (the
   Krumhansl–Schmuckler algorithm — Pearson correlation against the standard

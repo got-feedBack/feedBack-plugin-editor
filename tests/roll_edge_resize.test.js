@@ -114,5 +114,55 @@ t('the read-only-roll lock still blocks an ordinary (non-pitchPreserving) comman
     assert.ok(notices.includes('LOCKED'), 'the user is told why');
 });
 
+// ── group resize preserves per-member relative durations (does NOT flatten) ───
+// A chord whose members ring out for different lengths (e.g. imported GP data:
+// bass 1.0, top 0.5) must keep that relative difference when one edge is dragged
+// — the same delta applies to each member's OWN original sustain. The old code
+// computed one `anchorOrig + delta` and assigned it to every member, flattening
+// them; that regression fails here.
+const chordResize = (function () {
+    const body = extractBlock('chord-resize')
+        + '\nreturn { _resizeSustainsForDeltaPure, _maxSustainBeforeCollisionPure };';
+    return new Function(body)();
+})();
+
+t('group edge-drag preserves differing per-member sustains (not flattened)', () => {
+    // Two-member chord at t=0, no later same-string onsets ⇒ no collision cap.
+    const noteList = [
+        { time: 0, string: 3, fret: 1, sustain: 1.0 },
+        { time: 0, string: 2, fret: 3, sustain: 0.5 },
+    ];
+    const out = chordResize._resizeSustainsForDeltaPure(
+        noteList, [0, 1], [1.0, 0.5], 0.5);
+    assert.deepStrictEqual(out, [1.5, 1.0], 'each member shifted by the same delta');
+    assert.notStrictEqual(out[0], out[1], 'members are NOT flattened to one value');
+    assert.strictEqual(out[0] - out[1], 1.0 - 0.5, 'relative difference preserved');
+});
+
+t('single-note resize is unchanged (scalar orig, own clamp)', () => {
+    const noteList = [{ time: 0, string: 3, fret: 1, sustain: 0.5 }];
+    assert.deepStrictEqual(
+        chordResize._resizeSustainsForDeltaPure(noteList, [0], 0.5, 0.75),
+        [1.25], 'scalar orig broadcast, delta applied');
+    // clamps to ≥0
+    assert.deepStrictEqual(
+        chordResize._resizeSustainsForDeltaPure(noteList, [0], 0.5, -2),
+        [0], 'clamped to zero');
+});
+
+t('each member clamps independently to its own collision limit', () => {
+    // Member on string 3 has a later same-string onset at t=0.8 ⇒ cap 0.8.
+    // Member on string 2 is free ⇒ no cap. Same +1.0 delta from origs [0.2,0.2].
+    const noteList = [
+        { time: 0, string: 3, fret: 1, sustain: 0.2 },
+        { time: 0, string: 2, fret: 3, sustain: 0.2 },
+        { time: 0.8, string: 3, fret: 5, sustain: 0.2 },
+    ];
+    const out = chordResize._resizeSustainsForDeltaPure(
+        noteList, [0, 1], [0.2, 0.2], 1.0);
+    assert.deepStrictEqual(out, [0.8, 1.2],
+        'string-3 member stops at its collision limit; string-2 member keeps extending');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

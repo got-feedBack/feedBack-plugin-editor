@@ -1239,13 +1239,20 @@ function _resizeTargetIndicesPure(noteList, index, expandChord) {
     return out.length ? out : [index];
 }
 
-function _maxSustainBeforeCollisionPure(noteList, targetIndices) {
+// Collision limit for a resize. With `onlyIdx` omitted this is the group-wide
+// limit (min over every member) — kept for callers that want one shared cap.
+// With `onlyIdx` given it's that single member's own limit (its next same-string
+// onset), while the whole group is still excluded from the collision candidates
+// so chord siblings never count as colliders. Per-member group resize uses the
+// latter so each member clamps independently.
+function _maxSustainBeforeCollisionPure(noteList, targetIndices, onlyIdx) {
     if (!Array.isArray(noteList) || !Array.isArray(targetIndices) || !targetIndices.length) {
         return Infinity;
     }
     const targetSet = new Set(targetIndices);
+    const checkIndices = (onlyIdx === undefined || onlyIdx === null) ? targetIndices : [onlyIdx];
     let limit = Infinity;
-    for (const idx of targetIndices) {
+    for (const idx of checkIndices) {
         const n = noteList[idx];
         if (!n || typeof n.time !== 'number') continue;
         for (let i = 0; i < noteList.length; i++) {
@@ -1260,11 +1267,21 @@ function _maxSustainBeforeCollisionPure(noteList, targetIndices) {
     return limit;
 }
 
-function _resizeSustainsForDeltaPure(noteList, targetIndices, anchorOrigSustain, delta) {
-    const desired = Math.max(0, (Number(anchorOrigSustain) || 0) + (Number(delta) || 0));
-    const limit = _maxSustainBeforeCollisionPure(noteList, targetIndices);
-    const sustain = Math.max(0, Math.min(desired, limit));
-    return targetIndices.map(() => sustain);
+// Apply the same edge-drag `delta` to EACH target's own original sustain, so a
+// group resize preserves the members' relative ring-out lengths instead of
+// flattening every member to one value. `origSustains` is an array aligned to
+// `targetIndices` (per member); a scalar is broadcast to all (single-note path).
+// Each member is clamped independently to ≥0 and to its own collision limit — a
+// member that would collide stops at its limit while the others keep extending.
+function _resizeSustainsForDeltaPure(noteList, targetIndices, origSustains, delta) {
+    const d = Number(delta) || 0;
+    const perMember = Array.isArray(origSustains);
+    return targetIndices.map((idx, k) => {
+        const orig = Number(perMember ? origSustains[k] : origSustains) || 0;
+        const desired = Math.max(0, orig + d);
+        const limit = _maxSustainBeforeCollisionPure(noteList, targetIndices, idx);
+        return Math.max(0, Math.min(desired, limit));
+    });
 }
 /* @pure:chord-resize:end */
 
@@ -4624,13 +4641,11 @@ function onMouseDown(e) {
             S.sel.clear();
             for (const i of resizeIndices) S.sel.add(i);
         }
-        const n = nn[edgeIdx];
         S.drag = {
             type: 'resize',
             noteIdx: edgeIdx,
             indices: resizeIndices,
             startX: x,
-            origSustain: n.sustain || 0,
             origSustains: resizeIndices.map(i => nn[i].sustain || 0),
         };
         draw();
@@ -4831,7 +4846,7 @@ function _onMouseMoveBody(e, x, y, L) {
         const dt = (x - S.drag.startX) / S.zoom;
         const nn = notes();
         const nextSustains = _resizeSustainsForDeltaPure(
-            nn, S.drag.indices, S.drag.origSustain, dt);
+            nn, S.drag.indices, S.drag.origSustains, dt);
         for (let i = 0; i < S.drag.indices.length; i++) {
             nn[S.drag.indices[i]].sustain = nextSustains[i];
         }
