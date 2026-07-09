@@ -23,38 +23,19 @@
  * Run: node tests/suggest_position_wiring.test.mjs
  */
 import assert from 'node:assert';
-import fs from 'node:fs';
 import { reconstructChords } from '../src/chords.js';
 import {
-    _clearSuggested, _isSuggested, _markSuggested, _suggestedCount, _suggestedNotes,
-} from '../src/notes.js';
-import {
-    _activeAnchorAtPure, _enumerateFrettedPositionsPure, _suggestPositionPure,
-} from '../src/position.js';
-import { LC, lanes } from '../src/lanes.js';
-import { S as realS } from '../src/state.js';
+    AcceptPositionsCmd, AddNoteCmd, MoveToStringCmd, _commitAddResolved, _execAcceptPositions,
+    _rollAddByPitch,
+} from '../src/commands.js';
 import { EditHistory } from '../src/history.js';
-import { _rollLockNotice, _rollReadOnly } from '../src/keys.js';
-import { lastStatus, seedState, trackHooks } from './_history_env.mjs';
+import { setHostHooks } from '../src/host.js';
+import { _rollReadOnly } from '../src/keys.js';
+import { LC, lanes } from '../src/lanes.js';
+import { _clearSuggested, _isSuggested, _markSuggested, _suggestedCount } from '../src/notes.js';
+import { S as realS } from '../src/state.js';
+import { lastStatus, seedState, statusMessages, trackHooks } from './_history_env.mjs';
 
-// The suggest blocks and the roll-add helpers still live in src/main.js and are
-// still sliced; `reconstructChords` moved to src/chords.js and is imported, so
-// section 6 drives it against the REAL `S` rather than a fabricated one.
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-
-function extractByKeyword(keyword, label) {
-    const start = src.indexOf(keyword);
-    assert.ok(start >= 0, `${label || keyword} must exist in src/main.js`);
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-    }
-    throw new Error(`unbalanced braces extracting ${label || keyword}`);
-}
-const extractFn = name => extractByKeyword('function ' + name + '(', 'function ' + name);
-const extractClass = name => extractByKeyword('class ' + name, 'class ' + name);
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -63,7 +44,6 @@ function t(name, fn) {
 }
 
 // Standard 6-string guitar, low → high: E2 A2 D3 G3 B3 E4.
-const OPEN = [40, 45, 50, 55, 59, 64];
 const TUN = [0, 0, 0, 0, 0, 0];
 const NOTE_KEYS = ['fret', 'string', 'sustain', 'techniques', 'time'];
 
@@ -92,46 +72,23 @@ function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
     });
     assert.ok(_rollReadOnly(), 'harness precondition: the roll must be read-only');
     trackHooks();
-    const statuses = [];
-    const refusals = [];   // records _rollConfirmPosition handoffs
-    const fullSrc = '"use strict";'
-        + extractFn('_withStableSelection')
-        + '\n' + extractClass('AddNoteCmd')
-        + '\n' + extractClass('MoveToStringCmd')
-        + '\n' + extractClass('AcceptPositionsCmd')
-        + '\n' + extractFn('_rollAnchorList')
-        + '\n' + extractFn('_occupiedStringsAt')
-        + '\n' + extractFn('_prevNoteBefore')
-        + '\n' + extractFn('_defaultAddSustain')
-        + '\n' + extractFn('_commitAddResolved')
-        + '\n' + extractFn('_rollAddByPitch')
-        + '\n' + extractFn('_execAcceptPositions')
-        + '\nreturn { _rollAddByPitch, _commitAddResolved, _execAcceptPositions,'
-        + ' _isSuggested, _markSuggested, _clearSuggested, _suggestedCount,'
-        + ' AddNoteCmd, MoveToStringCmd };';
-    const env = new Function(
-        'S', 'history', 'notes', 'setStatus', 'draw', 'updateStatus', '_renderInspector',
-        '_editBlipAt', '_rollReadOnly', '_rollLockNotice', '_editorCurrentNoteIndices',
-        '_rollPitchCtx', '_rollConfirmPosition',
-        '_markSuggested', '_clearSuggested', '_isSuggested', '_suggestedNotes',
-        '_suggestPositionPure', '_enumerateFrettedPositionsPure', '_activeAnchorAtPure',
-        '_suggestedCount',
-        fullSrc
-    )(
-        S,
-        (S.history = new EditHistory()),
-        () => S.arrangements[S.currentArr].notes,
-        m => statuses.push(m),
-        () => {}, () => {}, () => {}, () => {},
-        _rollReadOnly,                                 // the real locked-fretted-roll predicate
-        () => { statuses.push('LOCKED'); _rollLockNotice(); },
-        () => (S.sel && S.sel.size ? [...S.sel] : []),
-        () => ({ openMidi: OPEN, tuning: TUN.slice(), capo: 0 }),
-        (res, pitch, time) => refusals.push({ reason: res.reason, pitch, time, candidates: res.candidates }),
-        _markSuggested, _clearSuggested, _isSuggested, _suggestedNotes,  // src/notes.js
-        _suggestPositionPure, _enumerateFrettedPositionsPure, _activeAnchorAtPure,
-        _suggestedCount,
-    );
+    const refusals = [];   // records host.rollConfirmPosition handoffs
+    const statuses = statusMessages;   // live array of real setStatus() writes
+
+    // Everything the sandbox used to slice is a real import now. The four
+    // main.js callbacks it stubbed are host hooks; the ambiguous-pitch popover
+    // is one of them, which is how a refusal is still observable without a DOM.
+    setHostHooks({
+        rollConfirmPosition: (res, pitch, time) => refusals.push(
+            { reason: res.reason, pitch, time, candidates: res.candidates }),
+        editorCurrentNoteIndices: () => (S.sel && S.sel.size ? [...S.sel] : []),
+    });
+    S.history = new EditHistory();
+    const env = {
+        _rollAddByPitch, _commitAddResolved, _execAcceptPositions,
+        _isSuggested, _markSuggested, _clearSuggested, _suggestedCount,
+        AddNoteCmd, MoveToStringCmd, AcceptPositionsCmd,
+    };
     env.history = S.history;
     return { S, env, statuses, refusals, notes: () => S.arrangements[0].notes };
 }

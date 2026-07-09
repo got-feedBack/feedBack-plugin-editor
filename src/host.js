@@ -49,6 +49,16 @@ export const host = {
      * executed against, or refuse when it is gone. `true` means "proceed".
      */
     ensureArr: () => true,
+    /** Flash the edit-confirmation blip at a canvas point. Purely cosmetic. */
+    editBlipAt: () => {},
+    /** Indices (into notes()) of the current selection, in stable order. */
+    editorCurrentNoteIndices: () => [],
+    /** Re-render the right-side note inspector from the current selection. */
+    renderInspector: () => {},
+    /** Re-derive lane metrics after a string was added/removed, on the next frame. */
+    resizeForLaneChange: () => {},
+    /** Ambiguous-pitch popover: let the user pick a string/fret for a roll add. */
+    rollConfirmPosition: () => {},
 };
 
 export function setHostHooks(hooks) { Object.assign(host, hooks); }

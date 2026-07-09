@@ -16,27 +16,11 @@
  * Run: node tests/suggest_position_move.test.mjs
  */
 import assert from 'node:assert';
-import fs from 'node:fs';
-import { _soundingPitchPure } from '../src/lanes.js';
+import { MoveNoteCmd, _positionLocked, _rollDragPitchMove } from '../src/commands.js';
+import { PIANO_LANE_H } from '../src/keys.js';
 import { _clearSuggested, _isSuggested, _markSuggested } from '../src/notes.js';
-import {
-    _activeAnchorAtPure, _enumerateFrettedPositionsPure, _suggestPositionPure,
-} from '../src/position.js';
+import { seedState } from './_history_env.mjs';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-function extractByKeyword(keyword, label) {
-    const start = src.indexOf(keyword);
-    assert.ok(start >= 0, `${label || keyword} must exist`);
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-    }
-    throw new Error(`unbalanced braces extracting ${label || keyword}`);
-}
-const extractFn = name => extractByKeyword('function ' + name + '(', 'function ' + name);
-const extractClass = name => extractByKeyword('class ' + name, 'class ' + name);
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -44,38 +28,17 @@ function t(name, fn) {
     catch (e) { fail++; console.error('  FAIL ' + name + ': ' + (e && e.message)); }
 }
 
-const OPEN = [40, 45, 50, 55, 59, 64];   // EADGBe standard
-const PIANO_LANE_H = 12;
-
+// _rollDragPitchMove and MoveNoteCmd are real imports now; both close over the
+// REAL `S` and the REAL PIANO_LANE_H live binding, so seed one and let the
+// semitone arithmetic use the module's own row height rather than a local guess.
 function makeMoveEnv(seed) {
-    const S = {
+    const S = seedState({
         currentArr: 0,
         arrangements: [{ name: 'Lead', tuning: [0, 0, 0, 0, 0, 0], anchors_user: [], anchors: [],
                          notes: seed.map(n => ({ ...n, techniques: { ...(n.techniques || {}) } })) }],
-    };
-    const body = '"use strict";'
-        + '\n' + extractFn('_rollAnchorList')
-        + '\n' + extractFn('_occupiedStringsAt')
-        + '\n' + extractFn('_positionLocked')
-        + '\n' + extractFn('_rollDragPitchMove')
-        + '\n' + extractClass('MoveNoteCmd')
-        + '\nreturn { _rollDragPitchMove, _positionLocked, MoveNoteCmd,'
-        + ' _isSuggested, _markSuggested, _clearSuggested };';
-    // The suggested-mark WeakSet moved to src/notes.js — inject the real fns.
-    // Each env builds fresh note objects, so a module-shared WeakSet keyed by
-    // object identity cannot leak marks between cases.
-    const env = new Function('S', 'notes', '_rollPitchCtx', 'snapTime', 'PIANO_LANE_H',
-        '_soundingPitchPure', '_markSuggested', '_clearSuggested', '_isSuggested',
-        '_suggestPositionPure', '_enumerateFrettedPositionsPure', '_activeAnchorAtPure', body)(
-        S,
-        () => S.arrangements[S.currentArr].notes,
-        () => ({ openMidi: OPEN, tuning: [0, 0, 0, 0, 0, 0], capo: 0 }),
-        tm => tm,                                  // snapTime: identity
-        PIANO_LANE_H,
-        _soundingPitchPure,                        // the REAL one, from src/lanes.js
-        _markSuggested, _clearSuggested, _isSuggested,
-        _suggestPositionPure, _enumerateFrettedPositionsPure, _activeAnchorAtPure,
-    );
+    });
+    const env = { _rollDragPitchMove, _positionLocked, MoveNoteCmd,
+                  _isSuggested, _markSuggested, _clearSuggested };
     return { S, env, notes: () => S.arrangements[0].notes };
 }
 function startDrag(S, indices) {

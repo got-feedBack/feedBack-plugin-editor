@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Unit tests for the "Import Guitar / Bass from GP" feature's pure helpers in
  * src/main.js:
@@ -14,41 +13,32 @@
  * Extract-and-eval pattern (matches tests/bass_string_count.test.js): pull the
  * function source straight out of src/main.js so the test pins the shipping code.
  *
- * Run: node tests/import_guitar_track.test.js
+ * Run: node tests/import_guitar_track.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { _restoreChartFields, _swapChartFields } from '../src/commands.js';
 
-function extractFn(src, name) {
-    const start = src.indexOf('function ' + name);
-    assert.ok(start >= 0, `function ${name} must exist`);
-    const open = src.indexOf('{', start);
+// _swapChartFields / _restoreChartFields (and the _REPLACE_CHART_FIELDS table
+// they close over) are real imports now. The two import-side helpers still live
+// in src/main.js, so they are still brace-matched out of it.
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+function extractFn(source, name) {
+    const start = source.indexOf('function ' + name);
+    assert.ok(start >= 0, 'function ' + name + ' not found');
+    const open = source.indexOf('{', start);
     let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+    for (let i = open; i < source.length; i++) {
+        if (source[i] === '{') depth++;
+        else if (source[i] === '}') { depth--; if (depth === 0) return source.slice(start, i + 1); }
     }
     throw new Error(`unbalanced braces extracting ${name}`);
 }
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const {
-    _isGuitarBassTrack, _guitarImportName, _swapChartFields, _restoreChartFields,
-} = new Function(
-    '"use strict";' +
-    extractFn(src, '_isGuitarBassTrack') +
-    '\nconst _REPLACE_CHART_FIELDS = ' +
-    // Pull the const array literal out of src/main.js so the field set stays in sync.
-    (() => {
-        const m = src.match(/const _REPLACE_CHART_FIELDS = (\[[^\]]*\]);/);
-        assert.ok(m, '_REPLACE_CHART_FIELDS array must exist');
-        return m[1];
-    })() + ';' +
-    extractFn(src, '_guitarImportName') +
-    extractFn(src, '_swapChartFields') +
-    extractFn(src, '_restoreChartFields') +
-    '\nreturn { _isGuitarBassTrack, _guitarImportName, _swapChartFields, _restoreChartFields };'
+const { _isGuitarBassTrack, _guitarImportName } = new Function(
+    '"use strict";'
+    + extractFn(src, '_isGuitarBassTrack')
+    + extractFn(src, '_guitarImportName')
+    + '\nreturn { _isGuitarBassTrack, _guitarImportName };'
 )();
 
 let pass = 0, fail = 0;

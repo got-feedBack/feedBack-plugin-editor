@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The note command classes now live in `src/commands.js` (R2, step 18).** All
+  18 of them, plus the helpers that construct and execute them — `src/main.js`
+  is down to 15,042. They are the classes `history.js` has been duck-typing all
+  along: `exec()`, `rollback()`, and the three flags the read-only-roll lock
+  reads.
+  `commands.js` is **DOM-free**, and that is a deliberate boundary rather than a
+  happy accident. Two functions that would have broken it moved back to
+  `main.js`: the ambiguous-pitch popover (`_rollConfirmPosition`) and
+  `_resizeForLaneChange`, which schedules a `requestAnimationFrame`. Both arrive
+  as host hooks. It is what lets the eight suites below import the real classes
+  under node with no `document` at all.
+  Eight suites stopped brace-matching classes out of `main.js` and import them.
+  Converting `strings_modal` exposed a fixture that only made sense under a stub:
+  its 4-string `'Banjo'` ran against an injected `arr => arr.tuning.length`, and
+  the real `_stringCountFor` reads a 4-length tuning on a non-bass part as a
+  padded guitar (6). It is a `'Bass'` now.
+
+
 - **The per-module hook objects collapse into one `src/host.js` (R2, step 17).**
   `history.js`, `drum.js` and `annotation-lanes.js` each grew their own
   `setXHooks()` for the same reason — they need a few `main.js` symbols that

@@ -15,7 +15,7 @@
  * Run: node tests/roll_edge_resize.test.mjs
  */
 import assert from 'node:assert';
-import fs from 'node:fs';
+import { ResizeSustainCmd, ResizeSustainGroupCmd } from '../src/commands.js';
 import { EditHistory } from '../src/history.js';
 import { _rollReadOnly } from '../src/keys.js';
 import {
@@ -23,21 +23,6 @@ import {
 } from '../src/notes.js';
 import { lastStatus, seedState, trackHooks } from './_history_env.mjs';
 
-// The undo commands still live in src/main.js, so they are still sliced; the
-// pure resize arithmetic they were paired with now comes from src/notes.js, and
-// the stack itself from src/history.js.
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-function extractClass(name) {
-    const start = src.indexOf('class ' + name);
-    assert.ok(start >= 0, `class ${name} must exist in src/main.js`);
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-    }
-    throw new Error(`unbalanced braces extracting class ${name}`);
-}
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -56,14 +41,7 @@ function makeEnv(seed) {
     });
     assert.ok(_rollReadOnly(), 'harness precondition: the roll must be read-only');
     trackHooks();
-    const fullSrc = '"use strict";'
-        + extractClass('ResizeSustainCmd')
-        + '\n' + extractClass('ResizeSustainGroupCmd')
-        + '\nreturn { ResizeSustainCmd, ResizeSustainGroupCmd };';
-    const env = new Function('S', 'notes', fullSrc)(
-        S,
-        () => S.arrangements[S.currentArr].notes,
-    );
+    const env = { ResizeSustainCmd, ResizeSustainGroupCmd };
     env.history = new EditHistory();
     S.history = env.history;
     return { S, env, notes: () => S.arrangements[0].notes };

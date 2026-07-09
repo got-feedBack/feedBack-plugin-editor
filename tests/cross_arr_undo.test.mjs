@@ -32,6 +32,7 @@
  */
 import assert from 'node:assert';
 import fs from 'node:fs';
+import { MoveNoteCmd } from '../src/commands.js';
 import { EditHistory } from '../src/history.js';
 import { setHostHooks } from '../src/host.js';
 import { seedState } from './_history_env.mjs';
@@ -50,7 +51,6 @@ function extractRe(re, label) {
 const ensureArr = extractRe(
     /let _undoDrivenArrSwitch = false;[\s\S]*?\nfunction _historyEnsureArr\(cmd\) \{[\s\S]*?\n\}/,
     '_historyEnsureArr');
-const moveNoteCmd = extractRe(/class MoveNoteCmd \{[\s\S]*?\n\}/, 'MoveNoteCmd');
 const selectArr = extractRe(
     /window\.editorSelectArrangement = \(val\) => \{[\s\S]*?\n\};/,
     'editorSelectArrangement');
@@ -77,8 +77,8 @@ function makeEnv() {
         'window', 'document', 'S', 'flattenChords', 'isKeysMode',
         'updatePianoRange', 'draw', 'updateStatus', 'setStatus', 'notes',
         '"use strict";'
-        + ensureArr + '\n' + moveNoteCmd + '\n' + selectArr + '\n'
-        + 'return { _historyEnsureArr, MoveNoteCmd };'
+        + ensureArr + '\n' + selectArr + '\n'
+        + 'return { _historyEnsureArr };'
     )(
         win,
         { getElementById: () => null },
@@ -93,7 +93,7 @@ function makeEnv() {
     );
     setHostHooks({ ensureArr: env._historyEnsureArr, draw: () => {}, updateStatus: () => {} });
     S.history = new EditHistory();
-    return { ...env, S, win, history: S.history, flattenChords };
+    return { ...env, MoveNoteCmd, S, win, history: S.history, flattenChords };
 }
 
 let pass = 0, fail = 0;

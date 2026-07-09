@@ -17,6 +17,8 @@
  */
 import assert from 'node:assert';
 import fs from 'node:fs';
+import { MoveNoteCmd, ResizeSustainGroupCmd } from '../src/commands.js';
+import { S as realS } from '../src/state.js';
 import { EditHistory } from '../src/history.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 
@@ -35,22 +37,23 @@ function extractNamed(decl) {
     }
     throw new Error(`unbalanced braces for ${decl}`);
 }
-// Injected `notes()` reads a mutable outer array so each test controls it.
-let CURRENT = [];
-seedState();
+// The commands are real imports and resolve their target through notes(), which
+// reads the REAL S. Seed one arrangement and point it at CURRENT so the cases
+// can keep asserting on the array object they built.
+seedState({ arrangements: [{ id: 'a1', name: 'Lead', notes: [] }], currentArr: 0 });
 trackHooks();
+
+let CURRENT = [];
+const setCurrent = (arr) => { CURRENT = arr; realS.arrangements[0].notes = arr; };
+// The two commands are real imports; the inspector's bounds table and coercion
+// helper are still in main.js, so they are still brace-matched out of it.
 const api = new Function(
-    'notes',
     '"use strict";'
-    + extractNamed('class MoveNoteCmd') + '\n'
-    + extractNamed('class ResizeSustainGroupCmd') + '\n'
     + extractNamed('const _INSPECTOR_BOUNDS =') + '\n'
     + extractNamed('function _coerceInspectorNumber') + '\n'
-    + 'return { MoveNoteCmd, ResizeSustainGroupCmd,'
-    + ' _INSPECTOR_BOUNDS, _coerceInspectorNumber };'
-)(() => CURRENT);
-const { MoveNoteCmd, ResizeSustainGroupCmd,
-    _INSPECTOR_BOUNDS, _coerceInspectorNumber } = api;
+    + 'return { _INSPECTOR_BOUNDS, _coerceInspectorNumber };'
+)();
+const { _INSPECTOR_BOUNDS, _coerceInspectorNumber } = api;
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const n = (time, sustain) => ({ time, string: 2, fret: 5, sustain, techniques: {} });
@@ -75,7 +78,7 @@ t('_INSPECTOR_BOUNDS.time exists and clamps/parses via the real coerce fn', () =
 
 // ── sustain edit is now undoable (ResizeSustainGroupCmd via real history) ─────
 t('sustain: exec sets all; rollback restores exactly; redo reproduces', () => {
-    CURRENT = [n(0, 0.5), n(4, 1.0)];
+    setCurrent([n(0, 0.5), n(4, 1.0)]);
     const before = clone(CURRENT);
     const history = new EditHistory();
     history.exec(new ResizeSustainGroupCmd([0, 1], [2, 2]));
@@ -88,7 +91,7 @@ t('sustain: exec sets all; rollback restores exactly; redo reproduces', () => {
 
 // ── time edit: absolute target → per-note deltas via MoveNoteCmd ──────────────
 t('time: multi-select moves every note to the target; round-trips exactly', () => {
-    CURRENT = [n(1.0, 0), n(3.0, 0)];
+    setCurrent([n(1.0, 0), n(3.0, 0)]);
     const before = clone(CURRENT);
     const target = 2.0;
     const dtimes = [0, 1].map(i => target - CURRENT[i].time);   // [1.0, -1.0]
@@ -102,7 +105,7 @@ t('time: multi-select moves every note to the target; round-trips exactly', () =
 });
 
 t('time: single note (the common case) moves to the exact target and undoes', () => {
-    CURRENT = [n(1.0, 0.5)];
+    setCurrent([n(1.0, 0.5)]);
     const history = new EditHistory();
     history.exec(new MoveNoteCmd([0], [2.5 - CURRENT[0].time], [0], null));
     assert.strictEqual(CURRENT[0].time, 2.5);
@@ -112,7 +115,7 @@ t('time: single note (the common case) moves to the exact target and undoes', ()
 });
 
 t('time: a note already at the target gets a zero delta (no-op move)', () => {
-    CURRENT = [n(2.0, 0), n(2.0, 0)];   // both already at 2.0
+    setCurrent([n(2.0, 0), n(2.0, 0)]);   // both already at 2.0
     const before = clone(CURRENT);
     const dtimes = [0, 1].map(i => 2.0 - CURRENT[i].time);   // [0, 0]
     const history = new EditHistory();
@@ -142,9 +145,8 @@ const win = {};                      // captures `window.editorInspectorSetField
 // only supplies the arrangement tag — irrelevant to these cases.
 new Function(
     'notes', 'S', 'draw', 'updateStatus', '_renderInspector', 'window',
+    'MoveNoteCmd', 'ResizeSustainGroupCmd',
     '"use strict";'
-    + extractNamed('class MoveNoteCmd') + '\n'
-    + extractNamed('class ResizeSustainGroupCmd') + '\n'
     + extractNamed('const _INSPECTOR_BOUNDS =') + '\n'
     + extractNamed('function _coerceInspectorNumber') + '\n'
     + extractNamed('function _editorCurrentNoteIndices') + '\n'
@@ -156,12 +158,17 @@ new Function(
     () => {}, () => {},          // editorInspectorSetField's own draw/updateStatus
     () => { renderCount++; },
     win,
+    MoveNoteCmd, ResizeSustainGroupCmd,
 );
 const setField = win.editorInspectorSetField;
 
 // Fresh notes + selection + history per case.
+// `dispatchS` stays sandbox-local for editorInspectorSetField's `sel` and mode
+// flags, but the imported commands resolve their target through the REAL S's
+// notes() — so both must point at the SAME array.
 function resetDispatch(arr, sel) {
     DISPATCH_NOTES = arr;
+    realS.arrangements[0].notes = arr;
     dispatchS.sel = new Set(sel);
     dispatchS.history = new EditHistory();
     renderCount = 0;
