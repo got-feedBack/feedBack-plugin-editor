@@ -96,3 +96,18 @@ export const S = {
     // Clipboard
     clipboard: null, // { notes: [...], baseTime }
 };
+
+// ── Shared edit generation ──────────────────────────────────────────
+// Bumped once per committed edit by `EditHistory._afterEdit()`. Three memos key
+// on it — the section-coverage strip (draw.js), the chord-at-cursor readout and
+// the drum-limb lint (both main.js) — because an in-place note-time move keeps
+// the notes array's identity AND length, so a cheap cache key cannot see it.
+//
+// A counter cannot be written across a module boundary (import bindings are
+// read-only), so readers import the live `editGen` binding and the one writer
+// calls `bumpEditGen()`.
+export let editGen = 0;
+
+export function bumpEditGen() {
+    editGen++;
+}
