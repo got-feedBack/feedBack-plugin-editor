@@ -286,6 +286,28 @@ def _timeline_round_time(value) -> float:
         return 0.0
 
 
+def _wire_beats_sections(beats, sections):
+    """Serialize the timeline grid for the first arrangement's wire dict.
+
+    Beat/section times use 6-decimal precision (via `_timeline_round_time`) so a
+    downstream consumer that derives tempo from this arrangement-JSON beat array
+    sees the same drift-free grid as `song_timeline.json` and the arrangement
+    XML `<ebeat>`s. Shared by the two save paths so precision can't skew again.
+    """
+    beats_wire = [
+        {"time": _timeline_round_time(b.get("time", 0)),
+         "measure": int(b.get("measure", -1))}
+        for b in beats
+    ]
+    sections_wire = [
+        {"name": s.get("name", ""),
+         "number": int(s.get("number", 0)),
+         "time": _timeline_round_time(s.get("start_time", 0))}
+        for s in sections
+    ]
+    return beats_wire, sections_wire
+
+
 def _timeline_denominator(value) -> int:
     try:
         den = int(value)
@@ -3783,17 +3805,8 @@ def setup(app, context):
                         ph, wire["notes"], wire["chords"], wire["anchors"],
                     )
                 if is_first:
-                    wire["beats"] = [
-                        {"time": round(float(b.get("time", 0)), 3),
-                         "measure": int(b.get("measure", -1))}
-                        for b in beats
-                    ]
-                    wire["sections"] = [
-                        {"name": s.get("name", ""),
-                         "number": int(s.get("number", 0)),
-                         "time": round(float(s.get("start_time", 0)), 3)}
-                        for s in sections
-                    ]
+                    wire["beats"], wire["sections"] = _wire_beats_sections(
+                        beats, sections)
                 return wire
 
             # Determine the arrangement set to write. If `arrangements` was
@@ -7168,17 +7181,8 @@ def setup(app, context):
                     anchors_user=authored_anchors,
                 )
                 if i == 0:
-                    wire["beats"] = [
-                        {"time": round(float(b.get("time", 0)), 3),
-                         "measure": int(b.get("measure", -1))}
-                        for b in beats
-                    ]
-                    wire["sections"] = [
-                        {"name": s.get("name", ""),
-                         "number": int(s.get("number", 0)),
-                         "time": round(float(s.get("start_time", 0)), 3)}
-                        for s in sections
-                    ]
+                    wire["beats"], wire["sections"] = _wire_beats_sections(
+                        beats, sections)
                 (arr_dir / f"{aid}.json").write_text(
                     json.dumps(wire, separators=(",", ":")),
                     encoding="utf-8",
