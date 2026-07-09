@@ -5,7 +5,7 @@
  * no DOM. Three layers, each the inverse or the selector of the one below:
  *
  *   _absolutePitch          string+fret → pitch, WITHOUT the capo (see below)
- *   _enumerateFrettedPositions  pitch → every {string, fret} that sounds it
+ *   _enumerateFrettedPositionsPure  pitch → every {string, fret} that sounds it
  *   _suggestPositionPure    pick one, given the anchor, the previous note and
  *                           which strings are already ringing
  *
@@ -22,8 +22,8 @@
 // DELIBERATELY OMITS CAPO: string-moves compare two pitches on the same
 // arrangement, so the capo cancels on both sides. Anything that needs the
 // real SOUNDING pitch (in-key highlight, future guide synthesis) must use
-// _soundingPitchPure below, which adds the capo exactly once — adding it
-// here too would double-count it in code that composes the two.
+// `_soundingPitchPure` in src/lanes.js, which adds the capo exactly once —
+// adding it here too would double-count it in code that composes the two.
 export function _absolutePitch(openMidi, tuning, stringIdx, fret) {
     const offset = (Array.isArray(tuning) && tuning[stringIdx] !== undefined)
         ? (Number(tuning[stringIdx]) || 0)
