@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Loop edges as beat coordinates — Phase A4 (charrette §1.6).
  *
@@ -23,13 +22,13 @@
  * on main — a would-fail-on-main test.  (TempoMapCmd's flex + undo symmetry live
  * in loop_undo_mode.test.js.)
  *
- * Run: node tests/loop_beats.test.js
+ * Run: node tests/loop_beats.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { beatOf, timeOf } from '../src/beats.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractFn(name) {
     const start = src.indexOf('function ' + name + '(');
@@ -50,26 +49,25 @@ function braceSlice(start) {
     }
     throw new Error('unbalanced braces');
 }
-const conv = src.match(/\/\* @pure:beat-converter:start \*\/[\s\S]*?\/\* @pure:beat-converter:end \*\//);
-if (!conv) { console.error('FAIL: @pure:beat-converter block not found'); process.exit(1); }
-
 // Sandbox exposing the three A4 loop helpers over the real converter + S.
 function helperEnv(S) {
-    return new Function('S',
-        '"use strict";' + conv[0] + '\n'
+    // beatOf/timeOf are real imports (src/beats.js), injected into the sandbox.
+    return new Function('S', 'beatOf', 'timeOf',
+        '"use strict";'
         + extractFn('_loopSyncBeats') + '\n'
         + extractFn('_loopReprojectFromBeats') + '\n'
         + extractFn('_loopReliftBeats')
         + '\nreturn { _loopSyncBeats, _loopReprojectFromBeats, _loopReliftBeats, beatOf, timeOf };'
-    )(S);
+    )(S, beatOf, timeOf);
 }
 // Sandbox exposing the real TempoGridCmd + _loopReliftBeats over S.
 function gridEnv(S) {
     return new Function('S', '_renderLoopStrip', '_updateLoopIn3DBtn', '_liftAllBeats',
-        '"use strict";' + conv[0] + '\n' + extractFn('_loopReliftBeats') + '\n'
+        'beatOf', 'timeOf',
+        '"use strict";' + extractFn('_loopReliftBeats') + '\n'
         + extractClass('TempoGridCmd')
         + '\nreturn { TempoGridCmd };'
-    )(S, () => {}, () => {}, () => {});
+    )(S, () => {}, () => {}, () => {}, beatOf, timeOf);
 }
 
 const clone = g => g.map(b => ({ ...b }));

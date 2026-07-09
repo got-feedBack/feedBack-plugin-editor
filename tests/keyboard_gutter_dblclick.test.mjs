@@ -30,12 +30,6 @@ function extractFn(name) {
     }
     throw new Error('unbalanced braces extracting ' + name);
 }
-function extractBlock(name) {
-    const re = new RegExp('/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    assert.ok(m, `@pure:${name} block must exist`);
-    return m[0];
-}
 
 // _inKeyboardGutterPure is a real import from src/keys.js; `onDblClick` still
 // lives in src/main.js and is still brace-extracted.

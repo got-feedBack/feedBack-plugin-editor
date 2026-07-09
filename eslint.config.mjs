@@ -63,4 +63,27 @@ export default [
             }],
         },
     },
+    {
+        // The real-import test suites. `no-undef` would be noise here (each suite
+        // stubs a different slice of the browser), but unused imports are a real
+        // smell: they are what is left behind when a suite stops slicing a block
+        // and starts importing it. Codex caught one on #161 that a grep missed,
+        // because the name also appeared inside a `new Function` return STRING.
+        files: ['tests/**/*.mjs'],
+        languageOptions: {
+            ecmaVersion: 2022,
+            sourceType: 'module',
+            globals: Object.fromEntries(
+                ['console', 'process', 'globalThis', 'document', 'localStorage', 'window']
+                    .map((g) => [g, 'readonly'])),
+        },
+        rules: {
+            'no-unused-vars': ['error', {
+                args: 'none',
+                caughtErrors: 'all',
+                caughtErrorsIgnorePattern: '^_',
+                ignoreRestSiblings: true,
+            }],
+        },
+    },
 ];

@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Buffer-less (compose-mode) transport — Phase A3 (charrette §1.7).
  *
@@ -26,13 +25,13 @@
  * _composeSongDuration) that do not exist on origin/main, so the whole suite
  * fails on main — a would-fail-on-main test.
  *
- * Run: node tests/compose_transport.test.js
+ * Run: node tests/compose_transport.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { timeOf } from '../src/beats.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const m = src.match(new RegExp('/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/'));
@@ -51,11 +50,11 @@ function extractFn(name) {
     throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-// The A3 pures + the A1 converter (timeOf) in one sandbox.
-const pures = new Function('"use strict";'
-    + extractBlock('transport') + '\n' + extractBlock('beat-converter')
-    + '\nreturn { _transportChartTimePure, _composeSongDurationPure, timeOf, beatOf };')();
-const { _transportChartTimePure, _composeSongDurationPure, timeOf } = pures;
+// The A3 pures still live in src/main.js; the A1 converter (beatOf/timeOf) is a
+// real import from src/beats.js.
+const pures = new Function('"use strict";' + extractBlock('transport')
+    + '\nreturn { _transportChartTimePure, _composeSongDurationPure };')();
+const { _transportChartTimePure, _composeSongDurationPure } = pures;
 
 // Live _composeSongDuration with real timeOf + a stubbed guide source (so we
 // exercise the actual grid→seconds resolution, not a copy).
@@ -232,7 +231,7 @@ t('_ensureAudioCtx returns falsy (no throw) when Web Audio is absent', () => {
     const S = { audioCtx: null };
     const ensure = makeEnsureAudioCtx(S, {}); // no AudioContext / webkitAudioContext
     let ctx, threw = false;
-    try { ctx = ensure(); } catch (e) { threw = true; }
+    try { ctx = ensure(); } catch (_) { threw = true; }
     assert.strictEqual(threw, false, 'must not throw before callers can guard on !S.audioCtx');
     assert.ok(!ctx, 'returns a falsy sentinel');
     assert.ok(!S.audioCtx, 'leaves S.audioCtx unset so startPlayback/loadAudio bail');

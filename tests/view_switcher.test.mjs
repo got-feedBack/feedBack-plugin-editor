@@ -15,9 +15,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import * as keys from '../src/keys.js';
 import {
-    _partViewKeyPure, _rollMidiForNote, _viewForPure, isKeysArr, isKeysMode,
-    noteToMidi, updatePianoRange, viewFor,
-} from '../src/keys.js';
+    _partViewKeyPure, _rollMidiForNote, _viewForPure, noteToMidi, updatePianoRange, } from '../src/keys.js';
 import { LC } from '../src/lanes.js';
 import { S } from '../src/state.js';
 

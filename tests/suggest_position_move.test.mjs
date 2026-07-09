@@ -191,7 +191,7 @@ t('vertical chord drag where both would resolve to the SAME string lands DISTINC
 
 // ── 3. MoveNoteCmd mark round-trip ────────────────────────────────────────────
 t('MoveNoteCmd.markSuggestedIdx marks on exec and rollback restores the prior state', () => {
-    const { S, env, notes } = makeMoveEnv([{ time: 0, string: 3, fret: 1, sustain: 0 }]);
+    const { env, notes } = makeMoveEnv([{ time: 0, string: 3, fret: 1, sustain: 0 }]);
     // Simulate the commit: net delta s3/f1 → s3/f2, mark index 0 suggested.
     const cmd = new env.MoveNoteCmd([0], [0], [0], [1]);
     cmd.markSuggestedIdx = [0];

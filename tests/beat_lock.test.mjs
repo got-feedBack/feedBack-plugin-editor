@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Beat-lock — Phase A5 (charrette §1.8 / D-T5).
  *
@@ -20,13 +19,13 @@
  * These reference A5 helpers that do not exist on the base, so the whole suite
  * fails there — a would-fail-on-main test.
  *
- * Run: node tests/beat_lock.test.js
+ * Run: node tests/beat_lock.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { beatOf as _beatOf, timeOf as _timeOf } from '../src/beats.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 const block = src.match(/\/\* @pure:beat-lock:start \*\/[\s\S]*?\/\* @pure:beat-lock:end \*\//);
 if (!block) { console.error('FAIL: @pure:beat-lock block not found (A5 not applied)'); process.exit(1); }
 const {
@@ -37,10 +36,6 @@ const {
 
 // beatOf / timeOf (the beat-primary converter) — used to prove the sync path now
 // reprojects notes onto the warped grid instead of drifting them off it.
-const convBlock = src.match(/\/\* @pure:beat-converter:start \*\/[\s\S]*?\/\* @pure:beat-converter:end \*\//);
-if (!convBlock) { console.error('FAIL: @pure:beat-converter block not found'); process.exit(1); }
-const { beatOf: _beatOf, timeOf: _timeOf } = new Function('"use strict";' + convBlock[0]
-    + '\nreturn { beatOf, timeOf };')();
 
 // A uniform old grid at 1s beats; a re-fit is a new same-length grid.
 const grid = (times, locks = []) => times.map((t, i) => ({ time: t, measure: i === 0 ? 1 : -1, locked: locks.includes(i) }));

@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Beat-primary note model — Phase A2 (charrette §1.3/§1.4/§1.10).
  *
@@ -19,19 +18,14 @@
  *   8. exact undo: TempoMapCmd exec→rollback restores original times exactly.
  *   9. the save body never leaks a beat/beatEnd field to the wire.
  *
- * Run: node tests/beat_primary.test.js
+ * Run: node tests/beat_primary.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { beatOf, timeOf } from '../src/beats.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
-function extractBlock(name) {
-    const m = src.match(new RegExp('/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/'));
-    if (!m) { console.error('FAIL: @pure:' + name + ' block not found'); process.exit(1); }
-    return m[0];
-}
 function extractFn(name) {
     const start = src.indexOf('function ' + name + '(');
     assert.ok(start >= 0, `function ${name} must exist`);
@@ -93,8 +87,8 @@ function legacyApplyTempoRemap(remap, S, ride) {
 
 // A sandbox whose beat helpers + TempoMapCmd all read the injected S.
 function makeEnv(S) {
+    // beatOf/timeOf are real imports (src/beats.js), injected below.
     const body = [
-        extractBlock('beat-converter'),
         r3m[0],
         extractFn('_eachTimed'),
         extractFn('_liftAllBeats'),
@@ -108,11 +102,12 @@ function makeEnv(S) {
         extractClass('TempoMapCmd'),
     ].join('\n');
     return new Function(
+        'beatOf', 'timeOf',
         'S', '_loopReprojectFromBeats', '_renderLoopStrip', '_updateLoopIn3DBtn',
         '"use strict";' + body +
         '\nreturn { beatOf, timeOf, _liftAllBeats, _reprojectAll, _makeTimeRemap,' +
         ' _stripBeatsFromSaveBody, TempoMapCmd };'
-    )(S, () => {}, () => {}, () => {});
+    )(beatOf, timeOf, S, () => {}, () => {}, () => {});
 }
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
