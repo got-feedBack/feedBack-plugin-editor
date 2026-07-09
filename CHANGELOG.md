@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 3 — the state lift (R2).** The canonical edit-state
+  object `S` moves verbatim from `src/main.js` into `src/state.js` (21,036 →
+  20,945 lines); `main.js` gains exactly one line, `import { S } from './state.js'`.
+  No call site changes across its 1,831 `S.` references: the editor already kept all
+  edit state on a single `S` object (constitution §I), and `S` is never reassigned —
+  only its properties are — so a read-only import binding is exactly right. This is
+  the keystone every later extraction needs, since almost every remaining cluster
+  reads `S`. The `S.snapIdx` default is now pinned by an assertion in
+  `tests/snap_options.test.mjs` (`SNAP_OPTIONS[S.snapIdx].label === '1/4'`) rather
+  than by a comment — inserting a snap option ahead of `1/4` without bumping the
+  default now fails the suite.
 - **ES-module migration, step 2 — the first pure extractions (R2).** Two leaf
   modules split out of `src/main.js` (21,176 → 21,036 lines), bodies moved
   verbatim: `src/snap.js` (the snap-resolution table + subdivision arithmetic)

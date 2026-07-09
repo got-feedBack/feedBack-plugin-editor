@@ -1,0 +1,98 @@
+/* Slopsmith Arrangement Editor — canonical edit state.
+ *
+ * The single mutable state object every module reads and writes (constitution
+ * §I). `S` is never reassigned — only its properties are — so importing the
+ * binding read-only is exactly right.
+ */
+
+export const S = {
+    // Song data
+    title: '', artist: '', sessionId: null, filename: '',
+    format: 'sloppak',
+    arrangements: [],
+    currentArr: 0,
+    beats: [], sections: [], duration: 0, offset: 0,
+    // Selected tone-change marker — stored as a direct ref into the
+    // active arrangement's `arr.tones.changes` array (not an index)
+    // so commands that sort/splice that array don't invalidate the
+    // selection. `null` means no marker is selected — Del key falls
+    // through to the note delete path.
+    toneSel: null,
+    // Selected anchor marker — direct ref into the active
+    // arrangement's `arr.anchors_user` array. Same semantics as
+    // `toneSel`. `null` means no anchor is selected.
+    anchorSel: null,
+    // Selected handshape — direct ref into the active arrangement's
+    // `arr.handshapes` array. Same semantics as `anchorSel`. `null` = none.
+    handshapeSel: null,
+
+    // Drum tab — null until the user adds drums via the +Drums modal, then
+    // a dict matching docs/sloppak-spec.md §5.3 ({version,name,kit,hits}).
+    // Persisted via _buildSaveBody as the `drum_tab` field on the save body.
+    drumTab: null,
+    // True once the user imports or edits the drum tab this session.
+    // _buildSaveBody only ships `drum_tab` when this is set, so a tab
+    // merely loaded from disk doesn't get re-persisted on every save.
+    drumTabDirty: false,
+    // Drum editor mode — when true, the editor canvas swaps to a piece-lane
+    // grid view of S.drumTab.hits[]. drumSel is the set of selected hit
+    // indices. Both reset whenever the user loads a different sloppak.
+    drumEditMode: false,
+    // Parts view: stacked all-parts overview (navigational; mutually
+    // exclusive with drumEditMode / tempoMapMode like they are with
+    // each other).
+    partsViewMode: false,
+    drumSel: new Set(),
+
+    // Tempo Map mode — EOF-style: drag the song-wide beat grid's measure
+    // downbeats ("sync points") to fit it to the audio; BPM is derived
+    // from sync-point spacing. tempoSel/tempoHover index into S.beats. Under
+    // beat-primary a grid edit reprojects EVERY part from its beat, so there
+    // is no "which parts ride" choice to make. Mode resets on song load.
+    tempoMapMode: false,
+    tempoSel: -1,
+    tempoHover: -1,
+
+    // View
+    scrollX: 0,   // seconds
+    zoom: 120,     // px per second
+    snapIdx: 3,    // default 1/4 (index 3 after the 1/3T insert)
+    snapEnabled: true,
+    // Snap target: 'grid' = tempo-map subdivisions; 'onset' = nearest detected
+    // audio transient within ONSET_SNAP_TOL (falls back to grid when none near).
+    // UI pref only (persisted to localStorage), never written to the pack.
+    snapMode: 'grid',
+
+    // Selection
+    sel: new Set(),
+
+    // Bar-range selection for the "Loop in 3D" handoff. Drag on the bottom
+    // beat bar (measure strip) to set { startTime, endTime } in seconds,
+    // snapped to downbeat boundaries. `null` = no bar range selected.
+    barSel: null,
+    loopEnabled: false,
+    // True when this editor session was opened from the 3D highway's
+    // "Edit region" action. Used to make the preview button read as a
+    // return trip instead of a fresh action.
+    returnToHighway: false,
+    // Drag state
+    drag: null, // { type, startX, startY, startTime, startString, noteIdx, origTimes, origStrings }
+
+    // Playback
+    playing: false,
+    cursorTime: 0,
+    audioCtx: null, audioBuffer: null, audioSource: null,
+    playStartWall: 0, playStartTime: 0,
+
+    // Waveform cache
+    waveformPeaks: null,
+
+    // History
+    history: null,
+
+    // Songs list cache
+    songsList: null,
+
+    // Clipboard
+    clipboard: null, // { notes: [...], baseTime }
+};

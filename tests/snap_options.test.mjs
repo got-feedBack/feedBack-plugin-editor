@@ -11,6 +11,7 @@ import {
     _editorSnapSubdivisionsPure,
     _editorEffectiveSnapValuePure,
 } from '../src/snap.js';
+import { S } from '../src/state.js';
 
 let pass = 0;
 let fail = 0;
@@ -20,10 +21,17 @@ function t(name, fn) {
 }
 
 t('keeps 1/4 as the default snap index', () => {
-    // 1/4 shifts to index 3 once 1/3T is inserted ahead of it; the S.snapIdx
-    // default in src/main.js must track this (default 1/4).
+    // 1/4 shifts to index 3 once 1/3T is inserted ahead of it.
     assert.strictEqual(SNAP_OPTIONS[3].label, '1/4');
     assert.strictEqual(SNAP_VALUES[3], 0.25);
+});
+
+t('S.snapIdx defaults to the 1/4 entry (cross-module invariant)', () => {
+    // Both modules are importable now, so the "S.snapIdx must track this"
+    // note that used to live in a comment is an assertion: inserting a snap
+    // option ahead of 1/4 without bumping S.snapIdx fails here.
+    assert.strictEqual(SNAP_OPTIONS[S.snapIdx].label, '1/4');
+    assert.strictEqual(SNAP_VALUES[S.snapIdx], 0.25);
 });
 
 t('includes dense and triplet-friendly snap divisions', () => {
