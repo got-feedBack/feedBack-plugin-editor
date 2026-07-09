@@ -19,14 +19,11 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import { _soundingPitchPure } from '../src/lanes.js';
 import { _clearSuggested, _isSuggested, _markSuggested } from '../src/notes.js';
+import {
+    _activeAnchorAtPure, _enumerateFrettedPositionsPure, _suggestPositionPure,
+} from '../src/position.js';
 
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-function extractBlock(name) {
-    const re = new RegExp('/\\* @pure:' + name + ':start[\\s\\S]*?@pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) { console.error(`FAIL: @pure:${name} block not found`); process.exit(1); }
-    return m[0];
-}
 function extractByKeyword(keyword, label) {
     const start = src.indexOf(keyword);
     assert.ok(start >= 0, `${label || keyword} must exist`);
@@ -57,7 +54,6 @@ function makeMoveEnv(seed) {
                          notes: seed.map(n => ({ ...n, techniques: { ...(n.techniques || {}) } })) }],
     };
     const body = '"use strict";'
-        + extractBlock('suggest-position')
         + '\n' + extractFn('_rollAnchorList')
         + '\n' + extractFn('_occupiedStringsAt')
         + '\n' + extractFn('_positionLocked')
@@ -69,7 +65,8 @@ function makeMoveEnv(seed) {
     // Each env builds fresh note objects, so a module-shared WeakSet keyed by
     // object identity cannot leak marks between cases.
     const env = new Function('S', 'notes', '_rollPitchCtx', 'snapTime', 'PIANO_LANE_H',
-        '_soundingPitchPure', '_markSuggested', '_clearSuggested', '_isSuggested', body)(
+        '_soundingPitchPure', '_markSuggested', '_clearSuggested', '_isSuggested',
+        '_suggestPositionPure', '_enumerateFrettedPositionsPure', '_activeAnchorAtPure', body)(
         S,
         () => S.arrangements[S.currentArr].notes,
         () => ({ openMidi: OPEN, tuning: [0, 0, 0, 0, 0, 0], capo: 0 }),
@@ -77,6 +74,7 @@ function makeMoveEnv(seed) {
         PIANO_LANE_H,
         _soundingPitchPure,                        // the REAL one, from src/lanes.js
         _markSuggested, _clearSuggested, _isSuggested,
+        _suggestPositionPure, _enumerateFrettedPositionsPure, _activeAnchorAtPure,
     );
     return { S, env, notes: () => S.arrangements[0].notes };
 }

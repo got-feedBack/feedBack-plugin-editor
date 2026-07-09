@@ -48,6 +48,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 12 — fretboard position math (R2).**
+  `src/position.js` (`main.js` 18,802 → 18,671): `_absolutePitch`, the
+  `@pure:position-cycle` pures (same-pitch candidate enumeration and stepping)
+  and the `@pure:suggest-position` pures (enumerate → pick, given the anchor, the
+  previous note and which strings already ring). Pure arithmetic over open-string
+  pitches, tuning and capo — it imports **nothing**, another root of the graph.
+  `_absolutePitch` deliberately omits the capo (it only ever compares two pitches
+  on one arrangement, where the capo cancels); `_soundingPitchPure` in
+  `src/lanes.js` adds it exactly once. Composing the two therefore cannot
+  double-count, and the module header now says so where both live.
+  Five suites retargeted. `suggest_position` drops its sandbox entirely, and
+  **`fret_key_highlight` is now fully real-import** — it was the first suite this
+  refactor touched, back when it still regex-sliced two `@pure:` blocks and
+  brace-extracted a third function.
+
 - **ES-module migration, step 11 — the tempo-grid converter (R2).** `src/beats.js`:
   `beatOf` / `timeOf`, the one musical-beat ⇄ seconds mapping (charrette §1.1).
   Pure — it takes the grid as an argument and touches nothing else, so it imports
