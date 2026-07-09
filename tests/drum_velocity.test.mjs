@@ -12,46 +12,27 @@
  * Run: node tests/drum_velocity.test.mjs
  */
 import assert from 'node:assert';
-import fs from 'node:fs';
+import {
+    DRUM_GHOST_VELOCITY, SetDrumVelocityCmd, ToggleDrumArticulationCmd,
+    _drumClampVelocityPure, _drumImportHitPure, _drumVelocityDragValuePure, setDrumHooks,
+} from '../src/drum.js';
 import { EditHistory } from '../src/history.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
-function extract(name) {
-    const re = new RegExp(
-        '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) {
-        console.error(`FAIL: @pure:${name} block not found in src/main.js`);
-        process.exit(1);
-    }
-    return m[0];
-}
-
-const drumBlock = extract('drum-cmds');
-
+// The drum commands and EditHistory are real imports now; both close over the
+// REAL `S` from src/state.js, so seed that rather than fabricating one.
 function makeEnv() {
-    // EditHistory is a real import and closes over the REAL `S`, so the sliced
-    // drum commands must share that object rather than a fabricated one.
     const S = seedState({
         drumTab: { hits: [] },
         drumSel: new Set(),
         drumTabDirty: false,
         currentArr: 0,
     });
-    const env = new Function(
-        'S', 'updateArrangementSelector',
-        '"use strict";'
-        + drumBlock + '\n'
-        + 'return { SetDrumVelocityCmd, ToggleDrumArticulationCmd, '
-        + 'DRUM_GHOST_VELOCITY, _drumClampVelocityPure, _drumVelocityDragValuePure, '
-        + '_drumImportHitPure };'
-    )(
-        S,
-        () => {},
-    );
+    setDrumHooks({ updateArrangementSelector: () => {} });
     trackHooks();
+    const env = { SetDrumVelocityCmd, ToggleDrumArticulationCmd, DRUM_GHOST_VELOCITY,
+                  _drumClampVelocityPure, _drumVelocityDragValuePure, _drumImportHitPure };
     return { ...env, S, history: new EditHistory() };
 }
 

@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The drum editor now lives in `src/drum.js` (R2, step 15).** 714 lines out of
+  `src/main.js`, which is down to 17,757 — the largest single lift of the split
+  so far. It carries the lane/density model, the limb-lint memo, the drum
+  geometry and hit-test, `_drumEditorDraw`, and the `@pure:drum-cmds` undo
+  commands. `main.js` keeps what genuinely belongs to it: the mouse/drag handlers
+  that construct those commands, the toolbar buttons, the GM-percussion name
+  table, and the MIDI-tempo import flow — which is about tempo, not drums, and
+  was only sharing the section banner.
+  Three symbols travel back the other way (`draw`, `drawWaveform`,
+  `updateArrangementSelector`) and would close a cycle, so they arrive through
+  `setDrumHooks()`, matching `setHistoryHooks()` and `setCanvas()`. The
+  `typeof S` / `typeof editGen` guards in `_drumLimbConflicts` existed only to
+  keep the block eval-able in a test sandbox; real imports make them dead.
+  All four drum suites now import the real module rather than regex-slicing it,
+  and `drum_limb_lint`'s two source-locks on the memo key became one behavioural
+  assertion: bump `editGen`, the memo must recompute.
+
+
 - **`EditHistory` now lives in `src/history.js` (R2, step 14).** 121 lines out of
   `src/main.js`, which is down to 18,471. The 47 command classes stay put — they
   are interleaved with the feature code that constructs them and each reaches
