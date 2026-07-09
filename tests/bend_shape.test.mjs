@@ -1,27 +1,13 @@
-'use strict';
 /*
  * Tests for the §6.2.1 bend-shape authoring helpers in src/main.js. src/main.js is
- * a single browser IIFE, so this extracts the `@pure:bend-shape` marked block
  * (browser-free) and eval's it in isolation — real source, no drift.
  *
- * Run: node tests/bend_shape.test.js
+ * Run: node tests/bend_shape.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:bend-shape:start[\s\S]*?@pure:bend-shape:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:bend-shape block not found in src/main.js');
-    process.exit(1);
-}
-const { bendPresetCurve, sanitizeBendCurve, rescaleBendCurveToPeak, BEND_INTENTS } =
-    new Function(
-        '"use strict";' + m[0] +
-        '\nreturn { bendPresetCurve, sanitizeBendCurve, rescaleBendCurveToPeak,' +
-        ' BEND_INTENTS };'
-    )();
+import assert from 'node:assert';
+import {
+    BEND_INTENTS, bendPresetCurve, rescaleBendCurveToPeak, sanitizeBendCurve,
+} from '../src/notes.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {

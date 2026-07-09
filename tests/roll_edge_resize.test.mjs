@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Edge-drag sustain resize in the READ-ONLY fretted roll (V4).
  *
@@ -13,13 +12,17 @@
  * On main the resize commands are NOT pitchPreserving, so the edit lock blocks
  * them in a read-only roll — these cases fail on main.
  *
- * Run: node tests/roll_edge_resize.test.js
+ * Run: node tests/roll_edge_resize.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import {
+    _maxSustainBeforeCollisionPure, _resizeSustainsForDeltaPure,
+} from '../src/notes.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+// The undo commands still live in src/main.js, so they are still sliced; the
+// pure resize arithmetic they were paired with now comes from src/notes.js.
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const re = new RegExp('/\\* @pure:' + name + ':start[\\s\\S]*?@pure:' + name + ':end \\*/');
@@ -120,11 +123,7 @@ t('the read-only-roll lock still blocks an ordinary (non-pitchPreserving) comman
 // — the same delta applies to each member's OWN original sustain. The old code
 // computed one `anchorOrig + delta` and assigned it to every member, flattening
 // them; that regression fails here.
-const chordResize = (function () {
-    const body = extractBlock('chord-resize')
-        + '\nreturn { _resizeSustainsForDeltaPure, _maxSustainBeforeCollisionPure };';
-    return new Function(body)();
-})();
+const chordResize = { _resizeSustainsForDeltaPure, _maxSustainBeforeCollisionPure };
 
 t('group edge-drag preserves differing per-member sustains (not flattened)', () => {
     // Two-member chord at t=0, no later same-string onsets ⇒ no collision cap.

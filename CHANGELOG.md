@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 6 — the note/chord pure tier (R2).** `src/notes.js`
+  (`main.js` 20,763 → 20,601): the active-arrangement accessors `notes()`/`chords()`
+  (204 and 35 call sites, none of which changed), plus the pure arithmetic over
+  them — chord-aware sustain resizing, bend-curve authoring (`bendPresetCurve`,
+  `sanitizeBendCurve`, `rescaleBendCurveToPeak`, `BEND_INTENTS`) and the
+  teaching-mark options (`FRET_FINGER_OPTIONS`, `nextUnusedStrumGroup`). Reads `S`;
+  no DOM, no undo history.
+  Four more suites stop slicing `@pure:` blocks out of source: `chord_resize`,
+  `bend_shape` and `teaching_marks` become plain real-import tests, and
+  `roll_edge_resize` becomes a hybrid — it still slices the `edit-history` block
+  and the `ResizeSustainCmd`/`ResizeSustainGroupCmd` classes that remain in
+  `main.js`, but takes the resize arithmetic from the module. New
+  `tests/notes.test.mjs` pins the accessors' empty-arrangement guard and that they
+  return the live array rather than a copy.
+  `@pure:chord-relink`, `reconstructChords`, `flattenChords` and the handshape
+  normalizers stay in `main.js` for now: they are entangled with `S.history`, and
+  three sandbox tests drive them against a fabricated `S` that a real import would
+  bypass. That rework is its own step.
 - **ES-module migration, step 5 — canvas geometry (R2).** `src/geometry.js`
   (`main.js` 20,799 → 20,764): the time⇄x and string⇄y mappings every draw and
   hit-test path goes through (`timeToX`/`xToTime`, `laneToY`/`yToLane`,
