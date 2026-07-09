@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **ES-module migration, step 8a — the open-string pitch model (R2).** The
+  string→pitch half of the lane model joins `src/lanes.js`: `_GUITAR_OPEN_MIDI` /
+  `_BASS_OPEN_MIDI` (module-private), `_openMidiForArr`, and the
+  `@pure:fret-pitch` helper `_soundingPitchPure`. They belong with the code that
+  already knows bass-vs-guitar and string counts, and `main.js`'s only change is
+  two more names on its `lanes.js` import.
+  `@pure:fret-pitch` was the most-sliced block in the suite. All five consumers
+  now take the real function: `fret_key_highlight` (down to one brace-extract),
+  `suggest_position`, `roll_position_cycle`, `suggest_position_move` and
+  `view_switcher` — the last four inject it into their sandboxes rather than
+  concatenating its source. New cases in `tests/lanes.test.mjs` cover
+  `_openMidiForArr`, which had no test at all: extended low strings a perfect
+  fourth apart, the 6-string bass appending a high C instead of extending
+  downward, and capo-added-exactly-once.
+
 ### Fixed
 
 - **Chord-template save path (#152).** Three pre-existing data-integrity bugs,

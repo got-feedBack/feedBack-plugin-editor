@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Suggest-position resolver — P6 / VA.3 (design V4 / V13.3).
  *
@@ -19,22 +18,24 @@
  *
  * These reference P6 helpers absent on main, so the suite fails on main.
  *
- * Run: node tests/suggest_position.test.js
+ * Run: node tests/suggest_position.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { _soundingPitchPure } from '../src/lanes.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 const grab = name => {
     const m = src.match(new RegExp('/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/'));
     if (!m) { console.error('FAIL: @pure:' + name + ' block not found'); process.exit(1); }
     return m[0];
 };
-const api = new Function('"use strict";' + grab('suggest-position') + '\n' + grab('fret-pitch')
-    + '\nreturn { _enumerateFrettedPositionsPure, _activeAnchorAtPure, _suggestPositionPure, _soundingPitchPure };'
-)();
-const { _enumerateFrettedPositionsPure, _activeAnchorAtPure, _suggestPositionPure, _soundingPitchPure } = api;
+// `_soundingPitchPure` now lives in src/lanes.js — inject the REAL one instead
+// of concatenating its source; @pure:suggest-position is still in src/main.js.
+const api = new Function('_soundingPitchPure', '"use strict";' + grab('suggest-position')
+    + '\nreturn { _enumerateFrettedPositionsPure, _activeAnchorAtPure, _suggestPositionPure };'
+)(_soundingPitchPure);
+const { _enumerateFrettedPositionsPure, _activeAnchorAtPure, _suggestPositionPure } = api;
 
 // Standard 6-string guitar, low → high: E2 A2 D3 G3 B3 E4.
 const OPEN = [40, 45, 50, 55, 59, 64];
