@@ -35,6 +35,13 @@ const {
     + '\nreturn { _respaceWithLocksPure, _beatLockStorageKeyPure, _beatLockParsePure, _applyBeatLocksPure };'
 )();
 
+// beatOf / timeOf (the beat-primary converter) — used to prove the sync path now
+// reprojects notes onto the warped grid instead of drifting them off it.
+const convBlock = src.match(/\/\* @pure:beat-converter:start \*\/[\s\S]*?\/\* @pure:beat-converter:end \*\//);
+if (!convBlock) { console.error('FAIL: @pure:beat-converter block not found'); process.exit(1); }
+const { beatOf: _beatOf, timeOf: _timeOf } = new Function('"use strict";' + convBlock[0]
+    + '\nreturn { beatOf, timeOf };')();
+
 // A uniform old grid at 1s beats; a re-fit is a new same-length grid.
 const grid = (times, locks = []) => times.map((t, i) => ({ time: t, measure: i === 0 ? 1 : -1, locked: locks.includes(i) }));
 const times = bs => bs.map(b => b.time);
@@ -103,6 +110,63 @@ t('the locked flag rides onto the output beats', () => {
     const neu = grid([0, 1.5, 3, 4.5, 6]).map(b => ({ time: b.time, measure: b.measure })); // re-fit dropped the flag
     const out = _respaceWithLocksPure(oldB, neu);
     assert.strictEqual(out[2].locked, true, 'lock re-asserted on the re-fit output');
+});
+
+// ── 1b. non-monotonic-grid regressions (review) ──────────────────────────────
+// A global re-fit can push an end (or a neighbour) past a lock's held old time.
+// Pre-fix the lock stayed a fixed point and the grid went BACKWARDS — corrupting
+// beatOf/timeOf's binary search. Post-fix an unsatisfiable lock is dropped as a
+// fixed point and rides the affine remap, so the grid stays strictly increasing.
+const strictInc = bs => bs.every((b, i) => i === 0 || b.time > bs[i - 1].time);
+const nonNeg = bs => bs.every(b => b.time >= 0);
+
+t('A compress: an end re-fit past a late lock stays monotonic (was [0,1,2,3,2])', () => {
+    const oldB = grid([0, 1, 2, 3, 4], [3]);         // beat 3 locked at t=3
+    const neu = grid([0, 0.5, 1, 1.5, 2]);           // song compressed to span 2
+    const out = _respaceWithLocksPure(oldB, neu);
+    assert.ok(strictInc(out), 'strictly increasing: ' + JSON.stringify(times(out)));
+    assert.ok(nonNeg(out), 'no negative times');
+});
+
+t('B offset: a positive sync offset past an early lock stays monotonic (was [3,1,3,5,7])', () => {
+    const oldB = grid([0, 1, 2, 3, 4], [1]);         // beat 1 locked at t=1
+    const neu = grid([3, 4, 5, 6, 7]);               // whole grid shifted +3
+    const out = _respaceWithLocksPure(oldB, neu);
+    assert.ok(strictInc(out), 'strictly increasing: ' + JSON.stringify(times(out)));
+    assert.ok(nonNeg(out), 'no negative times');
+});
+
+t('C ends between locks: a re-fit that lands inside the locks stays monotonic (was [0,1,2,3,1.6])', () => {
+    const oldB = grid([0, 1, 2, 3, 4], [1, 3]);      // beats 1 and 3 locked
+    const neu = grid([0, 0.4, 0.8, 1.2, 1.6]);       // compressed inside lock 3's old time
+    const out = _respaceWithLocksPure(oldB, neu);
+    assert.ok(strictInc(out), 'strictly increasing: ' + JSON.stringify(times(out)));
+    assert.ok(nonNeg(out), 'no negative times');
+    assert.ok(near(out[1].time, 1), 'the still-satisfiable early lock holds its time');
+});
+
+t('a LOCKED endpoint still yields the re-fit end (ends carry the re-fit, stay monotonic)', () => {
+    const oldB = grid([0, 1, 2, 3, 4], [4]);         // the final beat is locked
+    const neu = grid([5, 6, 7, 8, 9]);               // sync offset +5
+    const out = _respaceWithLocksPure(oldB, neu);
+    assert.ok(strictInc(out), 'strictly increasing: ' + JSON.stringify(times(out)));
+    assert.ok(near(out[4].time, 9), 'the locked end still carries the re-fit end, not its old 4');
+    assert.strictEqual(out[4].locked, true, 'the lock flag still rides');
+});
+
+t('editorApplySync reprojection keeps notes on the warped grid at a lock (FIX 2)', () => {
+    // sync ×2 stretch (factor 0.5), beat 2 locked at t=2 → grid warps to [0,1,2,5,8].
+    const factor = 0.5, offset = 0;
+    const oldB = grid([0, 1, 2, 3, 4], [2]);
+    const scaled = oldB.map(b => ({ ...b, time: b.time / factor + offset }));
+    const respaced = _respaceWithLocksPure(oldB, scaled);
+    assert.ok(near(respaced[2].time, 2), 'lock held through the sync');
+    const noteT = 1.5;                                // a note between beat 1 and the lock
+    const beat = _beatOf(oldB, noteT);
+    const reproj = _timeOf(respaced, beat);          // what editorApplySync now writes
+    const linear = noteT / factor + offset;          // what the old linear scale wrote
+    assert.ok(Math.abs(_beatOf(respaced, reproj) - beat) < 1e-9, 'reprojected note keeps its beat (on grid)');
+    assert.ok(Math.abs(reproj - linear) > 1e-6, 'the old linear scale would have drifted off the grid near the lock');
 });
 
 // ── 2. persistence pures ─────────────────────────────────────────────────────

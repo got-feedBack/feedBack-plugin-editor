@@ -17,8 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ever pushed before the start). Locked poles render **emerald** on the beat
   bar. This is the guard that makes the beat-primary model safe for placing
   notes by ear before the grid is trusted: a nailed passage can't be walked off
-  by a later global tempo op. Locks are **editor-pref**, keyed by song, restored
-  on load — **never written to the pack**. Tests: `tests/beat_lock.test.js`.
+  by a later global tempo op. A re-fit that would push a locked anchor out of
+  order **releases that one anchor** (it rides the interpolation) so the grid
+  stays **strictly monotonic** — never a backwards beat that would corrupt the
+  `beatOf`/`timeOf` lookup. Sync-to-audio **reprojects notes from their beats**
+  so they stay on a locked grid instead of drifting near the anchor. Locks are
+  **editor-pref**, keyed by song, restored on load — **never written to the
+  pack**. Tests: `tests/beat_lock.test.js`.
 
 ### Changed
 - **Loop edges follow the grid by beat (bar/grid loops).** A bar or grid loop's

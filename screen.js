@@ -10120,17 +10120,36 @@ window.editorApplySync = () => {
 
     if (factor <= 0 || !isFinite(factor)) return;
 
-    // Scale all note times and sustains
+    // Build the new grid first: unlocked beats scale, but a locked sync point
+    // holds its time through the re-fit and the runs re-space around the locks.
+    const oldBeats = S.beats.map(b => ({ ...b }));
+    const scaledBeats = S.beats.map(b => ({ ...b, time: b.time / factor + offset }));
+    const respaced = _respaceWithLocksPure(oldBeats, scaledBeats);
+
+    // With a lock present the grid warps, so reproject note times from the OLD
+    // grid onto the new one (beat is truth), exactly as the TempoMapCmd tempo
+    // paths do — a note stays on the grid even right next to a lock. Without a
+    // lock _respaceWithLocksPure hands back `scaledBeats` unchanged; keep the
+    // plain linear scale there — it is identical to the reproject for a real
+    // grid (timeOf∘beatOf round-trips through an affine map) and, unlike the
+    // reproject, still scales notes on a degenerate <2-beat grid (where
+    // beatOf/timeOf are identity).
+    const locked = respaced !== scaledBeats;
     const nn = notes();
     for (const n of nn) {
-        n.time = n.time / factor + offset;
-        if (n.sustain) n.sustain = n.sustain / factor;
+        if (locked) {
+            const t = timeOf(respaced, beatOf(oldBeats, n.time));
+            if (n.sustain) {
+                const endT = timeOf(respaced, beatOf(oldBeats, n.time + n.sustain));
+                n.sustain = Math.max(0, endT - t);
+            }
+            n.time = t;
+        } else {
+            n.time = n.time / factor + offset;
+            if (n.sustain) n.sustain = n.sustain / factor;
+        }
     }
 
-    // Scale beat times — but a locked sync point holds its time through the
-    // sync re-fit; unlocked beats scale and the runs re-space around the locks.
-    const scaledBeats = S.beats.map(b => ({ ...b, time: b.time / factor + offset }));
-    const respaced = _respaceWithLocksPure(S.beats, scaledBeats);
     for (let i = 0; i < S.beats.length; i++) S.beats[i].time = respaced[i].time;
 
     // Scale section times
@@ -16903,16 +16922,37 @@ function _respaceWithLocksPure(oldBeats, newBeats) {
     for (let i = 0; i < n && !anyLock; i++) anyLock = isLocked(i);
     if (!anyLock) return newBeats;
     const out = newBeats.map(b => ({ ...b }));
-    // Fixed points: the ends carry the re-fit's own time; a locked anchor holds
-    // its old time. (An end that is itself locked holds too.)
-    const fixed = [];
-    for (let i = 0; i < n; i++) {
-        if (i === 0 || i === n - 1 || isLocked(i)) {
-            out[i].time = isLocked(i) ? oldBeats[i].time : newBeats[i].time;
-            if (isLocked(i)) out[i].locked = true;
+    // The `locked` flag is a persistent editor-pref — it rides onto every locked
+    // beat whether or not this particular re-fit can honour its held time.
+    for (let i = 0; i < n; i++) if (isLocked(i)) out[i].locked = true;
+    // Fixed points: the two song ends ALWAYS carry the re-fit's own time (a
+    // global tempo change must be free to lengthen/shift the song — a locked end
+    // can't pin the total span, or a re-fit that moves the far end past it would
+    // write a backwards grid); a locked interior anchor holds its old time.
+    // Nothing guarantees those held times stay INCREASING once a global re-fit
+    // pushes an end (or a neighbour) past a lock — a naive mix writes a
+    // non-monotonic grid that silently corrupts beatOf/timeOf's binary search. So
+    // we DROP any interior lock whose held time no longer falls strictly between
+    // the surrounding kept fixed points; a dropped lock stops being a fixed point
+    // and simply rides the affine remap of its run (its flag stays). Lock held
+    // times are increasing in index (the old grid is sorted), so a single greedy
+    // pass keeps the maximal satisfiable set and the kept fixed times are strictly
+    // increasing by construction — the affine runs below then stay monotonic.
+    out[0].time = newBeats[0].time;
+    out[n - 1].time = newBeats[n - 1].time;
+    const endTime = out[n - 1].time;
+    const fixed = [0];
+    let lastTime = out[0].time;
+    for (let i = 1; i < n - 1; i++) {
+        if (!isLocked(i)) continue;
+        const held = oldBeats[i].time;
+        if (held > lastTime && held < endTime) {
+            out[i].time = held;
             fixed.push(i);
+            lastTime = held;
         }
     }
+    fixed.push(n - 1);
     for (let k = 0; k + 1 < fixed.length; k++) {
         const a = fixed[k], b = fixed[k + 1];
         const na = newBeats[a].time, span = newBeats[b].time - na;
