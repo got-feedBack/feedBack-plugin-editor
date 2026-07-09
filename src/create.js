@@ -1560,6 +1560,20 @@ async function _editorPickCaaCover(id, group) {
     document.getElementById('editor-art-popup')?.remove();
 }
 
+// UNREACHABLE, both of these. `_populateCreateArrButtons` is called only by
+// itself (a re-render on click) and `_populateStringCountButtons` only by it, so
+// nothing outside this pair ever enters them. `npm run lint` has been warning
+// about the first one for as long as the warning list has existed.
+//
+// They read and write `createState.initialArr`. Nothing else does: the create
+// payload sends `createState.initialArrangement` (see _editorDoBlankCreate),
+// which this UI would never set. If it were ever wired up, the arrangement the
+// user picked would not reach the server (Copilot, #173).
+//
+// Both arrived with the Create-New redesign (977ec65, #45) — the same commit
+// whose `_editorDoBlankCreate` never ran either, for a different reason. That
+// redesign is half-wired, and finishing it is a product decision, not a
+// refactor's. Left exactly as found.
 function _populateCreateArrButtons() {
     const wrap = document.getElementById('editor-create-arr-buttons');
     if (!wrap) return;
@@ -1639,10 +1653,12 @@ export function editorSetCreateMode(mode) {
     updateCreateButton();
 }
 
-// Wire up input change events for enabling the create button. Changing the
-// Step 2 audio inputs also invalidates a cached upload URL — otherwise
-// editorDoCreate() skips re-upload (it only uploads when audioUrl is unset)
-// and reuses the previously-selected file/URL.
+// Re-gate the Create button as the user types, and dismiss the one-time autofill
+// note once they edit an autofilled field. That is all this listener does — the
+// cached-upload-URL invalidation an older version of this comment described
+// happens in the audio file/URL change handlers, which clear createState.audioUrl
+// directly (editorDoCreate only re-uploads when audioUrl is unset).
+//
 // Wired by main.js's init(), not at import: a module must have no side effects
 // when it is loaded, or its unit tests cannot import it without a DOM.
 export function initCreate() {
