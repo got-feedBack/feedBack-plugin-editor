@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   along: `exec()`, `rollback()`, and the three flags the read-only-roll lock
   reads.
   `commands.js` is **DOM-free**, and that is a deliberate boundary rather than a
-  happy accident. Two functions that would have broken it moved back to
+  happy accident. `setStatus` now no-ops when there is no `document`, so the
+  module can be *run* under node and not merely imported; the guard lives in
+  `src/ui.js` rather than at its ~180 call sites. Two functions that would have broken it moved back to
   `main.js`: the ambiguous-pitch popover (`_rollConfirmPosition`) and
   `_resizeForLaneChange`, which schedules a `requestAnimationFrame`. Both arrive
   as host hooks. It is what lets the eight suites below import the real classes

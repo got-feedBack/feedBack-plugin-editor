@@ -16,7 +16,10 @@
 // _editorCurrentNoteIndices, _renderInspector, the ambiguous-pitch popover, and
 // _resizeForLaneChange (which schedules a requestAnimationFrame). Importing them
 // directly would close a cycle, and keeping them out is what lets this file be
-// imported under node with no DOM at all.
+// imported AND RUN under node with no DOM at all — asserted by
+// tests/commands_dom_free.test.mjs, the one suite that must not install a
+// document stub. The single indirect reach is setStatus (src/ui.js), which
+// no-ops when there is no document.
 //
 // Browser surface: NONE. The ambiguous-pitch popover it used to build lives in
 // main.js and arrives as host.rollConfirmPosition — a command module has no
@@ -26,7 +29,7 @@
 import { beatOf, timeOf } from './beats.js';
 import { _flattenArrChords, _mergeChordFn } from './chords.js';
 import { host } from './host.js';
-import { PIANO_LANE_H, _rollPitchCtx, isKeysArr, midiToNote } from './keys.js';
+import { PIANO_LANE_H, _rollPitchCtx, isKeysArr } from './keys.js';
 import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js';
 import { _clearSuggested, _isSuggested, _markSuggested, notes } from './notes.js';
 import {
