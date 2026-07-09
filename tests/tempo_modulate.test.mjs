@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Tests for metric modulation (@pure:tempo-modulate block): the ratio
  * parser and _tempoModulateRunPure — new tempo = old × ratio applied from
@@ -10,22 +9,13 @@
  * keep their fractional positions), rigid tail shift after the run, and
  * beat-count preservation (the invariant TempoMapCmd requires).
  *
- * Run: node tests/tempo_modulate.test.js
+ * Run: node tests/tempo_modulate.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:tempo-modulate:start \*\/[\s\S]*?\/\* @pure:tempo-modulate:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:tempo-modulate block not found in src/main.js');
-    process.exit(1);
-}
-const { _tempoModulationRatioPure, _tempoModulateRunPure } = new Function(
-    '"use strict";' + m[0]
-    + '\nreturn { _tempoModulationRatioPure, _tempoModulateRunPure };'
-)();
+import assert from 'node:assert';
+import {
+    _tempoModulateRunPure,
+    _tempoModulationRatioPure,
+} from '../src/tempo.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {

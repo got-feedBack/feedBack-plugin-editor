@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Tests for the per-beat rubato drag (@pure:tempo-beat-drag block +
  * _tempoApplyDrag): grabbing an individual sub-beat tick in Tempo Map mode
@@ -11,42 +10,13 @@
  *     or reorder a gap;
  *   - ends without a bounding downbeat clamp against the immediate
  *     neighbor (pickup / trailing sub-beats);
- *   - _tempoApplyDrag (extracted from source) keeps downbeats fixed and
+ *   - _tempoApplyDrag (a real import) keeps downbeats fixed and
  *     re-spaces only the dragged beat's neighbours, monotonically.
  *
- * Run: node tests/tempo_beat_drag.test.js
+ * Run: node tests/tempo_beat_drag.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-
-const m = src.match(/\/\* @pure:tempo-beat-drag:start \*\/[\s\S]*?\/\* @pure:tempo-beat-drag:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:tempo-beat-drag block not found in src/main.js');
-    process.exit(1);
-}
-const { _tempoBeatDragBoundsPure } = new Function(
-    '"use strict";' + m[0] + '\nreturn { _tempoBeatDragBoundsPure };'
-)();
-
-// Extract _tempoApplyDrag by name (brace matching — the waveform_render
-// harness pattern); it only touches its arguments.
-function extractFn(name) {
-    const start = src.indexOf('function ' + name);
-    assert.ok(start >= 0, `function ${name} must exist`);
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-    }
-    throw new Error(`unbalanced braces extracting ${name}`);
-}
-const _tempoApplyDrag = new Function(
-    '"use strict";' + extractFn('_tempoApplyDrag') + '\nreturn _tempoApplyDrag;'
-)();
+import assert from 'node:assert';
+import { _tempoApplyDrag, _tempoBeatDragBoundsPure } from '../src/tempo.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {

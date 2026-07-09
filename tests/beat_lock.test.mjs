@@ -24,15 +24,14 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import { beatOf as _beatOf, timeOf as _timeOf } from '../src/beats.js';
+import {
+    _applyBeatLocksPure, _beatLockParsePure, _beatLockStorageKeyPure, _respaceWithLocksPure,
+} from '../src/tempo.js';
 
+// The beat-lock pures are real imports. One case still slices: editorApplySync's
+// "Scale section times" loop is inline in src/main.js, and running the ACTUAL
+// loop is what makes that case fail on pre-fix code.
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-const block = src.match(/\/\* @pure:beat-lock:start \*\/[\s\S]*?\/\* @pure:beat-lock:end \*\//);
-if (!block) { console.error('FAIL: @pure:beat-lock block not found (A5 not applied)'); process.exit(1); }
-const {
-    _respaceWithLocksPure, _beatLockStorageKeyPure, _beatLockParsePure, _applyBeatLocksPure,
-} = new Function('"use strict";' + block[0]
-    + '\nreturn { _respaceWithLocksPure, _beatLockStorageKeyPure, _beatLockParsePure, _applyBeatLocksPure };'
-)();
 
 // beatOf / timeOf (the beat-primary converter) — used to prove the sync path now
 // reprojects notes onto the warped grid instead of drifting them off it.

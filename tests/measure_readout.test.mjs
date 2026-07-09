@@ -1,24 +1,25 @@
-'use strict';
 /*
  * Measure/signature readout helper tests for src/main.js.
  *
- * Run: node tests/measure_readout.test.js
+ * Run: node tests/measure_readout.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { _tempoNormalizeDenominatorPure } from '../src/tempo.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const ts = src.match(/\/\* @pure:tempo-map-timesig:start \*\/[\s\S]*?\/\* @pure:tempo-map-timesig:end \*\//);
+// The time-signature pures moved to src/tempo.js and are real imports. The
+// readout itself is still inline in src/main.js, so it is still sliced — with
+// the one pure it depends on injected.
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 const mr = src.match(/\/\* @pure:measure-readout:start \*\/[\s\S]*?\/\* @pure:measure-readout:end \*\//);
-if (!ts || !mr) {
-    console.error('FAIL: required pure blocks not found in src/main.js');
+if (!mr) {
+    console.error('FAIL: @pure:measure-readout block not found in src/main.js');
     process.exit(1);
 }
-
-const api = new Function(
-    '"use strict";' + ts[0] + '\n' + mr[0] + '\nreturn { _editorMeasureSignatureReadoutPure };'
-)();
+const { _editorMeasureSignatureReadoutPure } = new Function(
+    '_tempoNormalizeDenominatorPure',
+    '"use strict";' + mr[0] + '\nreturn { _editorMeasureSignatureReadoutPure };'
+)(_tempoNormalizeDenominatorPure);
 
 let pass = 0;
 let fail = 0;
@@ -43,21 +44,21 @@ const beats = [
 ];
 
 t('follows the cursor measure in note view', () => {
-    assert.deepStrictEqual(api._editorMeasureSignatureReadoutPure(beats, 4.25, -1), {
+    assert.deepStrictEqual(_editorMeasureSignatureReadoutPure(beats, 4.25, -1), {
         label: 'M2 4/8', measure: 2, numerator: 4, denominator: 8,
     });
 });
 
 t('prefers selected tempo sync point over cursor time', () => {
-    assert.strictEqual(api._editorMeasureSignatureReadoutPure(beats, 1.2, 4).label, 'M2 4/8');
+    assert.strictEqual(_editorMeasureSignatureReadoutPure(beats, 1.2, 4).label, 'M2 4/8');
 });
 
 t('falls back to denominator 4 when no denominator is authored', () => {
-    assert.strictEqual(api._editorMeasureSignatureReadoutPure(beats, 8.1, -1).label, 'M3 4/4');
+    assert.strictEqual(_editorMeasureSignatureReadoutPure(beats, 8.1, -1).label, 'M3 4/4');
 });
 
 t('returns empty label shape when there is no downbeat grid', () => {
-    assert.deepStrictEqual(api._editorMeasureSignatureReadoutPure([{ time: 0, measure: -1 }], 0, -1), {
+    assert.deepStrictEqual(_editorMeasureSignatureReadoutPure([{ time: 0, measure: -1 }], 0, -1), {
         label: 'M-- --', measure: null, numerator: null, denominator: null,
     });
 });

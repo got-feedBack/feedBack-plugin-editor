@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Flatten a variable tempo map to a constant BPM — tester report: a GP8 import
  * produced a per-measure tempo map (wrong, varying BPM) and there was "no way to
@@ -8,18 +7,14 @@
  *
  * References _tempoFlattenToBpmPure (absent on main), so the suite fails on main.
  *
- * Run: node tests/tempo_flatten.test.js
+ * Run: node tests/tempo_flatten.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:tempo-map-bpm:start \*\/[\s\S]*?\/\* @pure:tempo-map-bpm:end \*\//);
-if (!m) { console.error('FAIL: @pure:tempo-map-bpm block not found'); process.exit(1); }
-const { _tempoFlattenToBpmPure, _tempoMeasureBpmsPure, _tempoHasMultipleMeasureBpmsPure } =
-    new Function('"use strict";' + m[0] +
-        '\nreturn { _tempoFlattenToBpmPure, _tempoMeasureBpmsPure, _tempoHasMultipleMeasureBpmsPure };')();
+import assert from 'node:assert';
+import {
+    _tempoFlattenToBpmPure,
+    _tempoHasMultipleMeasureBpmsPure,
+    _tempoMeasureBpmsPure,
+} from '../src/tempo.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {

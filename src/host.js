@@ -59,6 +59,34 @@ export const host = {
     resizeForLaneChange: () => {},
     /** Ambiguous-pitch popover: let the user pick a string/fret for a roll add. */
     rollConfirmPosition: () => {},
+
+    // ── Transport, loop strip and toolbar, for src/tempo.js ──────────
+    /** Canvas coordinates of a mouse event, in CSS pixels. */
+    getMousePos: () => ({ x: 0, y: 0 }),
+    /** True while a MIDI/audio take is being recorded — tempo edits stay out. */
+    isRecording: () => false,
+    /** Dismiss the Add Note dialog. */
+    hideAddNote: () => {},
+    startPlayback: () => {},
+    stopPlayback: () => {},
+    /** Toolbar readouts for the current BPM and time signature. */
+    updateBPMDisplay: () => {},
+    updateTempoSigDisplay: () => {},
+    /** Re-render the A/B loop strip after the beat grid moved under it. */
+    renderLoopStrip: () => {},
+    updateLoopIn3DBtn: () => {},
+    /** Lift the loop region onto beat coordinates before the grid changes… */
+    loopReliftBeats: () => {},
+    /** …and project it back to seconds afterwards. */
+    loopReprojectFromBeats: () => {},
+    /** The 🥁 button's visibility depends on which mode is active. */
+    refreshDrumEditButton: () => {},
+    /**
+     * Commit or clear whatever canvas drag is in flight before a mode switch.
+     * It dispatches across tempo, drum, handshape and pan drags, so it belongs
+     * to none of them and stays in main.js.
+     */
+    finalizeActiveDrag: () => {},
 };
 
 export function setHostHooks(hooks) { Object.assign(host, hooks); }

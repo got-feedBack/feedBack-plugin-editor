@@ -23,6 +23,9 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import { beatOf, timeOf } from '../src/beats.js';
+import { setHostHooks } from '../src/host.js';
+import { S as realS } from '../src/state.js';
+import { TempoMapCmd } from '../src/tempo.js';
 
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
@@ -38,9 +41,7 @@ function extractFn(name) {
     throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-// ── Extract the real TempoMapCmd class + the A4 loop helpers + the converter ──
-const cm = src.match(/class TempoMapCmd \{[\s\S]*?\n\}/);
-if (!cm) { console.error('FAIL: TempoMapCmd class not found'); process.exit(1); }
+// ── The A4 loop helpers are still inline in main.js; TempoMapCmd is imported ──
 const pm = src.match(/\/\* @pure:pending-view:start \*\/[\s\S]*?\/\* @pure:pending-view:end \*\//);
 if (!pm) { console.error('FAIL: @pure:pending-view block not found'); process.exit(1); }
 
@@ -48,20 +49,25 @@ const { _resolvePendingViewStatePure } = new Function(
     '"use strict";' + pm[0] + '\nreturn { _resolvePendingViewStatePure };'
 )();
 
-// A sandbox: the real TempoMapCmd + _loopReprojectFromBeats + _loopSyncBeats,
-// all reading the injected S, over the real beatOf/timeOf. _liftAllBeats /
-// _reprojectAll / _eachTimed are no-ops here (this suite checks the LOOP, not
-// note times — the note-seconds snapshot/restore has nothing to walk).
-function makeEnv(S) {
-    return new Function(
-        'S', '_renderLoopStrip', '_updateLoopIn3DBtn', '_liftAllBeats', '_reprojectAll', '_eachTimed',
-        'beatOf', 'timeOf',
+// TempoMapCmd is a real import (src/tempo.js) closing over the REAL `S`; the two
+// loop helpers are still inline in main.js and are still sliced, over the same
+// object. This suite checks the LOOP, not note times — S.arrangements stays
+// empty, so the command's real note-seconds snapshot/restore has nothing to walk.
+function makeEnv(seed) {
+    Object.assign(realS, { arrangements: [], sections: [], ...seed });
+    const env = new Function(
+        'S', 'beatOf', 'timeOf',
         '"use strict";'
         + extractFn('_loopReprojectFromBeats') + '\n'
         + extractFn('_loopSyncBeats') + '\n'
-        + cm[0]
-        + '\nreturn { TempoMapCmd, _loopReprojectFromBeats, _loopSyncBeats, beatOf, timeOf };'
-    )(S, () => {}, () => {}, () => {}, () => {}, () => {}, beatOf, timeOf);
+        + '\nreturn { _loopReprojectFromBeats, _loopSyncBeats };'
+    )(realS, beatOf, timeOf);
+    setHostHooks({
+        renderLoopStrip: () => {},
+        updateLoopIn3DBtn: () => {},
+        loopReprojectFromBeats: env._loopReprojectFromBeats,
+    });
+    return { ...env, TempoMapCmd, beatOf, timeOf };
 }
 
 // Old grid: 5 beats, downbeats (measure > 0) at indices 0,2,4 → times 0,2,4.

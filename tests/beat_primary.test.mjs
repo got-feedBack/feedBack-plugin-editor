@@ -21,36 +21,14 @@
  * Run: node tests/beat_primary.test.mjs
  */
 import assert from 'node:assert';
-import fs from 'node:fs';
 import { beatOf, timeOf } from '../src/beats.js';
+import { S as realS } from '../src/state.js';
+import {
+    TempoMapCmd, _liftAllBeats, _makeTimeRemap, _reprojectAll, _stripBeatsFromSaveBody,
+} from '../src/tempo.js';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
-function extractFn(name) {
-    const start = src.indexOf('function ' + name + '(');
-    assert.ok(start >= 0, `function ${name} must exist`);
-    const open = src.indexOf('{', start);
-    let d = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') d++;
-        else if (src[i] === '}' && --d === 0) return src.slice(start, i + 1);
-    }
-    throw new Error(`unbalanced braces extracting ${name}`);
-}
-function extractClass(name) {
-    const start = src.indexOf('class ' + name + ' {');
-    assert.ok(start >= 0, `class ${name} must exist`);
-    const open = src.indexOf('{', start);
-    let d = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') d++;
-        else if (src[i] === '}' && --d === 0) return src.slice(start, i + 1);
-    }
-    throw new Error(`unbalanced braces extracting ${name}`);
-}
 
-const r3m = src.match(/const _r3 = [^\n]+\n/);
-assert.ok(r3m, '_r3 must exist');
 
 // The pre-A2 _applyTempoRemap, threaded with S + ride explicitly — the golden
 // reference the total reproject must reproduce (with ride = all parts + drum).
@@ -85,29 +63,14 @@ function legacyApplyTempoRemap(remap, S, ride) {
     }
 }
 
-// A sandbox whose beat helpers + TempoMapCmd all read the injected S.
-function makeEnv(S) {
-    // beatOf/timeOf are real imports (src/beats.js), injected below.
-    const body = [
-        r3m[0],
-        extractFn('_eachTimed'),
-        extractFn('_liftAllBeats'),
-        extractFn('_reprojectAll'),
-        extractFn('_stripBeat'),
-        extractFn('_stripBeatsList'),
-        extractFn('_stripChordBeats'),
-        extractFn('_stripArrangementBeats'),
-        extractFn('_stripBeatsFromSaveBody'),
-        extractFn('_makeTimeRemap'),
-        extractClass('TempoMapCmd'),
-    ].join('\n');
-    return new Function(
-        'beatOf', 'timeOf',
-        'S', '_loopReprojectFromBeats', '_renderLoopStrip', '_updateLoopIn3DBtn',
-        '"use strict";' + body +
-        '\nreturn { beatOf, timeOf, _liftAllBeats, _reprojectAll, _makeTimeRemap,' +
-        ' _stripBeatsFromSaveBody, TempoMapCmd };'
-    )(beatOf, timeOf, S, () => {}, () => {}, () => {});
+// The beat helpers and TempoMapCmd are real imports now, and they close over
+// the REAL `S` — so seed that rather than injecting a fabricated one. Their
+// three main.js callbacks (the loop strip) are host hooks; the inert defaults
+// are what these cases used to inject as no-ops.
+function makeEnv(seed) {
+    Object.assign(realS, seed);
+    return { beatOf, timeOf, _liftAllBeats, _reprojectAll, _makeTimeRemap,
+             _stripBeatsFromSaveBody, TempoMapCmd };
 }
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
