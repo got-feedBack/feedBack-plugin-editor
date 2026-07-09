@@ -1,18 +1,10 @@
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:scroll-bounds:start \*\/[\s\S]*?\/\* @pure:scroll-bounds:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:scroll-bounds block not found in src/main.js');
-    process.exit(1);
-}
-
-const api = new Function(
-    'console',
-    '"use strict";' + m[0] + '\nreturn { _editorViewportDurationPure, _editorMaxScrollXPure, _editorClampScrollXPure };'
-)(console);
+/*
+ * Scroll-bound arithmetic (src/geometry.js), driven by real imports.
+ *
+ * Run: node tests/scroll_bounds.test.mjs
+ */
+import assert from 'node:assert';
+import * as api from '../src/geometry.js';
 
 function t(name, fn) {
     try {
