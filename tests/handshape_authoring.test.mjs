@@ -1,38 +1,28 @@
-'use strict';
 /*
  * E2 (PR-B) integration test for handshape authoring → save round-trip.
  *
- * src/main.js is a single browser IIFE, so this test pulls the REAL source for
- * the two pieces that actually carry the logic:
- *   1. `_handshapeSpanFrets` — extracted by brace-matching from src/main.js
- *      (it's self-contained: only uses its args + Array/Object/Number), and
- *   2. the `@pure:chord-relink` helpers (eval'd from the marked block).
+ * The two pieces that carry the logic run for real: the chord-template helpers
+ * are imported from src/chords.js, and `_handshapeSpanFrets` — still in
+ * src/main.js — is extracted by brace-matching (it's self-contained: only uses
+ * its args + Array/Object/Number).
  * It then replays the authoring path (AddHandshapeCmd._resolve: voicing ->
  * find-or-create template -> chord_id) and the save path (reconstructChords:
  * rebuild templates from same-time chords -> remap handshape chord_ids), and
  * asserts the produced handshapes are backend-valid (chord_id < len(templates),
  * the rule routes.py enforces). No drift: the risky bits run the real source.
  *
- * Run: node tests/handshape_authoring.test.js
+ * Run: node tests/handshape_authoring.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+// The chord-template helpers are real imports now; `_handshapeSpanFrets` still
+// lives in src/main.js, so it is still pulled out by brace matching.
+import {
+    _buildPreservedTemplates, _fretKeyForL, buildHandshapeChordIdMap,
+    relinkChordTemplate, remapHandshapeChordIds,
+} from '../src/chords.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-
-// ── pull the @pure:chord-relink helpers (same approach as chord_relink.test) ─
-const pm = src.match(/\/\* @pure:chord-relink:start[\s\S]*?@pure:chord-relink:end \*\//);
-if (!pm) { console.error('FAIL: @pure:chord-relink block not found'); process.exit(1); }
-const pure = new Function(
-    '"use strict";' + pm[0] +
-    '\nreturn { relinkChordTemplate, _fretKeyForL, _buildPreservedTemplates,' +
-    ' buildHandshapeChordIdMap, remapHandshapeChordIds };'
-)();
-const {
-    relinkChordTemplate, _fretKeyForL, _buildPreservedTemplates,
-    buildHandshapeChordIdMap, remapHandshapeChordIds,
-} = pure;
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 // ── extract `function _handshapeSpanFrets(...) { ... }` by brace matching ────
 function extractFn(name) {

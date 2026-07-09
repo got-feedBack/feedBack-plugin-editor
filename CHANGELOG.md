@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 7 — chord templates & handshapes (R2).**
+  `src/chords.js` (`main.js` 20,601 → 20,160): the chord load/save round-trip —
+  `flattenChords`/`_flattenArrChords`, the whole `@pure:chord-relink` helper set
+  (`relinkChordTemplate`, `_buildPreservedTemplates`, `buildHandshapeChordIdMap`,
+  `dropOrphanedHandshapes`, `remapHandshapeChordIds`, the sanitizers and
+  `_groupFn`), `reconstructChords`, the handshape wire-coercion helpers, and the
+  handshape dirty-count trio (`_ensureHandshapes`, `_bumpHandshapesDirty`,
+  `_handshapesAreDirty`, lifted out of the Handshape-lane section). Reads `S` and
+  `lanes()`; no DOM. `main.js`'s whole diff is deletions plus the import block.
+  The three tests that had blocked this move are reworked. `chord_relink` becomes
+  a plain real-import suite; `handshape_authoring` becomes a hybrid (imports the
+  chord-template helpers, still slices `_handshapeSpanFrets`, which stays in
+  `main.js`). `suggest_position_wiring` — the one that mattered — used to feed
+  `reconstructChords` a **fabricated `S` and a `lanes: () => 6` stub**. It now
+  drives the real `S` from `state.js` and the real `lanes()`, and asserts
+  `lanes() === 6` for its fixture rather than asserting it by fiat.
 - **ES-module migration, step 6 — the note/chord pure tier (R2).** `src/notes.js`
   (`main.js` 20,763 → 20,601): the active-arrangement accessors `notes()`/`chords()`
   (204 and 35 call sites, none of which changed), plus the pure arithmetic over
