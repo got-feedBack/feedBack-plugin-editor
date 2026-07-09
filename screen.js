@@ -3174,6 +3174,10 @@ class ResizeSustainCmd {
         this.index = index;
         this.newSustain = newSustain;
         this.oldSustain = notes()[index].sustain || 0;
+        // A sustain (duration) edit never changes what a note SOUNDS like — only
+        // how long it rings — so it preserves pitch and passes the read-only-roll
+        // lock (V4: duration edits, the roll's native strength, apply directly).
+        this.pitchPreserving = true;
     }
     exec() { notes()[this.index].sustain = this.newSustain; }
     rollback() { notes()[this.index].sustain = this.oldSustain; }
@@ -3185,6 +3189,7 @@ class ResizeSustainGroupCmd {
         this.newSustains = newSustains.slice();
         const nn = notes();
         this.oldSustains = this.indices.map(i => nn[i] ? (nn[i].sustain || 0) : 0);
+        this.pitchPreserving = true;   // duration edit — passes the read-only-roll lock (see ResizeSustainCmd)
     }
     exec() {
         const nn = notes();
@@ -4604,10 +4609,13 @@ function onMouseDown(e) {
     // silently overwritten by _recNotes when the take is finalized on Stop.
     if (_recState === 'recording') return;
 
-    // Check for sustain edge grab first. Read-only roll (V4): resize
-    // mutates sustains LIVE during the drag (before any command), so the
-    // drag must not start at all — selection stays available below.
-    const edgeIdx = _rollReadOnly() ? -1 : hitNoteEdge(x, y);
+    // Check for sustain edge grab first. Edge-drag sustain resize is a DURATION
+    // edit — it changes only how long a note rings, never its pitch — so it
+    // applies directly even in the read-only fretted roll (V4): the resize
+    // commands are pitchPreserving and pass the edit lock, so grabbing an edge
+    // is allowed here (unlike a pitch/position write). Resize mutates sustains
+    // LIVE during the drag (before any command); the commit is pitchPreserving.
+    const edgeIdx = hitNoteEdge(x, y);
     if (edgeIdx >= 0) {
         const nn = notes();
         const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, !isKeysArr() && !e.altKey);
