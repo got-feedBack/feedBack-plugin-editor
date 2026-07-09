@@ -27,7 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The song-creation flow now lives in `src/create.js` (R2, step 22).** 2,380
   lines: the format picker, the create modal, the roster, the MusicBrainz match,
   the album-art picker, and the `createState` object they all read. `main.js` is
-  down to 10,380 — **51%** of what it was.
+  down to 10,380 — a **51% reduction** from the 21,176 lines this refactor
+  started at (i.e. 49% of the original), and 81% of what it was one step ago.
   It keeps the load/audio pipeline and the transport readouts, which arrive as
   host hooks, and the entry landing, which is screen-entry UI that happens to
   open two of these dialogs. The 22 `window.editor*` handlers the HTML calls are
