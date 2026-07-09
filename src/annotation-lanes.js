@@ -8,14 +8,13 @@
 // cross-module imports for no gain.
 //
 // main.js keeps the canvas event routing (deciding which strip is under the
-// cursor) and forwards to the on*LaneMouse* handlers here. Four of its symbols
-// travel the other way — draw, hideContextMenu, snapTime, _editorPromptText —
-// and would close a cycle, so they arrive through the shared `host` object in
-// src/host.js.
+// cursor) and forwards to the on*LaneMouse* handlers here. Three of its symbols
+// travel the other way — draw, hideContextMenu, snapTime — and would close a
+// cycle, so they arrive through the shared `host` object in src/host.js.
 //
 // snapTime stays in main.js because its onset-snap path reaches _ensureOnsets
-// and the onset cache; _editorPromptText stays because it owns a modal and the
-// shared _editorPromptCancel handle. Neither is a lane concern.
+// and the onset cache. `_editorPromptText` used to cross as a hook too; it is a
+// plain import from src/ui.js now, where every modal primitive lives.
 //
 // TONE_LANE_H moved to geometry.js, where ANCHOR_LANE_H and HS_LANE_H already
 // live. The tones modal's window.* handlers are exported as plain functions —
@@ -35,7 +34,7 @@ import {
 import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S } from './state.js';
-import { setStatus } from './ui.js';
+import { _editorPromptText, setStatus } from './ui.js';
 
 // ─── Tone-lane slot data (PR3c) ────────────────────────────────────
 export const _TONE_SLOT_DEFAULTS = ['Clean', 'Drive', 'Lead', 'Crunch', 'Effect'];
@@ -1200,11 +1199,11 @@ export function onAnchorLaneContextMenu(e, x, y) {
     editBtn.textContent = `Edit fret/width (currently ${hit.fret}+${hit.width})`;
     editBtn.onclick = async () => {
         host.hideContextMenu();
-        const fretStr = await host.editorPromptText({
+        const fretStr = await _editorPromptText({
             title: 'Edit Anchor', label: 'Hand-position fret — index finger (1–24)', value: String(hit.fret),
         });
         if (fretStr === null) return;
-        const widthStr = await host.editorPromptText({
+        const widthStr = await _editorPromptText({
             title: 'Edit Anchor', label: 'Hand span (frets, 1–24)', value: String(hit.width),
         });
         if (widthStr === null) return;

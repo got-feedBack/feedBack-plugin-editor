@@ -24,9 +24,12 @@
 // not, and a silent zero-match here is exactly the wrong answer to get.)
 //
 // The defaults are inert but type-honest: snapTime is the identity, not a no-op
-// returning undefined, and editorPromptText resolves to null (a cancelled
-// prompt). A module imported under node with no host wired must degrade, never
-// crash — that is how the unit tests exercise it.
+// returning undefined. A module imported under node with no host wired must
+// degrade, never crash — that is how the unit tests exercise it.
+//
+// A symbol only belongs here if it genuinely cannot leave main.js. When one can,
+// move it and delete the hook: `editorPromptText` was here until the modal
+// primitives found their home in src/ui.js.
 // ════════════════════════════════════════════════════════════════════
 
 export const host = {
@@ -42,8 +45,6 @@ export const host = {
     hideContextMenu: () => {},
     /** Snap a time to the active grid (or the nearest onset). Identity default. */
     snapTime: (t) => t,
-    /** Modal text prompt; resolves to null when cancelled. */
-    editorPromptText: async () => null,
     /**
      * Undo/redo arrangement guard: switch to the arrangement a command was
      * executed against, or refuse when it is gone. `true` means "proceed".

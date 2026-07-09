@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The modal primitives moved into `src/ui.js` (R2, step 21).** The focus trap
+  (`_installModalKeyboard`), the in-app text prompt (`_editorPromptText`) and the
+  HTML escaper (`_editorEscHtml`) are what every dialog in the editor is built
+  on, and they were sitting inside the "New…" entry-point section because that is
+  where the first one happened to be needed. They belong beside `setStatus`, for
+  the same reason it lives there.
+  `ui.js` imports nothing, which is what lets any module use it without thinking
+  about cycles — so `annotation-lanes.js` now imports `_editorPromptText`
+  directly, and **the `host.editorPromptText` hook is deleted**. A hook is a
+  workaround for a symbol that cannot leave `main.js`; when one can, the hook
+  should go with it.
+
+
 - **The drum editor's mouse handlers and toolbar buttons follow the model into
   `src/drum.js` (R2, step 20).** 444 lines that step 15 left behind in
   `main.js` — not on purpose, but because they sit under the Tempo Map section
