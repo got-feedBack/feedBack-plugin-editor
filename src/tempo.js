@@ -11,10 +11,11 @@
 // flight (tempo, drum, handshape, pan) before a mode switch, so it belongs to
 // none of them; it reaches back here as host.finalizeActiveDrag().
 //
-// Fourteen main.js symbols travel the other way — the transport, the A/B loop
-// strip, the toolbar readouts — and would close a cycle, so they arrive through
-// the shared `host` object in src/host.js. `_recState` is a reassigned scalar
-// rather than a function, so it crosses as the predicate `host.isRecording()`.
+// The transport, the A/B loop strip and the toolbar readouts stay in main.js and
+// would close a cycle, so they arrive through the shared `host` object in
+// src/host.js. `_recState` is a reassigned scalar rather than a function, so it
+// cannot cross as a value at all — it crosses as the predicate
+// `host.isRecording()`.
 //
 // Browser surface: `ctx` (the shared 2D context) plus the sync-inspector and
 // time-signature controls it builds into the toolbar.
@@ -344,7 +345,12 @@ function _ensureTempoSyncInspector() {
     return el;
 }
 
-let _tempoSyncInspectorState = '';
+// No memo signature here, deliberately. One used to be computed and stored and
+// never compared — dead code, removed. Re-adding it is not the obvious win it
+// looks like: the DOM this writes is NOT a pure function of the state below,
+// because the BPM field is left alone while it has focus. Skipping the writes on
+// an unchanged signature would strand whatever the user had typed and then
+// abandoned, since nothing else restores it.
 export function _refreshTempoSyncInspector() {
     const el = _ensureTempoSyncInspector();
     const bpmEl = document.getElementById('editor-bpm');
@@ -356,8 +362,6 @@ export function _refreshTempoSyncInspector() {
     const hasGrid = !!(S.beats && S.beats.length >= 2);
     const visible = !!S.tempoMapMode && hasGrid;
     const state = _tempoSyncInspectorStatePure(visible ? _tempoMeasures() : [], visible ? S.tempoSel : -1);
-    const sig = `${visible}|${S.tempoSel}|${state.label}|${state.bpmValue}|${state.bpmDisabled}|${state.numeratorValue}|${state.denominatorValue}|${state.signatureDisabled}|${state.canInsert}|${state.canDelete}|${state.hint}`;
-    _tempoSyncInspectorState = sig;
     el.classList.toggle('hidden', !visible);
     el.classList.toggle('inline-flex', visible);
     const label = document.getElementById('editor-tempo-sync-label');

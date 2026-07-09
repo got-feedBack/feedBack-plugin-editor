@@ -1,5 +1,5 @@
 /*
- * Beat-converter tests for src/main.js (charrette §1.1/§1.10, Phase A1).
+ * Beat-converter tests for src/beats.js + src/tempo.js (charrette §1.1/§1.10, Phase A1).
  *
  * The one tempo-map converter — beatOf(beats, t) / timeOf(beats, β) — extracted
  * from the interior math of _makeTimeRemap + snapTime. This suite proves:

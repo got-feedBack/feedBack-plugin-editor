@@ -1,5 +1,5 @@
 /*
- * Measure/signature readout helper tests for src/main.js.
+ * Measure/signature readout helper tests (src/main.js, over src/tempo.js's pures).
  *
  * Run: node tests/measure_readout.test.mjs
  */

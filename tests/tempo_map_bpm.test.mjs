@@ -1,5 +1,5 @@
 /*
- * Tempo-map BPM helper tests for src/main.js.
+ * Tempo-map BPM helper tests for src/tempo.js.
  *
  * Run: node tests/tempo_map_bpm.test.mjs
  */

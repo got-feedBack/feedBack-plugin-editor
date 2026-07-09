@@ -1,5 +1,5 @@
 /*
- * Tempo-map sync-point inspector helper tests for src/main.js.
+ * Tempo-map sync-point inspector helper tests for src/tempo.js.
  *
  * Run: node tests/tempo_sync_inspector.test.mjs
  */
