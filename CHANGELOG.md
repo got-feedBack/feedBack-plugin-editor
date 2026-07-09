@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The drum editor's mouse handlers and toolbar buttons follow the model into
+  `src/drum.js` (R2, step 20).** 444 lines that step 15 left behind in
+  `main.js` — not on purpose, but because they sit under the Tempo Map section
+  banner and had none of their own. `main.js` is down to 12,908.
+  `drum.js` needed `_refreshTempoMapButton`, which lives in `tempo.js` — and
+  `tempo.js` already imports `drum.js`. It crosses through `host` instead, so
+  the graph stays acyclic.
+
+
 - **The Tempo Map editor now lives in `src/tempo.js` (R2, step 19).** 1,720
   lines: the measure model, the draw pass, the mouse handlers, the sync
   inspector, tap-tempo, beat-lock respacing, and its two undo commands
