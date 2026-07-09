@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Tests for same-pitch position cycling in the piano roll (VA.5):
  * the @pure:position-cycle block (candidate enumeration + step), the
@@ -9,13 +8,13 @@
  * carve-out (undo/redo of ANY note-scope command is refused in the locked
  * roll), and transposeStringUp always runs the String-view move.
  *
- * Run: node tests/roll_position_cycle.test.js
+ * Run: node tests/roll_position_cycle.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { _soundingPitchPure } from '../src/lanes.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const re = new RegExp(
@@ -47,10 +46,10 @@ function t(name, fn) {
 
 // ── Candidate enumeration ────────────────────────────────────────────
 
-const P = new Function(
-    '"use strict";' + extractBlock('position-cycle') + extractBlock('fret-pitch')
+const P = new Function('_soundingPitchPure',
+    '"use strict";' + extractBlock('position-cycle')
     + '\nreturn { _cyclePositionCandidatesPure, _cycleStepPure, _soundingPitchPure };'
-)();
+)(_soundingPitchPure);
 
 const STD = [40, 45, 50, 55, 59, 64];       // EADGBe standard
 const FLAT = [0, 0, 0, 0, 0, 0];

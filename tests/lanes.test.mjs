@@ -12,7 +12,8 @@
 import assert from 'node:assert';
 import { S } from '../src/state.js';
 import {
-    LC, MAX_LANES, colorForLane, laneLabels, laneToStr, lanes, strToLane,
+    LC, MAX_LANES, _openMidiForArr, _soundingPitchPure, colorForLane, laneLabels,
+    laneToStr, lanes, strToLane,
 } from '../src/lanes.js';
 
 let pass = 0, fail = 0;
@@ -117,6 +118,40 @@ t('colorForLane uses LC.labels only while the cache is hot', () => {
     LC.active = false;
     LC.labels = null;
     assert.strictEqual(colorForLane(0), '#C473FF', 'cold cache recomputes labels');
+});
+
+// ── open-string pitch: the string model's other half ─────────────────
+
+t('standard open-string MIDI for guitar and bass', () => {
+    assert.deepStrictEqual(_openMidiForArr({ name: 'Lead' }, 6), [40, 45, 50, 55, 59, 64]);
+    assert.deepStrictEqual(_openMidiForArr({ name: 'Bass' }, 4), [28, 33, 38, 43]);
+});
+
+t('extra low strings are a perfect 4th below the current lowest', () => {
+    // 7-string guitar adds low B (35), 8-string adds low F# (30).
+    assert.deepStrictEqual(_openMidiForArr({ name: 'Lead' }, 7)[0], 35);
+    assert.deepStrictEqual(_openMidiForArr({ name: 'Lead' }, 8).slice(0, 2), [30, 35]);
+    assert.deepStrictEqual(_openMidiForArr({ name: 'Bass' }, 5)[0], 23, '5-string bass low B');
+});
+
+t('a 6-string bass appends high C rather than extending downward', () => {
+    const six = _openMidiForArr({ name: 'Bass' }, 6);
+    assert.strictEqual(six.length, 6);
+    assert.strictEqual(six[5], 48, 'high C on top');
+    assert.strictEqual(six[0], 23, 'and still the 5-string low B underneath');
+});
+
+t('open-string pitch composes with the lane model (bass low E == guitar low E)', () => {
+    assert.strictEqual(_openMidiForArr({ name: 'Bass' }, 4)[0] + 12,
+        _openMidiForArr({ name: 'Lead' }, 6)[0], 'bass E1 is an octave below guitar E2');
+});
+
+t('_soundingPitchPure adds the capo exactly once', () => {
+    const g = _openMidiForArr({ name: 'Lead' }, 6);
+    const std = [0, 0, 0, 0, 0, 0];
+    assert.strictEqual(_soundingPitchPure(g, std, 0, 0, 0), 40, 'open low E');
+    assert.strictEqual(_soundingPitchPure(g, std, 2, 0, 0), 42, 'capo 2 → F#');
+    assert.strictEqual(_soundingPitchPure(g, std, 0, 9, 0), null, 'no such string');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

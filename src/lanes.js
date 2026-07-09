@@ -171,3 +171,54 @@ export function laneLabels() {
 
 export function strToLane(s) { return (lanes() - 1) - s; }
 export function laneToStr(l) { return (lanes() - 1) - l; }
+
+// ── Open-string pitch ───────────────────────────────────────────────
+// Standard open-string MIDI pitches (low → high, string index order).
+// Guitar E2=40 A2=45 D3=50 G3=55 B3=59 e4=64; extended low strings
+// prepend B1=35 (7-str) and F#1=30 (8-str).
+// Bass  E1=28 A1=33 D2=38 G2=43; extended: B0=23 low, C3=48 high.
+// These match the chart's own pitch reference so that fret=0 on each
+// string resolves to the correct open-string MIDI note.
+const _GUITAR_OPEN_MIDI = [40, 45, 50, 55, 59, 64]; // 6-string standard
+const _BASS_OPEN_MIDI   = [28, 33, 38, 43];           // 4-string standard
+
+// Return the open-string MIDI array for the active arrangement,
+// extended/trimmed to `laneCount` strings. Extended-range strings
+// are prepended at the low end (matching how AddStringCmd works).
+export function _openMidiForArr(arr, laneCount) {
+    const isBass = /bass/i.test(arr.name || '');
+    const base = isBass ? _BASS_OPEN_MIDI.slice() : _GUITAR_OPEN_MIDI.slice();
+    // Extend low end: each additional low string is 5 semitones below
+    // the current lowest (perfect 4th), matching standard guitar/bass
+    // tuning intervals. 6-string bass high-C is a special case handled
+    // by appending at the high end instead.
+    while (base.length < laneCount) {
+        if (isBass && base.length === 5) {
+            // 6-string bass: high C (MIDI 48) above G (43)
+            base.push(48);
+        } else {
+            base.unshift(base[0] - 5);
+        }
+    }
+    // Trim in case laneCount is less than baseline (shouldn't occur
+    // in practice, but guards against unexpected arrangements).
+    return base.slice(0, laneCount);
+}
+
+// Sounding pitch (MIDI) of one fretted note:
+//     openMidi[string] + tuning offset + CAPO + fret
+// Chart frets are capo-relative (fret 0 = the capo), so the capo is added
+// exactly ONCE — verified against core's single source of the formula
+// (lib/song.py pitch_from_base, which the tuner/open-string labels and the
+// highway's scale-degree derivation share). Returns null for a string with
+// no open pitch or a non-finite fret, so callers skip rather than paint
+// garbage.
+export function _soundingPitchPure(openMidi, tuning, capo, stringIdx, fret) {
+    if (!Array.isArray(openMidi) || openMidi[stringIdx] === undefined) return null;
+    const f = Number(fret);
+    if (!Number.isFinite(f)) return null;
+    const offset = (Array.isArray(tuning) && tuning[stringIdx] !== undefined)
+        ? (Number(tuning[stringIdx]) || 0)
+        : 0;
+    return openMidi[stringIdx] + offset + (Number(capo) || 0) + f;
+}

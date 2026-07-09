@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Tests for the per-part view switcher + universal read-first piano roll
  * (@pure:view-pref block, the isKeysMode/isKeysArr split, _rollMidiForNote,
@@ -9,13 +8,13 @@
  * at sounding pitch, every mutation inert until suggest-position lands).
  * These fail on main, where none of the seam exists.
  *
- * Run: node tests/view_switcher.test.js
+ * Run: node tests/view_switcher.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { _soundingPitchPure } from '../src/lanes.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const re = new RegExp(
@@ -129,11 +128,13 @@ t('junk stored JSON never breaks resolution', () => {
 
 // ── Sounding-pitch mapping in the roll ───────────────────────────────
 
-const M = new Function(
-    '"use strict";' + extractBlock('fret-pitch')
+// `_soundingPitchPure` moved to src/lanes.js — inject the REAL one; noteToMidi
+// and _rollMidiForNote are still in src/main.js, so they are still sliced.
+const M = new Function('_soundingPitchPure',
+    '"use strict";'
     + '\n' + extractFn('noteToMidi') + '\n' + extractFn('_rollMidiForNote')
     + '\nreturn { _rollMidiForNote, noteToMidi };'
-)();
+)(_soundingPitchPure);
 const GUITAR_CTX = {
     openMidi: [40, 45, 50, 55, 59, 64],
     tuning: [0, 0, 0, 0, 0, 0],
@@ -148,7 +149,6 @@ t('_rollMidiForNote: keys packing without a ctx, sounding pitch with one', () =>
 
 t('piano range fits FRETTED parts to sounding pitch, not the wire packing', () => {
     const rangeSrc = '"use strict";'
-        + extractBlock('fret-pitch') + '\n'
         + extractFn('noteToMidi') + '\n' + extractFn('_rollMidiForNote') + '\n'
         + 'let pianoRange = { lo: 36, hi: 96 };\nlet PIANO_LANE_H = 10;\n'
         + extractFn('updatePianoRange') + '\n'
@@ -158,9 +158,9 @@ t('piano range fits FRETTED parts to sounding pitch, not the wire packing', () =
         + '  return pianoRange;'
         + '};';
     const run = new Function(
-        'notes', '_rollPitchCtx',
+        'notes', '_rollPitchCtx', '_soundingPitchPure',
         rangeSrc
-    )(() => globalThis.__vsNotes, () => globalThis.__vsCtx);
+    )(() => globalThis.__vsNotes, () => globalThis.__vsCtx, _soundingPitchPure);
     // Open low E (sounding 40) + high-e fret 0 (sounding 64), no capo.
     const r = run(
         [{ string: 0, fret: 0 }, { string: 5, fret: 0 }],

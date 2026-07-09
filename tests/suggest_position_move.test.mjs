@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Suggest-position PITCH-MOVE by drag — P6 follow-up (design V4/V5).
  *
@@ -14,13 +13,13 @@
  *
  * References P6-follow-up code absent on main, so the suite fails on main.
  *
- * Run: node tests/suggest_position_move.test.js
+ * Run: node tests/suggest_position_move.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { _soundingPitchPure } from '../src/lanes.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 function extractBlock(name) {
     const re = new RegExp('/\\* @pure:' + name + ':start[\\s\\S]*?@pure:' + name + ':end \\*/');
     const m = src.match(re);
@@ -58,7 +57,6 @@ function makeMoveEnv(seed) {
     };
     const body = '"use strict";'
         + extractBlock('suggest-marks')
-        + extractBlock('fret-pitch')
         + extractBlock('suggest-position')
         + '\n' + extractFn('_rollAnchorList')
         + '\n' + extractFn('_occupiedStringsAt')
@@ -67,12 +65,14 @@ function makeMoveEnv(seed) {
         + '\n' + extractClass('MoveNoteCmd')
         + '\nreturn { _rollDragPitchMove, _positionLocked, MoveNoteCmd,'
         + ' _isSuggested, _markSuggested, _clearSuggested };';
-    const env = new Function('S', 'notes', '_rollPitchCtx', 'snapTime', 'PIANO_LANE_H', body)(
+    const env = new Function('S', 'notes', '_rollPitchCtx', 'snapTime', 'PIANO_LANE_H',
+        '_soundingPitchPure', body)(
         S,
         () => S.arrangements[S.currentArr].notes,
         () => ({ openMidi: OPEN, tuning: [0, 0, 0, 0, 0, 0], capo: 0 }),
         tm => tm,                                  // snapTime: identity
         PIANO_LANE_H,
+        _soundingPitchPure,                        // the REAL one, from src/lanes.js
     );
     return { S, env, notes: () => S.arrangements[0].notes };
 }
