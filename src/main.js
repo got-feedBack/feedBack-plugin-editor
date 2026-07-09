@@ -6131,7 +6131,23 @@ function updateTimeDisplay() {
 // File operations
 // ════════════════════════════════════════════════════════════════════
 
+// How many loads are in flight. The entry landing is armed by a timer on screen
+// entry and asks "is anything loaded?" only when it fires, so a load that is
+// still fetching loses that race — and nothing else takes the landing down
+// again. Because `mousedown` is bound to the canvas while `mousemove` is bound
+// to `document`, the leftover `fixed inset-0` overlay then swallows every click
+// while the cursor still updates: the edge-drag arms but never grabs.
+//
+// A counter, not a flag: two loads can overlap (editSong twice, or a load that
+// fails fast while a slower one is still fetching), and the first to settle
+// would otherwise clear a flag the second still needs held.
+let _editorLoadsInFlight = 0;
+
 async function loadCDLC(filename) {
+    _editorLoadsInFlight++;
+    // A load can also start while the landing is already up (editorLoadFile is
+    // callable from outside the editor, e.g. the library's Edit button).
+    document.getElementById('editor-start-landing')?.remove();
     setStatus('Loading ' + filename + '...');
     try {
         const resp = await fetch('/api/plugins/editor/load', {
@@ -6268,6 +6284,8 @@ async function loadCDLC(filename) {
         _updateLoopIn3DBtn();
     } catch (e) {
         setStatus('Load failed: ' + e.message);
+    } finally {
+        _editorLoadsInFlight--;
     }
 }
 
@@ -8763,9 +8781,10 @@ window.editorShowStartLanding = () => {
     inner.querySelector('button')?.focus();
 };
 
-// Show the landing only on a genuinely empty editor — nothing loaded, no
-// create session, and no create/load modal already open.
+// Show the landing only on a genuinely empty editor — nothing loaded, no load
+// in flight, no create session, and no create/load modal already open.
 function _editorMaybeShowStartLanding() {
+    if (_editorLoadsInFlight > 0) return;
     const loaded = !!(typeof S !== 'undefined' && S && (S.filename || S.sessionId
         || (Array.isArray(S.arrangements) && S.arrangements.length)));
     if (loaded) return;
