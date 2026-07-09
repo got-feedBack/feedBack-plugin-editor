@@ -78,6 +78,9 @@ export default [
                     .map((g) => [g, 'readonly'])),
         },
         rules: {
+            // Explicit, not merely absent: if a future shared base config turns
+            // `no-undef` on broadly, these suites would drown in it.
+            'no-undef': 'off',
             'no-unused-vars': ['error', {
                 args: 'none',
                 caughtErrors: 'all',
