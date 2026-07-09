@@ -1,23 +1,10 @@
-'use strict';
 /*
  * EOF legacy shortcut profile mapping tests for src/main.js.
  *
- * Run: node tests/eof_shortcuts.test.js
+ * Run: node tests/eof_shortcuts.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:shortcut-profile:start \*\/[\s\S]*?\/\* @pure:shortcut-profile:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:shortcut-profile block not found in src/main.js');
-    process.exit(1);
-}
-
-const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _editorKeySigPure, _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure, _editorShortcutRowsPure, _editorDefaultRightClickBehaviorPure, _editorEffectiveRightClickBehaviorPure };'
-)();
+import assert from 'node:assert';
+import * as api from '../src/shortcuts.js';
 
 let pass = 0;
 let fail = 0;

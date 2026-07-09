@@ -1,17 +1,19 @@
-'use strict';
 /*
  * Tests for numbered bookmarks (@pure:bookmarks block + the shortcut-
  * profile dispatch): nine per-song time markers, Shift+Alt+1-9 sets/clears
  * at the cursor, Alt+1-9 jumps. Editor-side localStorage only — never pack
  * data. These fail on main, where none of this exists.
  *
- * Run: node tests/bookmarks.test.js
+ * Run: node tests/bookmarks.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import {
+    _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure,
+} from '../src/shortcuts.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+// @pure:bookmarks and @pure:shortcut-panel-hint are still in src/main.js.
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extract(name) {
     const re = new RegExp(
@@ -27,11 +29,6 @@ function extract(name) {
 const B = new Function(
     '"use strict";' + extract('bookmarks')
     + '\nreturn { _bookmarkStorageKeyPure, _bookmarksParsePure, _bookmarkTogglePure };'
-)();
-
-const { _editorFeedbackCommandForKeyPure, _editorEofCommandForKeyPure } = new Function(
-    '"use strict";' + extract('shortcut-profile')
-    + '\nreturn { _editorFeedbackCommandForKeyPure, _editorEofCommandForKeyPure };'
 )();
 
 const { _editorShortcutPanelHintPure } = new Function(

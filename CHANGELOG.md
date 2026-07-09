@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sustain edge-drag was unusable in the piano roll.** `hitNote` branches on
+  `isKeysMode()` and resolves a note to its sounding-pitch row via `midiToY`;
+  `hitNoteEdge` did not — it always computed `y` from `strToY(n.string)`, the
+  fretted lane band. So the resize grab zone sat on the wrong rows in the roll,
+  even though the call site documents that edge-drag resize *"applies directly
+  even in the read-only fretted roll (V4)"* — a duration edit is pitch-preserving
+  and passes the roll's edit lock. The cursor hint was gated on the same stale
+  band, so `ew-resize` never appeared there either.
+  Both now go through one shared `_noteRect`, and the cursor band uses
+  `_beatBarTopY()`, which is correct in both views. Two functions computing the
+  same rectangle two different ways is why they drifted.
+  Found by CodeRabbit while `src/hit-test.js` was being extracted (#160).
+
 ### Added
 
 - **ESLint on the `src/` module graph (#158).** The module playbook's per-repo
@@ -32,6 +47,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and strips only `.git`, so a devDependency here would ship into the packaged app.
 
 ### Changed
+
+- **ES-module migration, step 10 — hit testing, shortcuts, and the status line
+  (R2).** Three modules, `main.js` 19,339 → 18,852.
+  `src/hit-test.js` — `hitNote` / `hitNoteEdge`, the pointer→note resolution and
+  the sustain-resize grab zone. It had **zero** dependencies left in `main.js`
+  once the earlier tiers landed. `src/shortcuts.js` — the two shortcut profiles
+  (FeedBack native / EOF legacy), their key→command maps, the right-click
+  behaviour that rides on the profile, localStorage persistence and the
+  shortcut-panel renderer. `src/ui.js` — `setStatus`, four lines and ~180 call
+  sites; it exists so `shortcuts.js` needn't drag the whole of `main.js` behind it.
+  `editorShortcutProfile` and `editorRightClickBehavior` are live `export let`
+  bindings: reassigned, but every writer moved with them, so `main.js`'s read
+  sites are untouched. The two `window.editorSet*` handlers become plain exported
+  functions, with `main.js` keeping the `window.*` surface `screen.html` calls
+  (§V) — which also keeps `shortcuts.js` importable under node.
+  `eof_shortcuts` becomes a pure real-import suite and `bookmarks` a hybrid.
 
 - **ES-module migration, step 9b — the painters (R2).** `src/draw.js` (`main.js`
   19,963 → 19,340): the lane and grid backgrounds, beat bar, section-coverage
