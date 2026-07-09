@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 4 — the string/lane model (R2).** `src/lanes.js`
+  (21,036 → 20,800 lines in `main.js`): how many strings the active arrangement
+  has (`_stringCountFor`, `lanes`, `_seedExtendedStringsFromTuning`),
+  what they're called (`laneLabels`), how a string index maps to a display lane
+  (`strToLane`/`laneToStr`), and what colour it paints (`colorForLane` +
+  `STRING_LABEL_COLORS`, now module-private). Reads `S`; no DOM.
+  **First reassigned-scalar lift in the editor:** the per-frame lane cache was
+  three module-scope `let`s (`_lanesCacheActive` / `_lanesCacheValue` /
+  `_laneLabelsCacheValue`) that `draw()` and `onMouseMove()` both write. ES import
+  bindings are read-only, so they move onto one exported container `LC`
+  (`.active` / `.value` / `.labels`) — the shape the stems pilot used for its
+  `SH`/`ST` lifts. Purely mechanical: `main.js`'s only additions are the import
+  block and that rename.
+  Two more suites drop their brace-counting source extractors and import the real
+  functions: `bass_string_count.test.mjs` (which had been re-declaring its own
+  `const MAX_LANES = 8`) and `strings_modal.test.mjs` (which now injects the real
+  `_stringCountFor` into its sandbox instead of concatenating its source text).
+  New `tests/lanes.test.mjs` drives `lanes.js` against the real `S` — extended-range
+  label rows, the string⇄lane involution, label-keyed colour, and the `LC` cache
+  contract that `draw()`/`onMouseMove` depend on.
 - **ES-module migration, step 3 — the state lift (R2).** The canonical edit-state
   object `S` moves verbatim from `src/main.js` into `src/state.js` (21,036 →
   20,945 lines); `main.js` gains exactly one line, `import { S } from './state.js'`.

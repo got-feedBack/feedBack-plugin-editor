@@ -12,13 +12,13 @@
  * on main: _stringsRangePure / SetStringTuningCmd don't exist and the
  * guitar floor is 6.
  *
- * Run: node tests/strings_modal.test.js
+ * Run: node tests/strings_modal.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { _stringCountFor } from '../src/lanes.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const re = new RegExp(
@@ -75,7 +75,6 @@ const tuningBlock = extractBlock('string-tuning');
 const historyBlock = extractBlock('edit-history');
 const addStringSrc = extractClass('AddStringCmd');
 const removeStringSrc = extractClass('RemoveStringCmd');
-const stringCountForSrc = extractFn('_stringCountFor');
 const normalizeSrc = extractFn('_normalizeTuningToLanes');
 const notesOnStringSrc = extractFn('_notesOnString');
 const addStringHandlerSrc = extractWindowFn('editorAddString');
@@ -89,10 +88,10 @@ const removeStringHandlerSrc = extractWindowFn('editorRemoveString');
 function makeHandlerEnv(S) {
     const env = new Function(
         'window', 'document', 'S', 'draw', 'updateStatus',
-        '_renderStringsModal', '_resizeForLaneChange', 'MAX_LANES',
+        '_renderStringsModal', '_resizeForLaneChange', '_stringCountFor',
         '"use strict";'
         + historyBlock + '\n' + tuningBlock + '\n'
-        + normalizeSrc + '\n' + stringCountForSrc + '\n' + notesOnStringSrc + '\n'
+        + normalizeSrc + '\n' + notesOnStringSrc + '\n'
         + addStringSrc + '\n' + removeStringSrc + '\n'
         + addStringHandlerSrc + '\n' + removeStringHandlerSrc + '\n'
         + 'return { window, EditHistory, _stringCountFor, _addPositionPure,'
@@ -105,7 +104,7 @@ function makeHandlerEnv(S) {
         () => {},                 // updateStatus
         () => {},                 // _renderStringsModal (DOM-free)
         () => {},                 // _resizeForLaneChange
-        8,                        // MAX_LANES
+        _stringCountFor,          // the REAL one, imported from src/lanes.js
     );
     S.history = new env.EditHistory();
     return env;
