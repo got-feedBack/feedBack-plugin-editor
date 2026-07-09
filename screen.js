@@ -3688,6 +3688,92 @@ function _suggestedCount() {
     return n;
 }
 
+// Suggested-mark PERSISTENCE (editor-pref, keyed by filename, NEVER in the pack
+// — mirrors beat-lock, §6/D15). The WeakSet above is object-keyed, so a save's
+// flatten+reconstructChords rebuild and a reload both mint fresh note objects
+// and DROP every mark: after a reload the machine's UNREVIEWED guesses would
+// render as CONFIRMED and "positions unresolved: N" would reset to 0, losing
+// the honest-gap contract. We persist each marked note's STABLE identity
+// {time,string,fret} to localStorage and re-attach on load / post-save reflatten.
+// Scoped PER ARRANGEMENT (matches _suggestedCount): the key carries the
+// arrangement index, so marks authored on arrangement N restore onto N (a reload
+// resets to arr 0, and a later switch to N re-attaches N's marks) instead of
+// bleeding onto arr 0. Successive saves accumulate a key per arrangement; only
+// the arrangement current AT a given save updates that save. Index (not name) is
+// the discriminator — a part reorder is an accepted, cosmetic-only skew (marks
+// are advisory). A Save-As to a new filename MIGRATES the keys to the new name
+// (see editorSaveAsSloppakConfirm) so the guesses stay honest in the new file.
+/* @pure:suggest-marks-persist:start */
+function _suggestedStorageKeyPure(filename, arrIdx) {
+    return 'editorSuggested:' + (filename || '') + ':' + (arrIdx >= 0 ? arrIdx : 0);
+}
+function _suggestedParsePure(raw) {
+    let arr = null;
+    try { arr = JSON.parse(raw); } catch (_) { return []; }
+    if (!Array.isArray(arr)) return [];
+    const out = [];
+    for (const e of arr) {
+        if (!e || typeof e !== 'object') continue;
+        const t = Number(e.time), s = Number(e.string), f = Number(e.fret);
+        if (Number.isFinite(t) && t >= 0
+            && Number.isInteger(s) && s >= 0 && Number.isInteger(f) && f >= 0) {
+            out.push({ time: t, string: s, fret: f });
+        }
+    }
+    return out;
+}
+// Re-mark the notes in `nn` matching a persisted identity (string+fret exact,
+// |time−t| ≤ tol). Greedy 1:1 — each stored mark claims at most one note and
+// each note is claimed once — so a degenerate duplicate identity can't over-mark.
+// `addFn(note)` repopulates the mark (injected so this stays module-state-free).
+function _applySuggestedMarksPure(nn, marks, tol, addFn) {
+    const used = new Set();
+    for (const m of marks) {
+        for (let i = 0; i < nn.length; i++) {
+            if (used.has(i)) continue;
+            const n = nn[i];
+            if (n && n.string === m.string && n.fret === m.fret
+                && Math.abs((n.time || 0) - m.time) <= tol) {
+                addFn(n); used.add(i); break;
+            }
+        }
+    }
+}
+/* @pure:suggest-marks-persist:end */
+
+// Persist the current arrangement's suggested marks. Call BEFORE a save churns
+// note identity so localStorage matches exactly what lands on disk.
+function _saveSuggestedMarks() {
+    // No real filename (create mode sets S.filename = '') ⇒ skip: an empty key
+    // would be a shared slot every unsaved session bleeds marks into.
+    if (typeof S === 'undefined' || !S.filename || !S.arrangements || !S.arrangements.length) return;
+    const arr = S.arrangements[S.currentArr];
+    const nn = (arr && Array.isArray(arr.notes)) ? arr.notes : [];
+    const marks = [];
+    for (const n of nn) {
+        if (n && _suggestedNotes.has(n)) {
+            marks.push({ time: Math.round((n.time || 0) * 1000) / 1000, string: n.string, fret: n.fret });
+        }
+    }
+    const key = _suggestedStorageKeyPure(S.filename, S.currentArr);
+    try {
+        if (marks.length) localStorage.setItem(key, JSON.stringify(marks));
+        else localStorage.removeItem(key);
+    } catch (_) { /* localStorage unavailable */ }
+}
+
+// Re-attach persisted marks onto the current arrangement's (freshly rebuilt)
+// note objects — after a load or a post-save reflatten. Adds straight to the
+// WeakSet so it never re-persists. tol 2ms covers the ms-rounded save identity.
+function _restoreSuggestedMarks() {
+    if (typeof S === 'undefined' || !S.filename || !S.arrangements || !S.arrangements.length) return;
+    const arr = S.arrangements[S.currentArr];
+    const nn = (arr && Array.isArray(arr.notes)) ? arr.notes : [];
+    let raw = null;
+    try { raw = localStorage.getItem(_suggestedStorageKeyPure(S.filename, S.currentArr)); } catch (_) {}
+    _applySuggestedMarksPure(nn, _suggestedParsePure(raw), 2e-3, n => _suggestedNotes.add(n));
+}
+
 // Human-readable reasons for a resolver refusal (resolved:null), shown in the
 // confirm popover's subtitle or a status line when no free string exists.
 const _ROLL_REFUSE_REASONS = {
@@ -3752,6 +3838,8 @@ function _rollDragPitchMove(nn, snappedDt, dy) {
     if (!arr || !ctx) return;
     const dMidi = -Math.round(dy / PIANO_LANE_H);
     const moving = new Set(S.drag.indices);
+    // Time always applies (a pitch-domain edit); gather the actual pitch-movers.
+    const movers = [];
     for (let i = 0; i < S.drag.indices.length; i++) {
         const ni = S.drag.indices[i];
         const n = nn[ni];
@@ -3761,10 +3849,34 @@ function _rollDragPitchMove(nn, snappedDt, dy) {
         const origPitch = _soundingPitchPure(
             ctx.openMidi, ctx.tuning, ctx.capo, S.drag.origStrings[i], S.drag.origFrets[i]);
         if (origPitch === null) continue;
+        movers.push({ n, target: origPitch + dMidi, prevFret: S.drag.origFrets[i] });
+    }
+    // Resolve SEQUENTIALLY, in ascending target sounding-pitch (ties keep drag
+    // order — Array.sort is stable). Each resolved member's chosen string joins
+    // the occupancy the later members see, so two members of a vertically-dragged
+    // chord can't independently pick the SAME string: at save reconstructChords
+    // does frets[n.string] = n.fret, and a shared string would drop a member
+    // (the chord template silently loses a note). A member the resolver refuses
+    // HOLDS its old position and contributes NO occupancy (unchanged behaviour).
+    movers.sort((a, b) => a.target - b.target);
+    const claimed = [];   // {time, end, string} chosen by already-resolved siblings this drag
+    for (const mv of movers) {
+        const n = mv.n;
+        const occ = _occupiedStringsAt(arr, n.time, moving);
+        // Full interval overlap (not just onset containment): movers are ordered
+        // by pitch, not time, so a later-resolved member can start BEFORE an
+        // already-claimed one yet sustain through it — both directions collide.
+        const nEnd = n.time + (n.sustain || 0);
+        for (const c of claimed) {
+            if (n.time <= c.end + 1e-6 && nEnd >= c.time - 1e-6) occ.add(c.string);
+        }
         const res = _suggestPositionPure(
-            origPitch + dMidi, n.time, { fret: S.drag.origFrets[i] },
-            _rollAnchorList(arr), _occupiedStringsAt(arr, n.time, moving), ctx);
-        if (res.resolved) { n.string = res.resolved.string; n.fret = res.resolved.fret; }
+            mv.target, n.time, { fret: mv.prevFret }, _rollAnchorList(arr), occ, ctx);
+        if (res.resolved) {
+            n.string = res.resolved.string;
+            n.fret = res.resolved.fret;
+            claimed.push({ time: n.time, end: n.time + (n.sustain || 0), string: res.resolved.string });
+        }
     }
 }
 
@@ -8454,6 +8566,9 @@ async function loadCDLC(filename) {
         _liftAllBeats(S.beats);
         // Beat-lock (§1.8): re-attach persisted sync-point locks (editor-pref).
         _restoreBeatLocks();
+        // Re-attach persisted suggested marks onto the rebuilt note objects so
+        // the machine's unreviewed guesses stay honest across a reload.
+        _restoreSuggestedMarks();
         if (isKeysMode()) updatePianoRange();
 
         // Update UI
@@ -8860,15 +8975,28 @@ function _activeArrangementExceedsArchiveLimit() {
 function _buildSaveBody(forceFullSnapshot) {
     if (_recState === 'recording') editorStopRecordMidi();
 
+    // Persist suggested marks BEFORE reconstructChords mints fresh note objects
+    // and drops them from the WeakSet, so a reload restores the honest-gap marks.
+    // Capture PER ARRANGEMENT (keyed by S.currentArr). Two subtleties:
+    //   - The full-snapshot loop leaves INACTIVE arrangements RECONSTRUCTED (their
+    //     chord members live in arr.chords as fresh, unmarked objects), so a later
+    //     save must flatten first, then re-attach that arr's marks FROM THE STORE
+    //     before capturing — otherwise the capture sees zero chord-member marks
+    //     and would wipe the key. The ACTIVE arr is already flattened with LIVE
+    //     WeakSet marks (which may lead the store after an unsaved Accept), so it
+    //     is NOT restored — its live marks win.
     const savedArr = S.currentArr;
     if (S.format === 'sloppak' || forceFullSnapshot) {
         for (let i = 0; i < S.arrangements.length; i++) {
             S.currentArr = i;
             flattenChords();
+            if (i !== savedArr) _restoreSuggestedMarks();
+            _saveSuggestedMarks();
             reconstructChords();
         }
         S.currentArr = savedArr;
     } else {
+        _saveSuggestedMarks();
         reconstructChords();
     }
 
@@ -8998,6 +9126,7 @@ async function saveCDLC() {
         setStatus('Save failed: ' + e.message);
     } finally {
         flattenChords();
+        _restoreSuggestedMarks();   // reattach marks onto the reflattened objects
         // (Undo history was invalidated inside _buildSaveBody's reconstructChords
         // rebuild — see #18 there; nothing to reset here.)
         draw();
@@ -9016,7 +9145,8 @@ window.editorSaveAsSloppakConfirm = async () => {
     document.getElementById('editor-save-format-modal').classList.add('hidden');
     if (!S.sessionId) return;
     setStatus('Saving as Sloppak...');
-    const body = _buildSaveBody(true);
+    const oldFilename = S.filename;
+    const body = _buildSaveBody(true);   // persists suggested marks under oldFilename
     try {
         const resp = await fetch('/api/plugins/editor/save_as_sloppak', {
             method: 'POST',
@@ -9027,7 +9157,20 @@ window.editorSaveAsSloppakConfirm = async () => {
         if (data.error) { setStatus('Save error: ' + data.error); return; }
         // Flip session into sloppak mode so subsequent edits route to
         // _save_sloppak. The original archive stays on disk untouched.
-        if (data.filename) S.filename = data.filename;
+        if (data.filename) {
+            // Migrate the suggested-mark keys to the new filename so the machine's
+            // unresolved guesses stay honest in the new .sloppak (the finally
+            // restore below reads the NEW key). Old file's keys are left intact.
+            if (data.filename !== oldFilename) {
+                try {
+                    for (let i = 0; i < S.arrangements.length; i++) {
+                        const v = localStorage.getItem(_suggestedStorageKeyPure(oldFilename, i));
+                        if (v !== null) localStorage.setItem(_suggestedStorageKeyPure(data.filename, i), v);
+                    }
+                } catch (_) { /* localStorage unavailable */ }
+            }
+            S.filename = data.filename;
+        }
         S.format = 'sloppak';
         // Normalize in-memory tuning to the real string count so a
         // subsequent /save (which now goes through the native sloppak
@@ -9052,6 +9195,7 @@ window.editorSaveAsSloppakConfirm = async () => {
         setStatus('Save failed: ' + e.message);
     } finally {
         flattenChords();
+        _restoreSuggestedMarks();   // reattach marks onto the reflattened objects
         // (Undo history already invalidated by reconstructChords in _buildSaveBody — #18.)
         draw();
     }
@@ -10216,6 +10360,11 @@ window.editorNudgeOffset = (delta) => {
     editorApplyOffset(el.value);
 };
 window.editorSelectArrangement = (val) => {
+    // Flush the OUTGOING arrangement's live suggested marks to its keyed store
+    // before switching, so localStorage tracks the WeakSet (an Accept/position
+    // move that cleared a mark since the last save isn't resurrected when we
+    // restore this arrangement later). Guarded for extracted-test envs.
+    if (typeof _saveSuggestedMarks === 'function') _saveSuggestedMarks();
     S.currentArr = parseInt(val) || 0;
     S.sel.clear();
     // Tone + anchor selections are per-arrangement — clear them so
@@ -10225,6 +10374,10 @@ window.editorSelectArrangement = (val) => {
     S.anchorSel = null;
     S.handshapeSel = null;
     flattenChords();
+    // Re-attach this arrangement's persisted suggested marks (the key carries the
+    // arr index) so switching parts restores the right marks, not arr 0's.
+    // typeof-guarded like the mark helpers (absent in extracted-test envs).
+    if (typeof _restoreSuggestedMarks === 'function') _restoreSuggestedMarks();
     // Undo hardening: flattenChords() re-sorts arr.notes (see _flattenArrChords),
     // which renumbers the index-based note commands (MoveNoteCmd, DeleteNotesCmd,
     // ResizeSustainCmd) recorded against this or another arrangement. A later

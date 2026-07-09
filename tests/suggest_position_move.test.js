@@ -148,11 +148,41 @@ t('multi-note drag excludes the whole moving set from occupancy', () => {
     ]);
     startDrag(S, [0, 1]);
     env._rollDragPitchMove(notes(), 0, -PIANO_LANE_H);
-    // Both originally sound 56; +1 ⇒ 57. Neither should be blocked by the other's
-    // ORIGINAL string (both excluded). They may land on the same resolved string
-    // (a real same-pitch collision the charter can see) — the point is the move
-    // isn't silently dropped by self-occupancy.
+    // Both originally sound 56; +1 ⇒ 57. Neither is blocked by the other's
+    // ORIGINAL string (the base occupancy excludes the whole moving set). Their
+    // prevFrets (1 and 6) steer them to different hand positions, so no
+    // sequential re-pick is needed here — they land distinct on their own.
     assert.ok(notes()[0].fret === 2 || notes()[1].fret === 2, 'at least one repicked to the A3 hand position');
+    assert.notStrictEqual(notes()[0].string, notes()[1].string, 'distinct strings');
+});
+
+// ── 2b. Sequential occupancy: chord re-pitch can't double-book a string ────────
+t('vertical chord drag where both would resolve to the SAME string lands DISTINCT', () => {
+    // A two-note cluster: s3/f3 (sounds 58) + s4/f0 (sounds 59), dragged up 2
+    // lanes ⇒ targets 60 (C4) and 61 (C#4). Independently, prevFret 3 → s4/1 and
+    // prevFret 0 → s4/2, so PRE-FIX (each excludes the whole moving set) BOTH land
+    // on string 4 — at save reconstructChords does frets[4]=fret and one member
+    // is silently overwritten. Sequential occupancy resolves in ascending target
+    // pitch: the 60 member claims s4/1, then the 61 member sees s4 occupied and
+    // drops to s3/6. Distinct strings, no lost chord member.
+    const { S, env, notes } = makeMoveEnv([
+        { time: 1, string: 3, fret: 3, sustain: 0 },   // 58 → 60, prevFret 3 → wants s4/1
+        { time: 1, string: 4, fret: 0, sustain: 0 },   // 59 → 61, prevFret 0 → also wants s4
+    ]);
+    startDrag(S, [0, 1]);
+    env._rollDragPitchMove(notes(), 0, -PIANO_LANE_H * 2);
+    assert.strictEqual(notes()[0].time, 1, 'time unchanged (no horizontal drag)');
+    assert.strictEqual(notes()[1].time, 1, 'time unchanged (no horizontal drag)');
+    // No two members of the moved chord share a string at the same time.
+    assert.notStrictEqual(notes()[0].string, notes()[1].string,
+        'sequential occupancy split the members onto different strings');
+    // Each member still sounds its own target pitch (orig + 2 semitones).
+    const OPEN2 = [40, 45, 50, 55, 59, 64];
+    assert.strictEqual(OPEN2[notes()[0].string] + notes()[0].fret, 60, 'member 0 sounds C4');
+    assert.strictEqual(OPEN2[notes()[1].string] + notes()[1].fret, 61, 'member 1 sounds C#4');
+    // Deterministic: the lower target (resolved first) keeps the s4/1 hand slot.
+    assert.deepStrictEqual({ string: notes()[0].string, fret: notes()[0].fret }, { string: 4, fret: 1 });
+    assert.deepStrictEqual({ string: notes()[1].string, fret: notes()[1].fret }, { string: 3, fret: 6 });
 });
 
 // ── 3. MoveNoteCmd mark round-trip ────────────────────────────────────────────

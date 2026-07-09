@@ -26,6 +26,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restored on load — **never written to the pack**. Tests:
   `tests/beat_lock.test.js`.
 ### Fixed
+- **Vertically re-pitching a chord in the roll can't double-book a string.**
+  `_rollDragPitchMove` resolved each dragged member independently against the
+  strings *not* in the drag set, so two members could land on the **same**
+  string at the same time — at save `reconstructChords` does
+  `frets[string] = fret` and silently dropped one member. Members are now
+  resolved **sequentially** in ascending target pitch (ties keep drag order):
+  each resolved member's chosen string joins the occupancy the later members
+  see. A member the resolver refuses still HOLDS and contributes no occupancy.
+  Test: `tests/suggest_position_move.test.js`.
+- **Suggested-position marks now survive save + reload.** Marks lived only in a
+  module `WeakSet` keyed by note-object identity, so a save's
+  flatten/`reconstructChords` rebuild and a reload dropped every mark — the
+  machine's unreviewed guesses rendered as CONFIRMED and "positions
+  unresolved: N" reset to 0. Marks now persist to `localStorage`
+  (`editorSuggested:<filename>:<arrIdx>`, stable `{time,string,fret}` identity,
+  never in the pack — mirrors beat-lock) and re-attach onto the rebuilt note
+  objects on load, on arrangement switch, and post-save reflatten. Keyed per
+  arrangement so marks don't bleed across parts; flushed before an arrangement
+  switch so an accepted mark isn't resurrected; and Save-As migrates the keys to
+  the new filename so the new file's guesses stay honest.
+  Test: `tests/suggest_position_persist.test.js`.
 - **Mass-moving notes no longer "loses" most of the selection — the group
   moves rigidly.** Dragging a multi-note selection snapped each note's
   absolute time independently, so with snap on (the default) only the notes
