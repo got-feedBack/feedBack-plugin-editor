@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ESLint on the `src/` module graph (#158).** The module playbook's per-repo
+  lint, added because two bugs during the R2 split slipped past `node --test`
+  (86/86 green) *and* the headless harnesses: `MIN_NOTE_W`/`NOTE_PAD` used after
+  they moved to `geometry.js` without an import, and — silently —
+  `typeof _coverageEditGen === 'number' ? _coverageEditGen : 0` surviving the
+  counter's move, so two memos keyed on a constant `0` and never invalidated.
+  `no-undef` with **`typeof: true`** catches both. That option is off by default:
+  plain `no-undef` deliberately ignores `typeof x`, which is exactly the second
+  bug's shape.
+  The 32 pre-existing violations were the editor's own `window.editorX = …`
+  functions being called bare, relying on window properties being implicit
+  globals. They are now called as `window.editorX(…)`. `showScreen` and
+  `alphaTab` really are host-provided and are declared as globals.
+  `no-unused-vars` runs as a **warning** (10 today): a few declarations are
+  reachable only from tests that slice them out of the source text, so erroring
+  would mean deleting code the suite covers. It ratchets down as those tests move
+  to real imports.
+  ESLint runs via `npx` in its own CI job, so the repo keeps **zero
+  `node_modules`** — `feedback-desktop`'s `copy_plugin()` does `cp -R "$src/."`
+  and strips only `.git`, so a devDependency here would ship into the packaged app.
+
 ### Changed
 
 - **ES-module migration, step 9b — the painters (R2).** `src/draw.js` (`main.js`

@@ -4606,7 +4606,7 @@ function _editorRunEofCommand(cmd) {
         return _editorSetBookmark(parseInt(cmd.slice('setBookmark:'.length), 10));
     }
     switch (cmd) {
-    case 'save': editorSave(); return true;
+    case 'save': window.editorSave(); return true;
     case 'toggleWaveform': return _editorToggleWaveform();
     case 'toggleGuideClap': return _editorToggleGuideClap();
     case 'toggleMetronome': return _editorToggleMetronome();
@@ -4905,7 +4905,7 @@ function onKeyDown(e) {
 
     if (e.key === ' ' && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
-        editorTogglePlay();
+        window.editorTogglePlay();
         return;
     }
 
@@ -5068,12 +5068,12 @@ function onKeyDown(e) {
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
         e.preventDefault();
-        editorUndo();
+        window.editorUndo();
         return;
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) {
         e.preventDefault();
-        editorRedo();
+        window.editorRedo();
         return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
@@ -5656,12 +5656,12 @@ window.__editorScreenTeardown = () => {
 _globalListeners.add(document, 'keydown', (e) => {
     if (e.key === 'Enter' && addNoteData) {
         e.preventDefault();
-        editorConfirmAddNote();
+        window.editorConfirmAddNote();
     }
     if (e.key === 'Escape') {
         hideAddNote();
         hideContextMenu();
-        editorHideLoadModal();
+        window.editorHideLoadModal();
     }
 });
 
@@ -6055,7 +6055,7 @@ function playbackTick() {
         // before resetting the cursor — otherwise chartTimeNow() keeps
         // advancing past S.duration and emits notes beyond the chart.
         if (_recState === 'recording') {
-            editorStopRecordMidi();
+            window.editorStopRecordMidi();
         } else {
             stopPlayback();
         }
@@ -7201,7 +7201,7 @@ function renderBrowse(data) {
     };
     if (data.cwd) row('⬆', '.. (up one folder)', () => _editorBrowse(data.parent || ''));
     for (const d of (data.dirs || [])) row('📁', d.name, () => _editorBrowse(d.path));
-    for (const f of (data.files || [])) row('🎵', f.name, () => editorLoadFile(f.filename), f.format);
+    for (const f of (data.files || [])) row('🎵', f.name, () => window.editorLoadFile(f.filename), f.format);
     if (!(data.dirs || []).length && !(data.files || []).length) {
         const empty = document.createElement('div');
         empty.className = 'text-xs text-gray-500 p-2';
@@ -7276,7 +7276,7 @@ function renderSongList(files) {
     for (const f of shown) {
         const btn = document.createElement('button');
         btn.className = 'w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-dark-500 rounded flex items-center gap-2';
-        btn.addEventListener('click', () => editorLoadFile(f.filename));
+        btn.addEventListener('click', () => window.editorLoadFile(f.filename));
 
         // Prefer the real song name (title — artist) when the library cache
         // had it; fall back to the raw filename otherwise. The filename is
@@ -7358,7 +7358,7 @@ function _activeArrangementExceedsArchiveLimit() {
 // `forceFullSnapshot` is true for save_as_sloppak so the new sloppak
 // gets every arrangement (not just S.currentArr).
 function _buildSaveBody(forceFullSnapshot) {
-    if (_recState === 'recording') editorStopRecordMidi();
+    if (_recState === 'recording') window.editorStopRecordMidi();
 
     // Persist suggested marks BEFORE reconstructChords mints fresh note objects
     // and drops them from the WeakSet, so a reload restores the honest-gap marks.
@@ -8543,7 +8543,7 @@ function resizeCanvas() {
 window.editorShowLoadModal = showLoadModal;
 window.editorHideLoadModal = () => document.getElementById('editor-load-modal').classList.add('hidden');
 window.editorFilterSongs = filterSongs;
-window.editorLoadFile = (f) => { editorHideLoadModal(); loadCDLC(f); };
+window.editorLoadFile = (f) => { window.editorHideLoadModal(); loadCDLC(f); };
 window.editorSave = saveCDLC;
 window.editorUndo = () => S.history && S.history.doUndo();
 window.editorRedo = () => S.history && S.history.doRedo();
@@ -8552,7 +8552,7 @@ window.editorTogglePlay = () => {
     // spacebar (or any other transport caller) finalizes the recording
     // cleanly instead of leaving _recState stuck in 'recording'.
     if (_recState === 'recording') {
-        editorStopRecordMidi();
+        window.editorStopRecordMidi();
         return;
     }
     if (S.playing) stopPlayback(); else startPlayback();
@@ -8755,7 +8755,7 @@ window.editorNudgeOffset = (delta) => {
     const el = document.getElementById('editor-offset');
     const current = parseFloat(el.value) || 0;
     el.value = (current + delta).toFixed(3);
-    editorApplyOffset(el.value);
+    window.editorApplyOffset(el.value);
 };
 window.editorSelectArrangement = (val) => {
     // Flush the OUTGOING arrangement's live suggested marks to its keyed store
@@ -9109,7 +9109,7 @@ window.editorSyncTempo = () => {
     document.getElementById('sync-audio-bpm').textContent = syncState.audioBPM.toFixed(1);
     document.getElementById('sync-manual-bpm').value = '';
     document.getElementById('sync-offset').value = '0';
-    editorSyncUpdateFactor();
+    window.editorSyncUpdateFactor();
 
     const dlg = document.getElementById('editor-sync-dialog');
     const btn = document.getElementById('editor-sync-btn');
@@ -9184,7 +9184,7 @@ window.editorApplySync = () => {
             : s.start_time / factor + offset;
     }
 
-    editorHideSyncDialog();
+    window.editorHideSyncDialog();
     draw();
     setStatus(`Tempo synced: scaled ${factor.toFixed(4)}x` + (offset ? `, offset ${offset}s` : ''));
 };
@@ -9930,7 +9930,7 @@ function _refreshGpAudioUI() {
     } else if (createState.gpHasEmbedded) {
         createState.autoSyncCoupled = false;
         if (banner) banner.classList.remove('hidden');
-        editorSetGP8AudioMode('embedded');   // sets mode + button styles + hides syncSec
+        window.editorSetGP8AudioMode('embedded');   // sets mode + button styles + hides syncSec
         createState.autoSyncAudioUrl = null;
     } else {
         createState.autoSyncCoupled = false;
@@ -10396,7 +10396,7 @@ function renderStaged() {
         x.className = 'text-gray-500 hover:text-white shrink-0';
         x.textContent = '✕';
         x.title = 'Remove';
-        x.onclick = () => editorStagedRemove(r.role);
+        x.onclick = () => window.editorStagedRemove(r.role);
         row.appendChild(x);
         wrap.appendChild(row);
     }
@@ -11218,7 +11218,7 @@ async function _editorDoBlankCreate() {
             if (btn) btn.disabled = false;
             return;
         }
-        editorHideCreateModal();
+        window.editorHideCreateModal();
         if (typeof _kickLibraryRescan === 'function') _kickLibraryRescan();
         await loadCDLC(data.filename);
     } catch (e) {
@@ -11522,7 +11522,7 @@ async function _editorDoBlankCreate() {
             if (btn) btn.disabled = false;
             return;
         }
-        editorHideCreateModal();
+        window.editorHideCreateModal();
         if (typeof _kickLibraryRescan === 'function') _kickLibraryRescan();
         await loadCDLC(data.filename);
     } catch (e) {
@@ -11540,7 +11540,7 @@ window.editorApplyCreateResult = async (data) => {
     if (data.audio_url) createState.audioUrl = data.audio_url;
 
     // Load into editor
-    editorHideCreateModal();
+    window.editorHideCreateModal();
     S.title = data.title || '';
     S.artist = data.artist || '';
     S.filename = '';
@@ -11819,7 +11819,7 @@ window.editorShowReplaceAudioModal = () => {
     document.getElementById('editor-replace-audio-status').textContent = '';
     document.getElementById('editor-replace-audio-apply').disabled = false;
     document.getElementById('editor-replace-audio-modal').classList.remove('hidden');
-    editorSetReplaceAudioMode('file');
+    window.editorSetReplaceAudioMode('file');
 };
 
 window.editorHideReplaceAudioModal = () => {
@@ -11908,7 +11908,7 @@ window.editorApplyReplaceAudio = async () => {
             build:   'Audio replaced (will persist on next Build feedpak)',
             rebuild: "Audio replaced (playback only — archive won't be repacked)",
         };
-        editorHideReplaceAudioModal();
+        window.editorHideReplaceAudioModal();
         setStatus(HINTS[data.next_step] || (data.persisted ? HINTS.none : HINTS.rebuild));
     } catch (e) {
         status.textContent = 'Failed: ' + e.message;
@@ -12439,7 +12439,7 @@ window.editorDoAddDrums = async () => {
         S.drumTabDirty = true;  // user-imported — persist on next save
         S.drumSel = new Set();
 
-        editorHideAddDrumsModal();
+        window.editorHideAddDrumsModal();
         const hitCount = Array.isArray(data.drum_tab.hits)
             ? data.drum_tab.hits.length : 0;
         const unmapped = Array.isArray(data.unmapped) ? data.unmapped : [];
@@ -13081,7 +13081,7 @@ async function _editorAppendKeysArrangement(arrangement, statusEl, opts = {}) {
 
         // Shared with the guitar/bass import — hide whichever modal opened this
         // (default: the Add-Keys modal) and label the toast accordingly.
-        (opts.hideModal || editorHideAddKeysModal)();
+        (opts.hideModal || window.editorHideAddKeysModal)();
         const label = opts.label || 'Keys';
         setStatus('Added ' + label + ' arrangement (' + (arrangement.notes || []).length + ' notes). Save to commit.');
         return true;
@@ -13139,7 +13139,7 @@ window.editorAddEmptyKeys = async () => {
         updateStatus();
         draw();
 
-        editorHideAddKeysModal();
+        window.editorHideAddKeysModal();
         setStatus('Added empty Keys arrangement. Double-click the chart to add notes; save to commit.');
     } catch (e) {
         statusEl.textContent = 'Failed: ' + e.message;
@@ -13256,7 +13256,7 @@ window.editorImportGuitarRefreshReplaceTargets = () => {
             if (addRadio) addRadio.checked = true;
         }
     }
-    editorImportGuitarDestChanged();
+    window.editorImportGuitarDestChanged();
 };
 
 window.editorImportGuitarFileSelected = async (input) => {
@@ -13312,7 +13312,7 @@ window.editorImportGuitarFileSelected = async (input) => {
         // populate the Replace target dropdown for the default-selected track.
         const addRadio = document.querySelector('input[name="guitar-dest"][value="add"]');
         if (addRadio) addRadio.checked = true;
-        editorImportGuitarRefreshReplaceTargets();
+        window.editorImportGuitarRefreshReplaceTargets();
 
         document.getElementById('editor-import-guitar-tracks').classList.remove('hidden');
         document.getElementById('editor-import-guitar-dest').classList.remove('hidden');
@@ -13399,7 +13399,7 @@ window.editorDoImportGuitar = async () => {
             updateArrangementSelector();
             updateStatus();
             draw();
-            editorHideImportGuitarModal();
+            window.editorHideImportGuitarModal();
             const nm = S.arrangements[targetIdx] && S.arrangements[targetIdx].name;
             setStatus('Replaced "' + nm + '" chart (' + (arrangement.notes || []).length +
                 ' notes). Undo (Ctrl+Z) reverts it. Save to commit.');
@@ -13407,7 +13407,7 @@ window.editorDoImportGuitar = async () => {
             const ok = await _editorAppendKeysArrangement(arrangement, statusEl, {
                 xml_path: data.xml_path || '',
                 label: 'Guitar/Bass',
-                hideModal: editorHideImportGuitarModal,
+                hideModal: window.editorHideImportGuitarModal,
                 isStale: () => reqSeq !== _importGuitarReqSeq,
             });
             if (!ok) goBtn.disabled = false;
@@ -13864,7 +13864,7 @@ window.editorStartRecordMidi = () => {
     // before audioSource.stop() runs.
     if (S.audioSource) {
         S.audioSource.onended = () => {
-            if (_recState === 'recording') editorStopRecordMidi();
+            if (_recState === 'recording') window.editorStopRecordMidi();
         };
     }
 
@@ -18265,11 +18265,11 @@ window.editorApplyTonesModal = () => {
     const slotsUnchanged = newSlots.length === snap.slots.length
         && newSlots.every((name, i) => name === snap.slots[i]);
     if (slotsUnchanged && newBase === snap.base) {
-        editorHideTonesModal();
+        window.editorHideTonesModal();
         return;
     }
     S.history.exec(new RenameToneSlotsCmd(S.currentArr, newSlots, newBase));
-    editorHideTonesModal();
+    window.editorHideTonesModal();
     draw();
 };
 
