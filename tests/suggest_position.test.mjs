@@ -21,21 +21,13 @@
  * Run: node tests/suggest_position.test.mjs
  */
 import assert from 'node:assert';
-import fs from 'node:fs';
 import { _soundingPitchPure } from '../src/lanes.js';
+import {
+    _activeAnchorAtPure, _enumerateFrettedPositionsPure, _suggestPositionPure,
+} from '../src/position.js';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-const grab = name => {
-    const m = src.match(new RegExp('/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/'));
-    if (!m) { console.error('FAIL: @pure:' + name + ' block not found'); process.exit(1); }
-    return m[0];
-};
-// `_soundingPitchPure` now lives in src/lanes.js — inject the REAL one instead
-// of concatenating its source; @pure:suggest-position is still in src/main.js.
-const api = new Function('_soundingPitchPure', '"use strict";' + grab('suggest-position')
-    + '\nreturn { _enumerateFrettedPositionsPure, _activeAnchorAtPure, _suggestPositionPure };'
-)(_soundingPitchPure);
-const { _enumerateFrettedPositionsPure, _activeAnchorAtPure, _suggestPositionPure } = api;
+// Everything under test is a real import now: _soundingPitchPure (src/lanes.js)
+// and the position pures (src/position.js). No sandbox.
 
 // Standard 6-string guitar, low → high: E2 A2 D3 G3 B3 E4.
 const OPEN = [40, 45, 50, 55, 59, 64];

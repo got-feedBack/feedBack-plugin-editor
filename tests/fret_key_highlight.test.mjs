@@ -12,30 +12,9 @@
  * Run: node tests/fret_key_highlight.test.mjs
  */
 import assert from 'node:assert';
-import fs from 'node:fs';
 import { _soundingPitchPure } from '../src/lanes.js';
+import { _absolutePitch } from '../src/position.js';
 import { _pcInScalePure } from '../src/theory.js';
-
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-
-// `_absolutePitch` is the last piece still in src/main.js; brace-extract it.
-// ASSUMPTION: its body contains no `{`/`}` inside a string, regex, or comment —
-// a naive brace count would miscount those. Safe: it is a three-line pure
-// arithmetic helper. Everything else here is a real import.
-function extractFn(name) {
-    const start = src.indexOf('function ' + name);
-    assert.ok(start >= 0, `function ${name} must exist`);
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-    }
-    throw new Error(`unbalanced braces extracting ${name}`);
-}
-
-const { _absolutePitch } = new Function(
-    '"use strict";' + extractFn('_absolutePitch') + '\nreturn { _absolutePitch };')();
 
 const GUITAR = [40, 45, 50, 55, 59, 64]; // E A D G B E
 const STD = [0, 0, 0, 0, 0, 0];

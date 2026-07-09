@@ -1,6 +1,6 @@
 /*
  * Tests for same-pitch position cycling in the piano roll (VA.5):
- * the @pure:position-cycle block (candidate enumeration + step), the
+ * the position-cycle pures in src/position.js (candidate enumeration + step), the
  * _execCyclePosition driver, the pitchPreserving carve-out in the
  * EditHistory read-only-roll lock, and the Shift+↑/↓ dispatch routing.
  *
@@ -13,6 +13,9 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import { _soundingPitchPure } from '../src/lanes.js';
+import {
+    _cyclePositionCandidatesPure, _cycleStepPure,
+} from '../src/position.js';
 
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
@@ -46,10 +49,9 @@ function t(name, fn) {
 
 // ── Candidate enumeration ────────────────────────────────────────────
 
-const P = new Function('_soundingPitchPure',
-    '"use strict";' + extractBlock('position-cycle')
-    + '\nreturn { _cyclePositionCandidatesPure, _cycleStepPure, _soundingPitchPure };'
-)(_soundingPitchPure);
+// The cycle pures moved to src/position.js; _execCyclePosition (below) is still
+// sliced out of src/main.js.
+const P = { _cyclePositionCandidatesPure, _cycleStepPure, _soundingPitchPure };
 
 const STD = [40, 45, 50, 55, 59, 64];       // EADGBe standard
 const FLAT = [0, 0, 0, 0, 0, 0];
@@ -147,8 +149,9 @@ function makeCycleEnv({ arrName = 'Lead', noteSeed, sel, locked = true } = {}) {
         else if (src[i] === '}' && --depth === 0) { clsEnd = i + 1; break; }
     }
     const clsSrc = src.slice(clsStart, clsEnd);
+    // position-cycle moved to src/position.js — injected below; edit-history and
+    // _execCyclePosition are still in src/main.js and still sliced.
     const fullSrc = '"use strict";'
-        + extractBlock('position-cycle')
         + extractBlock('edit-history')
         + '\n' + clsSrc
         + '\n' + extractFn('_execCyclePosition')
@@ -158,6 +161,7 @@ function makeCycleEnv({ arrName = 'Lead', noteSeed, sel, locked = true } = {}) {
         'S', 'document', 'notes', 'setStatus', 'draw', 'updateStatus',
         '_renderInspector', '_editBlipAt', '_rollReadOnly', '_rollLockNotice',
         '_editorCurrentNoteIndices', 'isKeysArr', '_stringCountFor', '_openMidiForArr',
+        '_soundingPitchPure', '_cyclePositionCandidatesPure', '_cycleStepPure',
         fullSrc
     )(
         S,
@@ -171,6 +175,7 @@ function makeCycleEnv({ arrName = 'Lead', noteSeed, sel, locked = true } = {}) {
         () => /^(piano|keys|synth)/i.test(S.arrangements[S.currentArr].name),
         () => 6,
         () => STD.slice(),
+        _soundingPitchPure, _cyclePositionCandidatesPure, _cycleStepPure,
     );
     return { S, env, statuses };
 }
