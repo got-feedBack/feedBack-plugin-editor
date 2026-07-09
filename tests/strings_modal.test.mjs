@@ -15,7 +15,9 @@
  * Run: node tests/strings_modal.test.mjs
  */
 import assert from 'node:assert';
+import { AddStringCmd, RemoveStringCmd, _normalizeTuningToLanes } from '../src/commands.js';
 import { EditHistory } from '../src/history.js';
+import { setHostHooks } from '../src/host.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 import fs from 'node:fs';
 import { _stringCountFor } from '../src/lanes.js';
@@ -31,17 +33,6 @@ function extractBlock(name) {
         process.exit(1);
     }
     return m[0];
-}
-function extractClass(name) {
-    const start = src.indexOf('class ' + name);
-    assert.ok(start >= 0, `class ${name} must exist`);
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-    }
-    throw new Error(`unbalanced braces extracting ${name}`);
 }
 
 function extractFn(name) {
@@ -74,9 +65,6 @@ function extractWindowFn(name) {
 }
 
 const tuningBlock = extractBlock('string-tuning');
-const addStringSrc = extractClass('AddStringCmd');
-const removeStringSrc = extractClass('RemoveStringCmd');
-const normalizeSrc = extractFn('_normalizeTuningToLanes');
 const notesOnStringSrc = extractFn('_notesOnString');
 const addStringHandlerSrc = extractWindowFn('editorAddString');
 const removeStringHandlerSrc = extractWindowFn('editorRemoveString');
@@ -89,24 +77,21 @@ const removeStringHandlerSrc = extractWindowFn('editorRemoveString');
 function makeHandlerEnv(seed) {
     const S = seedState(seed);
     const env = new Function(
-        'window', 'document', 'S', 'draw', 'updateStatus',
-        '_renderStringsModal', '_resizeForLaneChange', '_stringCountFor',
+        'window', 'S', 'draw', 'updateStatus', '_renderStringsModal', '_stringCountFor',
+        'AddStringCmd', 'RemoveStringCmd',
         '"use strict";'
-        + tuningBlock + '\n'
-        + normalizeSrc + '\n' + notesOnStringSrc + '\n'
-        + addStringSrc + '\n' + removeStringSrc + '\n'
+        + tuningBlock + '\n' + notesOnStringSrc + '\n'
         + addStringHandlerSrc + '\n' + removeStringHandlerSrc + '\n'
         + 'return { window, _stringCountFor, _addPositionPure,'
         + ' _removePositionPure };'
     )(
         {},                       // window
-        { getElementById: () => ({ disabled: false }) },
         S,
         () => {},                 // draw
         () => {},                 // updateStatus
         () => {},                 // _renderStringsModal (DOM-free)
-        () => {},                 // _resizeForLaneChange
         _stringCountFor,          // the REAL one, imported from src/lanes.js
+        AddStringCmd, RemoveStringCmd,
     );
     S.history = new EditHistory();
     return env;
@@ -114,27 +99,20 @@ function makeHandlerEnv(seed) {
 
 function makeEnv(seed) {
     const S = seedState(seed);
+    // AddStringCmd is a real import now, so it runs against the REAL
+    // _stringCountFor and the REAL _normalizeTuningToLanes rather than the
+    // tuning-length stub this harness used to inject. The handler harness above
+    // already drove those; this one no longer differs from it on that axis.
     const env = new Function(
-        'document', 'S', 'draw', 'updateStatus',
-        '_normalizeTuningToLanes', '_stringCountFor', '_resizeForLaneChange',
-        '"use strict";'
-        + tuningBlock + '\n' + addStringSrc + '\n'
-        + 'return { SetStringTuningCmd, AddStringCmd,'
-        + ' _stringsRangePure, _stringTuningClampPure,'
+        'S', '"use strict";' + tuningBlock
+        + '\nreturn { SetStringTuningCmd, _stringsRangePure, _stringTuningClampPure,'
         + ' _addPositionPure, _removePositionPure };'
-    )(
-        { getElementById: () => ({ disabled: false }) },
-        S,
-        () => {},
-        () => {},
-        () => {},                                  // normalize: fixtures are exact
-        (arr) => (arr.tuning || []).length,        // count = real tuning length
-        () => {},                                  // resize: no-op off-DOM
-    );
-    return { ...env, S, history: new EditHistory() };
+    )(S);
+    return { ...env, AddStringCmd, _normalizeTuningToLanes, S, history: new EditHistory() };
 }
 
 trackHooks();
+setHostHooks({ resizeForLaneChange: () => {} });
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -235,14 +213,20 @@ t('command input is clamped at the boundary', () => {
 // ── Command-level mechanics (raw AddStringCmd, count stubbed) ────────
 
 t('low-side add shifts note lanes up; direct re-entrant offset then undo round-trips', () => {
-    // Drive the raw command against a stubbed count: adding at the LOW end
-    // shifts existing notes up one lane, a large offset can then be typed
-    // directly (re-entrant drone), and a full undo restores the chart.
+    // Adding at the LOW end shifts existing notes up one lane, a large offset
+    // can then be typed directly (re-entrant drone), and a full undo restores
+    // the chart.
+    //
+    // The fixture is a 4-string BASS, not the 'Banjo' this used to use. The
+    // command now runs against the REAL _stringCountFor rather than an injected
+    // tuning-length stub, and the real model has no banjo: it reads a 4-length
+    // tuning on a non-bass part as a padded guitar and reports 6. Only a name
+    // the string-count model actually recognises gives a 4-string chart.
     const S = {
         currentArr: 0,
         arrangements: [{
-            name: 'Banjo',
-            tuning: [-2, 0, 0, -1],  // D G B D relative-ish fixture
+            name: 'Bass',
+            tuning: [-2, 0, 0, -1],  // relative-ish fixture, 4 strings
             notes: [{ time: 1, string: 0, fret: 2 }],
             chords: [],
             chord_templates: [],

@@ -12,9 +12,10 @@
  */
 import assert from 'node:assert';
 import fs from 'node:fs';
+import { MoveToStringCmd, _execCyclePosition } from '../src/commands.js';
 import { EditHistory } from '../src/history.js';
-import { _rollLockNotice, _rollReadOnly } from '../src/keys.js';
-import { setStatus } from '../src/ui.js';
+import { setHostHooks } from '../src/host.js';
+import { _rollReadOnly } from '../src/keys.js';
 import { seedState, statusMessages, trackHooks } from './_history_env.mjs';
 import { _soundingPitchPure } from '../src/lanes.js';
 import {
@@ -138,42 +139,11 @@ function makeCycleEnv({ arrName = 'Lead', noteSeed, sel, locked = true } = {}) {
     assert.strictEqual(_rollReadOnly(), locked, 'harness precondition: lock state');
     trackHooks();
     const statuses = statusMessages;   // live array of real setStatus() writes
-    // MoveToStringCmd is a class — extractFn targets functions, so pull the
-    // class by brace-matching from its declaration instead.
-    const clsStart = src.indexOf('class MoveToStringCmd');
-    let depth = 0, clsEnd = -1;
-    const open = src.indexOf('{', clsStart);
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) { clsEnd = i + 1; break; }
-    }
-    const clsSrc = src.slice(clsStart, clsEnd);
-    // position-cycle moved to src/position.js — injected below; edit-history and
-    // _execCyclePosition are still in src/main.js and still sliced.
-    const fullSrc = '"use strict";'
-        + clsSrc
-        + '\n' + extractFn('_execCyclePosition')
-        + '\nreturn { _execCyclePosition };';
-    const env = new Function(
-        'S', 'history', 'notes', 'setStatus', 'draw', 'updateStatus',
-        '_renderInspector', '_editBlipAt', '_rollReadOnly', '_rollLockNotice',
-        '_editorCurrentNoteIndices', 'isKeysArr', '_stringCountFor', '_openMidiForArr',
-        '_soundingPitchPure', '_cyclePositionCandidatesPure', '_cycleStepPure',
-        fullSrc
-    )(
-        S,
-        (S.history = new EditHistory()),
-        () => S.arrangements[S.currentArr].notes,
-        setStatus,
-        () => {}, () => {}, () => {}, () => {},
-        _rollReadOnly,
-        _rollLockNotice,
-        () => (S.sel && S.sel.size ? [...S.sel] : []),
-        () => /^(piano|keys|synth)/i.test(S.arrangements[S.currentArr].name),
-        () => 6,
-        () => STD.slice(),
-        _soundingPitchPure, _cyclePositionCandidatesPure, _cycleStepPure,
-    );
+    // Everything the sandbox used to slice is a real import now; the two main.js
+    // callbacks it stubbed are host hooks.
+    setHostHooks({ editorCurrentNoteIndices: () => (S.sel && S.sel.size ? [...S.sel] : []) });
+    S.history = new EditHistory();
+    const env = { _execCyclePosition, MoveToStringCmd };
     env.history = S.history;
     return { S, env, statuses };
 }
