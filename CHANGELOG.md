@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under total reprojection there is no ride choice left to get wrong. Gated by a
   golden test proving lift+reproject reproduces the old all-parts remap to 3 dp
   before any legacy code was deleted. Tests: `tests/beat_primary.test.js`.
+- **Exact tempo-flex undo.** Undoing a tempo flex now restores each note's
+  original seconds verbatim instead of reprojecting them through `_r3`, so a
+  sub-millisecond note placement (e.g. `1.23456 s`) survives edit→undo→save
+  instead of quantizing to `1.235 s`. Tests: `tests/beat_primary.test.js`.
 - **One tempo-map converter: `beatOf` / `timeOf`.** The musical-beat ⇄
   seconds math that the flex remapper (`_makeTimeRemap`) and `snapTime`
   each computed inline is now a single extracted `@pure:beat-converter`

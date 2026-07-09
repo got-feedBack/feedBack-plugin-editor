@@ -17254,6 +17254,7 @@ function _liftAllBeats(fromBeats) {
 function _reprojectAll(toBeats) {
     let drumMoved = false;
     _eachTimed((o, tf, endKind) => {
+        // ponytail: beat-less objects are skipped here — _reprojectAll MUST follow _liftAllBeats in the same command, or newly-created objects (chord/user-placed notes, mid-session imports) that carry time but no beat get stranded off-grid.
         if (typeof o.beat !== 'number') return;
         const start = timeOf(toBeats, o.beat);
         o[tf] = _r3(start);
@@ -17311,17 +17312,20 @@ function _stripBeatsFromSaveBody(body) {
     return body;
 }
 
-// (The hand-rolled _captureScopedTimes / _restoreScopedTimes ride-snapshot
-// machinery is gone: beat is invariant across a flex, so TempoMapCmd rollback
-// reprojects seconds from the stored beat — an exact inverse, no snapshot.)
+// (The hand-rolled _captureScopedTimes / _restoreScopedTimes RIDE-SCOPE snapshot
+// machinery is gone — beat is invariant across a flex, so every part rides its
+// beat and reproject is total. TempoMapCmd still keeps a small undo-exactness
+// snapshot of the pre-edit seconds so rollback restores them without _r3 rounding.)
 
 // Undo command for one tempo-map edit (times move, beat indexing fixed).
 // Beat is invariant across the flex: exec lifts every object's beat from the
 // OLD grid (capturing any note edits made since the last grid change), swaps
-// the grid, then reprojects seconds from those beats; rollback reprojects the
-// SAME stored beats against the old grid — an exact inverse, which is why the
-// old capture/restore snapshot machinery is gone. Reproject is TOTAL: every
-// part rides its beat, so no note can be left behind on a stale second (the old
+// the grid, then reprojects seconds from those beats. Reproject rounds via _r3,
+// so rollback can't reproject to undo — it would quantize sub-ms note placement
+// (a note imported at 1.23456 would come back 1.235, so edit→undo→save would not
+// equal the original save). Instead exec snapshots the exact pre-edit seconds and
+// rollback restores them verbatim — a true inverse. Reproject stays TOTAL: every
+// part rides its beat, so no note is left behind on a stale second (the old
 // ride-scope corruption class).
 class TempoMapCmd {
     constructor(oldBeats, newBeats, label) {
@@ -17343,13 +17347,32 @@ class TempoMapCmd {
             this.beforeBarSel = S.barSel ? { ...S.barSel } : null;
         }
         _liftAllBeats(this.oldBeats);
+        // Snapshot the EXACT pre-edit seconds — the fields _reprojectAll overwrites
+        // (o[tf], plus sustain / end_time for a span) — so rollback restores them
+        // verbatim instead of reprojecting (which _r3-rounds and drifts sub-ms
+        // placement). Same _eachTimed walk as reproject, holding object refs so
+        // restore is order-independent. Re-taken on every exec, so redo works too.
+        this._preTimes = [];
+        _eachTimed((o, tf, endKind) => {
+            this._preTimes.push([o, tf, o[tf],
+                endKind === 'sustain' ? o.sustain : endKind === 'span' ? o.end_time : undefined,
+                endKind]);
+        });
         S.beats = this.newBeats.map(b => ({ ...b }));
         _reprojectAll(S.beats);
         _loopRelockAfterGridChange();
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
-        _reprojectAll(S.beats);
+        // Restore the EXACT pre-edit seconds captured in exec rather than
+        // reprojecting — reproject would _r3-round and quantize sub-ms placement.
+        // Beat is left untouched: a flex preserves beat indexing, so beats are
+        // already correct against oldBeats.
+        for (const [o, tf, sec, endVal, endKind] of (this._preTimes || [])) {
+            o[tf] = sec;
+            if (endKind === 'sustain') { if (endVal !== undefined) o.sustain = endVal; }
+            else if (endKind === 'span') { if (endVal !== undefined) o.end_time = endVal; }
+        }
         // Restore the EXACT pre-edit loop selection rather than relocking
         // (relock is lossy — an undone tempo edit would otherwise move the loop).
         S.barSel = this.beforeBarSel ? { ...this.beforeBarSel } : null;

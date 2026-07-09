@@ -52,7 +52,7 @@ function makeCmd(S) {
     const relockMoved = { startTime: 1, endTime: 6, mode: 'bar' };
     const TempoMapCmd = new Function(
         'S', '_loopRelockAfterGridChange', '_renderLoopStrip', '_updateLoopIn3DBtn',
-        '_liftAllBeats', '_reprojectAll',
+        '_liftAllBeats', '_reprojectAll', '_eachTimed',
         '"use strict";' + cm[0] + '\nreturn TempoMapCmd;'
     )(
         S,
@@ -60,7 +60,8 @@ function makeCmd(S) {
         () => {},                                    // _renderLoopStrip
         () => {},                                    // _updateLoopIn3DBtn
         () => {},                                    // _liftAllBeats (no-op: this test checks loop/barSel undo)
-        () => {}                                     // _reprojectAll
+        () => {},                                    // _reprojectAll
+        () => {}                                     // _eachTimed (no-op: no timed objects to snapshot here)
     );
     return { TempoMapCmd, relockMoved };
 }

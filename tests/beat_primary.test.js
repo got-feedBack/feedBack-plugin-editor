@@ -328,6 +328,26 @@ t('exact undo: TempoMapCmd exec then rollback restores the original times exactl
     assert.deepStrictEqual(collectTimes(S), before);
 });
 
+// ── 8b. exact undo survives SUB-MILLISECOND placement (review) ───────────────
+// A note imported off-grid at 1.23456 s. A reproject-based rollback would _r3 it
+// back to 1.235 (sub-ms quantization), so edit→undo→save ≠ the original save.
+// The exact-restore rollback must return 1.23456 to the last significant digit.
+// (Fails on the pre-fix rollback, which reprojected the stored beat through _r3.)
+t('exact undo: TempoMapCmd rollback restores a sub-millisecond note time exactly', () => {
+    const S = song();
+    S.beats = driftGrid();
+    S.barSel = null;
+    const note = S.arrangements[0].notes[0];
+    note.time = 1.23456;
+    note.sustain = 0;
+    const env = makeEnv(S);
+    const cmd = new env.TempoMapCmd(driftGrid(), flexGrid(), 'drag');
+    cmd.exec();
+    assert.ok(Math.abs(note.time - 1.23456) > 1e-6, 'exec moved the note off 1.23456');
+    cmd.rollback();
+    assert.strictEqual(note.time, 1.23456);
+});
+
 // ── 9. No beat leak to the wire ──────────────────────────────────────────────
 t('the save body never leaks a beat / beatEnd field (client-only cache)', () => {
     const S = song();
