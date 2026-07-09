@@ -26,6 +26,23 @@ import {
     lanes,
     strToLane,
 } from './lanes.js';
+import {
+    ANCHOR_LANE_H,
+    BEAT_H,
+    EDITOR_SCROLL_TAIL_SECONDS,
+    HS_LANE_H,
+    LABEL_W,
+    LANE_H,
+    WAVEFORM_H,
+    _editorClampScrollXPure,
+    _editorViewportDurationPure,
+    laneToY,
+    setLaneMetrics,
+    strToY,
+    timeToX,
+    xToTime,
+    yToStr,
+} from './geometry.js';
 
 (function () {
 'use strict';
@@ -34,10 +51,6 @@ import {
 // Constants
 // ════════════════════════════════════════════════════════════════════
 
-let WAVEFORM_H = 70;
-let LANE_H = 44;
-let BEAT_H = 24;
-const LABEL_W = 52;
 const MIN_NOTE_W = 18;
 const NOTE_PAD = 3;
 const DPR = window.devicePixelRatio || 1;
@@ -67,12 +80,6 @@ const TONE_LANE_H = 16;
 const _TONE_SLOT_DEFAULTS = ['Clean', 'Drive', 'Lead', 'Crunch', 'Effect'];
 const _TONE_SLOT_COLORS = ['#7dd3fc', '#f87171', '#fbbf24', '#a78bfa', '#34d399'];
 
-// ─── Anchor-lane constants (PR3d) ──────────────────────────────────
-// Anchor lane lives below the beat bar so its time axis stays
-// aligned with notes and tones. 18px gives enough room for a fret
-// label plus a width-strip visualization.
-const ANCHOR_LANE_H = 18;
-const HS_LANE_H = 20;   // E2: handshape (chord-shape / arpeggio) span lane
 
 let canvas, ctx;
 let rafId = null;
@@ -80,39 +87,6 @@ let rafId = null;
 // ════════════════════════════════════════════════════════════════════
 // Coordinate mapping
 // ════════════════════════════════════════════════════════════════════
-function timeToX(t)  { return LABEL_W + (t - S.scrollX) * S.zoom; }
-function xToTime(x)  { return (x - LABEL_W) / S.zoom + S.scrollX; }
-
-const EDITOR_SCROLL_TAIL_SECONDS = 2;
-
-/* @pure:scroll-bounds:start */
-function _editorViewportDurationPure(canvasWidthPx, labelWidthPx, zoomPxPerSecond) {
-    const w = Number(canvasWidthPx);
-    const label = Number(labelWidthPx);
-    const zoom = Number(zoomPxPerSecond);
-    if (!Number.isFinite(w) || !Number.isFinite(label) || !Number.isFinite(zoom) || zoom <= 0) return 0;
-    return Math.max(0, (w - label) / zoom);
-}
-
-function _editorMaxScrollXPure(durationSeconds, viewportDurationSeconds, tailSeconds) {
-    const duration = Number(durationSeconds);
-    const view = Number(viewportDurationSeconds);
-    const tail = Number(tailSeconds);
-    if (!Number.isFinite(duration) || duration <= 0) return 0;
-    const v = Math.max(0, Number.isFinite(view) ? view : 0);
-    // The song already fits on screen → pin to the start (no scroll, no tail).
-    // The tail only extends the range once the content itself runs past the
-    // viewport, so a short/zoomed-out song can't hide its beginning.
-    if (duration <= v) return 0;
-    return Math.max(0, duration + Math.max(0, Number.isFinite(tail) ? tail : 0) - v);
-}
-
-function _editorClampScrollXPure(scrollX, durationSeconds, viewportDurationSeconds, tailSeconds) {
-    const raw = Number(scrollX);
-    const safe = Number.isFinite(raw) ? raw : 0;
-    return Math.max(0, Math.min(safe, _editorMaxScrollXPure(durationSeconds, viewportDurationSeconds, tailSeconds)));
-}
-/* @pure:scroll-bounds:end */
 
 function _editorViewportDuration() {
     const w = canvas ? canvas.width / DPR : 800;
@@ -263,10 +237,6 @@ function _downbeatTimes() {
 function _barSpanForTimes(t0, t1) {
     return _barSpanForTimesPure(_downbeatTimes(), S.duration || Math.max(t0, t1), t0, t1);
 }
-function laneToY(l)  { return WAVEFORM_H + l * LANE_H; }
-function yToLane(y)  { return Math.floor((y - WAVEFORM_H) / LANE_H); }
-function strToY(s)   { return laneToY(strToLane(s)); }
-function yToStr(y)   { const l = Math.max(0, Math.min(lanes() - 1, yToLane(y))); return laneToStr(l); }
 function canvasH()   {
     return _beatBarTopY() + BEAT_H;
 }
@@ -9954,16 +9924,10 @@ function resizeCanvas() {
     const h = wrap.clientHeight;
     if (w <= 0 || h <= 0) return;
 
-    // Dynamically size lanes to fill available height
-    const minBeat = 20, minWave = 50;
-    BEAT_H = Math.max(minBeat, Math.floor(h * 0.05));
-    WAVEFORM_H = Math.max(minWave, Math.floor(h * 0.12));
-    // Reserve `ANCHOR_LANE_H` for the anchor strip below the beat bar
-    // so the lanes still fill the remaining vertical space.
-    // Reserve the handshape lane (HS_LANE_H) alongside the anchor lane so the
-    // note lanes still fill the remaining height; the max(30,…) floor keeps
-    // short canvases from starving them.
-    LANE_H = Math.max(30, Math.floor((h - WAVEFORM_H - BEAT_H - ANCHOR_LANE_H - HS_LANE_H) / lanes()));
+    // Dynamically size lanes to fill available height. The metrics live in
+    // geometry.js as live `export let` bindings — everything reads them, only
+    // setLaneMetrics writes them.
+    setLaneMetrics(h);
 
     canvas.width = w * DPR;
     canvas.height = h * DPR;

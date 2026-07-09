@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 5 — canvas geometry (R2).** `src/geometry.js`
+  (`main.js` 20,799 → 20,764): the time⇄x and string⇄y mappings every draw and
+  hit-test path goes through (`timeToX`/`xToTime`, `laneToY`/`yToLane`,
+  `strToY`/`yToStr`), the lane metrics they read (`WAVEFORM_H`, `LANE_H`,
+  `BEAT_H`, `LABEL_W`, `ANCHOR_LANE_H`, `HS_LANE_H`), and the scroll-bound
+  arithmetic. Reads `S` and the lane model; no DOM.
+  **No renames, unlike step 4's `LC`.** The three lane metrics are reassigned on
+  every resize, but their only writer — the lane-sizing arithmetic inside
+  `resizeCanvas()` — moves with them as `setLaneMetrics(canvasHeightPx)`. ES import
+  bindings are *live* and read-only, so `main.js`'s ~100 read sites keep reading
+  the current value verbatim and none of them can write it. A container was needed
+  for `LC` only because its writers (`draw()`, `onMouseMove()`) must stay behind.
+  `tests/scroll_bounds.test.mjs` — the last `@pure`-block slicer among the
+  coordinate helpers — now imports the real module. New `tests/geometry.test.mjs`
+  pins the mappings (inversion, clamping, gutter offset) and the live-binding
+  contract itself: `setLaneMetrics` updates what importers see, importers get a
+  `TypeError` if they assign, and `laneToY` tracks a resize rather than capturing
+  boot-time metrics.
 - **ES-module migration, step 4 — the string/lane model (R2).** `src/lanes.js`
   (21,036 → 20,800 lines in `main.js`): how many strings the active arrangement
   has (`_stringCountFor`, `lanes`, `_seedExtendedStringsFromTuning`),
