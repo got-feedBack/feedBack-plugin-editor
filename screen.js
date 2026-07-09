@@ -3495,6 +3495,86 @@ function _cycleStepPure(candidates, curString, curFret, direction) {
 }
 /* @pure:position-cycle:end */
 
+/* @pure:suggest-position:start */
+// Suggest-position resolver (design V4 / V13.3): pick a {string, fret} for a
+// SOUNDING pitch added or pitch-moved in the piano roll for a fretted part —
+// the ONE writer that lets the read-only roll author fretted notes without a
+// view switch. The machine ENUMERATES; it only auto-decides when the choice is
+// unambiguous, and otherwise REFUSES (returns resolved:null + a reason +
+// the candidate list) so the UI flips to an explicit confirm popover.
+//
+// Enumerate every playable {string, fret} for `pitch`, capo-aware (the exact
+// inverse of _soundingPitchPure: fret = pitch − openMidi[s] − tuning[s] − capo,
+// valid as an integer in [0,24]). Ordered low string → high.
+function _enumerateFrettedPositionsPure(pitch, openMidi, tuning, capo) {
+    const out = [];
+    if (!Array.isArray(openMidi) || !Number.isFinite(pitch)) return out;
+    const off = s => (Array.isArray(tuning) && tuning[s] !== undefined) ? (Number(tuning[s]) || 0) : 0;
+    const cap = Number(capo) || 0;
+    for (let s = 0; s < openMidi.length; s++) {
+        if (openMidi[s] === undefined) continue;
+        const fret = pitch - openMidi[s] - off(s) - cap;
+        if (Number.isInteger(fret) && fret >= 0 && fret <= 24) out.push({ string: s, fret });
+    }
+    return out;
+}
+
+// The fret-hand anchor window active at `time`: the last anchor at/ before it
+// (notes before the first anchor borrow the first anchor's window). Anchors are
+// { time, fret, width } with no explicit end — each governs until the next.
+function _activeAnchorAtPure(anchorList, time) {
+    if (!Array.isArray(anchorList) || !anchorList.length) return null;
+    let active = null, earliest = null;
+    for (const a of anchorList) {
+        if (!a || !Number.isFinite(a.time)) continue;
+        if (!earliest || a.time < earliest.time) earliest = a;
+        if (a.time <= time + 1e-6 && (!active || a.time >= active.time)) active = a;
+    }
+    return active || earliest;
+}
+
+// The policy. `occupiedStrings` is the set of strings already sounding at this
+// time (a note can't share a string with another at the same instant). Success
+// order: (a) inside the active anchor window on a free string, (b) nearest the
+// previous note's hand position (least fret travel), (c) lowest-fret then
+// lowest-string. Refuse (resolved:null) when reachable only OUTSIDE the window,
+// when open-vs-fretted is a real articulation choice, when the only viable
+// string is occupied, or when out of range.
+function _suggestPositionPure(pitch, time, prevNote, anchorList, occupiedStrings, ctx) {
+    const c = ctx || {};
+    const candidates = _enumerateFrettedPositionsPure(pitch, c.openMidi, c.tuning, c.capo);
+    if (!candidates.length) return { resolved: null, reason: 'out-of-range', candidates };
+    const occ = occupiedStrings instanceof Set ? occupiedStrings : new Set(occupiedStrings || []);
+    const free = candidates.filter(p => !occ.has(p.string));
+    if (!free.length) return { resolved: null, reason: 'string-occupied', candidates };
+    // Eligible = free candidates that are open (fret 0 needs no hand position)
+    // or inside the active anchor window [fret, fret+width). No anchor ⇒ the
+    // window is unconstrained (every free candidate is eligible).
+    const anchor = _activeAnchorAtPure(anchorList, time);
+    let eligible = free;
+    if (anchor && Number.isFinite(anchor.fret)) {
+        const lo = anchor.fret;
+        const hi = anchor.fret + (Number.isFinite(anchor.width) ? anchor.width : 4);
+        eligible = free.filter(p => p.fret === 0 || (p.fret >= lo && p.fret < hi));
+        if (!eligible.length) return { resolved: null, reason: 'outside-anchor-window', candidates };
+    }
+    // Open vs fretted, both playable here → a real articulation choice; refuse.
+    if (eligible.some(p => p.fret === 0) && eligible.some(p => p.fret > 0)) {
+        return { resolved: null, reason: 'open-vs-fretted', candidates };
+    }
+    const prevFret = prevNote && Number.isFinite(prevNote.fret) ? prevNote.fret : null;
+    const best = eligible.slice().sort((a, b) => {
+        if (prevFret !== null) {
+            const d = Math.abs(a.fret - prevFret) - Math.abs(b.fret - prevFret);
+            if (d) return d;                      // (b) least fret travel
+        }
+        if (a.fret !== b.fret) return a.fret - b.fret;   // (c) lowest fret
+        return a.string - b.string;                       //     then lowest string
+    })[0];
+    return { resolved: best, reason: null, candidates };
+}
+/* @pure:suggest-position:end */
+
 // Undo-able command: move a set of notes to adjacent strings, adjusting
 // frets to preserve absolute pitch.  `moves` is an array of
 // { index, oldString, oldFret, newString, newFret }.
