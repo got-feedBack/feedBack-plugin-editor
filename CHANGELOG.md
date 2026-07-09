@@ -25,6 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a **per-filename editor preference** (localStorage `editorBeatLocks:<filename>`),
   restored on load — **never written to the pack**. Tests:
   `tests/beat_lock.test.js`.
+### Fixed
+- **Mass-moving notes no longer "loses" most of the selection — the group
+  moves rigidly.** Dragging a multi-note selection snapped each note's
+  absolute time independently, so with snap on (the default) only the notes
+  already near a grid line crossed it — the rest snapped back and appeared
+  not to move, and the selection's internal timing was silently destroyed
+  (tester: "only a few of selected notes get moved"). The drag now snaps the
+  grabbed note's target **once** (`_groupTimeDeltaPure`) and applies that
+  single delta to the whole selection, clamped so the earliest note can't
+  cross `t=0` — rigid, with spacing preserved. Also adds DAW-style grid
+  unlock: **hold Alt while dragging to move free of the grid** (vertical
+  stays semitone/string-quantized). Tests: `tests/group_move_snap.test.js`.
 
 ### Changed
 - **Loop edges follow the grid by beat (bar/grid loops).** A bar or grid loop's
