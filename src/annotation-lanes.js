@@ -57,9 +57,9 @@ export const _TONE_SLOT_COLORS = ['#7dd3fc', '#f87171', '#fbbf24', '#a78bfa', '#
 // markers, and surfaces a Tones… modal for slot renaming + base
 // selection. All edits go through `S.history` so undo/redo works.
 //
-// `TONE_LANE_H`, `_TONE_SLOT_DEFAULTS`, `_TONE_SLOT_COLORS` are
-// declared at the top of this IIFE (alongside `S`) so callsites
-// further down the file resolve them safely.
+// `TONE_LANE_H` is imported from geometry.js; `_TONE_SLOT_DEFAULTS` and
+// `_TONE_SLOT_COLORS` are declared at the top of this module. Both are
+// initialised before any callsite runs.
 // ════════════════════════════════════════════════════════════════════
 
 // Derive a 5-slot list from a raw tones object's `base` + `changes`.
@@ -707,12 +707,9 @@ function _undefinedToneSlotNames(arr) {
 }
 
 // Returns `true` when the build should proceed, `false` when the user
-// cancelled at the warning prompt. Called from `editorBuild` before
-// the network request. Declared as a plain function inside the
-// module IIFE so the bare-name reference at the callsite resolves
-// through normal lexical scoping (the previous `window.` assignment
-// relied on the browser's global → IIFE fallback, which works but
-// is fragile).
+// cancelled at the warning prompt. Called from `editorBuild` before the
+// network request — an ordinary exported function, so main.js imports it by
+// name rather than reaching through `window.`.
 export function _editorConfirmToneDefinitions() {
     if (!S.arrangements) return true;
     const missing = new Set();
