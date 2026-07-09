@@ -27,6 +27,9 @@ export const NOTE_PAD = 3;
 // label plus a width-strip visualization.
 export const ANCHOR_LANE_H = 18;
 export const HS_LANE_H = 20;   // E2: handshape (chord-shape / arpeggio) span lane
+// Tone lane is an overlay strip across the top of the chart, not part of the
+// lane stack — setLaneMetrics() below deliberately does not subtract it.
+export const TONE_LANE_H = 16;
 
 // Lane metrics, re-derived from the canvas height on resize. See the header:
 // importers read these as live bindings; only setLaneMetrics() may write them.

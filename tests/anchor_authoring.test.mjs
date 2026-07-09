@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Anchor authoring semantics — the "promote preserves the full computed set"
  * fix (got-feedback/feedback-plugin-editor#5, charrette PR 2).
@@ -7,57 +6,36 @@
  * list (empty => recompute from notes/source). The editor lane previously
  * promoted only the clicked computed/source anchor into `anchors_user`, so the
  * first interaction collapsed a whole computed set down to one anchor and
- * dropped the rest on save. This test pulls the REAL anchor authoring source
- * (src/main.js is a single browser IIFE) by brace-matching, runs it against a
- * fake `S` + undo history, and pins that both authoring entry points — clicking
- * a fallback marker and adding a new anchor in empty space — materialize the
- * WHOLE fallback set first.
+ * dropped the rest on save. This drives the REAL anchor authoring code from
+ * src/annotation-lanes.js against a seeded `S` + a recording undo history, and
+ * pins that both authoring entry points — clicking a fallback marker and adding
+ * a new anchor in empty space — materialize the WHOLE fallback set first.
  *
- * Run: node tests/anchor_authoring.test.js
+ * Run: node tests/anchor_authoring.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import {
+    AddAnchorCmd, PromoteAnchorsCmd, _anchorsAreDirty, _bumpAnchorsDirty, _ensureAnchors,
+    _promoteAnchor, _readAnchorSnapshot,
+} from '../src/annotation-lanes.js';
+import { seedState } from './_history_env.mjs';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const api = {
+    AddAnchorCmd, PromoteAnchorsCmd, _anchorsAreDirty, _bumpAnchorsDirty, _ensureAnchors,
+    _promoteAnchor, _readAnchorSnapshot,
+};
 
-// Brace-match a `function name(` / `class Name ` declaration out of the IIFE.
-function extractDecl(header) {
-    const start = src.indexOf(header);
-    if (start < 0) throw new Error('decl not found: ' + header);
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(start, i + 1); }
-    }
-    throw new Error('unbalanced braces: ' + header);
-}
-
-const sandbox = new Function('S', '"use strict";' + [
-    extractDecl('function _readAnchorSnapshot('),
-    extractDecl('function _ensureAnchors('),
-    extractDecl('function _bumpAnchorsDirty('),
-    extractDecl('function _anchorsAreDirty('),
-    extractDecl('class PromoteAnchorsCmd '),
-    extractDecl('class AddAnchorCmd '),
-    extractDecl('function _promoteAnchor('),
-].join('\n') +
-    '\nreturn { _readAnchorSnapshot, _ensureAnchors, _bumpAnchorsDirty, _anchorsAreDirty,' +
-    ' PromoteAnchorsCmd, AddAnchorCmd, _promoteAnchor };');
-
+// annotation-lanes.js closes over the REAL `S`, so seed that rather than
+// fabricating one. The history stays a recording stub: these cases assert on
+// exec/rollback, not on EditHistory's stack or its read-only-roll lock.
 function makeEnv(arr) {
     const undoStack = [];
-    const S = {
-        arrangements: [arr],
-        currentArr: 0,
-        anchorSel: null,
-        history: {
-            exec(cmd) { cmd.exec(); undoStack.push(cmd); },
-            undo() { const c = undoStack.pop(); if (c) c.rollback(); },
-        },
+    const S = seedState({ arrangements: [arr], currentArr: 0, anchorSel: null });
+    S.history = {
+        exec(cmd) { cmd.exec(); undoStack.push(cmd); },
+        undo() { const c = undoStack.pop(); if (c) c.rollback(); },
     };
-    return { S, api: sandbox(S) };
+    return { S, api };
 }
 
 // A computed/source fallback set with no authored overrides yet.
