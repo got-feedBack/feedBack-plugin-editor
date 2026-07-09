@@ -22,8 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stays **strictly monotonic** — never a backwards beat that would corrupt the
   `beatOf`/`timeOf` lookup. Sync-to-audio **reprojects notes from their beats**
   so they stay on a locked grid instead of drifting near the anchor. Locks are
-  **editor-pref**, keyed by song, restored on load — **never written to the
-  pack**. Tests: `tests/beat_lock.test.js`.
+  a **per-filename editor preference** (localStorage `editorBeatLocks:<filename>`),
+  restored on load — **never written to the pack**. Tests:
+  `tests/beat_lock.test.js`.
 
 ### Changed
 - **Loop edges follow the grid by beat (bar/grid loops).** A bar or grid loop's

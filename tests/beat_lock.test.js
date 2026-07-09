@@ -169,6 +169,30 @@ t('editorApplySync reprojection keeps notes on the warped grid at a lock (FIX 2)
     assert.ok(Math.abs(reproj - linear) > 1e-6, 'the old linear scale would have drifted off the grid near the lock');
 });
 
+t('editorApplySync reprojects SECTION times onto the warped grid under a lock (FIX A)', () => {
+    // Extract and RUN the actual "Scale section times" loop from screen.js, so a
+    // pre-fix linear-scale body genuinely fails here (would-fail-on-main).
+    const secLoop = src.match(/\/\/ Scale section times[\s\S]*?\n    for \(const s of S\.sections\) \{[\s\S]*?\n    \}/);
+    assert.ok(secLoop, 'section-scaling loop found in screen.js');
+    const runSectionScale = new Function(
+        'S', 'locked', 'respaced', 'oldBeats', 'factor', 'offset', 'timeOf', 'beatOf',
+        '"use strict";' + secLoop[0]);
+
+    const factor = 0.5, offset = 0;                    // ×2 stretch, beat 2 locked at t=2
+    const oldB = grid([0, 1, 2, 3, 4], [2]);
+    const scaled = oldB.map(b => ({ ...b, time: b.time / factor + offset }));
+    const respaced = _respaceWithLocksPure(oldB, scaled);
+    const start = 1.5;                                 // a section between beat 1 and the lock
+    const S = { sections: [{ name: 'x', start_time: start }] };
+    runSectionScale(S, respaced !== scaled, respaced, oldB, factor, offset, _timeOf, _beatOf);
+
+    const onGrid = _timeOf(respaced, _beatOf(oldB, start));
+    const linear = start / factor + offset;
+    assert.ok(Math.abs(onGrid - linear) > 1e-6, 'the two strategies actually diverge near the lock');
+    assert.ok(near(S.sections[0].start_time, onGrid),
+        'section landed on the warped grid (beatOf→timeOf), not the linear drift');
+});
+
 // ── 2. persistence pures ─────────────────────────────────────────────────────
 t('_beatLockStorageKeyPure keys by filename (empty ⇒ bare prefix)', () => {
     assert.strictEqual(_beatLockStorageKeyPure('song.sloppak'), 'editorBeatLocks:song.sloppak');

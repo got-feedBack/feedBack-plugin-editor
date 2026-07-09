@@ -10152,9 +10152,12 @@ window.editorApplySync = () => {
 
     for (let i = 0; i < S.beats.length; i++) S.beats[i].time = respaced[i].time;
 
-    // Scale section times
+    // Scale section times — like notes, reproject onto the warped grid under a
+    // lock (beat is truth) and keep the plain linear scale when unlocked.
     for (const s of S.sections) {
-        s.start_time = s.start_time / factor + offset;
+        s.start_time = locked
+            ? timeOf(respaced, beatOf(oldBeats, s.start_time))
+            : s.start_time / factor + offset;
     }
 
     editorHideSyncDialog();
