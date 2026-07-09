@@ -275,8 +275,13 @@ def _refresh_save_backup(output_path, backup_path) -> None:
 
 
 def _timeline_round_time(value) -> float:
+    # 6 decimals (microseconds), not 3 (ms): the timeline DERIVES per-bar BPM
+    # from beat spans (bpm = beats·60/span), which amplifies rounding — at 3
+    # decimals a constant-tempo song drifts ±0.05–0.7 BPM per bar because most
+    # bar lengths don't land on a ms boundary. 6 decimals keeps a saved/reloaded
+    # grid deriving to the exact tempo (mirrors gp2rs's 6-decimal ebeat output).
     try:
-        return round(float(value), 3)
+        return round(float(value), 6)
     except (TypeError, ValueError):
         return 0.0
 
@@ -2706,7 +2711,9 @@ def _build_arrangement_xml(
     for b in beats:
         ET.SubElement(
             ebeats_el, "ebeat",
-            time=f"{b['time']:.3f}", measure=str(b["measure"]),
+            # 6-decimal beat times so the derived per-bar tempo stays exact on
+            # save/reload (see _timeline_round_time / gp2rs ebeat precision).
+            time=f"{b['time']:.6f}", measure=str(b["measure"]),
         )
 
     if not sections:

@@ -54,6 +54,25 @@ def test_build_song_timeline_derives_signature_and_tempo_events():
     ]
 
 
+def test_build_song_timeline_constant_tempo_does_not_drift():
+    # A constant 140 BPM grid whose bars DON'T land on a millisecond boundary
+    # (0.428571 s/beat). At the old 3-decimal precision the per-bar BPM derived
+    # from the rounded spans wobbled (140.023 / 139.942 / ...), so a constant
+    # tempo surfaced as a multi-event "variable" map. At 6 decimals it stays one
+    # 140.0 event. (Guards the beat-precision fix — mirrors gp2rs's 6-decimal
+    # ebeat output so an imported constant tempo survives a save/reload.)
+    spb = round(60.0 / 140.0, 6)
+    beats = []
+    for i in range(13):  # 3 bars of 4/4 + a trailing downbeat to close bar 3
+        beats.append({
+            "time": round(i * spb, 6),
+            "measure": (i // 4 + 1) if i % 4 == 0 else -1,
+            "den": 4,
+        })
+    timeline = _build_song_timeline(beats, [])
+    assert timeline["tempos"] == [{"time": 0.0, "bpm": 140.0}], timeline["tempos"]
+
+
 def test_write_song_timeline_sidecar_stamps_manifest():
     workdir = _workdir("stamps_manifest")
     manifest = {"title": "Example"}
