@@ -168,6 +168,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   independently at its own next same-string onset (one member can stop at
   its collision limit while the others keep extending).
   Tests: `tests/roll_edge_resize.test.js`, `tests/chord_resize.test.js`.
+- **Snap to audio onset.** A second snap target alongside the subdivision grid:
+  a **Grid / Onset** toggle by the Snap controls (and the `toggleSnapMode`
+  command) switches placement between the tempo-map subdivisions and the
+  nearest detected transient in the recording. This is the bridge between
+  musical time and audio-attack time for by-ear transcription — grid time and
+  the actual attack routinely differ by tens of milliseconds. It reuses the
+  onset detector that already draws the display-only onset strip (no warp, just
+  snap to the onset time), snaps onto a transient only within a ~70 ms window,
+  and **falls back to grid snap** when no attack is near or none is computed —
+  so placement stays sensible everywhere. Because every add/drag routes through
+  `snapTime`, the mode applies to all note, drum, anchor and section placement
+  at once. The choice is an editor pref (persisted locally), never written to
+  the pack. Tests: `tests/onset_snap.test.js` (the `@pure:onset-snap`
+  nearest-onset helper + the grid-vs-onset routing).
 - **Detect key from the notes.** A new **Detect** button in the key controls
   guesses the current part's key from its pitch-class content (the
   Krumhansl–Schmuckler algorithm — Pearson correlation against the standard
