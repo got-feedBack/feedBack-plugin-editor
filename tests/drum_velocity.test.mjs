@@ -14,9 +14,10 @@
 import assert from 'node:assert';
 import {
     DRUM_GHOST_VELOCITY, SetDrumVelocityCmd, ToggleDrumArticulationCmd,
-    _drumClampVelocityPure, _drumImportHitPure, _drumVelocityDragValuePure, setDrumHooks,
+    _drumClampVelocityPure, _drumImportHitPure, _drumVelocityDragValuePure,
 } from '../src/drum.js';
 import { EditHistory } from '../src/history.js';
+import { setHostHooks } from '../src/host.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 
 
@@ -29,7 +30,7 @@ function makeEnv() {
         drumTabDirty: false,
         currentArr: 0,
     });
-    setDrumHooks({ updateArrangementSelector: () => {} });
+    setHostHooks({ updateArrangementSelector: () => {} });
     trackHooks();
     const env = { SetDrumVelocityCmd, ToggleDrumArticulationCmd, DRUM_GHOST_VELOCITY,
                   _drumClampVelocityPure, _drumVelocityDragValuePure, _drumImportHitPure };

@@ -16,8 +16,7 @@
 // toolbar buttons, and the MIDI-import flow (which is about tempo, not drums).
 // They reach the commands as plain imports. Three symbols travel the other way
 // — draw, drawWaveform, updateArrangementSelector — and would close a cycle, so
-// they arrive through setDrumHooks(), the same shape as history.js's
-// setHistoryHooks() and canvas.js's setCanvas().
+// they arrive through the shared `host` object in src/host.js.
 //
 // Browser surface: `ctx` (the shared 2D context) and `localStorage` (the
 // density pref, which is editor state and never pack data).
@@ -25,16 +24,9 @@
 import { ctx } from './canvas.js';
 import { drawSelectionRect } from './draw.js';
 import { LABEL_W, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
+import { host } from './host.js';
 import { S, editGen } from './state.js';
 import { setStatus } from './ui.js';
-
-const _hooks = {
-    draw: () => {},
-    drawWaveform: () => {},
-    updateArrangementSelector: () => {},
-};
-
-export function setDrumHooks(hooks) { Object.assign(_hooks, hooks); }
 
 // Physical-kit ordering of the drum piece-ids. Mirrors lib/drums.py's
 // PIECES dict but ordered for visual editing rather than data shape.
@@ -221,7 +213,7 @@ export function _editorToggleDrumDensity() {
     // Row count changed — drop selection (indices keep meaning, but the
     // user's visual anchor doesn't) and repaint.
     S.drumSel = new Set();
-    _hooks.draw();
+    host.draw();
     setStatus(next === 'compact'
         ? 'Compact rows — families share a row (colors keep each piece distinct); adding writes the family’s main piece'
         : 'Full rows — one row per drum piece');
@@ -303,7 +295,7 @@ export function _drumEditorDraw(w, h) {
     const visibleStart = S.scrollX - 0.5;
     const visibleEnd = S.scrollX + (w - LABEL_W) / S.zoom + 0.5;
 
-    _hooks.drawWaveform(w);
+    host.drawWaveform(w);
 
     // ── Lane grid ─────────────────────────────────────────────────────
     const laneTable = _drumLanes();
@@ -551,7 +543,7 @@ export class AddDrumHitCmd {
         S.drumTab.hits.push(this.hit);
         _drumSortAndRemapSel(keepSel);
         S.drumTabDirty = true;
-        _hooks.updateArrangementSelector();
+        host.updateArrangementSelector();
     }
     rollback() {
         const keepSel = _drumSelectedRefs().filter(h => h !== this.hit);
@@ -559,7 +551,7 @@ export class AddDrumHitCmd {
         if (i >= 0) S.drumTab.hits.splice(i, 1);
         _drumSortAndRemapSel(keepSel);
         S.drumTabDirty = true;
-        _hooks.updateArrangementSelector();
+        host.updateArrangementSelector();
     }
 }
 
@@ -570,7 +562,7 @@ export class DeleteDrumHitsCmd {
         S.drumTab.hits = S.drumTab.hits.filter(h => !drop.has(h));
         S.drumSel = new Set();
         S.drumTabDirty = true;
-        _hooks.updateArrangementSelector();
+        host.updateArrangementSelector();
     }
     rollback() {
         S.drumTab.hits.push(...this.hits);
@@ -578,7 +570,7 @@ export class DeleteDrumHitsCmd {
         // articulation toggle) has the same selection the delete consumed.
         _drumSortAndRemapSel(this.hits);
         S.drumTabDirty = true;
-        _hooks.updateArrangementSelector();
+        host.updateArrangementSelector();
     }
 }
 

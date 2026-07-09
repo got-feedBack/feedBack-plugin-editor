@@ -32,7 +32,8 @@
  */
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { EditHistory, setHistoryHooks } from '../src/history.js';
+import { EditHistory } from '../src/history.js';
+import { setHostHooks } from '../src/host.js';
 import { seedState } from './_history_env.mjs';
 
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
@@ -90,7 +91,7 @@ function makeEnv() {
         () => {},
         notes,
     );
-    setHistoryHooks({ ensureArr: env._historyEnsureArr, draw: () => {}, updateStatus: () => {} });
+    setHostHooks({ ensureArr: env._historyEnsureArr, draw: () => {}, updateStatus: () => {} });
     S.history = new EditHistory();
     return { ...env, S, win, history: S.history, flattenChords };
 }

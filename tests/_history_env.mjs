@@ -25,7 +25,7 @@
  */
 import { S } from '../src/state.js';
 import { _partViewKeyPure, _viewPrefs } from '../src/keys.js';
-import { setHistoryHooks } from '../src/history.js';
+import { setHostHooks } from '../src/host.js';
 
 const SONG = 'history-test.sloppak';
 
@@ -86,12 +86,13 @@ export function setRollView(on) {
 }
 
 /**
- * Install counting stand-ins for the three main.js symbols history.js cannot
- * import back without closing a cycle. Pass `ensureArr` to model a refusal.
+ * Install counting stand-ins for the main.js symbols the modules cannot import
+ * back without closing a cycle (src/host.js). Pass `ensureArr` to model a
+ * refusal.
  */
 export function trackHooks({ ensureArr } = {}) {
     const calls = { draw: 0, updateStatus: 0, ensureArr: [] };
-    setHistoryHooks({
+    setHostHooks({
         draw: () => { calls.draw++; },
         updateStatus: () => { calls.updateStatus++; },
         ensureArr: (cmd) => {

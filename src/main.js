@@ -21,7 +21,8 @@ import {
 } from './position.js';
 import { setStatus } from './ui.js';
 import { hitNote, hitNoteEdge } from './hit-test.js';
-import { EditHistory, setHistoryHooks } from './history.js';
+import { EditHistory } from './history.js';
+import { setHostHooks } from './host.js';
 import {
     AddAnchorCmd, AddHandshapeCmd, AddToneChangeCmd, EditChordTemplateCmd, RemoveAnchorCmd,
     RemoveHandshapeCmd, RemoveToneChangeCmd,
@@ -33,7 +34,6 @@ import {
     onAnchorLaneMouseMove, onAnchorLaneMouseUp, onHandshapeLaneContextMenu,
     onHandshapeLaneMouseDown, onHandshapeLaneMouseMove, onHandshapeLaneMouseUp,
     onToneLaneContextMenu, onToneLaneMouseDown, onToneLaneMouseMove, onToneLaneMouseUp,
-    setLaneHooks,
 } from './annotation-lanes.js';
 import {
     AddDrumHitCmd, DRUM_LANE_H, DRUM_PIECE_META, DRUM_PIECE_ORDER, DeleteDrumHitsCmd,
@@ -41,7 +41,7 @@ import {
     _drumDensityMode, _drumEditorDraw, _drumHitAtPoint, _drumImportHitPure,
     _drumLaneIdxForPiece, _drumLaneIdxToY, _drumLanes, _drumPieceAtY, _drumPieceCount,
     _drumSelectedRefs, _drumVelocityDragValuePure,
-    _editorToggleDrumDensity, setDrumHooks,
+    _editorToggleDrumDensity,
 } from './drum.js';
 import {
     _editorCommandById,
@@ -1196,27 +1196,29 @@ function _historyEnsureArr(cmd) {
     return true;
 }
 
-// src/history.js cannot import these three back out of main.js without closing
-// a cycle. All are hoisted function declarations, so this top-level call is
-// safe wherever it sits.
+// The extracted modules cannot import these back out of main.js without closing
+// a cycle, so they read them off the shared `host` object. All are hoisted
+// function declarations, so this top-level call is safe wherever it sits.
+//
 // `draw` is REASSIGNED near the bottom of this file to a wrapper that refreshes
-// the toolbar buttons before repainting. Passing the identifier here would
-// capture the ORIGINAL function forever; the thunk resolves the live binding at
-// call time, which is what the in-IIFE call sites did before the split. The
-// canvas still repaints either way — only the button refreshes go missing — so
-// nothing but the drum-density label makes the difference visible.
-const _drawLive = (...args) => draw(...args);
+// the toolbar buttons before repainting. Passing the identifier would capture
+// the ORIGINAL function forever; the thunk resolves the live binding at call
+// time, as the in-IIFE call sites did before the split. The canvas repaints
+// either way — only the button refreshes go missing — so nothing but the
+// drum-density button's label makes the difference visible. See src/host.js.
+setHostHooks({
+    draw: (...args) => draw(...args),
+    drawWaveform,
+    updateStatus,
+    updateArrangementSelector,
+    hideContextMenu,
+    snapTime,
+    editorPromptText: _editorPromptText,
+    ensureArr: _historyEnsureArr,
+});
 
-setHistoryHooks({ ensureArr: _historyEnsureArr, draw: _drawLive, updateStatus });
-
-// Same cycle break for src/drum.js. `window.editorToggleDrumDensity` is
-// re-attached here rather than in the module: a top-level `window.x =` throws
-// when drum.js is imported under node, which its unit tests do.
-setDrumHooks({ draw: _drawLive, drawWaveform, updateArrangementSelector });
-
-// Same cycle break for src/annotation-lanes.js, plus the window.* surface the
-// module can't own (a top-level `window.x =` throws when it is imported).
-setLaneHooks({ draw: _drawLive, hideContextMenu, snapTime, _editorPromptText });
+// The window.* surface the modules can't own: a top-level `window.x =` throws
+// when they are imported under node, which their unit tests do.
 window.editorShowTonesModal = editorShowTonesModal;
 window.editorHideTonesModal = editorHideTonesModal;
 window.editorApplyTonesModal = editorApplyTonesModal;
