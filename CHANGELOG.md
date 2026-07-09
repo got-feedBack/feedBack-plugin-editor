@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Chord-template save path (#152).** Three pre-existing data-integrity bugs,
+  surfaced by CodeRabbit while extracting `src/chords.js` and each verified by
+  running the real module.
+  - `relinkChordTemplate` stored `frets.slice()` verbatim, so a preserved
+    template arriving 6-wide stayed 6-wide on a 7/8-string chart (reachable via
+    `buildHandshapeChordIdMap`'s preserve-append, which hands it a template
+    straight off the wire), and a non-finite fret slot rode through untouched.
+    It now stores the width-normalized row — the same fold `_fretKeyForL`
+    already applied for the lookup key, and the same padding `fingers` always
+    got. One fold, one source of truth.
+  - `arp: !!(old && old.arp)` turned the **string** `"false"` into `true`.
+    `_safeWireBool` — which lives in that same module for exactly this reason —
+    is now used, so a hand-edited or legacy sloppak carrying `arp: "false"`
+    can't switch arpeggio on across a load→save round-trip.
+  - A chord reduced to a single note left `_fromChord` and `_chordId` on the
+    survivor. They're cleared alongside `_fn`. (None of the three could reach
+    disk — the backend's `_note()` whitelists the keys it writes — but `_fn` is
+    read back by `_groupFn`, so a stale one would be adopted by majority vote if
+    that note were later dragged into a chord. The comment there claimed the
+    delete was about the wire; it isn't.)
+
+  Not a bug, checked and closed out: `time: cn.time || ch.time` in
+  `_flattenArrChords` does not drop first-beat notes. Chord-member `time` is
+  absolute, so a chord on beat one has `cn.time === ch.time === 0`.
+
 ### Changed
 
 - **ES-module migration, step 7 — chord templates & handshapes (R2).**

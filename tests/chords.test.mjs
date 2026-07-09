@@ -14,7 +14,9 @@
  * Run: node tests/chords.test.mjs
  */
 import assert from 'node:assert';
-import { _fretKeyForL, flattenChords, reconstructChords } from '../src/chords.js';
+import {
+    _fretKeyForL, flattenChords, reconstructChords, relinkChordTemplate,
+} from '../src/chords.js';
 import { LC, lanes } from '../src/lanes.js';
 import { S } from '../src/state.js';
 
@@ -116,6 +118,76 @@ t('flatten → reconstruct is a round-trip for a plain chord chart', () => {
     assert.strictEqual(flat.chords.length, 0);
     assert.strictEqual(flat.notes.length, 2, 'both members come back');
     assert.deepStrictEqual(flat.notes.map(n => n.fret).sort(), [2, 3]);
+});
+
+// ── relinkChordTemplate: the stored row is normalized (issue #152) ────
+
+t('the stored frets row is widened to the chart\'s string count', () => {
+    // Reachable via buildHandshapeChordIdMap's preserve-append, which hands a
+    // template straight off the wire — 6-wide even on a 7/8-string chart.
+    const tmpl = relinkChordTemplate([3, 2, 0, -1, -1, -1], {}, 8);
+    assert.strictEqual(tmpl.frets.length, 8, 'padded to L, like fingers always was');
+    assert.deepStrictEqual(tmpl.frets, [3, 2, 0, -1, -1, -1, -1, -1]);
+    assert.strictEqual(tmpl.fingers.length, 8);
+});
+
+t('non-finite fret slots are folded to -1 rather than reaching the wire', () => {
+    const tmpl = relinkChordTemplate([3, NaN, undefined, '2', -1, -1], {}, 6);
+    assert.deepStrictEqual(tmpl.frets, [3, -1, -1, -1, -1, -1]);
+    assert.ok(tmpl.frets.every(Number.isFinite), 'no NaN/undefined survives');
+});
+
+t('a narrowed row still finds its preserved template', () => {
+    // The lookup key and the stored row now come from the same fold, so a
+    // 6-wide preserved entry is still found when relinking on an 8-wide chart.
+    const key = _fretKeyForL([3, 2, 0, -1, -1, -1], 8);
+    const preserved = { [key]: { name: 'C', displayName: 'Cmaj', fingers: [3, 2, 1] } };
+    const tmpl = relinkChordTemplate([3, 2, 0, -1, -1, -1], preserved, 8);
+    assert.strictEqual(tmpl.name, 'C', 'carried the authored name forward');
+    assert.strictEqual(tmpl.displayName, 'Cmaj');
+});
+
+// ── relinkChordTemplate: `arp` is wire-coerced (issue #152) ───────────
+
+t('arp: the STRING "false" does not switch arpeggio on', () => {
+    const frets = [3, -1, -1, -1, -1, -1];
+    const withArp = (v) => relinkChordTemplate(frets, { [_fretKeyForL(frets, 6)]: { arp: v } }, 6).arp;
+    assert.strictEqual(withArp('false'), false, 'the whole point: !!"false" was true');
+    assert.strictEqual(withArp('0'), false);
+    assert.strictEqual(withArp('no'), false);
+    assert.strictEqual(withArp(0), false);
+});
+
+t('arp: real truthy spellings still switch it on', () => {
+    const frets = [3, -1, -1, -1, -1, -1];
+    const withArp = (v) => relinkChordTemplate(frets, { [_fretKeyForL(frets, 6)]: { arp: v } }, 6).arp;
+    assert.strictEqual(withArp(true), true);
+    assert.strictEqual(withArp('true'), true);
+    assert.strictEqual(withArp('1'), true);
+    assert.strictEqual(withArp(1), true);
+});
+
+t('arp: no preserved template → false', () => {
+    assert.strictEqual(relinkChordTemplate([3, -1, -1, -1, -1, -1], {}, 6).arp, false);
+});
+
+// ── solo notes carry no chord provenance (issue #152) ─────────────────
+
+t('a chord reduced to one note leaves no chord provenance on the survivor', () => {
+    seed({ name: 'Lead', chord_templates: [], notes: [],
+        chords: [{ time: 1, chord_id: 0, fn: { rn: 'I', q: 'maj', deg: 0 }, notes: [
+            note(1, 0, 3), note(1, 1, 2),
+        ] }] });
+    flattenChords();
+    const arr = S.arrangements[0];
+    assert.deepStrictEqual(Object.keys(arr.notes[0]).filter(k => k[0] === '_').sort(),
+        ['_chordId', '_fn', '_fromChord'], 'flatten tags the members');
+
+    arr.notes.splice(1, 1);   // the user deletes one member; the other is a solo
+    reconstructChords();
+    const solo = S.arrangements[0].notes[0];
+    assert.deepStrictEqual(Object.keys(solo).filter(k => k[0] === '_'), [],
+        'no _fn (which _groupFn would later adopt), no _fromChord, no _chordId');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
