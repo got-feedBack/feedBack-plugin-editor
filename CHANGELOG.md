@@ -48,6 +48,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 13 — suggested-mark persistence and the roll lock
+  notice (R2).** `main.js` 18,671 → 18,565. The suggested-position mark
+  persistence (`_suggestedCount`, `_saveSuggestedMarks`, `_restoreSuggestedMarks`
+  and the `@pure:suggest-marks-persist` pures) joins the `WeakSet` it reads in
+  `src/notes.js`; `_rollLockNotice` joins `_rollReadOnly` in `src/keys.js`, which
+  now imports `setStatus`.
+  `suggest_position_persist` loses its sandbox entirely — everything it tests is
+  an import — and `suggest_position_wiring`'s env now shares the real `S` with
+  `_suggestedCount` rather than fabricating its own.
+  Also removes a comment left truncated mid-sentence in `main.js` when the
+  `WeakSet` moved out in step 9b; its rationale lives in `notes.js` now.
+  This shrinks `EditHistory`'s coupling to `main.js` from four symbols to three
+  (`_historyEnsureArr`, `draw`, `updateStatus`) ahead of extracting it.
+
 - **ES-module migration, step 12 — fretboard position math (R2).**
   `src/position.js` (`main.js` 18,802 → 18,671): `_absolutePitch`, the
   `@pure:position-cycle` pures (same-pitch candidate enumeration and stepping)

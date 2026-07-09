@@ -20,30 +20,8 @@
  * Run: node tests/suggest_position_persist.test.mjs
  */
 import assert from 'node:assert';
-import fs from 'node:fs';
-import {
-    _clearSuggested, _isSuggested, _markSuggested, _suggestedNotes,
-} from '../src/notes.js';
-
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-function extractBlock(name) {
-    const re = new RegExp('/\\* @pure:' + name + ':start[\\s\\S]*?@pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) { console.error(`FAIL: @pure:${name} block not found`); process.exit(1); }
-    return m[0];
-}
-function extractByKeyword(keyword, label) {
-    const start = src.indexOf(keyword);
-    assert.ok(start >= 0, `${label || keyword} must exist`);
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-    }
-    throw new Error(`unbalanced braces extracting ${label || keyword}`);
-}
-const extractFn = name => extractByKeyword('function ' + name + '(', 'function ' + name);
+import * as marks from '../src/notes.js';
+import { S } from '../src/state.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -61,27 +39,17 @@ function fakeStore() {
     };
 }
 
+// Everything under test now lives in src/notes.js, so there is no sandbox left:
+// drive the REAL `S` and install the fake store on globalThis, which is where the
+// module resolves `localStorage` at call time. Each env builds fresh note objects,
+// so the identity-keyed WeakSet cannot leak marks between cases.
 function makeEnv(seed, filename) {
-    const S = {
-        currentArr: 0,
-        filename: filename || 'song.archive',
-        arrangements: [{ name: 'Lead', notes: seed.map(n => ({ ...n })) }],
-    };
     const localStorage = fakeStore();
-    const body = '"use strict";'
-        + extractBlock('suggest-marks-persist')
-        + '\n' + extractFn('_suggestedCount')
-        + '\n' + extractFn('_saveSuggestedMarks')
-        + '\n' + extractFn('_restoreSuggestedMarks')
-        + '\nreturn { _suggestedCount, _saveSuggestedMarks, _restoreSuggestedMarks,'
-        + ' _markSuggested, _clearSuggested, _isSuggested,'
-        + ' _suggestedParsePure, _suggestedStorageKeyPure, _applySuggestedMarksPure };';
-    // The mark WeakSet moved to src/notes.js; inject the real fns. Each env makes
-    // fresh note objects, so identity-keyed marks cannot leak between cases.
-    const env = new Function('S', 'localStorage',
-        '_markSuggested', '_clearSuggested', '_isSuggested', '_suggestedNotes', body)(
-        S, localStorage, _markSuggested, _clearSuggested, _isSuggested, _suggestedNotes);
-    return { S, env, localStorage, notes: () => S.arrangements[0].notes };
+    globalThis.localStorage = localStorage;
+    S.currentArr = 0;
+    S.filename = filename || 'song.archive';
+    S.arrangements = [{ name: 'Lead', notes: seed.map(n => ({ ...n })) }];
+    return { S, env: marks, localStorage, notes: () => S.arrangements[0].notes };
 }
 
 // Swap arr.notes for fresh objects with the SAME identities — models what a

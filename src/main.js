@@ -82,6 +82,7 @@ import {
     PIANO_LANE_H,
     _inKeyboardGutterPure,
     _partViewKeyPure,
+    _rollLockNotice,
     _rollMidiForNote,
     _rollPitchCtx,
     _rollReadOnly,
@@ -108,7 +109,10 @@ import {
     _markSuggested,
     _resizeSustainsForDeltaPure,
     _resizeTargetIndicesPure,
-    _suggestedNotes,
+    _restoreSuggestedMarks,
+    _saveSuggestedMarks,
+    _suggestedCount,
+    _suggestedStorageKeyPure,
     bendPresetCurve,
     chords,
     nextUnusedStrumGroup,
@@ -669,11 +673,6 @@ function _loopStripOnMouseUp() {
     draw();
     return true;
 }
-
-function _rollLockNotice() {
-    setStatus('Piano roll is read-only for fretted parts — Shift+↑/↓ cycles same-pitch positions; switch to String view to edit (suggest-position editing is coming)');
-}
-
 // Onset-snap tolerance (seconds): how close a note's placement must be to a
 // detected transient to snap onto it instead of the grid. ~70 ms spans the
 // grid-vs-attack gap on real recordings without hijacking clearly off-onset
@@ -1738,111 +1737,6 @@ function _canMoveString(direction) {
 // it never silently decides — "a confidently-wrong tab is worse than an
 // honest gap."
 // ────────────────────────────────────────────────────────────────────
-
-// Suggested-position marks: a module-scoped WeakSet of note objects the roll
-// RESOLVED (rather than the user picking). This MUST be transient UI state and
-// never a note field — `_buildSaveBody`/`reconstructChords` serialize solo
-// notes by reference (an underscore field would leak to the wire) and rebuild
-// chord members through an explicit {time,string,fret,sustain,techniques} mapper
-// (an extra field would vanish). A WeakSet is invisible to serialization by
-
-// Count of still-suggested (unconfirmed) notes in the current arrangement —
-// drives the "positions unresolved: N" status nudge.
-function _suggestedCount() {
-    if (typeof S === 'undefined' || !S.arrangements || !S.arrangements.length) return 0;
-    const arr = S.arrangements[S.currentArr];
-    if (!arr || !Array.isArray(arr.notes)) return 0;
-    let n = 0;
-    for (const note of arr.notes) if (_suggestedNotes.has(note)) n++;
-    return n;
-}
-
-// Suggested-mark PERSISTENCE (editor-pref, keyed by filename, NEVER in the pack
-// — mirrors beat-lock, §6/D15). The WeakSet above is object-keyed, so a save's
-// flatten+reconstructChords rebuild and a reload both mint fresh note objects
-// and DROP every mark: after a reload the machine's UNREVIEWED guesses would
-// render as CONFIRMED and "positions unresolved: N" would reset to 0, losing
-// the honest-gap contract. We persist each marked note's STABLE identity
-// {time,string,fret} to localStorage and re-attach on load / post-save reflatten.
-// Scoped PER ARRANGEMENT (matches _suggestedCount): the key carries the
-// arrangement index, so marks authored on arrangement N restore onto N (a reload
-// resets to arr 0, and a later switch to N re-attaches N's marks) instead of
-// bleeding onto arr 0. Successive saves accumulate a key per arrangement; only
-// the arrangement current AT a given save updates that save. Index (not name) is
-// the discriminator — a part reorder is an accepted, cosmetic-only skew (marks
-// are advisory). A Save-As to a new filename MIGRATES the keys to the new name
-// (see editorSaveAsSloppakConfirm) so the guesses stay honest in the new file.
-/* @pure:suggest-marks-persist:start */
-function _suggestedStorageKeyPure(filename, arrIdx) {
-    return 'editorSuggested:' + (filename || '') + ':' + (arrIdx >= 0 ? arrIdx : 0);
-}
-function _suggestedParsePure(raw) {
-    let arr = null;
-    try { arr = JSON.parse(raw); } catch (_) { return []; }
-    if (!Array.isArray(arr)) return [];
-    const out = [];
-    for (const e of arr) {
-        if (!e || typeof e !== 'object') continue;
-        const t = Number(e.time), s = Number(e.string), f = Number(e.fret);
-        if (Number.isFinite(t) && t >= 0
-            && Number.isInteger(s) && s >= 0 && Number.isInteger(f) && f >= 0) {
-            out.push({ time: t, string: s, fret: f });
-        }
-    }
-    return out;
-}
-// Re-mark the notes in `nn` matching a persisted identity (string+fret exact,
-// |time−t| ≤ tol). Greedy 1:1 — each stored mark claims at most one note and
-// each note is claimed once — so a degenerate duplicate identity can't over-mark.
-// `addFn(note)` repopulates the mark (injected so this stays module-state-free).
-function _applySuggestedMarksPure(nn, marks, tol, addFn) {
-    const used = new Set();
-    for (const m of marks) {
-        for (let i = 0; i < nn.length; i++) {
-            if (used.has(i)) continue;
-            const n = nn[i];
-            if (n && n.string === m.string && n.fret === m.fret
-                && Math.abs((n.time || 0) - m.time) <= tol) {
-                addFn(n); used.add(i); break;
-            }
-        }
-    }
-}
-/* @pure:suggest-marks-persist:end */
-
-// Persist the current arrangement's suggested marks. Call BEFORE a save churns
-// note identity so localStorage matches exactly what lands on disk.
-function _saveSuggestedMarks() {
-    // No real filename (create mode sets S.filename = '') ⇒ skip: an empty key
-    // would be a shared slot every unsaved session bleeds marks into.
-    if (typeof S === 'undefined' || !S.filename || !S.arrangements || !S.arrangements.length) return;
-    const arr = S.arrangements[S.currentArr];
-    const nn = (arr && Array.isArray(arr.notes)) ? arr.notes : [];
-    const marks = [];
-    for (const n of nn) {
-        if (n && _suggestedNotes.has(n)) {
-            marks.push({ time: Math.round((n.time || 0) * 1000) / 1000, string: n.string, fret: n.fret });
-        }
-    }
-    const key = _suggestedStorageKeyPure(S.filename, S.currentArr);
-    try {
-        if (marks.length) localStorage.setItem(key, JSON.stringify(marks));
-        else localStorage.removeItem(key);
-    } catch (_) { /* localStorage unavailable */ }
-}
-
-// Re-attach persisted marks onto the current arrangement's (freshly rebuilt)
-// note objects — after a load or a post-save reflatten. Adds straight to the
-// WeakSet so it never re-persists. tol 2ms covers the ms-rounded save identity.
-function _restoreSuggestedMarks() {
-    if (typeof S === 'undefined' || !S.filename || !S.arrangements || !S.arrangements.length) return;
-    const arr = S.arrangements[S.currentArr];
-    const nn = (arr && Array.isArray(arr.notes)) ? arr.notes : [];
-    let raw = null;
-    try { raw = localStorage.getItem(_suggestedStorageKeyPure(S.filename, S.currentArr)); } catch (_) {}
-    _applySuggestedMarksPure(nn, _suggestedParsePure(raw), 2e-3, n => _suggestedNotes.add(n));
-}
-
 // Human-readable reasons for a resolver refusal (resolved:null), shown in the
 // confirm popover's subtitle or a status line when no free string exists.
 const _ROLL_REFUSE_REASONS = {

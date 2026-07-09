@@ -2,8 +2,9 @@
  *
  * Which view a part opens in (fretted lanes vs piano roll), the persisted
  * per-part preference behind that, and the roll's own MIDI⇄y geometry. Reads
- * `S`, the lane model and the canvas geometry; the only DOM it touches is
- * `localStorage`, inside `_viewPrefs`/`_viewPrefsSave`.
+ * `S`, the lane model and the canvas geometry. It touches the browser in two
+ * places only: `localStorage`, inside `_viewPrefs`/`_viewPrefsSave`; and
+ * `_rollLockNotice`, which reports through `setStatus` (src/ui.js).
  *
  * `PIANO_LANE_H` and `pianoRange` are `export let`, not consts: they are
  * re-derived per arrangement. Their sole writer, `updatePianoRange`, lives here,
@@ -13,6 +14,7 @@
  */
 
 import { WAVEFORM_H } from './geometry.js';
+import { setStatus } from './ui.js';
 import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
@@ -107,6 +109,10 @@ export function isKeysMode() {
 // stays locked until the suggest-position write path exists — the roll
 // must never write string/fret by silent guess.
 export function _rollReadOnly() { return isKeysMode() && !isKeysArr(); }
+
+export function _rollLockNotice() {
+    setStatus('Piano roll is read-only for fretted parts — Shift+↑/↓ cycles same-pitch positions; switch to String view to edit (suggest-position editing is coming)');
+}
 
 // Sounding-pitch context for showing a FRETTED part in the roll — hoisted
 // once per draw/hit-test pass, never per note. Null for keys parts (their
