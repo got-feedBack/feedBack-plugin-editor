@@ -740,3 +740,461 @@ export class SetDrumVelocityCmd {
     }
 }
 /* @pure:drum-cmds:end */
+
+// ════════════════════════════════════════════════════════════════════
+// Canvas interaction and the toolbar buttons.
+//
+// main.js routes the raw canvas events here once S.drumEditMode is on, and
+// forwards Delete / velocity keys. It kept these when the model moved out in
+// #166 only because they had no section banner of their own; they belong here.
+//
+// `_refreshTempoMapButton` lives in src/tempo.js, which already imports this
+// module — so it crosses through `host` rather than closing a cycle.
+// ════════════════════════════════════════════════════════════════════
+
+// Add a hit at the snap-aligned time on the lane under (x, y). Returns
+// true if added (false if click was outside the lane grid).
+function _drumEditorAddHit(x, y) {
+    const piece = _drumPieceAtY(y);
+    if (!piece) return false;
+    // Reject clicks in the left label gutter — xToTime(x) there is
+    // negative and clamps to t=0, which would silently add an off-screen
+    // hit at the start of the song.
+    if (x < LABEL_W) return false;
+    const rawT = xToTime(x);
+    // Snap using host.snapTime() so drum hits align with the rest of the editor.
+    // Clamped on BOTH sides, for two different reasons: before, because the
+    // padding region left of t=0 would hand snapTime a negative time; after,
+    // because when the first beat is offset from 0 snapTime can still round
+    // backward past zero.
+    const t = Math.max(0, host.snapTime(Math.max(0, rawT)));
+    // Sort, dirty flag, and the ⟳ Drums (N) toolbar count all live in the
+    // command's exec() so undo/redo replay them identically.
+    S.history.exec(new AddDrumHitCmd({ t: Math.round(t * 1000) / 1000, p: piece, v: 100 }));
+    return true;
+}
+
+export function _drumEditorOnMouseDown(e, x, y) {
+    // Click in the waveform area above the lane grid → set cursor (no note edit).
+    if (y < WAVEFORM_H) {
+        // Waveform-area click sets the cursor like in guitar mode.
+        S.cursorTime = Math.max(0, xToTime(x));
+        if (S.playing) { host.stopPlayback(); host.startPlayback(); }
+        host.draw();
+        return;
+    }
+    if (y > WAVEFORM_H + _drumPieceCount() * DRUM_LANE_H) return;
+    // Clicks in the left lane-label gutter aren't on the time grid —
+    // ignore them so they neither hit-test nor add a hit.
+    if (x < LABEL_W) return;
+
+    const idx = _drumHitAtPoint(x, y);
+    if (idx >= 0) {
+        // Clicked on an existing hit. Three paths from here:
+        //   - plain click → ensure that hit is in the selection, then start
+        //     a drag that moves every selected hit together.
+        //   - Alt+click → start a VELOCITY drag on the selection (vertical,
+        //     piano-roll idiom: up = louder, 1 step/px).
+        //   - Shift+click → toggle the hit in/out of the selection (no drag).
+        if (e.altKey) {
+            if (!S.drumSel.has(idx)) {
+                S.drumSel.clear();
+                S.drumSel.add(idx);
+            }
+            const indices = [...S.drumSel];
+            S.drag = {
+                type: 'drum-velocity',
+                startY: y,
+                indices,
+                origVs: indices.map(i => S.drumTab.hits[i].v),
+                moved: false,
+            };
+            host.draw();
+            return;
+        }
+        if (e.shiftKey) {
+            if (S.drumSel.has(idx)) S.drumSel.delete(idx);
+            else S.drumSel.add(idx);
+            host.draw();
+            return;
+        }
+        // If the click target isn't already selected, clear and select it
+        // so the user can grab-and-drag without a separate select click.
+        if (!S.drumSel.has(idx)) {
+            S.drumSel.clear();
+            S.drumSel.add(idx);
+        }
+        // Snapshot the selected hits so move math can compute deltas off
+        // the original times / pieces (not the live mutating values).
+        const indices = [...S.drumSel];
+        const origTimes = indices.map(i => S.drumTab.hits[i].t);
+        const origPieces = indices.map(i => S.drumTab.hits[i].p);
+        S.drag = {
+            type: 'drum-move',
+            startX: x,
+            startY: y,
+            // Anchor time for delta-snap: cursor time at drag start, used by
+            // _drumEditorOnDragMove to compute a beat-aware snapped delta via
+            // host.snapTime(t0 + rawDt) - host.snapTime(t0).
+            startTime: xToTime(x),
+            indices,
+            origTimes,
+            origPieces,
+            moved: false,
+        };
+        host.draw();
+        return;
+    }
+    // Clicked empty grid spot. Defer the add-vs-marquee decision to
+    // mouseup: a stationary press adds a hit (the long-standing behaviour),
+    // a press-and-drag draws a rubber-band selection box (parity with the
+    // guitar/keys editor). The selection is NOT cleared here — clearing is
+    // deferred to mouseup so a press that neither moves nor lands a valid
+    // hit leaves the existing selection intact (no-op), and a non-shift
+    // marquee replaces it while shift unions onto it.
+    S.drag = {
+        type: 'drum-select',
+        startX: x, startY: y,
+        curX: x, curY: y,
+        // Where to drop a hit if this turns out to be a click, not a drag.
+        addX: x, addY: y,
+        shift: e.shiftKey,
+        moved: false,
+    };
+    host.draw();
+}
+
+// Apply an in-progress drum-move drag — called from _onMouseMoveBody
+// when S.drag.type === 'drum-move'. Computes a single time delta from
+// the cursor drift (snapped to the editor's snap grid) and applies it
+// uniformly to every selected hit. Snapping per-hit collapses sub-grid
+// detail (e.g. 16th-note double-bass gets quantised to quarter-notes if
+// snap is set to ¼), so we snap the DELTA once and let it ride.
+export function _drumEditorOnDragMove(x, y) {
+    if (!S.drag || S.drag.type !== 'drum-move' || !S.drumTab) return;
+    const dx = x - S.drag.startX;
+    const dy = y - S.drag.startY;
+    const rawDt = dx / S.zoom;
+    const dLanes = Math.round(dy / DRUM_LANE_H);
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) S.drag.moved = true;
+    // Don't mutate hit positions for sub-2px movements: the threshold above
+    // distinguishes a click (no move) from a real drag. Applying snapped
+    // deltas before `moved` is set could snap a note across a grid boundary
+    // even though the user never intended to drag.
+    if (!S.drag.moved) return;
+    // Guard against a malformed/older drum_tab whose `hits` is missing or
+    // not an array — indexing it below would throw mid-drag. Matches the
+    // defensive `|| []` other drum-editor helpers use.
+    if (!Array.isArray(S.drumTab.hits)) return;
+    const hits = S.drumTab.hits;
+    // Snap the COMMON delta once by anchoring at the drag start time and
+    // delegating to host.snapTime(), which respects per-surrounding-beat
+    // intervals and handles tempo changes correctly. This preserves the
+    // relative spacing between selected hits even when the editor's snap
+    // grid is coarser than the chart's note resolution.
+    const t0 = S.drag.startTime ?? 0;
+    const rawTarget = t0 + rawDt;
+    const snappedDt = host.snapTime(rawTarget) - host.snapTime(t0);
+    for (let k = 0; k < S.drag.indices.length; k++) {
+        const idx = S.drag.indices[k];
+        const h = hits[idx];
+        if (!h) continue;
+        const newT = Math.max(0, S.drag.origTimes[k] + snappedDt);
+        h.t = Math.round(newT * 1000) / 1000;
+
+        // Lane (piece) movement — via the density lane table. Skip remap
+        // for unknown piece ids (-1) to avoid silently mapping the hit to
+        // lane 0 on the first drag. Staying on the SAME row keeps the
+        // hit's original piece (a time-only drag in Compact must never
+        // rewrite hh_open → hh_closed); crossing rows assigns the target
+        // row's canonical piece — in Full that's the row's only piece,
+        // exactly today's behavior.
+        const laneTable = _drumLanes();
+        const origLaneIdx = _drumLaneIdxForPiece(S.drag.origPieces[k]);
+        if (origLaneIdx >= 0) {
+            const newLaneIdx = Math.max(
+                0,
+                Math.min(laneTable.length - 1, origLaneIdx + dLanes),
+            );
+            h.p = newLaneIdx === origLaneIdx
+                ? S.drag.origPieces[k]
+                : laneTable[newLaneIdx].canonical;
+        }
+    }
+}
+
+// Finalise a drum-move drag — keep the hits array sorted by time so the
+// renderer's binary-search-friendly early-break stays correct, then
+// remap the selection indices through the sort. Called from onMouseUp
+// when S.drag.type === 'drum-move'.
+export function _drumEditorOnDragEnd() {
+    if (!S.drag || S.drag.type !== 'drum-move' || !S.drumTab) return;
+    if (S.drag.moved && Array.isArray(S.drumTab.hits)) {
+        // The drag applied positions live; revert each hit to its origin and
+        // let the command's exec() re-apply the move — the same finalize
+        // pattern as the note-drag MoveNoteCmd path, so undo/redo replay the
+        // exact drag result (sort + selection remap included).
+        const hits = S.drumTab.hits;
+        const refs = [], origT = [], origP = [], newT = [], newP = [];
+        for (let k = 0; k < S.drag.indices.length; k++) {
+            const h = hits[S.drag.indices[k]];
+            if (!h) continue;
+            refs.push(h);
+            origT.push(S.drag.origTimes[k]);
+            origP.push(S.drag.origPieces[k]);
+            newT.push(h.t);
+            newP.push(h.p);
+            h.t = S.drag.origTimes[k];
+            h.p = S.drag.origPieces[k];
+        }
+        // Skip the command when the snapped delta was a no-op (sub-grid drag
+        // that rounded back to the start) — no state changed, so pushing an
+        // empty command would only pollute the undo stack.
+        const changed = newT.some((t, k) => t !== origT[k])
+            || newP.some((p, k) => p !== origP[k]);
+        if (refs.length && changed) {
+            S.history.exec(new MoveDrumHitsCmd(refs, origT, origP, newT, newP));
+        }
+    }
+    S.drag = null;
+    host.draw();
+}
+
+// Apply an in-progress velocity drag — vertical drift maps 1 velocity step
+// per pixel off each hit's ORIGINAL value (not the live one, so the drag
+// never accumulates). Live-preview only; the commit happens on drag end.
+export function _drumEditorOnVelocityDragMove(y) {
+    if (!S.drag || S.drag.type !== 'drum-velocity' || !S.drumTab) return;
+    if (!Array.isArray(S.drumTab.hits)) return;
+    const dy = y - S.drag.startY;
+    if (Math.abs(dy) > 2) S.drag.moved = true;
+    if (!S.drag.moved) return;
+    let shown = null;
+    for (let k = 0; k < S.drag.indices.length; k++) {
+        const h = S.drumTab.hits[S.drag.indices[k]];
+        if (!h) continue;
+        h.v = _drumVelocityDragValuePure(S.drag.origVs[k], dy);
+        if (shown === null) shown = h.v;
+    }
+    if (shown !== null) {
+        setStatus(`Velocity ${shown}${S.drag.indices.length > 1 ? ` (${S.drag.indices.length} hits)` : ''}`);
+    }
+}
+
+// Finalise a velocity drag — revert to the originals and let the command's
+// exec() re-apply, so undo/redo replay the exact result (the MoveDrumHitsCmd
+// finalize pattern).
+export function _drumEditorOnVelocityDragEnd() {
+    if (!S.drag || S.drag.type !== 'drum-velocity' || !S.drumTab) {
+        S.drag = null;
+        host.draw();
+        return;
+    }
+    if (S.drag.moved && Array.isArray(S.drumTab.hits)) {
+        const refs = [], newVs = [];
+        let changed = false;
+        for (let k = 0; k < S.drag.indices.length; k++) {
+            const h = S.drumTab.hits[S.drag.indices[k]];
+            if (!h) continue;
+            refs.push(h);
+            newVs.push(h.v);
+            if (h.v !== S.drag.origVs[k]) changed = true;
+            // Revert to the original (including "no v" hits, so a no-op
+            // drag leaves the wire data untouched).
+            if (S.drag.origVs[k] === undefined) delete h.v;
+            else h.v = S.drag.origVs[k];
+        }
+        if (refs.length && changed) {
+            S.history.exec(new SetDrumVelocityCmd(refs, newVs));
+        }
+    }
+    S.drag = null;
+    host.draw();
+}
+
+// Nudge / set the selection's velocity from the keyboard (Shift+↑/↓ = ±10,
+// A = accent, N = normal). One undoable command per keypress.
+export function _drumEditorNudgeVelocity(delta) {
+    if (!S.drumTab || !Array.isArray(S.drumTab.hits)) return;
+    const refs = _drumSelectedRefs();
+    if (!refs.length) return;
+    const newVs = refs.map(h =>
+        _drumClampVelocityPure((typeof h.v === 'number' ? h.v : 100) + delta));
+    S.history.exec(new SetDrumVelocityCmd(refs, newVs));
+    setStatus(`Velocity ${newVs[0]}${refs.length > 1 ? ` (${refs.length} hits)` : ''}`);
+}
+export function _drumEditorSetVelocity(value, label) {
+    if (!S.drumTab || !Array.isArray(S.drumTab.hits)) return;
+    const refs = _drumSelectedRefs();
+    if (!refs.length) return;
+    S.history.exec(new SetDrumVelocityCmd(refs, value));
+    setStatus(`${label} (velocity ${_drumClampVelocityPure(value)}, ${refs.length} hit${refs.length === 1 ? '' : 's'})`);
+}
+
+// Finalise a drum marquee drag. The selection is cleared lazily here (not
+// on mousedown), so a press that does nothing leaves it intact:
+//   - real drag (moved): non-shift replaces the selection, shift unions
+//     onto it; either way every hit whose centre falls inside the
+//     rubber-band rect is added.
+//   - stationary press (no move): a plain click → add a hit at the press
+//     point (clearing the selection only if the hit landed), matching the
+//     pre-marquee behaviour.
+// Called from onMouseUp when S.drag.type === 'drum-select'.
+export function _drumEditorOnSelectEnd() {
+    if (!S.drag || S.drag.type !== 'drum-select' || !S.drumTab) {
+        S.drag = null;
+        host.draw();
+        return;
+    }
+    if (!S.drag.moved) {
+        // Plain click on empty grid → add a hit. Only clear the selection
+        // if the hit actually landed (a press on a dead spot — e.g. the
+        // bottom grid border where _drumPieceAtY returns null — is a no-op
+        // and must not wipe the current selection).
+        const added = _drumEditorAddHit(S.drag.addX, S.drag.addY);
+        S.drag = null;
+        if (added) S.drumSel.clear();
+        host.draw();
+        return;
+    }
+    // Marquee. Non-shift replaces the selection; shift unions onto it.
+    if (!S.drag.shift) S.drumSel.clear();
+    // Select hits whose drawn centre lies inside the rect.
+    const x1 = Math.min(S.drag.startX, S.drag.curX);
+    const y1 = Math.min(S.drag.startY, S.drag.curY);
+    const x2 = Math.max(S.drag.startX, S.drag.curX);
+    const y2 = Math.max(S.drag.startY, S.drag.curY);
+    const hits = Array.isArray(S.drumTab.hits) ? S.drumTab.hits : [];
+    for (let i = 0; i < hits.length; i++) {
+        const h = hits[i];
+        const laneIdx = _drumLaneIdxForPiece(h.p);
+        if (laneIdx < 0) continue;  // unknown piece → not on the grid
+        const hx = timeToX(h.t);
+        const hy = _drumLaneIdxToY(laneIdx) + DRUM_LANE_H / 2;
+        if (hx >= x1 && hx <= x2 && hy >= y1 && hy <= y2) S.drumSel.add(i);
+    }
+    S.drag = null;
+    host.draw();
+}
+
+export function _drumEditorDeleteSelection() {
+    if (!S.drumTab || !S.drumSel.size) return;
+    if (!Array.isArray(S.drumTab.hits)) return;
+    const refs = _drumSelectedRefs();
+    if (!refs.length) return;
+    S.history.exec(new DeleteDrumHitsCmd(refs));
+}
+
+export function _drumEditorToggleArticulation(kind) {
+    if (!S.drumTab) return;
+    // Guard a malformed/older drum_tab with missing/non-array `hits`.
+    if (!Array.isArray(S.drumTab.hits)) return;
+    const field = kind === 'g' ? 'g' : kind === 'f' ? 'f' : 'k';
+    let refs = _drumSelectedRefs();
+    if (field === 'k') {
+        // Choke is only meaningful on cymbal pieces; filter here so the
+        // command holds exactly the hits it will toggle (symmetric undo).
+        refs = refs.filter(h => {
+            const meta = DRUM_PIECE_META[h.p];
+            return meta && meta.cat === 'cymbal';
+        });
+    }
+    if (!refs.length) return;
+    S.history.exec(new ToggleDrumArticulationCmd(refs, field));
+}
+
+// ── Drum-edit toggle button (injected next to the +Drums button) ─────
+
+function _ensureDrumEditButton() {
+    let btn = document.getElementById('editor-drum-edit-btn');
+    if (!btn) {
+        const drumsBtn = document.getElementById('editor-add-drums-btn');
+        if (!drumsBtn) return null;
+        btn = document.createElement('button');
+        btn.id = 'editor-drum-edit-btn';
+        btn.type = 'button';
+        btn.textContent = '🥁 Edit Drums';
+        btn.className = 'px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden';
+        btn.title = 'Open the piece-lane drum editor';
+        btn.onclick = () => {
+            S.drumEditMode = !S.drumEditMode;
+            S.drumSel = new Set();
+            // Close any open guitar/keys note UI and drop the stale
+            // arrangement selection — while the drum grid is showing, the
+            // note context menu / add-note popover would otherwise stay
+            // interactive and could mutate the hidden arrangement.
+            host.hideContextMenu();
+            host.hideAddNote();
+            S.sel.clear();
+            // Finalize any in-progress canvas drag before the mode
+            // switch — commit a moved drag rather than discard it.
+            host.finalizeActiveDrag();
+            // Tempo, drum, and parts modes are mutually exclusive.
+            if (S.drumEditMode) {
+                S.tempoMapMode = false;
+                S.tempoSel = -1;
+                S.partsViewMode = false;
+            }
+            _refreshDrumEditButton();
+            host.refreshTempoMapButton();
+            host.refreshPartsViewButton();
+            host.draw();
+        };
+        drumsBtn.parentNode.insertBefore(btn, drumsBtn.nextSibling);
+    }
+    return btn;
+}
+
+let _drumEditBtnState = '';  // cached signature; button only updates when state changes
+
+export function _refreshDrumEditButton() {
+    const btn = _ensureDrumEditButton();
+    if (!btn) return;
+    // Memoize on the fields that actually affect the button so it
+    // does not cause layout/paint work on every requestAnimationFrame.
+    // Include format: drum editing can only be persisted in sloppak sessions.
+    const sig = `${!!S.drumTab}|${!!S.sessionId}|${!!S.drumEditMode}|${S.format}`;
+    if (sig === _drumEditBtnState) return;
+    _drumEditBtnState = sig;
+    btn.classList.toggle('hidden', !S.drumTab || !S.sessionId || S.format !== 'sloppak');
+    if (S.drumEditMode) {
+        btn.textContent = '🎸 Back to Notes';
+        btn.classList.add('bg-amber-600', 'hover:bg-amber-500');
+        btn.classList.remove('bg-dark-600', 'hover:bg-dark-500');
+    } else {
+        btn.textContent = '🥁 Edit Drums';
+        btn.classList.remove('bg-amber-600', 'hover:bg-amber-500');
+        btn.classList.add('bg-dark-600', 'hover:bg-dark-500');
+    }
+}
+
+// ── Drum row-density toggle (Full / Compact) ─────────────────────────
+let _drumDensityBtnState = '';
+function _ensureDrumDensityButton() {
+    let btn = document.getElementById('editor-drum-density-btn');
+    if (!btn) {
+        const editBtn = document.getElementById('editor-drum-edit-btn');
+        if (!editBtn) return null;
+        btn = document.createElement('button');
+        btn.id = 'editor-drum-density-btn';
+        btn.type = 'button';
+        btn.className = 'px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden';
+        btn.title = 'Row density: Full = one row per drum piece; Compact = family rows '
+            + '(crash / hi-hat / ride / toms / floor toms / snare / kick — the community '
+            + '7-row shape). Hits keep their real pieces and colors either way; adding in '
+            + 'a Compact row writes the family’s main piece, and dragging onto another '
+            + 'row does too.';
+        btn.onclick = () => _editorToggleDrumDensity();
+        editBtn.insertAdjacentElement('afterend', btn);
+    }
+    return btn;
+}
+export function _refreshDrumDensityButton() {
+    const btn = _ensureDrumDensityButton();
+    if (!btn) return;
+    const sig = `${!!S.drumEditMode}|${_drumDensityMode()}`;
+    if (sig === _drumDensityBtnState) return;
+    _drumDensityBtnState = sig;
+    btn.classList.toggle('hidden', !S.drumEditMode);
+    btn.textContent = _drumDensityMode() === 'compact' ? 'Rows: Compact' : 'Rows: Full';
+}

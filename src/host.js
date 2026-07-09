@@ -82,6 +82,14 @@ export const host = {
     /** The 🥁 button's visibility depends on which mode is active. */
     refreshDrumEditButton: () => {},
     /**
+     * The 🎵 Tempo Map button. Lives in src/tempo.js, and src/drum.js needs it
+     * when leaving drum mode — but tempo.js already imports drum.js, so a direct
+     * import would close a cycle. It crosses here instead.
+     */
+    refreshTempoMapButton: () => {},
+    /** The Parts-view toggle, whose enabled state tracks the active mode. */
+    refreshPartsViewButton: () => {},
+    /**
      * Commit or clear whatever canvas drag is in flight before a mode switch.
      * It dispatches across tempo, drum, handshape and pan drags, so it belongs
      * to none of them and stays in main.js.
