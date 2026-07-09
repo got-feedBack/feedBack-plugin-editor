@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Opening a song from the library card or the 3D highway left an invisible
+  wall over the canvas.** `window.editSong` calls `showScreen('plugin-editor')`
+  and `loadCDLC(filename)` in the same tick. The screen activation arms the
+  entry landing on a `setTimeout(…, 80)`, which asks *"is anything loaded?"*
+  only when it fires — so any load still fetching at that moment loses the race,
+  and nothing ever took the landing down again (its own buttons were the only
+  `remove()` call sites). A large feedpak therefore finished loading underneath
+  a `fixed inset-0 z-50` overlay.
+  That would be merely ugly if the overlay were inert. It is not: `mousedown` is
+  bound to the canvas while `mousemove` is bound to `document`, so the overlay
+  swallowed every click while the cursor still updated — a note's right edge
+  would show `ew-resize` and then refuse to grab. Now a load in flight suppresses
+  the landing, and starting one dismisses a landing already up.
+
 - **Sustain edge-drag was unusable in the piano roll.** `hitNote` branches on
   `isKeysMode()` and resolves a note to its sounding-pitch row via `midiToY`;
   `hitNoteEdge` did not — it always computed `y` from `strToY(n.string)`, the
