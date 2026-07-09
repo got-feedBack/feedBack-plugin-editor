@@ -24,34 +24,19 @@
  * Run: node tests/drum_undo.test.mjs
  */
 import assert from 'node:assert';
-import fs from 'node:fs';
+import {
+    AddDrumHitCmd, DeleteDrumHitsCmd, MoveDrumHitsCmd, ToggleDrumArticulationCmd,
+    _drumSortAndRemapSel, setDrumHooks,
+} from '../src/drum.js';
 import { EditHistory } from '../src/history.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
-function extract(name) {
-    const re = new RegExp(
-        '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) {
-        console.error(`FAIL: @pure:${name} block not found in src/main.js`);
-        process.exit(1);
-    }
-    return m[0];
-}
-
-const drumBlock = extract('drum-cmds');
-
-// Build an isolated environment. The drum commands read S.drumTab/S.drumSel
-// and call updateArrangementSelector() (a DOM refresher — stubbed to a call
-// counter). EditHistory's doUndo/doRedo call draw()/updateStatus() (stubbed
-// no-ops) and read S.currentArr through a typeof guard, so passing S in makes
-// the tagging observable. _historyEnsureArr lives OUTSIDE the pure block on
-// purpose (it touches window/document); the typeof guard skips it here.
+// The drum commands and EditHistory are real imports now; both close over the
+// REAL `S` from src/state.js, so seed that rather than fabricating one. The
+// commands' one main.js callback (updateArrangementSelector, a DOM refresher)
+// arrives through setDrumHooks — stub it to a call counter.
 function makeEnv() {
-    // EditHistory is a real import and closes over the REAL `S`, so the sliced
-    // drum commands must share that object rather than a fabricated one.
     const S = seedState({
         drumTab: { hits: [] },
         drumSel: new Set(),
@@ -59,17 +44,10 @@ function makeEnv() {
         currentArr: 0,
     });
     const calls = { selector: 0 };
-    const env = new Function(
-        'S', 'updateArrangementSelector',
-        '"use strict";'
-        + drumBlock + '\n'
-        + 'return { AddDrumHitCmd, DeleteDrumHitsCmd, '
-        + 'MoveDrumHitsCmd, ToggleDrumArticulationCmd, _drumSortAndRemapSel };'
-    )(
-        S,
-        () => { calls.selector++; },
-    );
+    setDrumHooks({ updateArrangementSelector: () => { calls.selector++; } });
     trackHooks();
+    const env = { AddDrumHitCmd, DeleteDrumHitsCmd, MoveDrumHitsCmd,
+                  ToggleDrumArticulationCmd, _drumSortAndRemapSel };
     return { ...env, S, calls, history: new EditHistory() };
 }
 

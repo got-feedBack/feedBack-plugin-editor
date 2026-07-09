@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Tests for the advisory drum limb-lint (DAW 4.7):
  * _drumLimbConflictsPure flags physically-impossible simultaneities —
@@ -8,27 +7,22 @@
  *
  * All fail on main — the block doesn't exist there.
  *
- * Run: node tests/drum_limb_lint.test.js
+ * Run: node tests/drum_limb_lint.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import * as L from '../src/drum.js';
+import { S, bumpEditGen } from '../src/state.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-function extractBlock(name) {
-    const re = new RegExp('/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) { console.error(`FAIL: @pure:${name} not found`); process.exit(1); }
-    return m[0];
-}
+// One source-lock case remains: that the draw loop calls the MEMO, never the
+// O(n) pure pass. Everything else drives the real functions.
+const drumSrc = fs.readFileSync(new URL('../src/drum.js', import.meta.url), 'utf8');
+
 let passed = 0, failed = 0;
 function t(name, fn) {
     try { fn(); passed++; console.log('  ok ' + name); }
     catch (e) { failed++; console.error('  FAIL ' + name + '\n    ' + (e && e.message)); }
 }
-
-const L = new Function('"use strict";' + extractBlock('drum-limb-lint')
-    + '\nreturn { _drumLimbConflictsPure, _drumConflictIndexSetPure, DRUM_LIMB_EPSILON };')();
 
 // hits helper — time-sorted, as the editor keeps them.
 const H = (t, p) => ({ t, p });
@@ -156,76 +150,37 @@ t('_drumConflictIndexSetPure flattens every conflicted index, skips clean hits',
 // The pure clusterer is well-covered above; the real bugs live in the
 // draw-loop integration (per-frame recompute + the sorted-input assumption
 // vs. a live drum-move drag that mutates times in place before re-sorting).
-// The wrapper reads globals (S, editGen — the shared edit generation, now in
-// src/state.js), so we extract it
-// by brace-matching and eval it over injected fakes. These FAIL on pre-fix
-// code: the wrapper didn't exist and the draw called the pure fn directly.
-
-// Brace-match a function body from the `function name(` at `fnStart` — returns
-// the source through the matching close brace. Robust to nested/inner
-// `function ` declarations (a plain `\nfunction ` boundary is not).
-function braceEnd(fnStart) {
-    const open = src.indexOf('{', fnStart);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return i + 1;
-    }
-    return -1;
-}
-
-// Extract `let _drumLintCache … function _drumLimbConflicts(hits){…}` and run
-// it with the pure block + a mutable fake S / editGen in scope.
-function buildWrapper() {
-    const cacheAt = src.indexOf('let _drumLintCache');
-    const fnAt = src.indexOf('function _drumLimbConflicts(hits) {', cacheAt);
-    if (cacheAt < 0 || fnAt < 0) {
-        throw new Error('stateful _drumLimbConflicts wrapper not found (pre-fix?)');
-    }
-    const end = braceEnd(fnAt);
-    const wrapperSrc = src.slice(cacheAt, end);
-    return new Function(
-        '"use strict";'
-        + 'let S = { drag: null };'
-        + 'let editGen = 0;'
-        + extractBlock('drum-limb-lint')
-        + wrapperSrc
-        + '\nreturn {'
-        + '  fn: _drumLimbConflicts,'
-        + '  setDrag: d => { S.drag = d; },'
-        + '  setGen: g => { editGen = g; },'
-        + '};'
-    )();
-}
+// The wrapper reads the real `S.drag` and the real `editGen` (src/state.js),
+// so drive both directly rather than eval'ing it over injected fakes. The memo
+// lives in the module, so each case uses a FRESH hits array — the wrapper's
+// hitsRef check re-clusters a new reference on its own.
 
 t('memo wrapper flags the same conflicts as the pure fn when idle (no drag)', () => {
-    const W = buildWrapper();
-    const hits = [H(1, 'snare'), H(1, 'hh_closed'), H(1, 'crash_l')];
-    const got = W.fn(hits);
+    S.drag = null;
+    const got = L._drumLimbConflicts([H(1, 'snare'), H(1, 'hh_closed'), H(1, 'crash_l')]);
     assert.strictEqual(got.length, 1);
     assert.deepStrictEqual(got[0].reasons, ['hands']);
 });
 
 t('same edit-gen + same hits → memoized (identical reference, no recompute)', () => {
-    const W = buildWrapper();
+    S.drag = null;
     const hits = [H(1, 'snare'), H(1, 'hh_closed'), H(1, 'crash_l')];
-    const a = W.fn(hits);
-    const b = W.fn(hits);
+    const a = L._drumLimbConflicts(hits);
+    const b = L._drumLimbConflicts(hits);
     assert.strictEqual(a, b, 'second call must return the cached array, not re-cluster');
 });
 
 t('bumping the edit generation invalidates the memo', () => {
-    const W = buildWrapper();
+    S.drag = null;
     const hits = [H(1, 'snare'), H(1, 'hh_closed'), H(1, 'crash_l')];
-    const a = W.fn(hits);
-    W.setGen(1);
-    const b = W.fn(hits);
+    const a = L._drumLimbConflicts(hits);
+    bumpEditGen();
+    const b = L._drumLimbConflicts(hits);
     assert.notStrictEqual(a, b, 'an edit-gen bump must force a fresh cluster pass');
     assert.deepStrictEqual(b[0].reasons, ['hands'], 'and the fresh result is still correct');
 });
 
 t('LIVE drum-move drag pauses the lint — a transiently-unsorted array is never mismarked', () => {
-    const W = buildWrapper();
     // Mid-drag the hits array is NOT re-sorted: a late-time hit can sit BEFORE
     // early-time ones. The clusterer anchors on the first element, so a
     // descending order sweeps unrelated hits into one bogus cluster. Pin that
@@ -240,36 +195,31 @@ t('LIVE drum-move drag pauses the lint — a transiently-unsorted array is never
         'sorted, these are two clusters of <=2 hands — no real conflict');
     // The wrapper, during a drum-move drag, must return NO conflicts (paused),
     // never the spurious markers the raw pass would draw on the unsorted array.
-    W.setDrag({ type: 'drum-move' });
-    assert.deepStrictEqual(W.fn(unsorted), [], 'advisory lint pauses during a live drum-move drag');
+    S.drag = { type: 'drum-move' };
+    assert.deepStrictEqual(L._drumLimbConflicts(unsorted), [],
+        'advisory lint pauses during a live drum-move drag');
     // Drag done → lint resumes. `sorted` is a fresh array reference, so the
     // wrapper's hitsRef check re-clusters it on its own (no gen bump needed).
-    W.setDrag(null);
-    assert.deepStrictEqual(W.fn(sorted), [], 'after drop, sorted hits lint clean');
+    S.drag = null;
+    assert.deepStrictEqual(L._drumLimbConflicts(sorted), [], 'after drop, sorted hits lint clean');
 });
 
 // ── Source locks: the draw path uses the MEMO, not a per-frame pure pass ──
 
 t('the drum draw loop calls the memoized wrapper, not the O(n) pure fn', () => {
-    const fnStart = src.indexOf('function _drumEditorDraw');
-    assert.ok(fnStart >= 0, '_drumEditorDraw must exist');
-    const body = src.slice(fnStart, braceEnd(fnStart));  // brace-matched body
+    const fnStart = drumSrc.indexOf('function _drumEditorDraw');
+    assert.ok(fnStart >= 0, '_drumEditorDraw must exist in src/drum.js');
+    const open = drumSrc.indexOf('{', fnStart);
+    let depth = 0, end = -1;
+    for (let i = open; i < drumSrc.length; i++) {
+        if (drumSrc[i] === '{') depth++;
+        else if (drumSrc[i] === '}' && --depth === 0) { end = i + 1; break; }
+    }
+    const body = drumSrc.slice(fnStart, end);
     assert.ok(/_drumLimbConflicts\(hits\)/.test(body),
         'draw must call the memoized _drumLimbConflicts(hits)');
     assert.ok(!/_drumLimbConflictsPure\(/.test(body),
         'draw must NOT re-cluster with the pure helper every frame');
-});
-
-t('the lint memo key is built from the shared edit-generation counter', () => {
-    // Assert editGen participates in the CACHE KEY inside the wrapper
-    // itself — not merely that the two identifiers sit near each other in src.
-    const fnStart = src.indexOf('function _drumLimbConflicts(hits) {');
-    assert.ok(fnStart >= 0, '_drumLimbConflicts wrapper must exist');
-    const body = src.slice(fnStart, braceEnd(fnStart));
-    assert.ok(/editGen/.test(body),
-        'the wrapper must read editGen');
-    assert.ok(/const key\s*=[\s\S]*?gen/.test(body),
-        'the memo key must incorporate the edit generation');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
