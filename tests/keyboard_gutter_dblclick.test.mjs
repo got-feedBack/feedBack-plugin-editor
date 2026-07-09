@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Regression: a DOUBLE-click in the piano-roll keyboard gutter must NOT open
  * the Add Note dialog. The gutter is audition-only (single-click plays the
@@ -12,13 +11,13 @@
  * called for a gutter double-click, but IS called for a click in the note area.
  * Fails on pre-fix src/main.js (showAddNote fires in the gutter).
  *
- * Run: node tests/keyboard_gutter_dblclick.test.js
+ * Run: node tests/keyboard_gutter_dblclick.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { _inKeyboardGutterPure } from '../src/keys.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractFn(name) {
     const start = src.indexOf('function ' + name);
@@ -38,10 +37,8 @@ function extractBlock(name) {
     return m[0];
 }
 
-// Real _inKeyboardGutterPure straight from the source.
-const { _inKeyboardGutterPure } = new Function(
-    '"use strict";' + extractBlock('midi-freq') + '\nreturn { _inKeyboardGutterPure };'
-)();
+// _inKeyboardGutterPure is a real import from src/keys.js; `onDblClick` still
+// lives in src/main.js and is still brace-extracted.
 
 // Geometry matching src/main.js defaults.
 const LABEL_W = 52, WAVEFORM_H = 70, PIANO_LANE_H = 10;
