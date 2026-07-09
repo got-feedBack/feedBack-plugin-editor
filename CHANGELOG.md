@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **From-scratch song creation now behaves the way the button, the markup and the
+  server all say it should.** Typing a title enabled Create; clicking it answered
+  "Artist is required." Supplying an artist then demanded audio, which made the
+  advertised draft-now-audio-later flow impossible. The roster chips ("What are
+  you arranging?") were ignored — every draft came out as a lone Lead arrangement
+  — and the eight extended-metadata fields the modal collects (album artist,
+  track, disc, genres, language, ISRC, MBID, authors) were never sent.
+  Root cause: `main.js` defined `_editorDoBlankCreate` twice, and the second
+  definition silently won (see below). The client had been sending the server's
+  documented **back-compat** payload (`initial_arrangement` + `init_drum_tab`)
+  rather than the roster it asks for.
+  `_createGateOpen` (unit-tested), `screen.html` (only Title is marked required),
+  `editorDoCreate`'s own comment, and `create_sloppak` ("Artist is OPTIONAL for a
+  draft", "Draft-now, audio-later: audio is OPTIONAL") all already agreed. Only
+  the handler disagreed.
+
 - **`_editorDoBlankCreate` was defined twice, and the wrong one was running.**
   `main.js` carried two definitions of it. Inside the file's IIFE that is legal
   — function declarations hoist, and the last one in source order silently wins
@@ -18,9 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   intended audio to be optional for a draft-now project and validated the roster
   instead. The collision only surfaced because `src/create.js` is a module,
   where a duplicate declaration is a SyntaxError.
-  This release removes the dead definition and keeps the one that was executing,
-  so behaviour is unchanged. **Restoring the redesign's intent is a product
-  decision and needs its own change.**
+  The refactor that surfaced it removed the dead definition and kept the one that
+  was executing, so that change was behaviour-preserving. The entry above is the
+  follow-up that restores the intended behaviour.
 
 ### Changed
 
