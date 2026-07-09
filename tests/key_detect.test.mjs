@@ -1,22 +1,12 @@
-'use strict';
 /*
  * Tests for passive key detection (DAW 4.17): _detectKeyPure scores a 12-bin
  * pitch-class histogram against the 24 major/minor Krumhansl profiles and
  * returns the best-fit {tonic, scale}. Suggestion only; nothing mutates state.
  *
- * Fails on main — the block doesn't exist there.
- *
- * Run: node tests/key_detect.test.js
+ * Run: node tests/key_detect.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:key-detect:start \*\/[\s\S]*?\/\* @pure:key-detect:end \*\//);
-if (!m) { console.error('FAIL: @pure:key-detect block not found'); process.exit(1); }
-const K = new Function('"use strict";' + m[0]
-    + '\nreturn { _detectKeyPure, _KK_MAJOR_PROFILE, _KK_MINOR_PROFILE };')();
+import assert from 'node:assert';
+import * as K from '../src/theory.js';
 
 let passed = 0, failed = 0;
 function t(name, fn) {

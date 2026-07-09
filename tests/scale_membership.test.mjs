@@ -1,7 +1,6 @@
-'use strict';
 /*
  * Tests for the scale model behind the piano-roll in-key highlight
- * (@pure:scale block): SCALE_INTERVALS + _pcInScalePure, the tonic-relative
+ * (src/theory.js): SCALE_INTERVALS + _pcInScalePure, the tonic-relative
  * pitch-class membership every highlight render path consults.
  *
  * Display feature, so the habits that bite are adversarial inputs and proving
@@ -9,21 +8,10 @@
  * A bad/unknown state must return "in-key" so it never paints the whole roll
  * out-of-key. Every case drives the real function.
  *
- * Run: node tests/scale_membership.test.js
+ * Run: node tests/scale_membership.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:scale:start \*\/[\s\S]*?\/\* @pure:scale:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:scale block not found in src/main.js');
-    process.exit(1);
-}
-const { SCALE_INTERVALS, _pcInScalePure } = new Function(
-    '"use strict";' + m[0] + '\nreturn { SCALE_INTERVALS, _pcInScalePure };'
-)();
+import assert from 'node:assert';
+import { SCALE_INTERVALS, _pcInScalePure } from '../src/theory.js';
 
 // pitch classes: C0 C#1 D2 D#3 E4 F5 F#6 G7 G#8 A9 A#10 B11
 const C = 0, D = 2, E = 4, F = 5, Fs = 6, G = 7, A = 9, Bb = 10, B = 11, Cs = 1;

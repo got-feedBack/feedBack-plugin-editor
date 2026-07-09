@@ -1,0 +1,8 @@
+{
+    "name": "feedback-plugin-editor",
+    "version": "1.8.0",
+    "private": true,
+    "scripts": {
+        "test": "node --test"
+    }
+}

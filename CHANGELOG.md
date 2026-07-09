@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 2 — the first pure extractions (R2).** Two leaf
+  modules split out of `src/main.js` (21,176 → 21,036 lines), bodies moved
+  verbatim: `src/snap.js` (the snap-resolution table + subdivision arithmetic)
+  and `src/theory.js` (pitch-class names, `SCALE_INTERVALS` membership,
+  Krumhansl–Schmuckler key detection, scale-degree labels/colours). Both are
+  pure — no DOM, no editor state — and neither imports anything.
+  Their six test suites stop regex-slicing `@pure:` blocks out of source text
+  and **import the real modules** instead (`*.test.js` → `*.test.mjs`); the
+  `@pure:snap-options` / `scale` / `key-detect` / `scale-degree` markers are
+  retired with them. `tests/fret_key_highlight.test.mjs` and
+  `tests/chord_at_cursor.test.mjs` are hybrids — they still slice the
+  `@pure:fret-pitch` / `@pure:chord-id` blocks that remain in `main.js`, but
+  compose them against the real `src/theory.js`.
+  A root `package.json` (`npm test` → `node --test`) makes the org's reusable
+  CI run `.mjs` suites, which its bare `tests/*.test.js` glob would otherwise
+  skip silently; `src/package.json` (`"type": "module"`) scopes ESM to `src/`
+  so the 76 remaining CommonJS test files keep working unchanged.
 - **ES-module migration, step 1 — the bootstrap flip (R2).** `screen.js` is now a
   one-line `import './src/main.js'`; the IIFE body moved verbatim to `src/main.js`
   (`git mv`, sha256-identical). `plugin.json` declares `"scriptType": "module"` +
@@ -216,7 +233,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one, with a small floor so staccato still registers) and capo/tuning-aware for
   fretted parts. It's a **suggestion, not authoritative** — the tonic/scale
   pickers stay editable — and it says nothing when a part has no notes or no
-  tonal centre. Tests: `tests/key_detect.test.js`.
+  tonal centre. Tests: `tests/key_detect.test.mjs`.
 - **Scale-degree overlay on fretted notes.** With the in-key highlight on, each
   note in String view now shows a small scale-degree label in its top-right
   corner (`1`, `♭3`, `5`, `♭7`, …) relative to the current key, coloured by
@@ -226,7 +243,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   degrees at a glance. Capo- and tuning-aware (uses the same sounding pitch as
   the in-key shading); shown only while the highlight is active, and never for
   a note whose pitch can't be resolved. Display-only — it never edits the chart
-  or the authored `sd` teaching mark. Tests: `tests/scale_degree.test.js`.
+  or the authored `sd` teaching mark. Tests: `tests/scale_degree.test.mjs`.
 - **Chord-at-cursor readout.** A small chord name now appears next to the
   measure display, naming the notes sounding at the playhead — `C`, `Am`,
   `Gmaj7`, `D#6`, `Csus4`, `E5` (power chord), and so on. Fretted parts resolve
@@ -236,7 +253,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name when it's certain (`—` when notes sound but form no named chord, blank
   when nothing sounds), and the **bass note breaks genuine ties** (a Cm7 voiced
   over E♭ reads as D#6). Purely a read-only readout — it never edits anything.
-  Tests: `tests/chord_at_cursor.test.js`.
+  Tests: `tests/chord_at_cursor.test.mjs`.
 - **Drum editor: advisory playability lint.** The drum grid now flags
   physically impossible simultaneities with a small amber warning triangle on
   the offending hits plus a count in the editor HUD. Two rules, evaluated per
@@ -393,7 +410,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can never double-count. Out-of-key notes dim (never redden —
   chromaticism isn't an error) and unresolvable pitches stay fully lit;
   the Key controls now show for any pitched arrangement, not just keys.
-  Tests: `tests/fret_key_highlight.test.js` (including the capo-flips-
+  Tests: `tests/fret_key_highlight.test.mjs` (including the capo-flips-
   membership case an uncapoed resolver gets wrong).
 - **Parts can be reordered.** New ‹ / › buttons next to the arrangement
   selector (registry commands `movePartEarlier` / `movePartLater`) move
@@ -682,7 +699,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (which shades nothing, for atonal passages). The key is a per-song editor
   preference (localStorage, never the feedpak) and the highlight a global one;
   both are view aids, not chart data. Groundwork for reading authored key
-  regions (keys.json) in a later pass. Tests: `tests/scale_membership.test.js`.
+  regions (keys.json) in a later pass. Tests: `tests/scale_membership.test.mjs`.
 - **Section edits are undoable.** Adding (Shift+M or the beat-bar right-click
   menu), renaming, and deleting a section mutated `S.sections` directly with
   no undo — a stray Delete on a section was unrecoverable, and Ctrl+Z after
@@ -735,7 +752,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a `T` suffix (`1/3T`, `1/6T`, `1/12T`, `1/24T`, `1/48T`, `1/96T`) to set them
   apart from the binary grid; the default snap stays `1/4`. (Ports the one division
   set #62 had over the merged snap options, without adopting its `{step}` engine.)
-  Tests: `tests/snap_options.test.js`.
+  Tests: `tests/snap_options.test.mjs`.
 
 ### Fixed
 - **Editing a computed anchor no longer wipes the rest of the anchors.** The

@@ -1,32 +1,18 @@
-'use strict';
 /*
  * Tests for the guitar-lane scale-degree overlay (DAW 4.16a):
  * _scaleDegreeSemisPure / _scaleDegreeLabelPure (degree relative to a tonic,
  * flats for chromatics) and _scaleDegreeColorPure (role palette). Display-only.
  *
- * All fail on main — the block doesn't exist there.
- *
- * Run: node tests/scale_degree.test.js
+ * Run: node tests/scale_degree.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import * as D from '../src/theory.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-function extractBlock(name) {
-    const re = new RegExp('/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) { console.error(`FAIL: @pure:${name} not found`); process.exit(1); }
-    return m[0];
-}
 let passed = 0, failed = 0;
 function t(name, fn) {
     try { fn(); passed++; console.log('  ok ' + name); }
     catch (e) { failed++; console.error('  FAIL ' + name + '\n    ' + (e && e.message)); }
 }
-
-const D = new Function('"use strict";' + extractBlock('scale-degree')
-    + '\nreturn { _scaleDegreeSemisPure, _scaleDegreeLabelPure, _scaleDegreeColorPure, _SCALE_DEGREE_LABELS };')();
 
 // ── degree math ──────────────────────────────────────────────────────
 

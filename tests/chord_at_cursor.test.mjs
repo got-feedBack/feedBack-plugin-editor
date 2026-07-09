@@ -1,26 +1,22 @@
-'use strict';
 /*
  * Tests for the chord-at-cursor readout (DAW 4.17):
  * _pcSetFromMidisPure, _identifyChordPure (exact-match vocabulary + bass-note
  * tie-breaking), and _notesSoundingAtPure (which notes ring at a time).
  * Read-only readout; nothing here mutates state.
  *
- * All fail on main — the block doesn't exist there.
- *
- * Run: node tests/chord_at_cursor.test.js
+ * Run: node tests/chord_at_cursor.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { PIANO_NOTE_NAMES } from '../src/theory.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 function extractBlock(name) {
     const re = new RegExp('/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
     const m = src.match(re);
     if (!m) { console.error(`FAIL: @pure:${name} not found`); process.exit(1); }
     return m[0];
 }
-const NOTE_NAMES_SRC = src.match(/const PIANO_NOTE_NAMES = \[[^\]]*\];/)[0];
 
 let passed = 0, failed = 0;
 function t(name, fn) {
@@ -28,8 +24,10 @@ function t(name, fn) {
     catch (e) { failed++; console.error('  FAIL ' + name + '\n    ' + (e && e.message)); }
 }
 
-const C = new Function('"use strict";' + NOTE_NAMES_SRC + extractBlock('chord-id')
-    + '\nreturn { _pcSetFromMidisPure, _identifyChordPure, _notesSoundingAtPure, _soundingIntervalPure, _chordCacheHitPure, PIANO_NOTE_NAMES };')();
+// `chord-id` still lives in src/main.js; PIANO_NOTE_NAMES is injected as a
+// parameter so the sandbox uses the REAL table from src/theory.js.
+const C = new Function('PIANO_NOTE_NAMES', '"use strict";' + extractBlock('chord-id')
+    + '\nreturn { _pcSetFromMidisPure, _identifyChordPure, _notesSoundingAtPure, _soundingIntervalPure, _chordCacheHitPure, PIANO_NOTE_NAMES };')(PIANO_NOTE_NAMES);
 const name = (pcs, bass) => {
     const c = C._identifyChordPure(pcs, bass === undefined ? -1 : bass, C.PIANO_NOTE_NAMES);
     return c ? c.name : null;
