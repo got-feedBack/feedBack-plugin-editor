@@ -16,8 +16,12 @@
 // happening. That shipped in #165/#166 and took a Codex review to spot.
 //
 // So: pass a THUNK for anything main.js reassigns — `draw: (...a) => draw(...a)`
-// — not the identifier. Before wiring a symbol here, check it is not reassigned
-// (`grep -n '^\s*<name> = ' src/main.js`).
+// — not the identifier. Before wiring a symbol here, check it is not reassigned:
+//
+//     grep -nE '^[[:space:]]*<name> = ' src/main.js
+//
+// (POSIX class, not `\s`: GNU grep accepts `\s` as an extension, BSD grep does
+// not, and a silent zero-match here is exactly the wrong answer to get.)
 //
 // The defaults are inert but type-honest: snapTime is the identity, not a no-op
 // returning undefined, and editorPromptText resolves to null (a cancelled

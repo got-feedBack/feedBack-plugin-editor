@@ -36,7 +36,7 @@ import { seedState, trackHooks } from './_history_env.mjs';
 // The drum commands and EditHistory are real imports now; both close over the
 // REAL `S` from src/state.js, so seed that rather than fabricating one. The
 // commands' one main.js callback (updateArrangementSelector, a DOM refresher)
-// arrives through setDrumHooks — stub it to a call counter.
+// arrives through setHostHooks — stub it to a call counter.
 function makeEnv() {
     const S = seedState({
         drumTab: { hits: [] },

@@ -25,8 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Hook callbacks captured the pre-wrapper `draw`.** `draw` is reassigned near
   the bottom of `main.js` to a wrapper that refreshes seven toolbar buttons
-  before repainting. `setHistoryHooks()` and `setDrumHooks()` were handed the
-  bare identifier, so they froze the ORIGINAL function at wiring time and every
+  before repainting. The per-module hook setters (since consolidated into
+  `setHostHooks()`) were handed the bare identifier, so they froze the ORIGINAL
+  function at wiring time and every
   undo, redo and drum-density toggle skipped those refreshes. The canvas still
   repainted, which is why nothing looked obviously wrong — the visible symptom
   was the drum-density button keeping its old "Rows: Full" label after the grid
@@ -44,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_currentAnchorArr`. `main.js` keeps the canvas event routing and forwards to
   the `on*LaneMouse*` handlers.
   Four of its symbols travel back — `draw`, `hideContextMenu`, `snapTime`,
-  `_editorPromptText` — and arrive through `setLaneHooks()`. `snapTime` stays
+  `_editorPromptText` — and arrive through the shared `host` object. `snapTime` stays
   behind because its onset-snap path reaches the onset cache; `_editorPromptText`
   stays because it owns a modal and the shared `_editorPromptCancel` handle.
   `TONE_LANE_H` moved to `geometry.js`, joining `ANCHOR_LANE_H` and `HS_LANE_H`.
@@ -63,7 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was only sharing the section banner.
   Three symbols travel back the other way (`draw`, `drawWaveform`,
   `updateArrangementSelector`) and would close a cycle, so they arrive through
-  `setDrumHooks()`, matching `setHistoryHooks()` and `setCanvas()`. The
+  the shared `host` object (see step 17). The
   `typeof S` / `typeof editGen` guards in `_drumLimbConflicts` existed only to
   keep the block eval-able in a test sandbox; real imports make them dead.
   All four drum suites now import the real module rather than regex-slicing it,
@@ -80,8 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `history.js` imports `S`/`bumpEditGen` from `state.js` and the view predicates
   from `keys.js`. Its remaining three main.js symbols — `_historyEnsureArr`,
   `draw`, `updateStatus` — cannot be imported back without closing a cycle, so
-  they arrive through `setHistoryHooks()`, the same shape as `canvas.js`'s
-  `setCanvas()` and `geometry.js`'s `setLaneMetrics()`. The three duplicated
+  they arrive through the shared `host` object (see step 17). The three duplicated
   read-only-roll checks in `exec`/`doUndo`/`doRedo` collapse into one `_locked()`.
   Thirteen suites used to slice the class out of `main.js` and hand it a
   fabricated `S`, with `_rollReadOnly` stubbed to a boolean. They now import the
