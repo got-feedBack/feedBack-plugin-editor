@@ -19,11 +19,11 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 
 const m = src.match(/\/\* @pure:onset-snap:start \*\/[\s\S]*?\/\* @pure:onset-snap:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:onset-snap block not found in screen.js');
+    console.error('FAIL: @pure:onset-snap block not found in src/main.js');
     process.exit(1);
 }
 const { _nearestOnsetTimePure } = new Function(

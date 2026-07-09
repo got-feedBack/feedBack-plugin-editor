@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Tests for `_shiftArrangementTimes` in screen.js — the per-arrangement rigid
+ * Tests for `_shiftArrangementTimes` in src/main.js — the per-arrangement rigid
  * time shift used by editorApplyOffset. The bug (#2): editorApplyOffset only
  * shifted the CURRENT arrangement's notes while beats/sections/drums shifted
  * globally, so other arrangements (and all arrangements' chords/anchors/
@@ -26,7 +26,7 @@ function extractFn(src, name) {
     throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const _shiftArrangementTimes = new Function(
     '"use strict";' + extractFn(src, '_shiftArrangementTimes') +
     '\nreturn _shiftArrangementTimes;')();

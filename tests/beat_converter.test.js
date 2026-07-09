@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Beat-converter tests for screen.js (charrette §1.1/§1.10, Phase A1).
+ * Beat-converter tests for src/main.js (charrette §1.1/§1.10, Phase A1).
  *
  * The one tempo-map converter — beatOf(beats, t) / timeOf(beats, β) — extracted
  * from the interior math of _makeTimeRemap + snapTime. This suite proves:
@@ -21,18 +21,18 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 
 const conv = src.match(/\/\* @pure:beat-converter:start \*\/[\s\S]*?\/\* @pure:beat-converter:end \*\//);
 if (!conv) {
-    console.error('FAIL: @pure:beat-converter block not found in screen.js');
+    console.error('FAIL: @pure:beat-converter block not found in src/main.js');
     process.exit(1);
 }
 // _makeTimeRemap now depends only on the converter, so it lifts cleanly into the
 // same sandbox — letting us test the ACTUAL shipped remap, not a copy of it.
 const remapM = src.match(/\nfunction _makeTimeRemap\(oldBeats, newBeats\) \{[\s\S]*?\n\}/);
 if (!remapM) {
-    console.error('FAIL: _makeTimeRemap not found in screen.js');
+    console.error('FAIL: _makeTimeRemap not found in src/main.js');
     process.exit(1);
 }
 
@@ -246,7 +246,7 @@ t('snap tie-break splits ONLY at the exact tie; agrees one ULP either side', () 
 });
 
 t('snap is IDEMPOTENT — re-snapping an already-snapped time never moves it', () => {
-    // the real re-snap path (screen.js: oldTimes.map(snapTime)); a non-idempotent
+    // the real re-snap path (src/main.js: oldTimes.map(snapTime)); a non-idempotent
     // snap would creep note times on every edit. Beat-domain snap must be stable.
     for (const subs of [1, 2, 3, 4, 8, 16]) {
         for (let x = -0.5; x <= 3.5; x += 0.0011) {

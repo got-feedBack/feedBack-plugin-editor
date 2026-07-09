@@ -34,7 +34,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 
 function extractBlock(name) {
     const re = new RegExp(
@@ -45,7 +45,7 @@ function extractBlock(name) {
 }
 function extractRe(re, label) {
     const m = src.match(re);
-    if (!m) { console.error(`FAIL: could not extract ${label} from screen.js`); process.exit(1); }
+    if (!m) { console.error(`FAIL: could not extract ${label} from src/main.js`); process.exit(1); }
     return m[0];
 }
 

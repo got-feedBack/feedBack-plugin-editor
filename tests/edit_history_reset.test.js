@@ -17,7 +17,7 @@
  *   3. Undo -> previously mutated the wrong note / threw; now a no-op because the
  *      stack was reset by the save's `finally`.
  *
- * screen.js is a single browser IIFE, so this extracts the `@pure:edit-history`
+ * src/main.js is a single browser IIFE, so this extracts the `@pure:edit-history`
  * marked block (browser-free) and eval's it in isolation — real source, no drift.
  *
  * Run: node tests/edit_history_reset.test.js
@@ -26,10 +26,10 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:edit-history:start \*\/[\s\S]*?\/\* @pure:edit-history:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:edit-history block not found in screen.js');
+    console.error('FAIL: @pure:edit-history block not found in src/main.js');
     process.exit(1);
 }
 

@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Measure/signature readout helper tests for screen.js.
+ * Measure/signature readout helper tests for src/main.js.
  *
  * Run: node tests/measure_readout.test.js
  */
@@ -8,11 +8,11 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const ts = src.match(/\/\* @pure:tempo-map-timesig:start \*\/[\s\S]*?\/\* @pure:tempo-map-timesig:end \*\//);
 const mr = src.match(/\/\* @pure:measure-readout:start \*\/[\s\S]*?\/\* @pure:measure-readout:end \*\//);
 if (!ts || !mr) {
-    console.error('FAIL: required pure blocks not found in screen.js');
+    console.error('FAIL: required pure blocks not found in src/main.js');
     process.exit(1);
 }
 

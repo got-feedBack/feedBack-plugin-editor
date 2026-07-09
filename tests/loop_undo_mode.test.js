@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Loop-undo symmetry + mode round-trip tests for screen.js.
+ * Loop-undo symmetry + mode round-trip tests for src/main.js.
  *
  * Since Phase A4 a bar/grid loop's edges are anchored to BEAT COORDINATES (β);
  * their seconds are a cache. So TempoMapCmd's exec/rollback symmetry no longer
@@ -16,7 +16,7 @@
  *      loop survives the round-trip (isn't demoted to 'bar').
  *
  * The TempoMapCmd class + the loop reproject/sync helpers are pulled verbatim
- * from screen.js and run against the real beat converter, so this validates the
+ * from src/main.js and run against the real beat converter, so this validates the
  * shipping code path.
  *
  * Run: node tests/loop_undo_mode.test.js
@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 
 function extractFn(name) {
     const start = src.indexOf('function ' + name + '(');

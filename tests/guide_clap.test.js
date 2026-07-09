@@ -14,7 +14,7 @@
  *     simultaneous voices can't sum into a louder transient;
  *   - binary-search correctness so dense charts don't degrade the tick.
  *
- * screen.js is a single browser IIFE, so this extracts the marked
+ * src/main.js is a single browser IIFE, so this extracts the marked
  * `@pure:guide-clap` block (browser-free) and eval's it in isolation —
  * real source, no drift.
  *
@@ -24,10 +24,10 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:guide-clap:start \*\/[\s\S]*?\/\* @pure:guide-clap:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:guide-clap block not found in screen.js');
+    console.error('FAIL: @pure:guide-clap block not found in src/main.js');
     process.exit(1);
 }
 

@@ -12,7 +12,7 @@
  *   3. editorStopRecordMidi hides the modal, so it must release the domain
  *      session (the modal-close teardown never runs on the Stop path).
  *
- * All three FAIL on pre-fix screen.js (no generation guard; Stop only
+ * All three FAIL on pre-fix src/main.js (no generation guard; Stop only
  * removed the listener and left the refcounted session open).
  *
  * Run: node tests/midi_domain_leak.test.js
@@ -21,7 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 
 function extractFn(name) {
     let start = src.indexOf('function ' + name);

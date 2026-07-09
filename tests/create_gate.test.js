@@ -4,7 +4,7 @@
  * with no Blank/Guitar Pro/EOF mode toggle: the gate is INPUT-DRIVEN. A picked
  * Guitar Pro file enables it, then EOF XML arrangement(s); otherwise it's a
  * from-scratch DRAFT create, which needs only a title (audio + artist optional —
- * draft-now, audio-later). Brace-extracts the real pure gate from screen.js (a
+ * draft-now, audio-later). Brace-extracts the real pure gate from src/main.js (a
  * single browser IIFE) so there's no drift.
  *
  * Run: node tests/create_gate.test.js
@@ -12,7 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 
 function extractFn(name) {
     const start = src.indexOf('function ' + name + '(');

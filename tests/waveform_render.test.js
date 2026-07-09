@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Render-geometry test for `drawWaveform` in screen.js. Runs the real draw
+ * Render-geometry test for `drawWaveform` in src/main.js. Runs the real draw
  * routine against a stub 2D context and a synthetic min/max/RMS cache, then
  * inspects the emitted fillRect()s to prove the new visualization:
  *   - a peak envelope that follows the TRUE asymmetric shape (top extent and
@@ -27,7 +27,7 @@ function extractFn(src, name) {
     throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 
 const WAVEFORM_H = 70, LABEL_W = 60;
 const ZOOM = 180, SCROLLX = 0;          // px/sec, seconds

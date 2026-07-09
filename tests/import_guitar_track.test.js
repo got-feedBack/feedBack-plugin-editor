@@ -1,7 +1,7 @@
 'use strict';
 /*
  * Unit tests for the "Import Guitar / Bass from GP" feature's pure helpers in
- * screen.js:
+ * src/main.js:
  *   - _isGuitarBassTrack  — the track picker / backend-guard filter
  *   - _guitarImportName   — Add-case naming (bass MUST be /bass/i for 4 lanes,
  *                           keys/drums-named guitars renamed so they don't
@@ -12,7 +12,7 @@
  *     anchors/handshapes/_extendedStrings, round-trips exactly on undo).
  *
  * Extract-and-eval pattern (matches tests/bass_string_count.test.js): pull the
- * function source straight out of screen.js so the test pins the shipping code.
+ * function source straight out of src/main.js so the test pins the shipping code.
  *
  * Run: node tests/import_guitar_track.test.js
  */
@@ -32,14 +32,14 @@ function extractFn(src, name) {
     throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const {
     _isGuitarBassTrack, _guitarImportName, _swapChartFields, _restoreChartFields,
 } = new Function(
     '"use strict";' +
     extractFn(src, '_isGuitarBassTrack') +
     '\nconst _REPLACE_CHART_FIELDS = ' +
-    // Pull the const array literal out of screen.js so the field set stays in sync.
+    // Pull the const array literal out of src/main.js so the field set stays in sync.
     (() => {
         const m = src.match(/const _REPLACE_CHART_FIELDS = (\[[^\]]*\]);/);
         assert.ok(m, '_REPLACE_CHART_FIELDS array must exist');

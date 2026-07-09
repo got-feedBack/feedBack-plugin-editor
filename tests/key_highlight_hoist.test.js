@@ -19,14 +19,14 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 
 function body(name) {
     // Grab the function body from `function name(` to its matching close brace,
     // then strip line comments so prose (which may mention localStorage etc.)
     // never trips the code-shape assertions below.
     const start = src.indexOf('function ' + name + '(');
-    assert.notStrictEqual(start, -1, name + ' should exist in screen.js');
+    assert.notStrictEqual(start, -1, name + ' should exist in src/main.js');
     const open = src.indexOf('{', start);
     let depth = 0;
     for (let i = open; i < src.length; i++) {

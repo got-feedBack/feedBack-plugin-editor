@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Tests for `_buildWaveformPeaks` in screen.js — the pure min/max/RMS cache
+ * Tests for `_buildWaveformPeaks` in src/main.js — the pure min/max/RMS cache
  * builder behind the editor's waveform. It must capture the true (asymmetric)
  * signed extremes per bin plus per-bin RMS, soak the remainder into the last
  * bin, and stay sane for tiny inputs. The helper is pure; extract it by
@@ -24,7 +24,7 @@ function extractFn(src, name) {
     throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const _buildWaveformPeaks = new Function(
     '"use strict";' + extractFn(src, '_buildWaveformPeaks') +
     '\nreturn _buildWaveformPeaks;')();

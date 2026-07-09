@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Tempo-map time-signature helper tests for screen.js.
+ * Tempo-map time-signature helper tests for src/main.js.
  *
  * Run: node tests/tempo_map_timesig.test.js
  */
@@ -8,10 +8,10 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:tempo-map-timesig:start \*\/[\s\S]*?\/\* @pure:tempo-map-timesig:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:tempo-map-timesig block not found in screen.js');
+    console.error('FAIL: @pure:tempo-map-timesig block not found in src/main.js');
     process.exit(1);
 }
 

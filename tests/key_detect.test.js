@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:key-detect:start \*\/[\s\S]*?\/\* @pure:key-detect:end \*\//);
 if (!m) { console.error('FAIL: @pure:key-detect block not found'); process.exit(1); }
 const K = new Function('"use strict";' + m[0]

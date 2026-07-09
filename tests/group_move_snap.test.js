@@ -22,7 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:group-time-delta:start[\s\S]*?@pure:group-time-delta:end \*\//);
 if (!m) { console.error('FAIL: @pure:group-time-delta block not found'); process.exit(1); }
 const { _groupTimeDeltaPure } = new Function('"use strict";' + m[0] + '\nreturn { _groupTimeDeltaPure };')();

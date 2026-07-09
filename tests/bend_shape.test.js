@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Tests for the §6.2.1 bend-shape authoring helpers in screen.js. screen.js is
+ * Tests for the §6.2.1 bend-shape authoring helpers in src/main.js. src/main.js is
  * a single browser IIFE, so this extracts the `@pure:bend-shape` marked block
  * (browser-free) and eval's it in isolation — real source, no drift.
  *
@@ -10,10 +10,10 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:bend-shape:start[\s\S]*?@pure:bend-shape:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:bend-shape block not found in screen.js');
+    console.error('FAIL: @pure:bend-shape block not found in src/main.js');
     process.exit(1);
 }
 const { bendPresetCurve, sanitizeBendCurve, rescaleBendCurveToPeak, BEND_INTENTS } =
