@@ -2651,6 +2651,9 @@ function _drawNote(n, selected, ghl) {
     const sw = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
     const h = LANE_H - NOTE_PAD * 2;
     const color = colorForLane(strToLane(n.string));
+    // Suggested (machine-picked, unconfirmed) position: render provisional —
+    // dimmer body + dashed border — so an unresolved fingering reads at a glance.
+    const suggested = _isSuggested(n);
 
     // In-key highlight (mirrors the piano roll's treatment): out-of-key
     // notes dim, never redden — chromaticism is not an error. Membership
@@ -2666,7 +2669,7 @@ function _drawNote(n, selected, ghl) {
     }
 
     // Body
-    ctx.fillStyle = color + (outOfKey ? '55' : 'cc');
+    ctx.fillStyle = color + (suggested || outOfKey ? '55' : 'cc');
     ctx.beginPath();
     ctx.roundRect(x, y, sw, h, 3);
     ctx.fill();
@@ -2677,11 +2680,13 @@ function _drawNote(n, selected, ghl) {
         ctx.lineWidth = 2;
     } else {
         ctx.strokeStyle = color;
-        ctx.lineWidth = 0.5;
+        ctx.lineWidth = suggested ? 1 : 0.5;
     }
+    if (suggested) ctx.setLineDash([3, 2]);
     ctx.beginPath();
     ctx.roundRect(x, y, sw, h, 3);
     ctx.stroke();
+    if (suggested) ctx.setLineDash([]);
 
     // Fret number
     ctx.fillStyle = outOfKey ? 'rgba(255,255,255,0.6)' : '#fff';
@@ -2759,6 +2764,9 @@ function _drawPianoNote(n, selected, hl, midi, fretted) {
     const color = fretted
         ? colorForLane(strToLane(n.string))
         : PIANO_OCTAVE_COLORS[Math.min(octave, PIANO_OCTAVE_COLORS.length - 1)];
+    // Suggested (machine-picked, unconfirmed) position — render provisional
+    // (dimmer + dashed). Only fretted-in-roll adds are ever marked.
+    const suggested = _isSuggested(n);
 
     // In-key highlight: dim out-of-key notes (lower body alpha) so chromatic
     // notes read as chromatic without being hidden or flagged as wrong.
@@ -2767,7 +2775,7 @@ function _drawPianoNote(n, selected, hl, midi, fretted) {
     const outOfKey = !!hl && !_pcInScalePure(midi % 12, hl.tonic, hl.scale);
 
     // Body
-    ctx.fillStyle = color + (outOfKey ? '55' : 'cc');
+    ctx.fillStyle = color + (suggested || outOfKey ? '55' : 'cc');
     ctx.beginPath();
     ctx.roundRect(x, y, sw, h, 2);
     ctx.fill();
@@ -2778,11 +2786,13 @@ function _drawPianoNote(n, selected, hl, midi, fretted) {
         ctx.lineWidth = 2;
     } else {
         ctx.strokeStyle = color;
-        ctx.lineWidth = 0.5;
+        ctx.lineWidth = suggested ? 1 : 0.5;
     }
+    if (suggested) ctx.setLineDash([3, 2]);
     ctx.beginPath();
     ctx.roundRect(x, y, sw, h, 2);
     ctx.stroke();
+    if (suggested) ctx.setLineDash([]);
 
     // Note name — or, for fretted-in-roll, the s·f position chip (the
     // note name is redundant with the Y axis there; string·fret is the
@@ -2908,8 +2918,12 @@ class EditHistory {
         // VA.5 position cycle) are the one deliberate carve-out: they can
         // never change what a note SOUNDS like — only which string/fret
         // plays it — so the "no silent pitch writes" contract the lock
-        // protects is unbreakable by construction. Nothing else opts out.
-        if (cmd.songScope !== true && cmd.pitchPreserving !== true
+        // protects is unbreakable by construction. `suggestResolved` commands
+        // (the VA.3 suggest-position writer: resolved adds + Accept) are the
+        // OTHER carve-out — they ARE the sanctioned string/fret write path the
+        // lock was holding the door for, so they pass here (and mark, never
+        // guess). Nothing else opts out.
+        if (cmd.songScope !== true && cmd.pitchPreserving !== true && cmd.suggestResolved !== true
             && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
             if (typeof _rollLockNotice === 'function') _rollLockNotice();
             return;
@@ -2938,8 +2952,10 @@ class EditHistory {
         // evaluates read-only against the part the rollback would touch.
         // Song-scope commands (drum/tempo) don't touch the fretted chart and
         // undo normally; pitchPreserving commands (VA.5 position cycle)
-        // can't change pitch and round-trip freely (see exec).
-        if (c.songScope !== true && c.pitchPreserving !== true
+        // can't change pitch and round-trip freely (see exec); suggestResolved
+        // commands (VA.3 suggest-position writer) are the sanctioned string/fret
+        // write path and round-trip too.
+        if (c.songScope !== true && c.pitchPreserving !== true && c.suggestResolved !== true
             && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
             if (typeof _rollLockNotice === 'function') _rollLockNotice();
             return;
@@ -2953,8 +2969,8 @@ class EditHistory {
         if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
         // Read-only roll (V4): re-exec of a NOTE-scope command writes the
         // fretted chart that is read-only in the roll — same lock (and same
-        // pitchPreserving carve-out) as doUndo.
-        if (c.songScope !== true && c.pitchPreserving !== true
+        // pitchPreserving / suggestResolved carve-outs) as doUndo.
+        if (c.songScope !== true && c.pitchPreserving !== true && c.suggestResolved !== true
             && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
             if (typeof _rollLockNotice === 'function') _rollLockNotice();
             return;
@@ -3034,6 +3050,10 @@ class MoveNoteCmd {
         this.dtimes = dtimes;
         this.dstrings = dstrings;
         this.dfrets = dfrets; // null for guitar mode, array for piano mode
+        // VA.3 fretted-roll pitch-move: note indices whose {string,fret} the
+        // resolver repicked, to mark suggested. Set by the commit; null otherwise.
+        this.markSuggestedIdx = null;
+        this._priorSuggested = null;   // prior mark state, snapshot once for undo
     }
     exec() {
         const nn = notes();
@@ -3042,6 +3062,15 @@ class MoveNoteCmd {
             nn[this.indices[i]].string += this.dstrings[i];
             if (this.dfrets) nn[this.indices[i]].fret += this.dfrets[i];
         }
+        // Mark resolver-repicked notes suggested; snapshot the prior mark state
+        // once (first exec) so rollback restores it exactly. MoveNoteCmd never
+        // sorts, so these indices are stable across the exec/rollback round-trip.
+        if (this.markSuggestedIdx && typeof _markSuggested === 'function') {
+            if (!this._priorSuggested) {
+                this._priorSuggested = this.markSuggestedIdx.map(idx => ({ idx, was: _isSuggested(nn[idx]) }));
+            }
+            for (const idx of this.markSuggestedIdx) _markSuggested(nn[idx]);
+        }
     }
     rollback() {
         const nn = notes();
@@ -3049,6 +3078,11 @@ class MoveNoteCmd {
             nn[this.indices[i]].time -= this.dtimes[i];
             nn[this.indices[i]].string -= this.dstrings[i];
             if (this.dfrets) nn[this.indices[i]].fret -= this.dfrets[i];
+        }
+        if (this._priorSuggested && typeof _markSuggested === 'function') {
+            for (const { idx, was } of this._priorSuggested) {
+                if (was) _markSuggested(nn[idx]); else _clearSuggested(nn[idx]);
+            }
         }
     }
 }
@@ -3094,6 +3128,10 @@ class AddNoteCmd {
             nn.sort((a, b) => a.time - b.time);
         });
         this.idx = nn.indexOf(this.note);
+        // Suggest-position (V4): a roll-resolved add is marked SUGGESTED until
+        // the user confirms; redo re-marks so the state round-trips. typeof-
+        // guarded so extracted-test envs without the mark helpers are unaffected.
+        if (this.markSuggested && typeof _markSuggested === 'function') _markSuggested(this.note);
     }
     rollback() {
         const nn = notes();
@@ -3105,6 +3143,7 @@ class AddNoteCmd {
             const i = nn.indexOf(this.note);
             if (i >= 0) nn.splice(i, 1);
         });
+        if (this.markSuggested && typeof _clearSuggested === 'function') _clearSuggested(this.note);
     }
 }
 
@@ -3534,14 +3573,487 @@ function _cycleStepPure(candidates, curString, curFret, direction) {
 }
 /* @pure:position-cycle:end */
 
+/* @pure:suggest-position:start */
+// Suggest-position resolver (design V4 / V13.3): pick a {string, fret} for a
+// SOUNDING pitch added or pitch-moved in the piano roll for a fretted part —
+// the ONE writer that lets the read-only roll author fretted notes without a
+// view switch. The machine ENUMERATES; it only auto-decides when the choice is
+// unambiguous, and otherwise REFUSES (returns resolved:null + a reason +
+// the candidate list) so the UI flips to an explicit confirm popover.
+//
+// Enumerate every playable {string, fret} for `pitch`, capo-aware (the exact
+// inverse of _soundingPitchPure: fret = pitch − openMidi[s] − tuning[s] − capo,
+// valid as an integer in [0,24]). Ordered low string → high.
+function _enumerateFrettedPositionsPure(pitch, openMidi, tuning, capo) {
+    const out = [];
+    if (!Array.isArray(openMidi) || !Number.isFinite(pitch)) return out;
+    const off = s => (Array.isArray(tuning) && tuning[s] !== undefined) ? (Number(tuning[s]) || 0) : 0;
+    const cap = Number(capo) || 0;
+    for (let s = 0; s < openMidi.length; s++) {
+        if (openMidi[s] === undefined) continue;
+        const fret = pitch - openMidi[s] - off(s) - cap;
+        if (Number.isInteger(fret) && fret >= 0 && fret <= 24) out.push({ string: s, fret });
+    }
+    return out;
+}
+
+// The fret-hand anchor window active at `time`: the last anchor at/ before it
+// (notes before the first anchor borrow the first anchor's window). Anchors are
+// { time, fret, width } with no explicit end — each governs until the next.
+function _activeAnchorAtPure(anchorList, time) {
+    if (!Array.isArray(anchorList) || !anchorList.length) return null;
+    let active = null, earliest = null;
+    for (const a of anchorList) {
+        if (!a || !Number.isFinite(a.time)) continue;
+        if (!earliest || a.time < earliest.time) earliest = a;
+        if (a.time <= time + 1e-6 && (!active || a.time >= active.time)) active = a;
+    }
+    return active || earliest;
+}
+
+// The policy. `occupiedStrings` is the set of strings already sounding at this
+// time (a note can't share a string with another at the same instant). Success
+// order: (a) inside the active anchor window on a free string, (b) nearest the
+// previous note's hand position (least fret travel), (c) lowest-fret then
+// lowest-string. Refuse (resolved:null) when reachable only OUTSIDE the window,
+// when open-vs-fretted is a real articulation choice, when the only viable
+// string is occupied, or when out of range.
+function _suggestPositionPure(pitch, time, prevNote, anchorList, occupiedStrings, ctx) {
+    const c = ctx || {};
+    const candidates = _enumerateFrettedPositionsPure(pitch, c.openMidi, c.tuning, c.capo);
+    if (!candidates.length) return { resolved: null, reason: 'out-of-range', candidates };
+    const occ = occupiedStrings instanceof Set ? occupiedStrings : new Set(occupiedStrings || []);
+    const free = candidates.filter(p => !occ.has(p.string));
+    if (!free.length) return { resolved: null, reason: 'string-occupied', candidates };
+    // Eligible = free candidates that are open (fret 0 needs no hand position)
+    // or inside the active anchor window [fret, fret+width). No anchor ⇒ the
+    // window is unconstrained (every free candidate is eligible).
+    const anchor = _activeAnchorAtPure(anchorList, time);
+    let eligible = free;
+    if (anchor && Number.isFinite(anchor.fret)) {
+        const lo = anchor.fret;
+        const hi = anchor.fret + (Number.isFinite(anchor.width) ? anchor.width : 4);
+        eligible = free.filter(p => p.fret === 0 || (p.fret >= lo && p.fret < hi));
+        if (!eligible.length) return { resolved: null, reason: 'outside-anchor-window', candidates };
+    }
+    // Open vs fretted, both playable here → a real articulation choice; refuse.
+    if (eligible.some(p => p.fret === 0) && eligible.some(p => p.fret > 0)) {
+        return { resolved: null, reason: 'open-vs-fretted', candidates };
+    }
+    const prevFret = prevNote && Number.isFinite(prevNote.fret) ? prevNote.fret : null;
+    const best = eligible.slice().sort((a, b) => {
+        if (prevFret !== null) {
+            const d = Math.abs(a.fret - prevFret) - Math.abs(b.fret - prevFret);
+            if (d) return d;                      // (b) least fret travel
+        }
+        if (a.fret !== b.fret) return a.fret - b.fret;   // (c) lowest fret
+        return a.string - b.string;                       //     then lowest string
+    })[0];
+    return { resolved: best, reason: null, candidates };
+}
+/* @pure:suggest-position:end */
+
+// ────────────────────────────────────────────────────────────────────
+// Suggest-position WRITE path (V4/VA.3) — the wiring around the pure
+// resolver above. Adds in the piano roll for a FRETTED part resolve their
+// SOUNDING pitch to a {string, fret} through _suggestPositionPure; an
+// unambiguous pick is written and marked SUGGESTED (not confirmed), an
+// ambiguous one opens an explicit confirm popover. The machine enumerates,
+// it never silently decides — "a confidently-wrong tab is worse than an
+// honest gap."
+// ────────────────────────────────────────────────────────────────────
+
+// Suggested-position marks: a module-scoped WeakSet of note objects the roll
+// RESOLVED (rather than the user picking). This MUST be transient UI state and
+// never a note field — `_buildSaveBody`/`reconstructChords` serialize solo
+// notes by reference (an underscore field would leak to the wire) and rebuild
+// chord members through an explicit {time,string,fret,sustain,techniques} mapper
+// (an extra field would vanish). A WeakSet is invisible to serialization by
+// construction, and lets a rebuilt/replaced note object drop its mark for free.
+/* @pure:suggest-marks:start */
+const _suggestedNotes = new WeakSet();
+function _markSuggested(note)  { if (note) _suggestedNotes.add(note); }
+function _clearSuggested(note) { if (note) _suggestedNotes.delete(note); }
+function _isSuggested(note)    { return !!note && _suggestedNotes.has(note); }
+/* @pure:suggest-marks:end */
+
+// Count of still-suggested (unconfirmed) notes in the current arrangement —
+// drives the "positions unresolved: N" status nudge.
+function _suggestedCount() {
+    if (typeof S === 'undefined' || !S.arrangements || !S.arrangements.length) return 0;
+    const arr = S.arrangements[S.currentArr];
+    if (!arr || !Array.isArray(arr.notes)) return 0;
+    let n = 0;
+    for (const note of arr.notes) if (_suggestedNotes.has(note)) n++;
+    return n;
+}
+
+// Suggested-mark PERSISTENCE (editor-pref, keyed by filename, NEVER in the pack
+// — mirrors beat-lock, §6/D15). The WeakSet above is object-keyed, so a save's
+// flatten+reconstructChords rebuild and a reload both mint fresh note objects
+// and DROP every mark: after a reload the machine's UNREVIEWED guesses would
+// render as CONFIRMED and "positions unresolved: N" would reset to 0, losing
+// the honest-gap contract. We persist each marked note's STABLE identity
+// {time,string,fret} to localStorage and re-attach on load / post-save reflatten.
+// Scoped PER ARRANGEMENT (matches _suggestedCount): the key carries the
+// arrangement index, so marks authored on arrangement N restore onto N (a reload
+// resets to arr 0, and a later switch to N re-attaches N's marks) instead of
+// bleeding onto arr 0. Successive saves accumulate a key per arrangement; only
+// the arrangement current AT a given save updates that save. Index (not name) is
+// the discriminator — a part reorder is an accepted, cosmetic-only skew (marks
+// are advisory). A Save-As to a new filename MIGRATES the keys to the new name
+// (see editorSaveAsSloppakConfirm) so the guesses stay honest in the new file.
+/* @pure:suggest-marks-persist:start */
+function _suggestedStorageKeyPure(filename, arrIdx) {
+    return 'editorSuggested:' + (filename || '') + ':' + (arrIdx >= 0 ? arrIdx : 0);
+}
+function _suggestedParsePure(raw) {
+    let arr = null;
+    try { arr = JSON.parse(raw); } catch (_) { return []; }
+    if (!Array.isArray(arr)) return [];
+    const out = [];
+    for (const e of arr) {
+        if (!e || typeof e !== 'object') continue;
+        const t = Number(e.time), s = Number(e.string), f = Number(e.fret);
+        if (Number.isFinite(t) && t >= 0
+            && Number.isInteger(s) && s >= 0 && Number.isInteger(f) && f >= 0) {
+            out.push({ time: t, string: s, fret: f });
+        }
+    }
+    return out;
+}
+// Re-mark the notes in `nn` matching a persisted identity (string+fret exact,
+// |time−t| ≤ tol). Greedy 1:1 — each stored mark claims at most one note and
+// each note is claimed once — so a degenerate duplicate identity can't over-mark.
+// `addFn(note)` repopulates the mark (injected so this stays module-state-free).
+function _applySuggestedMarksPure(nn, marks, tol, addFn) {
+    const used = new Set();
+    for (const m of marks) {
+        for (let i = 0; i < nn.length; i++) {
+            if (used.has(i)) continue;
+            const n = nn[i];
+            if (n && n.string === m.string && n.fret === m.fret
+                && Math.abs((n.time || 0) - m.time) <= tol) {
+                addFn(n); used.add(i); break;
+            }
+        }
+    }
+}
+/* @pure:suggest-marks-persist:end */
+
+// Persist the current arrangement's suggested marks. Call BEFORE a save churns
+// note identity so localStorage matches exactly what lands on disk.
+function _saveSuggestedMarks() {
+    // No real filename (create mode sets S.filename = '') ⇒ skip: an empty key
+    // would be a shared slot every unsaved session bleeds marks into.
+    if (typeof S === 'undefined' || !S.filename || !S.arrangements || !S.arrangements.length) return;
+    const arr = S.arrangements[S.currentArr];
+    const nn = (arr && Array.isArray(arr.notes)) ? arr.notes : [];
+    const marks = [];
+    for (const n of nn) {
+        if (n && _suggestedNotes.has(n)) {
+            marks.push({ time: Math.round((n.time || 0) * 1000) / 1000, string: n.string, fret: n.fret });
+        }
+    }
+    const key = _suggestedStorageKeyPure(S.filename, S.currentArr);
+    try {
+        if (marks.length) localStorage.setItem(key, JSON.stringify(marks));
+        else localStorage.removeItem(key);
+    } catch (_) { /* localStorage unavailable */ }
+}
+
+// Re-attach persisted marks onto the current arrangement's (freshly rebuilt)
+// note objects — after a load or a post-save reflatten. Adds straight to the
+// WeakSet so it never re-persists. tol 2ms covers the ms-rounded save identity.
+function _restoreSuggestedMarks() {
+    if (typeof S === 'undefined' || !S.filename || !S.arrangements || !S.arrangements.length) return;
+    const arr = S.arrangements[S.currentArr];
+    const nn = (arr && Array.isArray(arr.notes)) ? arr.notes : [];
+    let raw = null;
+    try { raw = localStorage.getItem(_suggestedStorageKeyPure(S.filename, S.currentArr)); } catch (_) {}
+    _applySuggestedMarksPure(nn, _suggestedParsePure(raw), 2e-3, n => _suggestedNotes.add(n));
+}
+
+// Human-readable reasons for a resolver refusal (resolved:null), shown in the
+// confirm popover's subtitle or a status line when no free string exists.
+const _ROLL_REFUSE_REASONS = {
+    'out-of-range':          'that pitch is out of range for this tuning',
+    'string-occupied':       'every playable string is already in use here',
+    'outside-anchor-window': 'it is only reachable outside the current hand position',
+    'open-vs-fretted':       'it can play as an open string or a fretted note — your call',
+};
+
+// The effective fret-hand anchor list for an arrangement: the authored set
+// (anchors_user) when present, else the computed fallback (anchors). Matches
+// how the anchor lane treats a non-empty anchors_user as the complete set.
+function _rollAnchorList(arr) {
+    if (!arr) return [];
+    if (Array.isArray(arr.anchors_user) && arr.anchors_user.length) return arr.anchors_user;
+    return Array.isArray(arr.anchors) ? arr.anchors : [];
+}
+
+// Strings sounding across `time` — a string can't play two notes at the same
+// instant. A note occupies its string from n.time to n.time+sustain (a
+// zero-sustain note occupies only its onset). `except` skips notes being edited
+// from their own occupancy check: a single index, a Set of indices, or -1/null
+// for none (so a multi-note drag can exclude its whole moving set).
+function _occupiedStringsAt(arr, time, except) {
+    const skip = except instanceof Set ? except
+        : (typeof except === 'number' && except >= 0 ? new Set([except]) : null);
+    const occ = new Set();
+    const nn = (arr && Array.isArray(arr.notes)) ? arr.notes : [];
+    for (let i = 0; i < nn.length; i++) {
+        if (skip && skip.has(i)) continue;
+        const n = nn[i];
+        if (!n || typeof n.time !== 'number') continue;
+        const end = n.time + (n.sustain || 0);
+        if (time >= n.time - 1e-6 && time <= end + 1e-6) occ.add(n.string);
+    }
+    return occ;
+}
+
+// A note whose FRET is coupled to a technique, so a roll pitch-move can't repick
+// its string/fret without corrupting the technique's meaning (V5): a slide
+// targets a fret, a bend/harmonic anchors to one. Such notes REFUSE the roll
+// pitch-move (edit them in the fretted views). Pitch-portable techniques
+// (palm mute, vibrato, accent…) ride along and don't lock.
+function _positionLocked(n) {
+    const t = (n && n.techniques) || {};
+    return t.slide_to >= 0 || t.slide_unpitch_to >= 0
+        || t.bend > 0 || (Array.isArray(t.bend_values) && t.bend_values.length > 0)
+        || !!t.harmonic || !!t.harmonic_pinch;
+}
+
+// Live pitch-MOVE by drag in the fretted roll (VA.3): `dy` is a SOUNDING-pitch
+// delta; the resolver repicks {string,fret} at the new pitch, biased to keep the
+// hand where it was (prevNote = the note's original fret). `snappedDt` is the
+// shared group time delta (already snapped + clamped ≥ 0 by _groupTimeDeltaPure)
+// and always applies (a pitch-domain edit). A position-locked note, or a pitch
+// the resolver refuses (ambiguous / out of the hand window / occupied), HOLDS at
+// its last resolvable position — the note visibly sticks rather than the machine
+// guessing. The drop (onMouseUp) commits the net change as a suggested MoveNoteCmd.
+function _rollDragPitchMove(nn, snappedDt, dy) {
+    const arr = S.arrangements[S.currentArr];
+    const ctx = _rollPitchCtx();
+    if (!arr || !ctx) return;
+    const dMidi = -Math.round(dy / PIANO_LANE_H);
+    const moving = new Set(S.drag.indices);
+    // Time always applies (a pitch-domain edit); gather the actual pitch-movers.
+    const movers = [];
+    for (let i = 0; i < S.drag.indices.length; i++) {
+        const ni = S.drag.indices[i];
+        const n = nn[ni];
+        if (!n) continue;
+        n.time = S.drag.origTimes[i] + snappedDt;
+        if (dMidi === 0 || _positionLocked(n)) continue;   // no pitch move / technique-locked ⇒ hold
+        const origPitch = _soundingPitchPure(
+            ctx.openMidi, ctx.tuning, ctx.capo, S.drag.origStrings[i], S.drag.origFrets[i]);
+        if (origPitch === null) continue;
+        movers.push({ n, target: origPitch + dMidi, prevFret: S.drag.origFrets[i] });
+    }
+    // Resolve SEQUENTIALLY, in ascending target sounding-pitch (ties keep drag
+    // order — Array.sort is stable). Each resolved member's chosen string joins
+    // the occupancy the later members see, so two members of a vertically-dragged
+    // chord can't independently pick the SAME string: at save reconstructChords
+    // does frets[n.string] = n.fret, and a shared string would drop a member
+    // (the chord template silently loses a note). A member the resolver refuses
+    // HOLDS its old position and contributes NO occupancy (unchanged behaviour).
+    movers.sort((a, b) => a.target - b.target);
+    const claimed = [];   // {time, end, string} chosen by already-resolved siblings this drag
+    for (const mv of movers) {
+        const n = mv.n;
+        const occ = _occupiedStringsAt(arr, n.time, moving);
+        // Full interval overlap (not just onset containment): movers are ordered
+        // by pitch, not time, so a later-resolved member can start BEFORE an
+        // already-claimed one yet sustain through it — both directions collide.
+        const nEnd = n.time + (n.sustain || 0);
+        for (const c of claimed) {
+            if (n.time <= c.end + 1e-6 && nEnd >= c.time - 1e-6) occ.add(c.string);
+        }
+        const res = _suggestPositionPure(
+            mv.target, n.time, { fret: mv.prevFret }, _rollAnchorList(arr), occ, ctx);
+        if (res.resolved) {
+            n.string = res.resolved.string;
+            n.fret = res.resolved.fret;
+            claimed.push({ time: n.time, end: n.time + (n.sustain || 0), string: res.resolved.string });
+        }
+    }
+}
+
+// The note immediately before `time` (greatest onset strictly earlier) — gives
+// the resolver a previous-hand-position reference for its least-travel tiebreak.
+function _prevNoteBefore(arr, time, exceptIdx) {
+    const nn = (arr && Array.isArray(arr.notes)) ? arr.notes : [];
+    let best = null;
+    for (let i = 0; i < nn.length; i++) {
+        if (i === exceptIdx) continue;
+        const n = nn[i];
+        if (!n || typeof n.time !== 'number') continue;
+        if (n.time < time - 1e-6 && (!best || n.time > best.time)) best = n;
+    }
+    return best;
+}
+
+// Add a note at a SOUNDING pitch in the roll (fretted part), routed through the
+// resolver. Unambiguous ⇒ write + mark suggested; ambiguous/refused ⇒ open the
+// confirm popover. `cx,cy` are the click coords (reserved for popover placement).
+function _rollAddByPitch(pitch, time, cx, cy) {
+    if (!S.arrangements || !S.arrangements.length) return;
+    const arr = S.arrangements[S.currentArr];
+    const ctx = _rollPitchCtx();
+    if (!arr || !ctx) return;
+    const occ = _occupiedStringsAt(arr, time, -1);
+    const res = _suggestPositionPure(
+        pitch, time, _prevNoteBefore(arr, time, -1), _rollAnchorList(arr), occ, ctx);
+    if (res.resolved) {
+        _commitAddResolved(res.resolved, time, true);
+    } else {
+        _rollConfirmPosition(res, pitch, time, occ, cx, cy);
+    }
+}
+
+// A sensible default LENGTH for a roll-added note (Logic-style: a new note lands
+// at the grid length, then you drag its edge to resize — no typed-sustain dialog).
+// One snap step at `time`, or one beat when snap is off; a small fallback with no
+// tempo grid. Never zero, so the note is visible and its edge is grabbable.
+function _defaultAddSustain(time) {
+    if (Array.isArray(S.beats) && S.beats.length >= 2) {
+        const b = beatOf(S.beats, time);
+        const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
+        if (sv) {
+            const subs = _editorSnapSubdivisionsPure(sv);
+            const step = timeOf(S.beats, b + 1 / subs) - timeOf(S.beats, b);
+            if (step > 0.001) return step;
+        }
+        const beatDur = timeOf(S.beats, b + 1) - timeOf(S.beats, b);
+        if (beatDur > 0.001) return beatDur;
+    }
+    return 0.25;
+}
+
+// Write a resolved {string,fret} as a new note. `suggested` marks it as a
+// machine pick (dimmed/dashed until confirmed); a user pick from the popover is
+// born confirmed. The command carries `suggestResolved` so it passes the
+// read-only-roll lock — this writer IS the sanctioned replacement for that lock.
+function _commitAddResolved(pos, time, suggested) {
+    const note = { time, string: pos.string, fret: pos.fret, sustain: _defaultAddSustain(time), techniques: {} };
+    const cmd = new AddNoteCmd(note);
+    cmd.suggestResolved = true;
+    cmd.markSuggested = !!suggested;
+    S.history.exec(cmd);
+    _editBlipAt();
+    S.sel.clear();
+    if (cmd.idx >= 0) S.sel.add(cmd.idx);
+    draw();
+    updateStatus();
+    const where = pos.fret === 0 ? `open string ${pos.string}` : `string ${pos.string} fret ${pos.fret}`;
+    setStatus(suggested ? `Added ${where} (suggested — confirm to lock in)` : `Added ${where}`);
+}
+
+// Explicit confirm popover for a refused (ambiguous) add: lists the free
+// candidate positions; a pick writes a CONFIRMED note. When no string is free
+// (out-of-range / fully-occupied), there is nothing to pick — say why instead.
+function _rollConfirmPosition(res, pitch, time, occ, cx, cy) {
+    const occupied = occ instanceof Set ? occ : new Set(occ || []);
+    const free = (res.candidates || []).filter(c => !occupied.has(c.string));
+    const noteName = (typeof midiToNote === 'function') ? midiToNote(pitch) : String(pitch);
+    const reason = _ROLL_REFUSE_REASONS[res.reason] || res.reason || '';
+    if (!free.length) {
+        setStatus(`Can't place ${noteName} here — ${reason}.`);
+        return;
+    }
+    document.getElementById('editor-roll-position-picker')?.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'editor-roll-position-picker';
+    modal.className = 'fixed inset-0 bg-black/70 z-50 flex items-center justify-center';
+
+    const inner = document.createElement('div');
+    inner.className = 'bg-dark-800 border border-gray-700 rounded-lg p-6 max-w-sm w-full mx-4';
+    inner.setAttribute('role', 'dialog');
+    inner.setAttribute('aria-modal', 'true');
+
+    const h = document.createElement('h3');
+    h.id = 'editor-roll-position-title';
+    h.className = 'text-lg font-semibold mb-1';
+    h.textContent = `Choose a position for ${noteName}`;
+    inner.appendChild(h);
+    inner.setAttribute('aria-labelledby', h.id);
+
+    const sub = document.createElement('div');
+    sub.className = 'text-xs text-gray-400 mb-3';
+    sub.textContent = reason ? reason.charAt(0).toUpperCase() + reason.slice(1) + '.' : 'Pick where to play it.';
+    inner.appendChild(sub);
+
+    let settled = false;
+    const done = () => { if (settled) return; settled = true; modal.remove(); };
+
+    for (const c of free) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'w-full text-left p-2 mb-2 bg-dark-700 hover:bg-dark-600 rounded border border-gray-700 text-sm';
+        b.textContent = c.fret === 0 ? `String ${c.string} · open` : `String ${c.string} · fret ${c.fret}`;
+        b.onclick = () => { done(); _commitAddResolved(c, time, false); };
+        inner.appendChild(b);
+    }
+
+    const row = document.createElement('div');
+    row.className = 'flex justify-end gap-2 mt-1';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-sm';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.onclick = () => done();
+    row.appendChild(cancelBtn);
+    inner.appendChild(row);
+
+    modal.appendChild(inner);
+    _installModalKeyboard(modal, inner, () => done());
+    document.body.appendChild(modal);
+    inner.querySelector('button')?.focus();
+}
+
+// Confirm the machine's pick for the selected suggested notes: clears their
+// suggested marks (undo re-marks exactly those). Ref-based so it round-trips
+// regardless of index shuffles; `suggestResolved` passes the read-only-roll lock
+// (it only changes advisory marks, never note data).
+class AcceptPositionsCmd {
+    constructor(noteRefs) {
+        this.wereSuggested = (noteRefs || []).filter(n => _isSuggested(n));
+        this.suggestResolved = true;
+    }
+    exec()     { for (const n of this.wereSuggested) _clearSuggested(n); }
+    rollback() { for (const n of this.wereSuggested) _markSuggested(n); }
+}
+
+function _execAcceptPositions() {
+    const idxs = _editorCurrentNoteIndices();
+    const nn = notes();
+    const refs = idxs.map(i => nn[i]).filter(n => n && _isSuggested(n));
+    if (!refs.length) { setStatus('No suggested positions to accept.'); return; }
+    S.history.exec(new AcceptPositionsCmd(refs));
+    draw();
+    updateStatus();
+    setStatus(`Accepted ${refs.length} position${refs.length === 1 ? '' : 's'}`);
+}
+
 // Undo-able command: move a set of notes to adjacent strings, adjusting
 // frets to preserve absolute pitch.  `moves` is an array of
 // { index, oldString, oldFret, newString, newFret }.
 class MoveToStringCmd {
-    constructor(moves) { this.moves = moves; }
+    constructor(moves) { this.moves = moves; this._reMark = []; }
     exec() {
         const nn = notes();
+        // Deliberately moving a note's position (string-move / VA.5 cycle)
+        // CONFIRMS it — the user has now chosen where it plays, so drop any
+        // suggested mark. Snapshot the refs first so rollback re-marks exactly
+        // those (undo restores the suggested state). typeof-guarded for
+        // extracted-test envs without the mark helpers.
+        this._reMark = [];
+        const canMark = typeof _isSuggested === 'function';
         for (const m of this.moves) {
+            const note = nn[m.index];
+            if (canMark && _isSuggested(note)) { this._reMark.push(note); _clearSuggested(note); }
             nn[m.index].string = m.newString;
             nn[m.index].fret   = m.newFret;
         }
@@ -3552,6 +4064,7 @@ class MoveToStringCmd {
             nn[m.index].string = m.oldString;
             nn[m.index].fret   = m.oldFret;
         }
+        if (typeof _markSuggested === 'function') for (const note of this._reMark) _markSuggested(note);
     }
 }
 
@@ -4144,14 +4657,10 @@ function onMouseDown(e) {
             for (const i of chordSiblings) S.sel.add(i);
         }
 
-        // Start drag — unless the roll is read-only (fretted part in piano
-        // view): move drags mutate notes LIVE before the commit command,
-        // so selection happens above but no drag begins.
-        if (_rollReadOnly()) {
-            _rollLockNotice();
-            draw();
-            return;
-        }
+        // Start the move drag. In the read-only fretted roll (VA.3) this is the
+        // pitch-move: the live drag repicks {string,fret} through the resolver
+        // (onMouseMove's move branch → _rollDragPitchMove) and commits as a
+        // suggested-marked, lock-passing MoveNoteCmd.
         const selArr = [...S.sel];
         S.drag = {
             type: 'move',
@@ -4341,7 +4850,11 @@ function _onMouseMoveBody(e, x, y, L) {
         const snappedDt = _groupTimeDeltaPure(
             S.drag.origTimes, S.drag.primaryOrigTime, dtRaw, snapFn);
 
-        if (isKeysMode()) {
+        if (_rollReadOnly()) {
+            // Fretted part in the roll (VA.3): vertical drag = re-pitch through
+            // the resolver; the commit marks moved notes suggested.
+            _rollDragPitchMove(nn, snappedDt, dy);
+        } else if (isKeysMode()) {
             const dMidi = -Math.round(dy / PIANO_LANE_H);
             for (let i = 0; i < S.drag.indices.length; i++) {
                 const ni = S.drag.indices[i];
@@ -4436,6 +4949,7 @@ function onMouseUp(e) {
     if (S.drag.type === 'move' && S.drag.moved) {
         // Commit move as undo command
         const nn = notes();
+        const rollFretted = _rollReadOnly();
         const dtimes = S.drag.indices.map((ni, i) => nn[ni].time - S.drag.origTimes[i]);
         const dstrings = S.drag.indices.map((ni, i) => nn[ni].string - S.drag.origStrings[i]);
         const dfrets = isKeysMode()
@@ -4448,8 +4962,22 @@ function onMouseUp(e) {
             nn[S.drag.indices[i]].string = S.drag.origStrings[i];
             if (dfrets) nn[S.drag.indices[i]].fret = S.drag.origFrets[i];
         }
-        S.history.exec(new MoveNoteCmd(S.drag.indices, dtimes, dstrings, dfrets));
+        const cmd = new MoveNoteCmd(S.drag.indices, dtimes, dstrings, dfrets);
+        if (rollFretted) {
+            // VA.3: the sanctioned suggest-position writer passes the read-only
+            // lock; notes the resolver actually repicked (string/fret changed —
+            // not a pure time nudge or a held/locked note) are marked suggested.
+            cmd.suggestResolved = true;
+            cmd.markSuggestedIdx = S.drag.indices.filter((ni, i) => dstrings[i] !== 0 || (dfrets && dfrets[i] !== 0));
+        }
+        S.history.exec(cmd);
         if (_mixDragChangedPitchPure(dstrings, dfrets)) _editBlipAt();
+        // Refusal hint: a vertical drag that repitched nothing means every frame
+        // was refused (ambiguous / outside the hand window / occupied / locked).
+        if (rollFretted && (!cmd.markSuggestedIdx || !cmd.markSuggestedIdx.length)
+            && Math.abs(y - S.drag.startY) >= PIANO_LANE_H) {
+            setStatus('Couldn’t repitch here — hand position or a locked technique blocks it. Try String view or add an anchor.');
+        }
     }
 
     if (S.drag.type === 'select') {
@@ -4504,12 +5032,18 @@ function onDblClick(e) {
     const idx = hitNote(x, y);
     if (idx >= 0) return; // double-click on existing note = no-op
 
-    // Read-only roll (V4): adding by pitch would force a silent
-    // string/fret guess — refused until suggest-position exists.
-    if (_rollReadOnly()) { _rollLockNotice(); return; }
+    const t = snapTime(Math.max(0, xToTime(x)));
+
+    // Suggest-position write path (VA.3): a FRETTED part in the piano roll adds
+    // by SOUNDING pitch — the resolver picks the string/fret (marked suggested),
+    // or the confirm popover asks when the choice is genuinely ambiguous. No
+    // silent guess, no view switch. Real keys parts keep the pitch dialog below.
+    if (_rollReadOnly()) {
+        _rollAddByPitch(yToMidi(y), t, e.clientX, e.clientY);
+        return;
+    }
 
     // Show add-note dialog
-    const t = snapTime(Math.max(0, xToTime(x)));
     if (keysMode) {
         const midi = yToMidi(y);
         showAddNote(e.clientX, e.clientY, t, midiToString(midi), midiToFret(midi));
@@ -5964,9 +6498,9 @@ function _editorRightClickNoteEdit(e, x, y) {
     // reassigns arr.notes = _recNotes on Stop, so an add/remove here would be
     // silently overwritten and muddle undo history.
     if (_recState === 'recording') return false;
-    // Read-only roll (V4): the EOF-style right-click add/remove is a note
-    // edit — inert for a fretted part shown in the piano roll.
-    if (_rollReadOnly()) { _rollLockNotice(); return true; }
+    // Read-only roll (V4/VA.3): in the fretted roll an EOF-style right-click
+    // ADD routes through the suggest-position resolver (see below); DELETE
+    // stays locked — this write path only adds/repitches, never deletes.
     const keysMode = isKeysMode();
     const laneBottom = keysMode
         ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
@@ -5979,6 +6513,7 @@ function _editorRightClickNoteEdit(e, x, y) {
 
     const idx = hitNote(x, y);
     if (idx >= 0) {
+        if (_rollReadOnly()) { _rollLockNotice(); return true; }
         S.history.exec(new DeleteNotesCmd([idx]));
         draw();
         updateStatus();
@@ -5987,6 +6522,12 @@ function _editorRightClickNoteEdit(e, x, y) {
     }
 
     const time = snapTime(Math.max(0, xToTime(x)));
+    // Suggest-position write path (VA.3): a fretted part in the roll resolves the
+    // clicked SOUNDING pitch to a string/fret (marked suggested) or asks.
+    if (_rollReadOnly()) {
+        _rollAddByPitch(yToMidi(y), time, e.clientX, e.clientY);
+        return true;
+    }
     let note;
     if (keysMode) {
         const midi = yToMidi(y);
@@ -6412,7 +6953,15 @@ function showContextMenu(cx, cy, idx) {
     const canUp   = _canMoveString(+1);
     const canDown = _canMoveString(-1);
 
+    const n = notes()[idx];
     const items = [
+        // Suggest-position (VA.3): confirm the machine's pick for the current
+        // selection (clears the suggested mark; undo re-marks). Shown only when
+        // the clicked note is still an unconfirmed suggestion.
+        ...(_isSuggested(n) ? [
+            { label: '✓ Accept position', action: () => { hideContextMenu(); _execAcceptPositions(); } },
+            { type: 'sep' },
+        ] : []),
         { label: 'Move Up 1 String',   action: () => { hideContextMenu(); _execMoveString(+1); }, disabled: !canUp },
         { label: 'Move Down 1 String', action: () => { hideContextMenu(); _execMoveString(-1); }, disabled: !canDown },
         { type: 'sep' },
@@ -6439,7 +6988,6 @@ function showContextMenu(cx, cy, idx) {
         { label: 'Ignore', toggle: 'ignore', idx },
     ];
 
-    const n = notes()[idx];
     let html = '';
     for (const it of items) {
         if (it.type === 'sep') {
@@ -8018,6 +8566,9 @@ async function loadCDLC(filename) {
         _liftAllBeats(S.beats);
         // Beat-lock (§1.8): re-attach persisted sync-point locks (editor-pref).
         _restoreBeatLocks();
+        // Re-attach persisted suggested marks onto the rebuilt note objects so
+        // the machine's unreviewed guesses stay honest across a reload.
+        _restoreSuggestedMarks();
         if (isKeysMode()) updatePianoRange();
 
         // Update UI
@@ -8424,15 +8975,28 @@ function _activeArrangementExceedsArchiveLimit() {
 function _buildSaveBody(forceFullSnapshot) {
     if (_recState === 'recording') editorStopRecordMidi();
 
+    // Persist suggested marks BEFORE reconstructChords mints fresh note objects
+    // and drops them from the WeakSet, so a reload restores the honest-gap marks.
+    // Capture PER ARRANGEMENT (keyed by S.currentArr). Two subtleties:
+    //   - The full-snapshot loop leaves INACTIVE arrangements RECONSTRUCTED (their
+    //     chord members live in arr.chords as fresh, unmarked objects), so a later
+    //     save must flatten first, then re-attach that arr's marks FROM THE STORE
+    //     before capturing — otherwise the capture sees zero chord-member marks
+    //     and would wipe the key. The ACTIVE arr is already flattened with LIVE
+    //     WeakSet marks (which may lead the store after an unsaved Accept), so it
+    //     is NOT restored — its live marks win.
     const savedArr = S.currentArr;
     if (S.format === 'sloppak' || forceFullSnapshot) {
         for (let i = 0; i < S.arrangements.length; i++) {
             S.currentArr = i;
             flattenChords();
+            if (i !== savedArr) _restoreSuggestedMarks();
+            _saveSuggestedMarks();
             reconstructChords();
         }
         S.currentArr = savedArr;
     } else {
+        _saveSuggestedMarks();
         reconstructChords();
     }
 
@@ -8562,6 +9126,7 @@ async function saveCDLC() {
         setStatus('Save failed: ' + e.message);
     } finally {
         flattenChords();
+        _restoreSuggestedMarks();   // reattach marks onto the reflattened objects
         // (Undo history was invalidated inside _buildSaveBody's reconstructChords
         // rebuild — see #18 there; nothing to reset here.)
         draw();
@@ -8580,7 +9145,8 @@ window.editorSaveAsSloppakConfirm = async () => {
     document.getElementById('editor-save-format-modal').classList.add('hidden');
     if (!S.sessionId) return;
     setStatus('Saving as Sloppak...');
-    const body = _buildSaveBody(true);
+    const oldFilename = S.filename;
+    const body = _buildSaveBody(true);   // persists suggested marks under oldFilename
     try {
         const resp = await fetch('/api/plugins/editor/save_as_sloppak', {
             method: 'POST',
@@ -8591,7 +9157,20 @@ window.editorSaveAsSloppakConfirm = async () => {
         if (data.error) { setStatus('Save error: ' + data.error); return; }
         // Flip session into sloppak mode so subsequent edits route to
         // _save_sloppak. The original archive stays on disk untouched.
-        if (data.filename) S.filename = data.filename;
+        if (data.filename) {
+            // Migrate the suggested-mark keys to the new filename so the machine's
+            // unresolved guesses stay honest in the new .sloppak (the finally
+            // restore below reads the NEW key). Old file's keys are left intact.
+            if (data.filename !== oldFilename) {
+                try {
+                    for (let i = 0; i < S.arrangements.length; i++) {
+                        const v = localStorage.getItem(_suggestedStorageKeyPure(oldFilename, i));
+                        if (v !== null) localStorage.setItem(_suggestedStorageKeyPure(data.filename, i), v);
+                    }
+                } catch (_) { /* localStorage unavailable */ }
+            }
+            S.filename = data.filename;
+        }
         S.format = 'sloppak';
         // Normalize in-memory tuning to the real string count so a
         // subsequent /save (which now goes through the native sloppak
@@ -8616,6 +9195,7 @@ window.editorSaveAsSloppakConfirm = async () => {
         setStatus('Save failed: ' + e.message);
     } finally {
         flattenChords();
+        _restoreSuggestedMarks();   // reattach marks onto the reflattened objects
         // (Undo history already invalidated by reconstructChords in _buildSaveBody — #18.)
         draw();
     }
@@ -8671,8 +9251,13 @@ function _kickLibraryRescan(doneMsg) {
 function updateStatus() {
     const nn = notes();
     const cc = chords();
+    // Suggest-position (VA.3): nudge that N roll-resolved positions are still
+    // machine-picked (suggested), so the charter knows what's left to confirm.
+    const unresolved = _suggestedCount();
     document.getElementById('editor-note-count').textContent =
-        `${nn.length} notes, ${cc.length} chords` + (S.sel.size ? ` | ${S.sel.size} selected` : '');
+        `${nn.length} notes, ${cc.length} chords`
+        + (S.sel.size ? ` | ${S.sel.size} selected` : '')
+        + (unresolved ? ` | positions unresolved: ${unresolved}` : '');
     _renderInspector();
     // Selection drives the Loop-in-3D fallback region, so keep the button's
     // enabled state in sync whenever the status (selection count) refreshes.
@@ -9775,6 +10360,11 @@ window.editorNudgeOffset = (delta) => {
     editorApplyOffset(el.value);
 };
 window.editorSelectArrangement = (val) => {
+    // Flush the OUTGOING arrangement's live suggested marks to its keyed store
+    // before switching, so localStorage tracks the WeakSet (an Accept/position
+    // move that cleared a mark since the last save isn't resurrected when we
+    // restore this arrangement later). Guarded for extracted-test envs.
+    if (typeof _saveSuggestedMarks === 'function') _saveSuggestedMarks();
     S.currentArr = parseInt(val) || 0;
     S.sel.clear();
     // Tone + anchor selections are per-arrangement — clear them so
@@ -9784,6 +10374,10 @@ window.editorSelectArrangement = (val) => {
     S.anchorSel = null;
     S.handshapeSel = null;
     flattenChords();
+    // Re-attach this arrangement's persisted suggested marks (the key carries the
+    // arr index) so switching parts restores the right marks, not arr 0's.
+    // typeof-guarded like the mark helpers (absent in extracted-test envs).
+    if (typeof _restoreSuggestedMarks === 'function') _restoreSuggestedMarks();
     // Undo hardening: flattenChords() re-sorts arr.notes (see _flattenArrChords),
     // which renumbers the index-based note commands (MoveNoteCmd, DeleteNotesCmd,
     // ResizeSustainCmd) recorded against this or another arrangement. A later
