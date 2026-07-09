@@ -1,15 +1,18 @@
 /* ESLint for the editor's `src/` module graph.
  *
  * The playbook says lint rides in each migrated repo. This is the minimum that
- * earns its keep during the R2 split, and it exists because of two bugs that
- * `node --test` (86/86 green) and the headless harnesses BOTH missed:
+ * earns its keep during the R2 split. Two bugs motivated it; `node --test` was
+ * 86/86 green for both:
  *
  *   1. `MIN_NOTE_W` / `NOTE_PAD` moved to geometry.js and main.js kept using
- *      them unimported → `NOTE_PAD is not defined` on every mousemove.
+ *      them unimported → `NOTE_PAD is not defined` on every mousemove. Loud,
+ *      and the headless harnesses did catch it — but only after it shipped to a
+ *      branch.
  *   2. `typeof _coverageEditGen === 'number' ? _coverageEditGen : 0` survived
  *      the counter moving to state.js. `typeof` on an undeclared name is legal
  *      and yields 'undefined', so two memos silently keyed on a constant 0 and
- *      never invalidated on an edit. No error. No failing test.
+ *      never invalidated on an edit. No error, no failing test, and no harness
+ *      would have caught it either.
  *
  * `{ typeof: true }` is what catches (2), and is OFF by default — without it
  * `no-undef` deliberately ignores `typeof x`. Do not drop it.

@@ -10,11 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **ESLint on the `src/` module graph (#158).** The module playbook's per-repo
-  lint, added because two bugs during the R2 split slipped past `node --test`
-  (86/86 green) *and* the headless harnesses: `MIN_NOTE_W`/`NOTE_PAD` used after
-  they moved to `geometry.js` without an import, and — silently —
-  `typeof _coverageEditGen === 'number' ? _coverageEditGen : 0` surviving the
-  counter's move, so two memos keyed on a constant `0` and never invalidated.
+  lint, added because of two bugs during the R2 split that `node --test` (86/86
+  green) missed: `MIN_NOTE_W`/`NOTE_PAD` used after they moved to `geometry.js`
+  without an import — loud, and the headless harnesses did catch that one — and,
+  silently, `typeof _coverageEditGen === 'number' ? _coverageEditGen : 0`
+  surviving the counter's move, so two memos keyed on a constant `0` and never
+  invalidated. Nothing caught the second.
   `no-undef` with **`typeof: true`** catches both. That option is off by default:
   plain `no-undef` deliberately ignores `typeof x`, which is exactly the second
   bug's shape.

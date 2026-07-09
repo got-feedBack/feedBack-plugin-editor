@@ -12,15 +12,21 @@ jobs:
   # Not part of the org's reusable CI: that workflow runs `npm test` + pytest.
   # Per the module playbook, lint rides in each migrated repo. `no-undef` with
   # `typeof: true` is the gate — see eslint.config.mjs for the two bugs it
-  # exists to catch. Run via npx so the repo keeps ZERO node_modules: the
-  # desktop bundler's copy_plugin() does `cp -R "$src/."` and strips only
-  # `.git`, so a devDependency here would ship into the packaged app.
+  # exists to catch. The `lint` script shells out to npx, so the repo keeps ZERO
+  # node_modules: the desktop bundler's copy_plugin() does `cp -R "$src/."` and
+  # strips only `.git`, so a devDependency here would ship into the packaged app.
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # This job only reads `src` to lint it. Don't leave GITHUB_TOKEN in the
+          # local git config while npx pulls a dependency tree.
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: ESLint (src module graph)
-        run: npx --yes eslint@9.39.4 src
+        # `npm run lint` rather than repeating the invocation — package.json owns
+        # the eslint version and args.
+        run: npm run lint
