@@ -10396,9 +10396,28 @@ window.editorSetBPM = (val) => {
     const newBPM = parseFloat(val);
     if (!newBPM || newBPM <= 0 || S.beats.length < 2) return;
     if (!S.tempoMapMode && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01)) {
-        setStatus('Use Tempo Map to edit songs with multiple tempo events.');
+        // The song has a variable tempo map (multiple per-measure tempos). The
+        // per-measure editor can only fix ONE measure at a time, so offer to
+        // FLATTEN the whole map to this constant BPM — the escape hatch from a
+        // bad import's tempos (tester report: "can't remove all the BPM sync
+        // points without deleting measures"). Confirm because it discards the
+        // tempo variation; notes keep their times, and undo restores the map.
+        const ok = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+            ? window.confirm(
+                `This song has a variable tempo map (multiple tempo events).\n\n` +
+                `Flatten the WHOLE map to a constant ${newBPM} BPM?\n\n` +
+                `Only the beat grid is rebuilt — notes keep their times. Undo restores the tempo map.`)
+            : true;
+        if (!ok) { updateBPMDisplay(); draw(); return; }
+        // Exact spacing (no rounding) so the flattened map reads as PERFECTLY
+        // constant — _r3's ±0.5ms would drift per-measure BPM past the 0.01
+        // variable-tempo detector and the grid would still look variable.
+        const flat = _tempoFlattenToBpmPure(S.beats, newBPM);
+        if (!flat) { updateBPMDisplay(); return; }
+        S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), flat, 'flatten'));
         updateBPMDisplay();
         draw();
+        setStatus(`Tempo map flattened to a constant ${newBPM.toFixed(2)} BPM`);
         return;
     }
     if (S.tempoMapMode) {
@@ -17581,6 +17600,22 @@ function _tempoSetMeasureBpmPure(beats, d, newBpm, minMeasure, round) {
         out[i].time = r(out[i].time + dt);
     }
     return out;
+}
+
+// Rebuild a beat grid as a UNIFORM constant-BPM grid: keep every beat's measure
+// / time-signature metadata and the first beat's start time, and re-time each
+// beat to t0 + i·(60/bpm). This is the "flatten the whole tempo map to one BPM"
+// op — the escape hatch from a bad import's per-measure tempos, which the
+// per-measure BPM editor can only fix one measure at a time (tester report).
+// Spacing every beat by 60/bpm matches how this editor already defines a
+// measure's BPM (beatCount·60/span; see _tempoMeasureBpmsPure). Notes are NOT
+// touched here — the caller keeps note times so they stay aligned to the audio.
+function _tempoFlattenToBpmPure(beats, bpm, round) {
+    if (!Array.isArray(beats) || beats.length < 2 || !Number.isFinite(bpm) || bpm <= 0) return null;
+    const r = typeof round === 'function' ? round : (v => v);
+    const span = 60 / bpm;
+    const t0 = Number(beats[0] && beats[0].time) || 0;
+    return beats.map((b, i) => ({ ...b, time: r(t0 + i * span) }));
 }
 /* @pure:tempo-map-bpm:end */
 

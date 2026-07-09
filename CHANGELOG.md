@@ -103,6 +103,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   original seconds verbatim instead of reprojecting them through `_r3`, so a
   sub-millisecond note placement (e.g. `1.23456 s`) survives edit→undo→save
   instead of quantizing to `1.235 s`. Tests: `tests/beat_primary.test.js`.
+- **Typing a BPM on a variable tempo map offers to flatten it.** When a
+  song carries a variable tempo map (multiple per-measure tempos — e.g. a
+  bad import), the BPM field previously just refused with "Use Tempo Map to
+  edit songs with multiple tempo events." It now offers to **flatten the
+  whole map to that one constant BPM** (`_tempoFlattenToBpmPure`): the beat
+  grid is rebuilt at an exact `60/bpm` spacing (measure/time-signature
+  metadata and the first beat's start time preserved), notes keep their
+  times so they stay aligned to any audio, and the whole change is one
+  undoable `TempoGridCmd`. Fixes the tester report that there was "no way to
+  remove all the BPM sync points without deleting measures." Exact (unrounded)
+  spacing so the result reads as perfectly constant to the variable-tempo
+  detector. Tests: `tests/tempo_flatten.test.js`.
 - **One tempo-map converter: `beatOf` / `timeOf`.** The musical-beat ⇄
   seconds math that the flex remapper (`_makeTimeRemap`) and `snapTime`
   each computed inline is now a single extracted `@pure:beat-converter`
