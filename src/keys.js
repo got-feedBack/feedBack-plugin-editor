@@ -210,3 +210,16 @@ export function updatePianoRange(expandOnly = false) {
     // the canvas wrapper.
     PIANO_LANE_H = Math.max(4, Math.min(14, 350 / (nhi - nlo + 1)));
 }
+
+// A free "Keys" / "Keys 2" / … name for a new keys arrangement. Lives here
+// because a Keys arrangement is what it names; both the MIDI recorder and the
+// Add-Keys import need one.
+export function _uniqueKeysName() {
+    const taken = new Set(S.arrangements.map(a => (a.name || '').trim().toLowerCase()));
+    if (!taken.has('keys')) return 'Keys';
+    // The taken set has a finite number of entries, so a free slot is guaranteed
+    // within taken.size + 1 iterations; the +2 ceiling is a safety margin.
+    const limit = taken.size + 2;
+    for (let i = 2; i <= limit; i++) if (!taken.has(`keys ${i}`)) return `Keys ${i}`;
+    return `Keys ${Date.now()}`;
+}

@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Tests for the MIDI-input backend adapter (@pure:midi-adapter block +
  * the unified _recMidiOnData routing): the editor's live-record path now
@@ -12,13 +11,18 @@
  * adapter exists); the routing tests pin behavioral equivalence across
  * the migration.
  *
- * Run: node tests/midi_domain.test.js
+ * Run: node tests/midi_domain.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+// The recorder moved to src/midi-record.js; the internals these cases drive are
+// module-private, so they are still sliced — from their new home.
+const src = fs.readFileSync(new URL('../src/midi-record.js', import.meta.url), 'utf8');
+// `src` is a module: the declarations it slices carry `export`, which is a
+// SyntaxError inside `new Function`. Strip it — nothing here cares.
+const unexport = (code) => code.replace(/^export\s+/gm, '');
+
 
 function extractBlock(name) {
     const re = new RegExp(
@@ -28,7 +32,7 @@ function extractBlock(name) {
         console.error(`FAIL: @pure:${name} block not found in src/main.js`);
         process.exit(1);
     }
-    return m[0];
+    return unexport(m[0]);
 }
 function extractFn(name) {
     const start = src.indexOf('function ' + name);
@@ -37,7 +41,7 @@ function extractFn(name) {
     let depth = 0;
     for (let i = open; i < src.length; i++) {
         if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+        else if (src[i] === '}' && --depth === 0) return unexport(src.slice(start, i + 1));
     }
     throw new Error(`unbalanced braces extracting ${name}`);
 }
