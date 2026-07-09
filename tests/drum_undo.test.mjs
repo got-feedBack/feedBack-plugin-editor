@@ -21,13 +21,14 @@
  * `@pure:drum-cmds` + `@pure:edit-history` blocks (browser-free) and eval's
  * them in isolation — real source, no drift.
  *
- * Run: node tests/drum_undo.test.js
+ * Run: node tests/drum_undo.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { EditHistory } from '../src/history.js';
+import { seedState, trackHooks } from './_history_env.mjs';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extract(name) {
     const re = new RegExp(
@@ -41,7 +42,6 @@ function extract(name) {
 }
 
 const drumBlock = extract('drum-cmds');
-const historyBlock = extract('edit-history');
 
 // Build an isolated environment. The drum commands read S.drumTab/S.drumSel
 // and call updateArrangementSelector() (a DOM refresher — stubbed to a call
@@ -50,27 +50,27 @@ const historyBlock = extract('edit-history');
 // the tagging observable. _historyEnsureArr lives OUTSIDE the pure block on
 // purpose (it touches window/document); the typeof guard skips it here.
 function makeEnv() {
-    const S = {
+    // EditHistory is a real import and closes over the REAL `S`, so the sliced
+    // drum commands must share that object rather than a fabricated one.
+    const S = seedState({
         drumTab: { hits: [] },
         drumSel: new Set(),
         drumTabDirty: false,
         currentArr: 0,
-    };
+    });
     const calls = { selector: 0 };
     const env = new Function(
-        'document', 'S', 'updateArrangementSelector', 'draw', 'updateStatus',
+        'S', 'updateArrangementSelector',
         '"use strict";'
-        + historyBlock + '\n' + drumBlock + '\n'
-        + 'return { EditHistory, AddDrumHitCmd, DeleteDrumHitsCmd, '
+        + drumBlock + '\n'
+        + 'return { AddDrumHitCmd, DeleteDrumHitsCmd, '
         + 'MoveDrumHitsCmd, ToggleDrumArticulationCmd, _drumSortAndRemapSel };'
     )(
-        { getElementById: () => null },
         S,
         () => { calls.selector++; },
-        () => {},
-        () => {},
     );
-    return { ...env, S, calls, history: new env.EditHistory() };
+    trackHooks();
+    return { ...env, S, calls, history: new EditHistory() };
 }
 
 let pass = 0, fail = 0;

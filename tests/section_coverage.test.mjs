@@ -14,13 +14,12 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import { _sectionCoveragePure } from '../src/draw.js';
+import { EditHistory } from '../src/history.js';
+import { editGen } from '../src/state.js';
 
-// The pure helper is a real import now. Two cases still assert on code SHAPE —
-// that drawSections goes through the memo, and that EditHistory._afterEdit()
-// invalidates it — so they read the two files those live in.
+// The pure helper is a real import now. One case still asserts on code SHAPE —
+// that drawSections goes through the memo rather than recomputing per frame.
 const drawSrc = fs.readFileSync(new URL('../src/draw.js', import.meta.url), 'utf8');
-const mainSrc = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-const stateSrc = fs.readFileSync(new URL('../src/state.js', import.meta.url), 'utf8');
 
 const sec = (t, name) => ({ name: name || 's', start_time: t });
 
@@ -133,28 +132,15 @@ t('drawSections uses the memo, not a per-frame recompute', () => {
 });
 
 t('the coverage memo is invalidated on edit via _afterEdit()', () => {
-    // Brace-match the METHOD body rather than slicing a fixed character
-    // window: a fixed window silently shrinks by one char per line on a
-    // CRLF (Windows) checkout, and comment growth inside the method had
-    // already pushed the bump statement past the old 400-char cutoff —
-    // green on CI's LF checkout, red on every Windows clone.
-    const start = mainSrc.indexOf('_afterEdit() {');
-    assert.ok(start >= 0, '_afterEdit() must exist');
-    const open = mainSrc.indexOf('{', start);
-    let depth = 0, end = -1;
-    for (let i = open; i < mainSrc.length; i++) {
-        if (mainSrc[i] === '{') depth++;
-        else if (mainSrc[i] === '}' && --depth === 0) { end = i + 1; break; }
-    }
-    assert.ok(end > 0, '_afterEdit() must have a balanced body');
-    const body = mainSrc.slice(start, end);
-    // The shared edit generation lives in src/state.js now. A counter cannot be
-    // written across a module boundary (import bindings are read-only), so
-    // _afterEdit calls the exported bumper instead of incrementing it directly.
-    assert.ok(/bumpEditGen\(\)/.test(body),
+    // EditHistory is a real import now, so drive the method instead of asserting
+    // on the shape of its source. `editGen` is a live binding: reading it here
+    // always sees src/state.js's current value, and a counter cannot be written
+    // across a module boundary (import bindings are read-only), which is why
+    // _afterEdit() calls the exported bumper rather than incrementing directly.
+    const before = editGen;
+    new EditHistory()._afterEdit();
+    assert.strictEqual(editGen, before + 1,
         '_afterEdit() must bump the shared edit generation so in-place moves recompute');
-    assert.ok(/editGen\+\+/.test(stateSrc),
-        'bumpEditGen() must increment the shared edit generation');
     assert.ok(/editGen[\s\S]*?_covCache/.test(drawSrc),
         'the coverage memo must key on the edit generation counter');
 });

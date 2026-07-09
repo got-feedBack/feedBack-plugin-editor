@@ -16,20 +16,17 @@
  */
 import assert from 'node:assert';
 import fs from 'node:fs';
+import { EditHistory } from '../src/history.js';
+import { _rollReadOnly } from '../src/keys.js';
 import {
     _maxSustainBeforeCollisionPure, _resizeSustainsForDeltaPure,
 } from '../src/notes.js';
+import { lastStatus, seedState, trackHooks } from './_history_env.mjs';
 
 // The undo commands still live in src/main.js, so they are still sliced; the
-// pure resize arithmetic they were paired with now comes from src/notes.js.
+// pure resize arithmetic they were paired with now comes from src/notes.js, and
+// the stack itself from src/history.js.
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-
-function extractBlock(name) {
-    const re = new RegExp('/\\* @pure:' + name + ':start[\\s\\S]*?@pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) { console.error(`FAIL: @pure:${name} block not found in src/main.js`); process.exit(1); }
-    return m[0];
-}
 function extractClass(name) {
     const start = src.indexOf('class ' + name);
     assert.ok(start >= 0, `class ${name} must exist in src/main.js`);
@@ -48,31 +45,28 @@ function t(name, fn) {
     catch (e) { fail++; console.error('  FAIL ' + name + ': ' + (e && e.message)); }
 }
 
-// The locked-roll harness: _rollReadOnly ⇒ true, like a fretted part in the roll.
+// The locked-roll harness. EditHistory now imports _rollReadOnly for real, so the
+// lock is driven through actual state rather than a stubbed predicate: a part
+// named 'Lead' is fretted, and rollView puts it in the piano roll. That IS
+// _rollReadOnly() — asserted below, so the harness can't silently unlock.
 function makeEnv(seed) {
-    const S = {
-        currentArr: 0,
+    const S = seedState({
         arrangements: [{ id: 'a1', name: 'Lead', notes: seed.map(n => ({ ...n })) }],
-    };
-    const notices = [];
+        rollView: true,
+    });
+    assert.ok(_rollReadOnly(), 'harness precondition: the roll must be read-only');
+    trackHooks();
     const fullSrc = '"use strict";'
-        + extractBlock('edit-history')
-        + '\n' + extractClass('ResizeSustainCmd')
+        + extractClass('ResizeSustainCmd')
         + '\n' + extractClass('ResizeSustainGroupCmd')
-        + '\nconst history = new EditHistory(); S.history = history;'
-        + '\nreturn { history, ResizeSustainCmd, ResizeSustainGroupCmd };';
-    const env = new Function(
-        'S', 'document', 'notes', 'draw', 'updateStatus', '_rollReadOnly', '_rollLockNotice',
-        fullSrc
-    )(
+        + '\nreturn { ResizeSustainCmd, ResizeSustainGroupCmd };';
+    const env = new Function('S', 'notes', fullSrc)(
         S,
-        { getElementById: () => null },
         () => S.arrangements[S.currentArr].notes,
-        () => {}, () => {},
-        () => true,                       // read-only fretted roll
-        () => notices.push('LOCKED'),
     );
-    return { S, env, notices, notes: () => S.arrangements[0].notes };
+    env.history = new EditHistory();
+    S.history = env.history;
+    return { S, env, notes: () => S.arrangements[0].notes };
 }
 
 // ── the flag itself ───────────────────────────────────────────────────────────
@@ -108,13 +102,13 @@ t('a group resize applies in the read-only fretted roll and round-trips', () => 
 
 // ── the lock is still REAL — only pitchPreserving passes ──────────────────────
 t('the read-only-roll lock still blocks an ordinary (non-pitchPreserving) command', () => {
-    const { env, notes, notices } = makeEnv([{ time: 0, string: 3, fret: 1, sustain: 0.5 }]);
+    const { env, notes } = makeEnv([{ time: 0, string: 3, fret: 1, sustain: 0.5 }]);
     let ran = false;
     env.history.exec({ exec() { ran = true; notes()[0].sustain = 9; }, rollback() {} });  // no pitchPreserving
     assert.strictEqual(ran, false, 'an unflagged command stays inert in the locked roll');
     assert.strictEqual(notes()[0].sustain, 0.5, 'nothing was written');
     assert.strictEqual(env.history.undo.length, 0);
-    assert.ok(notices.includes('LOCKED'), 'the user is told why');
+    assert.match(lastStatus(), /read-only/, 'the user is told why (real _rollLockNotice)');
 });
 
 // ── group resize preserves per-member relative durations (does NOT flatten) ───

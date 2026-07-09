@@ -21,13 +21,14 @@
  * documented behavior is exactly what the test pins). These assertions fail on
  * main (the command classes don't exist there).
  *
- * Run: node tests/section_undo.test.js
+ * Run: node tests/section_undo.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { EditHistory } from '../src/history.js';
+import { seedState, trackHooks } from './_history_env.mjs';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 function extract(name) {
     const re = new RegExp(
         '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
@@ -36,21 +37,20 @@ function extract(name) {
     return m[0];
 }
 
-// Build an isolated world: the REAL EditHistory + the REAL section commands,
-// with S / draw / updateStatus injected. EditHistory._ui reads two buttons —
-// stub getElementById to return fakes. draw/updateStatus are no-ops.
+// The REAL EditHistory (a real import now) + the REAL section commands. History
+// closes over the real `S`, so the sliced commands must share that same object.
 function makeEnv(initialSections) {
-    const S = { sections: initialSections || [], history: null };
-    const documentStub = { getElementById: () => ({ disabled: false }) };
+    const S = seedState({ sections: initialSections || [], history: null });
     const api = new Function(
-        'S', 'document', 'draw', 'updateStatus',
+        'S',
         '"use strict";'
-        + extract('edit-history') + '\n' + extract('section-cmds') + '\n'
-        + 'return { EditHistory, AddSectionCmd, RemoveSectionCmd, RenameSectionCmd,'
+        + extract('section-cmds') + '\n'
+        + 'return { AddSectionCmd, RemoveSectionCmd, RenameSectionCmd,'
         + ' _sectionNearestIndexPure };'
-    )(S, documentStub, () => {}, () => {});
-    S.history = new api.EditHistory();
-    return { ...api, S };
+    )(S);
+    trackHooks();
+    S.history = new EditHistory();
+    return { ...api, S, history: S.history };
 }
 
 // Deep clone for before/after model comparison.

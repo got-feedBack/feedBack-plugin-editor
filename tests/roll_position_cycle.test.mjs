@@ -12,6 +12,10 @@
  */
 import assert from 'node:assert';
 import fs from 'node:fs';
+import { EditHistory } from '../src/history.js';
+import { _rollLockNotice, _rollReadOnly } from '../src/keys.js';
+import { setStatus } from '../src/ui.js';
+import { seedState, statusMessages, trackHooks } from './_history_env.mjs';
 import { _soundingPitchPure } from '../src/lanes.js';
 import {
     _cyclePositionCandidatesPure, _cycleStepPure,
@@ -19,16 +23,6 @@ import {
 
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
-function extractBlock(name) {
-    const re = new RegExp(
-        '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) {
-        console.error(`FAIL: @pure:${name} block not found in src/main.js`);
-        process.exit(1);
-    }
-    return m[0];
-}
 function extractFn(name) {
     const start = src.indexOf('function ' + name);
     assert.ok(start >= 0, `function ${name} must exist`);
@@ -129,16 +123,21 @@ t('single-position and corrupt-current are null (no-op, never a guess)', () => {
 
 // ── Driver + lock carve-out round-trip ───────────────────────────────
 
+// EditHistory imports _rollReadOnly for real, so `locked` is expressed as real
+// state: `rollView` puts the part in the piano roll, and a fretted part name
+// there IS the read-only condition. A keys-named part in the roll is editable.
 function makeCycleEnv({ arrName = 'Lead', noteSeed, sel, locked = true } = {}) {
-    const S = {
-        currentArr: 0,
+    const S = seedState({
         arrangements: [{ id: 'a1', name: arrName, tuning: [0, 0, 0, 0, 0, 0],
                          notes: noteSeed.map(n => ({ ...n })) }],
+        rollView: true,
         sel: new Set(sel),
         drumEditMode: false,
         tempoMapMode: false,
-    };
-    const statuses = [];
+    });
+    assert.strictEqual(_rollReadOnly(), locked, 'harness precondition: lock state');
+    trackHooks();
+    const statuses = statusMessages;   // live array of real setStatus() writes
     // MoveToStringCmd is a class — extractFn targets functions, so pull the
     // class by brace-matching from its declaration instead.
     const clsStart = src.indexOf('class MoveToStringCmd');
@@ -152,31 +151,30 @@ function makeCycleEnv({ arrName = 'Lead', noteSeed, sel, locked = true } = {}) {
     // position-cycle moved to src/position.js — injected below; edit-history and
     // _execCyclePosition are still in src/main.js and still sliced.
     const fullSrc = '"use strict";'
-        + extractBlock('edit-history')
-        + '\n' + clsSrc
+        + clsSrc
         + '\n' + extractFn('_execCyclePosition')
-        + '\nconst history = new EditHistory(); S.history = history;'
-        + '\nreturn { _execCyclePosition, history };';
+        + '\nreturn { _execCyclePosition };';
     const env = new Function(
-        'S', 'document', 'notes', 'setStatus', 'draw', 'updateStatus',
+        'S', 'history', 'notes', 'setStatus', 'draw', 'updateStatus',
         '_renderInspector', '_editBlipAt', '_rollReadOnly', '_rollLockNotice',
         '_editorCurrentNoteIndices', 'isKeysArr', '_stringCountFor', '_openMidiForArr',
         '_soundingPitchPure', '_cyclePositionCandidatesPure', '_cycleStepPure',
         fullSrc
     )(
         S,
-        { getElementById: () => ({ disabled: false }) },
+        (S.history = new EditHistory()),
         () => S.arrangements[S.currentArr].notes,
-        m => statuses.push(m),
+        setStatus,
         () => {}, () => {}, () => {}, () => {},
-        () => locked,
-        () => statuses.push('LOCKED'),
+        _rollReadOnly,
+        _rollLockNotice,
         () => (S.sel && S.sel.size ? [...S.sel] : []),
         () => /^(piano|keys|synth)/i.test(S.arrangements[S.currentArr].name),
         () => 6,
         () => STD.slice(),
         _soundingPitchPure, _cyclePositionCandidatesPure, _cycleStepPure,
     );
+    env.history = S.history;
     return { S, env, statuses };
 }
 
@@ -201,7 +199,7 @@ t('edit-lock still blocks every command WITHOUT the pitchPreserving flag', () =>
     env.history.exec({ exec() { ran++; }, rollback() { ran--; } });
     assert.strictEqual(ran, 0, 'unflagged command must stay inert');
     assert.strictEqual(env.history.undo.length, 0);
-    assert.ok(statuses.includes('LOCKED'), 'the user is told why');
+    assert.ok(statuses.some(m => /read-only/.test(m)), 'the user is told why (real _rollLockNotice)');
 });
 
 t('multi-select cycles each note independently, skipping single-position notes', () => {
@@ -240,8 +238,11 @@ t('all-single-position selection is a status no-op, never a history entry', () =
 });
 
 t('keys DATA and empty selection are guarded no-ops', () => {
+    // A keys-DATA part in the roll is fully editable — never read-only. The old
+    // harness stubbed _rollReadOnly() ⇒ true even here; the real predicate says
+    // false, so state it.
     const keys = makeCycleEnv({
-        arrName: 'Piano', noteSeed: [{ string: 1, fret: 0, time: 0 }], sel: [0] });
+        arrName: 'Piano', noteSeed: [{ string: 1, fret: 0, time: 0 }], sel: [0], locked: false });
     keys.env._execCyclePosition(+1);
     assert.strictEqual(keys.env.history.undo.length, 0, 'keys packing has no positions');
     const none = makeCycleEnv({ noteSeed: [{ string: 1, fret: 0, time: 0 }], sel: [] });

@@ -21,6 +21,7 @@ import {
 } from './position.js';
 import { setStatus } from './ui.js';
 import { hitNote, hitNoteEdge } from './hit-test.js';
+import { EditHistory, setHistoryHooks } from './history.js';
 import {
     _editorCommandById,
     _editorEffectiveRightClickBehaviorPure,
@@ -49,7 +50,7 @@ import {
     drawSelectionRect,
     editorKeyHighlightEnabled,
 } from './draw.js';
-import { S, bumpEditGen, editGen } from './state.js';
+import { S, editGen } from './state.js';
 import {
     LC,
     _openMidiForArr,
@@ -1149,125 +1150,6 @@ function _refreshKeyControls() {
 // Undo / Redo
 // ════════════════════════════════════════════════════════════════════
 
-/* @pure:edit-history:start */
-// Cap the undo stack so a marathon session can't grow memory without bound —
-// the stack held every command since the last save/load. Oldest entries drop
-// first; 500 comfortably exceeds any realistic between-saves editing run.
-const MAX_UNDO = 500;
-class EditHistory {
-    constructor() { this.undo = []; this.redo = []; }
-    // Tag each command with the arrangement it was executed against: most
-    // commands resolve their target through the notes()/chords() accessors at
-    // rollback time, so an undo issued after switching arrangements would
-    // silently mutate the WRONG arrangement's notes. Commands that edit
-    // song-level state (drum tab, tempo grid) opt out via `songScope = true`.
-    // The `typeof` guards keep this block browser-free for the test harness.
-    exec(cmd) {
-        // Read-only roll (V4): a FRETTED part shown in the piano roll is
-        // edit-locked until the suggest-position writer exists, so every
-        // NOTE-scope command entry point (keys, menus, inspector, dialogs)
-        // is inert here in one place. Song-scope commands (drum tab, tempo
-        // grid) edit song-level data, not the fretted chart, so they still
-        // pass through even while a fretted part is shown in the roll —
-        // otherwise switching an unrelated part to the roll would freeze
-        // tempo/drum editing. typeof-guarded so extracted-test envs without
-        // the view layer are unaffected. `pitchPreserving` commands (the
-        // VA.5 position cycle) are the one deliberate carve-out: they can
-        // never change what a note SOUNDS like — only which string/fret
-        // plays it — so the "no silent pitch writes" contract the lock
-        // protects is unbreakable by construction. `suggestResolved` commands
-        // (the VA.3 suggest-position writer: resolved adds + Accept) are the
-        // OTHER carve-out — they ARE the sanctioned string/fret write path the
-        // lock was holding the door for, so they pass here (and mark, never
-        // guess). Nothing else opts out.
-        if (cmd.songScope !== true && cmd.pitchPreserving !== true && cmd.suggestResolved !== true
-            && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
-            if (typeof _rollLockNotice === 'function') _rollLockNotice();
-            return;
-        }
-        cmd._arrIdx = (cmd.songScope === true) ? -1
-            : (typeof S !== 'undefined' ? (S.currentArr ?? -1) : -1);
-        cmd.exec();
-        this.undo.push(cmd);
-        if (this.undo.length > MAX_UNDO) this.undo.shift();
-        this.redo = [];
-        this._afterEdit();
-        this._ui();
-    }
-    doUndo() {
-        if (!this.undo.length) return;
-        const c = this.undo[this.undo.length - 1];
-        // Peek-then-pop: if the command belongs to another arrangement,
-        // _historyEnsureArr switches to it (or refuses when it's gone) BEFORE
-        // the command leaves the stack, so a refused undo loses nothing.
-        if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
-        // Read-only roll (V4): rolling a NOTE-scope command back would write
-        // the fretted chart currently shown read-only in the piano roll, so
-        // undo would silently bypass the exec/drag lock. Refuse (peek only —
-        // the command stays on the stack, nothing is lost). _historyEnsureArr
-        // above has already switched to the command's arrangement, so this
-        // evaluates read-only against the part the rollback would touch.
-        // Song-scope commands (drum/tempo) don't touch the fretted chart and
-        // undo normally; pitchPreserving commands (VA.5 position cycle)
-        // can't change pitch and round-trip freely (see exec); suggestResolved
-        // commands (VA.3 suggest-position writer) are the sanctioned string/fret
-        // write path and round-trip too.
-        if (c.songScope !== true && c.pitchPreserving !== true && c.suggestResolved !== true
-            && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
-            if (typeof _rollLockNotice === 'function') _rollLockNotice();
-            return;
-        }
-        this.undo.pop(); c.rollback(); this.redo.push(c);
-        this._afterEdit(); this._ui(); draw(); updateStatus();
-    }
-    doRedo() {
-        if (!this.redo.length) return;
-        const c = this.redo[this.redo.length - 1];
-        if (typeof _historyEnsureArr === 'function' && !_historyEnsureArr(c)) return;
-        // Read-only roll (V4): re-exec of a NOTE-scope command writes the
-        // fretted chart that is read-only in the roll — same lock (and same
-        // pitchPreserving / suggestResolved carve-outs) as doUndo.
-        if (c.songScope !== true && c.pitchPreserving !== true && c.suggestResolved !== true
-            && typeof _rollReadOnly === 'function' && _rollReadOnly()) {
-            if (typeof _rollLockNotice === 'function') _rollLockNotice();
-            return;
-        }
-        this.redo.pop(); c.exec(); this.undo.push(c);
-        // Re-apply the MAX_UNDO cap: a redo pushes back onto the undo stack, so
-        // without this a redo-heavy session could grow it past the bound that
-        // exec()/doUndo already enforce. Oldest drops first, mirroring exec().
-        if (this.undo.length > MAX_UNDO) this.undo.shift();
-        this._afterEdit(); this._ui(); draw(); updateStatus();
-    }
-    // #18: drop the whole stack when the model is rebuilt under us (the save /
-    // build flatten+reconstructChords round-trip renumbers arr.notes, so every
-    // index-based command would now roll back into the wrong note). Reuse the
-    // live instance + its _ui() wiring rather than reassigning S.history.
-    // Not _afterEdit() — that nudges the piano viewport, which a clear shouldn't.
-    reset() { this.undo = []; this.redo = []; this._ui(); }
-    _afterEdit() {
-        // Invalidate the section-coverage memo: an in-place note-time move
-        // keeps the notes array's identity + length, so the cheap cache key
-        // can't see it — this generation bump is what forces a recompute.
-        // typeof-guarded (like isKeysMode below): declared outside this @pure block.
-        // Bump the shared edit generation: the section-coverage, chord-display and
-        // drum-lint memos all key on it. typeof-guarded (like isKeysMode below):
-        // declared outside this @pure block, so a sliced sandbox may not have it.
-        if (typeof bumpEditGen === 'function') bumpEditGen();
-        // Keep the keys viewport in sync with the current note range so
-        // multi-octave authoring works without manual range control.
-        // expandOnly=true so adding a note outside the current viewport
-        // extends it instead of collapsing to the latest note's octave.
-        if (typeof isKeysMode === 'function' && isKeysMode()) updatePianoRange(true);
-    }
-    _ui() {
-        const u = document.getElementById('editor-undo');
-        const r = document.getElementById('editor-redo');
-        if (u) u.disabled = !this.undo.length;
-        if (r) r.disabled = !this.redo.length;
-    }
-}
-/* @pure:edit-history:end */
 
 // Guard: true only while _historyEnsureArr drives an arrangement switch to
 // replay an undo/redo. editorSelectArrangement reads it to distinguish a
@@ -1303,6 +1185,11 @@ function _historyEnsureArr(cmd) {
     setStatus(`Switched to "${S.arrangements[idx].name}" to apply undo/redo`);
     return true;
 }
+
+// src/history.js cannot import these three back out of main.js without closing
+// a cycle. All are hoisted function declarations, so this top-level call is
+// safe wherever it sits.
+setHistoryHooks({ ensureArr: _historyEnsureArr, draw, updateStatus });
 
 class MoveNoteCmd {
     constructor(indices, dtimes, dstrings, dfrets) {
