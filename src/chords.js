@@ -15,7 +15,8 @@ import { S } from './state.js';
 import { lanes } from './lanes.js';
 
 // Flatten chord notes into the main notes array on load, tagging with _fromChord.
-// On save, reconstruct chords from notes sharing the same time+_fromChord group.
+// On save, reconstruct chords from notes sharing the same time (see
+// reconstructChords — it groups by rounded time alone, not by _fromChord).
 export function flattenChords() {
     if (!S.arrangements.length) return;
     _flattenArrChords(S.arrangements[S.currentArr]);
@@ -105,12 +106,20 @@ export function _normalizeHandshape(hs) {
 
 // Normalize a frets array to a width-L comma key so loaded/GP templates
 // (padded to 6) match the editor's L-wide rebuilt frets on 7/8-string charts.
-export function _fretKeyForL(frets, L) {
+// Width-normalize a fret row to the chart's string count `L`, folding every
+// non-finite slot (undefined / NaN / a hand-edited string) to -1. This is the
+// single fold: the dedupe key, the preserved-template lookup, and the stored
+// template row all go through it, so they cannot disagree.
+function _normFretsToL(frets, L) {
     const out = new Array(L);
     for (let i = 0; i < L; i++) {
         out[i] = (Array.isArray(frets) && Number.isFinite(frets[i])) ? frets[i] : -1;
     }
-    return out.join(',');
+    return out;
+}
+
+export function _fretKeyForL(frets, L) {
+    return _normFretsToL(frets, L).join(',');
 }
 // Return a length-L fingers array from `fingers` (pad/trim with -1).
 export function _normFingers(fingers, L) {
@@ -170,14 +179,23 @@ export function _buildPreservedTemplates(oldTemplates, L) {
 // matching backend emission (routes.py wire/XML writers + read side), so these
 // persist through save and reload instead of being silent dead-state.
 export function relinkChordTemplate(frets, preserved, L) {
-    const old = preserved[_fretKeyForL(frets, L)];
+    // Store the NORMALIZED row, not `frets.slice()`. A preserved template can
+    // arrive narrower than the chart (buildHandshapeChordIdMap's preserve-append
+    // hands us a template straight off the wire), and a fret slot can be
+    // non-finite on a hand-edited pack. `fingers` has always been padded to L
+    // this way — `frets` now matches.
+    const normFrets = _normFretsToL(frets, L);
+    const old = preserved[normFrets.join(',')];
     const name = (old && typeof old.name === 'string') ? old.name : '';
     return {
         name,
-        frets: frets.slice(),
+        frets: normFrets,
         fingers: _normFingers(old && old.fingers, L),
         displayName: (old && typeof old.displayName === 'string') ? old.displayName : name,
-        arp: !!(old && old.arp),
+        // `!!old.arp` turned the STRING "false" into true — exactly the trap
+        // `_safeWireBool` was written for. A hand-edited / legacy sloppak with
+        // `arp: "false"` must not switch arpeggio on across a load→save.
+        arp: _safeWireBool(old && old.arp, false),
         // §6.6 voicing — carry it forward or the save rebuild BLANKS it (same
         // carry-forward gotcha as name/displayName/fingers/arp).
         voicing: (old && typeof old.voicing === 'string') ? old.voicing : '',
@@ -347,10 +365,16 @@ export function reconstructChords() {
     for (const key of Object.keys(byTime).sort((a, b) => parseFloat(a) - parseFloat(b))) {
         const group = byTime[key];
         if (group.length === 1) {
-            // A lone note is not a chord, so it carries no harmony fn. Drop any
-            // `_fn` it inherited (e.g. a chord note dragged out) so the internal
-            // field can't ride into the saved wire via arr.notes.
+            // A lone note is not a chord: drop the chord provenance it inherited
+            // from `flattenChords` (e.g. the other members were deleted). `_fn`
+            // matters most — `_groupFn` READS it, so a stale one would be adopted
+            // by majority vote if this note is later dragged into a chord.
+            // `_fromChord` / `_chordId` are write-only today; clearing them keeps
+            // a future reader from trusting a stale flag. (None of the three can
+            // reach disk: the backend's `_note()` whitelists the keys it writes.)
             delete group[0]._fn;
+            delete group[0]._fromChord;
+            delete group[0]._chordId;
             newNotes.push(group[0]);
         } else {
             // Multiple notes at same time = chord
