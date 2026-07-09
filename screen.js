@@ -7440,7 +7440,11 @@ _globalListeners.add(document, 'keydown', (e) => {
 // one on demand. Call from a user gesture (decode / play) so the browser does
 // not hand back a permanently-suspended context.
 function _ensureAudioCtx() {
-    if (!S.audioCtx) S.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!S.audioCtx) {
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        if (!Ctor) return null;            // no Web Audio — leave S.audioCtx unset so callers bail
+        S.audioCtx = new Ctor();
+    }
     return S.audioCtx;
 }
 

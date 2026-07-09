@@ -222,5 +222,29 @@ t('compose-mode claps are NOT gated to the guide phase (both passes clap)', () =
     assert.strictEqual(_abClapsEnabledPure(active, 'guide', true), true);
 });
 
+// ── _ensureAudioCtx: no Web Audio ⇒ returns falsy, never throws ──────────────
+function makeEnsureAudioCtx(S, win) {
+    return new Function('S', 'window',
+        extractFn('_ensureAudioCtx') + '\nreturn _ensureAudioCtx;'
+    )(S, win);
+}
+t('_ensureAudioCtx returns falsy (no throw) when Web Audio is absent', () => {
+    const S = { audioCtx: null };
+    const ensure = makeEnsureAudioCtx(S, {}); // no AudioContext / webkitAudioContext
+    let ctx, threw = false;
+    try { ctx = ensure(); } catch (e) { threw = true; }
+    assert.strictEqual(threw, false, 'must not throw before callers can guard on !S.audioCtx');
+    assert.ok(!ctx, 'returns a falsy sentinel');
+    assert.ok(!S.audioCtx, 'leaves S.audioCtx unset so startPlayback/loadAudio bail');
+});
+t('_ensureAudioCtx constructs and caches when a constructor exists', () => {
+    let built = 0;
+    const S = { audioCtx: null };
+    const ensure = makeEnsureAudioCtx(S, { AudioContext: function () { built++; } });
+    const a = ensure(), b = ensure();
+    assert.ok(a && a === b, 'returns the same cached context');
+    assert.strictEqual(built, 1, 'constructs exactly once');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -65,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being cut by `stopPlayback()` (explicit lengths stay exact). And A/B compare
   is treated as inactive with no reference buffer, so compose-mode loops keep
   every clap rather than gating half of each pass to silence.
+- **`_ensureAudioCtx` no longer throws when Web Audio is unavailable.** It
+  detects a missing `AudioContext`/`webkitAudioContext` first and returns
+  `null`, leaving `S.audioCtx` unset so `startPlayback`/`loadAudio` hit their
+  `!S.audioCtx` guards instead of a `new undefined()` TypeError.
 
 ### Changed
 - **Loop edges follow the grid by beat (bar/grid loops).** A bar or grid loop's
