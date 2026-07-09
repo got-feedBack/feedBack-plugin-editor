@@ -33,20 +33,15 @@ import {
 } from '../src/position.js';
 import { LC, lanes } from '../src/lanes.js';
 import { S as realS } from '../src/state.js';
+import { EditHistory } from '../src/history.js';
+import { _rollLockNotice, _rollReadOnly } from '../src/keys.js';
+import { lastStatus, seedState, trackHooks } from './_history_env.mjs';
 
 // The suggest blocks and the roll-add helpers still live in src/main.js and are
 // still sliced; `reconstructChords` moved to src/chords.js and is imported, so
 // section 6 drives it against the REAL `S` rather than a fabricated one.
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
-function extractBlock(name) {
-    // Lenient start: some blocks carry trailing prose after `:start` (e.g.
-    // chord-relink) rather than an immediate `*/`, so match up to the :end.
-    const re = new RegExp('/\\* @pure:' + name + ':start[\\s\\S]*?@pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) { console.error(`FAIL: @pure:${name} block not found in src/main.js`); process.exit(1); }
-    return m[0];
-}
 function extractByKeyword(keyword, label) {
     const start = src.indexOf(keyword);
     assert.ok(start >= 0, `${label || keyword} must exist in src/main.js`);
@@ -87,18 +82,20 @@ function assertNoForbidden(obj, label) {
 // sandbox has to share that object rather than fabricate its own — otherwise the
 // count would read an arrangement the commands never touched.
 function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
-    Object.assign(realS, {
-        currentArr: 0,
+    // A fretted part shown in the roll IS the read-only lock, so express it as
+    // real state rather than stubbing _rollReadOnly — EditHistory imports the
+    // real predicate now.
+    const S = seedState({
         arrangements: [{ id: 'a1', name: arrName, tuning: TUN.slice(),
                          notes: seed.map(n => ({ ...n })), anchors_user: [], anchors: [] }],
-        sel: new Set(),
+        rollView: true,
     });
-    const S = realS;
+    assert.ok(_rollReadOnly(), 'harness precondition: the roll must be read-only');
+    trackHooks();
     const statuses = [];
     const refusals = [];   // records _rollConfirmPosition handoffs
     const fullSrc = '"use strict";'
-        + extractBlock('edit-history')
-        + '\n' + extractFn('_withStableSelection')
+        + extractFn('_withStableSelection')
         + '\n' + extractClass('AddNoteCmd')
         + '\n' + extractClass('MoveToStringCmd')
         + '\n' + extractClass('AcceptPositionsCmd')
@@ -109,12 +106,11 @@ function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
         + '\n' + extractFn('_commitAddResolved')
         + '\n' + extractFn('_rollAddByPitch')
         + '\n' + extractFn('_execAcceptPositions')
-        + '\nconst history = new EditHistory(); S.history = history;'
-        + '\nreturn { history, _rollAddByPitch, _commitAddResolved, _execAcceptPositions,'
+        + '\nreturn { _rollAddByPitch, _commitAddResolved, _execAcceptPositions,'
         + ' _isSuggested, _markSuggested, _clearSuggested, _suggestedCount,'
         + ' AddNoteCmd, MoveToStringCmd };';
     const env = new Function(
-        'S', 'document', 'notes', 'setStatus', 'draw', 'updateStatus', '_renderInspector',
+        'S', 'history', 'notes', 'setStatus', 'draw', 'updateStatus', '_renderInspector',
         '_editBlipAt', '_rollReadOnly', '_rollLockNotice', '_editorCurrentNoteIndices',
         '_rollPitchCtx', '_rollConfirmPosition',
         '_markSuggested', '_clearSuggested', '_isSuggested', '_suggestedNotes',
@@ -123,12 +119,12 @@ function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
         fullSrc
     )(
         S,
-        { getElementById: () => ({ disabled: false }) },
+        (S.history = new EditHistory()),
         () => S.arrangements[S.currentArr].notes,
         m => statuses.push(m),
         () => {}, () => {}, () => {}, () => {},
-        () => true,                                   // _rollReadOnly: the locked fretted roll
-        () => statuses.push('LOCKED'),
+        _rollReadOnly,                                 // the real locked-fretted-roll predicate
+        () => { statuses.push('LOCKED'); _rollLockNotice(); },
         () => (S.sel && S.sel.size ? [...S.sel] : []),
         () => ({ openMidi: OPEN, tuning: TUN.slice(), capo: 0 }),
         (res, pitch, time) => refusals.push({ reason: res.reason, pitch, time, candidates: res.candidates }),
@@ -136,6 +132,7 @@ function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
         _suggestPositionPure, _enumerateFrettedPositionsPure, _activeAnchorAtPure,
         _suggestedCount,
     );
+    env.history = S.history;
     return { S, env, statuses, refusals, notes: () => S.arrangements[0].notes };
 }
 
@@ -230,11 +227,11 @@ t('Accept confirms the selected suggested notes in one undo step; undo re-marks 
 
 // ── 5. the lock still blocks an ordinary command ──────────────────────────────
 t('the read-only-roll lock still blocks an ordinary (unflagged) command', () => {
-    const { env, notes, statuses } = makeEnv();
+    const { env, notes } = makeEnv();
     env.history.exec(new env.AddNoteCmd({ time: 0, string: 0, fret: 0, sustain: 0, techniques: {} }));
     assert.strictEqual(notes().length, 0, 'an add WITHOUT suggestResolved stays inert in the locked roll');
     assert.strictEqual(env.history.undo.length, 0);
-    assert.ok(statuses.includes('LOCKED'), 'the user is told why');
+    assert.match(lastStatus(), /read-only/, 'the user is told why (real _rollLockNotice)');
 });
 
 // ── 6. WIRE PURITY through the real reconstructChords (solo AND chord) ─────────

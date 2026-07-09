@@ -28,29 +28,24 @@
  * what makes this test FAIL on pre-fix code (no history reset -> the corrupting
  * cross-arrangement rollback runs) and PASS on the fixed code.
  *
- * Run: node tests/cross_arr_undo.test.js
+ * Run: node tests/cross_arr_undo.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { EditHistory, setHistoryHooks } from '../src/history.js';
+import { seedState } from './_history_env.mjs';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
-function extractBlock(name) {
-    const re = new RegExp(
-        '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) { console.error(`FAIL: @pure:${name} block not found`); process.exit(1); }
-    return m[0];
-}
 function extractRe(re, label) {
     const m = src.match(re);
     if (!m) { console.error(`FAIL: could not extract ${label} from src/main.js`); process.exit(1); }
     return m[0];
 }
 
-const historyBlock = extractBlock('edit-history');
-// Real _undoDrivenArrSwitch flag + _historyEnsureArr (outside any pure block).
+// Real _undoDrivenArrSwitch flag + _historyEnsureArr. EditHistory is a real
+// import now, so _historyEnsureArr reaches it as a hook — which is exactly how
+// main.js wires the two together (they cannot import each other: cycle).
 const ensureArr = extractRe(
     /let _undoDrivenArrSwitch = false;[\s\S]*?\nfunction _historyEnsureArr\(cmd\) \{[\s\S]*?\n\}/,
     '_historyEnsureArr');
@@ -63,15 +58,14 @@ const selectArr = extractRe(
 // final `arr.notes.sort(...)` — the exact re-sort that renumbers index-based
 // note commands. notes() returns the active arrangement's notes array.
 function makeEnv() {
-    const S = {
+    const S = seedState({
         arrangements: [],
         currentArr: 0,
-        sel: new Set(),
         toneSel: null,
         anchorSel: null,
         handshapeSel: null,
         history: null,
-    };
+    });
     const win = {};
     const flattenChords = () => {
         const arr = S.arrangements[S.currentArr];
@@ -82,8 +76,8 @@ function makeEnv() {
         'window', 'document', 'S', 'flattenChords', 'isKeysMode',
         'updatePianoRange', 'draw', 'updateStatus', 'setStatus', 'notes',
         '"use strict";'
-        + historyBlock + '\n' + ensureArr + '\n' + moveNoteCmd + '\n' + selectArr + '\n'
-        + 'return { EditHistory, _historyEnsureArr, MoveNoteCmd };'
+        + ensureArr + '\n' + moveNoteCmd + '\n' + selectArr + '\n'
+        + 'return { _historyEnsureArr, MoveNoteCmd };'
     )(
         win,
         { getElementById: () => null },
@@ -96,7 +90,8 @@ function makeEnv() {
         () => {},
         notes,
     );
-    S.history = new env.EditHistory();
+    setHistoryHooks({ ensureArr: env._historyEnsureArr, draw: () => {}, updateStatus: () => {} });
+    S.history = new EditHistory();
     return { ...env, S, win, history: S.history, flattenChords };
 }
 

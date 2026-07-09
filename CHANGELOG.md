@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`EditHistory` now lives in `src/history.js` (R2, step 14).** 121 lines out of
+  `src/main.js`, which is down to 18,471. The 47 command classes stay put — they
+  are interleaved with the feature code that constructs them and each reaches
+  deep into it; only the stack lifts cleanly. Commands were always duck-typed
+  (`exec`, `rollback`, and the three opt-out flags), so nothing about them had to
+  change.
+  `history.js` imports `S`/`bumpEditGen` from `state.js` and the view predicates
+  from `keys.js`. Its remaining three main.js symbols — `_historyEnsureArr`,
+  `draw`, `updateStatus` — cannot be imported back without closing a cycle, so
+  they arrive through `setHistoryHooks()`, the same shape as `canvas.js`'s
+  `setCanvas()` and `geometry.js`'s `setLaneMetrics()`. The three duplicated
+  read-only-roll checks in `exec`/`doUndo`/`doRedo` collapse into one `_locked()`.
+  Thirteen suites used to slice the class out of `main.js` and hand it a
+  fabricated `S`, with `_rollReadOnly` stubbed to a boolean. They now import the
+  real class, seed the real `S`, and drive the real lock through real view state
+  (`tests/_history_env.mjs`). That turned up a stubbed lie: a keys-DATA part in
+  the roll had been forced read-only in `roll_position_cycle`, when a keys part
+  is never read-only. Six of them were CJS and are now `.mjs`.
+
 ### Fixed
 
 - **Opening a song from the library card or the 3D highway left an invisible

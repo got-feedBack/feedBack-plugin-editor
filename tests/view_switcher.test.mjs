@@ -12,6 +12,8 @@
  * Run: node tests/view_switcher.test.mjs
  */
 import assert from 'node:assert';
+import { EditHistory } from '../src/history.js';
+import { lockNotices, seedState, setRollView, trackHooks } from './_history_env.mjs';
 import fs from 'node:fs';
 import * as keys from '../src/keys.js';
 import {
@@ -21,17 +23,6 @@ import { S } from '../src/state.js';
 
 // Only @pure:edit-history is still sliced — it lives in src/main.js.
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-
-function extractBlock(name) {
-    const re = new RegExp(
-        '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) {
-        console.error(`FAIL: @pure:${name} block not found in src/main.js`);
-        process.exit(1);
-    }
-    return m[0];
-}
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -168,19 +159,16 @@ t('a KEYS part uses the wire packing, not sounding pitch', () => {
 
 // ── The read-only-roll gate in EditHistory ───────────────────────────
 
+// EditHistory imports _rollReadOnly for real, so the gate is driven through
+// actual state: a part named 'Lead' is fretted, and rollView puts it in the
+// piano roll — which IS the read-only condition. The precondition assert keeps a
+// future keys-pattern change from silently unlocking this suite.
 function makeHistory(locked) {
-    const S = { currentArr: 0 };
-    const notices = { count: 0 };
-    const env = new Function(
-        'document', 'S', 'draw', 'updateStatus', '_rollReadOnly', '_rollLockNotice',
-        '"use strict";' + extractBlock('edit-history') + '\nreturn { EditHistory };'
-    )(
-        { getElementById: () => ({ disabled: false }) },
-        S, () => {}, () => {},
-        () => locked.value,
-        () => { notices.count++; },
-    );
-    return { history: new env.EditHistory(), notices };
+    seedState({ arrangements: [{ id: 'a1', name: 'Lead', notes: [] }], rollView: locked.value });
+    assert.strictEqual(keys._rollReadOnly(), locked.value, 'harness precondition');
+    trackHooks();
+    const before = lockNotices();
+    return { history: new EditHistory(), notices: { get count() { return lockNotices() - before; } } };
 }
 
 t('read-only roll: exec is inert — no mutation, no undo entry, one notice', () => {
@@ -211,7 +199,7 @@ t('lock lifts live: the same history accepts commands once unlocked', () => {
     const cmd = { exec() { applied++; }, rollback() { applied--; } };
     history.exec(cmd);
     assert.strictEqual(applied, 0);
-    locked.value = false;   // user switches back to String view
+    setRollView(false);   // user switches back to String view
     history.exec(cmd);
     assert.strictEqual(applied, 1);
 });
@@ -244,7 +232,7 @@ t('read-only roll: undo/redo of a NOTE-scope command is inert (no chart write)',
     const cmd = { exec() { applied++; }, rollback() { applied--; } };
     history.exec(cmd);
     assert.strictEqual(applied, 1);
-    locked.value = true;            // user switches this part into the roll
+    setRollView(true);              // user switches this part into the roll
     const noticesBefore = notices.count;
     history.doUndo();
     assert.strictEqual(applied, 1, 'undo must not roll back a read-only fretted chart');

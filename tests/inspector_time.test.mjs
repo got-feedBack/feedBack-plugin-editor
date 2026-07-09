@@ -13,13 +13,14 @@
  * with adversarial inputs. The time-bounds assertions fail on main (no `time`
  * key exists there).
  *
- * Run: node tests/inspector_time.test.js
+ * Run: node tests/inspector_time.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { EditHistory } from '../src/history.js';
+import { seedState, trackHooks } from './_history_env.mjs';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 // Brace-match extraction of a named class/function/const (the waveform_render
 // harness pattern) — drives the real source, no re-implementation.
@@ -34,28 +35,21 @@ function extractNamed(decl) {
     }
     throw new Error(`unbalanced braces for ${decl}`);
 }
-function extractPure(name) {
-    const re = new RegExp(
-        '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) { console.error(`FAIL: @pure:${name} missing`); process.exit(1); }
-    return m[0];
-}
-
 // Injected `notes()` reads a mutable outer array so each test controls it.
 let CURRENT = [];
+seedState();
+trackHooks();
 const api = new Function(
-    'notes', 'document', 'draw', 'updateStatus',
+    'notes',
     '"use strict";'
-    + extractPure('edit-history') + '\n'
     + extractNamed('class MoveNoteCmd') + '\n'
     + extractNamed('class ResizeSustainGroupCmd') + '\n'
     + extractNamed('const _INSPECTOR_BOUNDS =') + '\n'
     + extractNamed('function _coerceInspectorNumber') + '\n'
-    + 'return { EditHistory, MoveNoteCmd, ResizeSustainGroupCmd,'
+    + 'return { MoveNoteCmd, ResizeSustainGroupCmd,'
     + ' _INSPECTOR_BOUNDS, _coerceInspectorNumber };'
-)(() => CURRENT, { getElementById: () => ({ disabled: false }) }, () => {}, () => {});
-const { EditHistory, MoveNoteCmd, ResizeSustainGroupCmd,
+)(() => CURRENT);
+const { MoveNoteCmd, ResizeSustainGroupCmd,
     _INSPECTOR_BOUNDS, _coerceInspectorNumber } = api;
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -143,33 +137,33 @@ let DISPATCH_NOTES = [];
 const dispatchS = { sel: new Set(), drumEditMode: false, tempoMapMode: false, history: null };
 let renderCount = 0;                 // # of _renderInspector() calls (reject branch)
 const win = {};                      // captures `window.editorInspectorSetField = …`
-const dispatch = new Function(
-    'notes', 'S', 'document', 'draw', 'updateStatus', '_renderInspector', 'window',
+// `dispatchS` stays sandbox-local: editorInspectorSetField reads its `sel` and
+// mode flags. EditHistory itself closes over the real `S` (seeded above), which
+// only supplies the arrangement tag — irrelevant to these cases.
+new Function(
+    'notes', 'S', 'draw', 'updateStatus', '_renderInspector', 'window',
     '"use strict";'
-    + extractPure('edit-history') + '\n'
     + extractNamed('class MoveNoteCmd') + '\n'
     + extractNamed('class ResizeSustainGroupCmd') + '\n'
     + extractNamed('const _INSPECTOR_BOUNDS =') + '\n'
     + extractNamed('function _coerceInspectorNumber') + '\n'
     + extractNamed('function _editorCurrentNoteIndices') + '\n'
     + extractNamed('window.editorInspectorSetField =') + '\n'
-    + 'return { EditHistory };'
+    + 'return {};'
 )(
     () => DISPATCH_NOTES,
     dispatchS,
-    { getElementById: () => ({ disabled: false }) },
-    () => {}, () => {},
+    () => {}, () => {},          // editorInspectorSetField's own draw/updateStatus
     () => { renderCount++; },
     win,
 );
 const setField = win.editorInspectorSetField;
 
-// Fresh notes + selection + history per case. History built with the dispatcher
-// scope's own EditHistory so exec/undo share the injected notes()/draw stubs.
+// Fresh notes + selection + history per case.
 function resetDispatch(arr, sel) {
     DISPATCH_NOTES = arr;
     dispatchS.sel = new Set(sel);
-    dispatchS.history = new dispatch.EditHistory();
+    dispatchS.history = new EditHistory();
     renderCount = 0;
 }
 

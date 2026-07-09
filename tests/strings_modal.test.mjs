@@ -15,6 +15,8 @@
  * Run: node tests/strings_modal.test.mjs
  */
 import assert from 'node:assert';
+import { EditHistory } from '../src/history.js';
+import { seedState, trackHooks } from './_history_env.mjs';
 import fs from 'node:fs';
 import { _stringCountFor } from '../src/lanes.js';
 
@@ -72,7 +74,6 @@ function extractWindowFn(name) {
 }
 
 const tuningBlock = extractBlock('string-tuning');
-const historyBlock = extractBlock('edit-history');
 const addStringSrc = extractClass('AddStringCmd');
 const removeStringSrc = extractClass('RemoveStringCmd');
 const normalizeSrc = extractFn('_normalizeTuningToLanes');
@@ -85,16 +86,17 @@ const removeStringHandlerSrc = extractWindowFn('editorRemoveString');
 // path that carried the corruption bugs), not the tuning-length stub the
 // pure-command harness uses. This is what catches an add/remove at an end
 // the pitch/label model can't represent.
-function makeHandlerEnv(S) {
+function makeHandlerEnv(seed) {
+    const S = seedState(seed);
     const env = new Function(
         'window', 'document', 'S', 'draw', 'updateStatus',
         '_renderStringsModal', '_resizeForLaneChange', '_stringCountFor',
         '"use strict";'
-        + historyBlock + '\n' + tuningBlock + '\n'
+        + tuningBlock + '\n'
         + normalizeSrc + '\n' + notesOnStringSrc + '\n'
         + addStringSrc + '\n' + removeStringSrc + '\n'
         + addStringHandlerSrc + '\n' + removeStringHandlerSrc + '\n'
-        + 'return { window, EditHistory, _stringCountFor, _addPositionPure,'
+        + 'return { window, _stringCountFor, _addPositionPure,'
         + ' _removePositionPure };'
     )(
         {},                       // window
@@ -106,17 +108,18 @@ function makeHandlerEnv(S) {
         () => {},                 // _resizeForLaneChange
         _stringCountFor,          // the REAL one, imported from src/lanes.js
     );
-    S.history = new env.EditHistory();
+    S.history = new EditHistory();
     return env;
 }
 
-function makeEnv(S) {
+function makeEnv(seed) {
+    const S = seedState(seed);
     const env = new Function(
         'document', 'S', 'draw', 'updateStatus',
         '_normalizeTuningToLanes', '_stringCountFor', '_resizeForLaneChange',
         '"use strict";'
-        + historyBlock + '\n' + tuningBlock + '\n' + addStringSrc + '\n'
-        + 'return { EditHistory, SetStringTuningCmd, AddStringCmd,'
+        + tuningBlock + '\n' + addStringSrc + '\n'
+        + 'return { SetStringTuningCmd, AddStringCmd,'
         + ' _stringsRangePure, _stringTuningClampPure,'
         + ' _addPositionPure, _removePositionPure };'
     )(
@@ -128,8 +131,10 @@ function makeEnv(S) {
         (arr) => (arr.tuning || []).length,        // count = real tuning length
         () => {},                                  // resize: no-op off-DOM
     );
-    return { ...env, S, history: new env.EditHistory() };
+    return { ...env, S, history: new EditHistory() };
 }
+
+trackHooks();
 
 let pass = 0, fail = 0;
 function t(name, fn) {

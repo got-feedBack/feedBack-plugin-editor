@@ -14,13 +14,14 @@
  * NaN, invalid snap step) and proven to use BOTH its arguments. These
  * assertions fail on main (neither symbol exists there).
  *
- * Run: node tests/duplicate_selection.test.js
+ * Run: node tests/duplicate_selection.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { EditHistory } from '../src/history.js';
+import { seedState, trackHooks } from './_history_env.mjs';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 function extract(name) {
     const re = new RegExp(
         '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
@@ -29,16 +30,16 @@ function extract(name) {
     return m[0];
 }
 
-// EditHistory.doUndo/doRedo call draw() + updateStatus() at the end and
-// _ui() reads two buttons — inject no-ops / a stub document so the REAL
-// history drives without a browser.
+// EditHistory is a real import now; it closes over the real `S` and calls back
+// into main.js through hooks. Seed one and install counting no-ops.
+seedState();
+trackHooks();
 const api = new Function(
-    'document', 'draw', 'updateStatus',
     '"use strict";'
-    + extract('edit-history') + '\n' + extract('duplicate') + '\n'
-    + 'return { EditHistory, AddNotesCmd, _duplicateShiftPure };'
-)({ getElementById: () => ({ disabled: false }) }, () => {}, () => {});
-const { EditHistory, AddNotesCmd, _duplicateShiftPure } = api;
+    + extract('duplicate') + '\n'
+    + 'return { AddNotesCmd, _duplicateShiftPure };'
+)();
+const { AddNotesCmd, _duplicateShiftPure } = api;
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 

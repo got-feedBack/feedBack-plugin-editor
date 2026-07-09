@@ -11,6 +11,8 @@
  * Run: node tests/rename_part.test.mjs
  */
 import assert from 'node:assert';
+import { EditHistory } from '../src/history.js';
+import { seedState, trackHooks } from './_history_env.mjs';
 import fs from 'node:fs';
 import { KEYS_PATTERN } from '../src/keys.js';
 
@@ -125,24 +127,23 @@ t('empty, too-long, duplicate, and no-op inputs are handled', () => {
 
 // ── The real command, round-tripped through EditHistory ──────────────
 
+// EditHistory is a real import and closes over the REAL `S`, so the sliced
+// command must share that same object rather than a fabricated one.
 function makeEnv() {
-    const S = {
-        currentArr: 0,
-        arrangements: [{ id: 'a1', name: 'Lead' }, { id: 'a2', name: 'Rhythm' }],
-    };
+    const S = seedState({
+        arrangements: [{ id: 'a1', name: 'Lead', notes: [] }, { id: 'a2', name: 'Rhythm', notes: [] }],
+    });
     const calls = { selector: 0 };
     const env = new Function(
-        'document', 'S', 'updateArrangementSelector', 'draw', 'updateStatus',
-        '"use strict";' + extractBlock('edit-history') + '\n' + extractClass('RenameArrangementCmd')
-        + '\nreturn { EditHistory, RenameArrangementCmd };'
+        'S', 'updateArrangementSelector',
+        '"use strict";' + extractClass('RenameArrangementCmd')
+        + '\nreturn { RenameArrangementCmd };'
     )(
-        { getElementById: () => ({ disabled: false }) },
         S,
         () => { calls.selector++; },
-        () => {},
-        () => {},
     );
-    return { ...env, S, calls, history: new env.EditHistory() };
+    trackHooks();
+    return { ...env, S, calls, history: new EditHistory() };
 }
 
 t('rename round-trips: exec applies, undo restores, redo replays; selector follows', () => {

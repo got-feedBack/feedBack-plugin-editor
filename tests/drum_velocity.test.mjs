@@ -9,13 +9,14 @@
  * that wasn't there. These fail on main, where drum velocity is
  * unauthorable and ghosting leaves a contradictory v:100.
  *
- * Run: node tests/drum_velocity.test.js
+ * Run: node tests/drum_velocity.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { EditHistory } from '../src/history.js';
+import { seedState, trackHooks } from './_history_env.mjs';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extract(name) {
     const re = new RegExp(
@@ -29,30 +30,29 @@ function extract(name) {
 }
 
 const drumBlock = extract('drum-cmds');
-const historyBlock = extract('edit-history');
 
 function makeEnv() {
-    const S = {
+    // EditHistory is a real import and closes over the REAL `S`, so the sliced
+    // drum commands must share that object rather than a fabricated one.
+    const S = seedState({
         drumTab: { hits: [] },
         drumSel: new Set(),
         drumTabDirty: false,
         currentArr: 0,
-    };
+    });
     const env = new Function(
-        'document', 'S', 'updateArrangementSelector', 'draw', 'updateStatus',
+        'S', 'updateArrangementSelector',
         '"use strict";'
-        + historyBlock + '\n' + drumBlock + '\n'
-        + 'return { EditHistory, SetDrumVelocityCmd, ToggleDrumArticulationCmd, '
+        + drumBlock + '\n'
+        + 'return { SetDrumVelocityCmd, ToggleDrumArticulationCmd, '
         + 'DRUM_GHOST_VELOCITY, _drumClampVelocityPure, _drumVelocityDragValuePure, '
         + '_drumImportHitPure };'
     )(
-        { getElementById: () => ({ disabled: false }) },
         S,
         () => {},
-        () => {},
-        () => {},
     );
-    return { ...env, S, history: new env.EditHistory() };
+    trackHooks();
+    return { ...env, S, history: new EditHistory() };
 }
 
 let pass = 0, fail = 0;
