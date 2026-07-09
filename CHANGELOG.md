@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sustain edge-drag was unusable in the piano roll.** `hitNote` branches on
+  `isKeysMode()` and resolves a note to its sounding-pitch row via `midiToY`;
+  `hitNoteEdge` did not — it always computed `y` from `strToY(n.string)`, the
+  fretted lane band. So the resize grab zone sat on the wrong rows in the roll,
+  even though the call site documents that edge-drag resize *"applies directly
+  even in the read-only fretted roll (V4)"* — a duration edit is pitch-preserving
+  and passes the roll's edit lock. The cursor hint was gated on the same stale
+  band, so `ew-resize` never appeared there either.
+  Both now go through one shared `_noteRect`, and the cursor band uses
+  `_beatBarTopY()`, which is correct in both views. Two functions computing the
+  same rectangle two different ways is why they drifted.
+  Found by CodeRabbit while `src/hit-test.js` was being extracted (#160).
+
 ### Added
 
 - **ESLint on the `src/` module graph (#158).** The module playbook's per-repo

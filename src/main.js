@@ -2955,7 +2955,12 @@ function _onMouseMoveBody(e, x, y, L) {
         const bbTop = _beatBarTopY();
         if (canvas && S.beats.length && y >= bbTop && y < bbTop + BEAT_H) {
             canvas.style.cursor = 'col-resize';
-        } else if (canvas && y >= WAVEFORM_H && y < WAVEFORM_H + L * LANE_H) {
+        } else if (canvas && y >= WAVEFORM_H && y < bbTop) {
+            // The note area runs from the waveform strip down to the beat bar in
+            // BOTH views — `_beatBarTopY()` already accounts for the roll's
+            // pianoLaneCount * PIANO_LANE_H. The old `WAVEFORM_H + L * LANE_H`
+            // bound was the fretted lane band, so the resize cursor never showed
+            // in the roll even though the grab itself is allowed there (V4).
             canvas.style.cursor = hitNoteEdge(x, y) >= 0 ? 'ew-resize' : '';
         } else if (canvas) {
             canvas.style.cursor = '';

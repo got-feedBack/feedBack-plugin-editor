@@ -215,7 +215,7 @@ export function _editorEofCommandForKeyPure(e, mode) {
     if (ctrl && key === 't') return 'toggleTap';
     if (ctrl && key === 'u') return 'unpitchedSlide';
     if (ctrl && key === 'x') return 'toggleMuteOpen';
-     if (ctrl && (key === '+' || key === '=')) return 'fretUp';
+    if (ctrl && (key === '+' || key === '=')) return 'fretUp';
     if (ctrl && key === '-') return 'fretDown';
     if (ctrlShift && key === 'a') return 'toggleAccent';
     if (ctrlShift && key === 'g') return 'customGridSnap';
