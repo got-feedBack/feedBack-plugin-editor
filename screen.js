@@ -828,7 +828,7 @@ function _loopNudgeEdge(edge, dir, coarse) {
     const next = _loopEdgeAdjustPure(
         mode, r, edge, probe, downbeats, S.duration || Math.max(cur, probe), snapTime);
     if (!next) return false;
-    S.barSel = next;
+    _setBarSel(next);
     _updateLoopIn3DBtn();
     _renderLoopStrip();
     draw();
@@ -845,24 +845,51 @@ function _loopHandleKeydown(edge, e) {
     _loopNudgeEdge(edge, e.key === 'ArrowRight' ? 1 : -1, e.shiftKey);
 }
 
-// Relock the loop region after the beat grid changes underneath it (D17):
-// bar/grid regions re-snap to the NEW grid per their mode; freely drawn
-// regions are absolute seconds and never move.
-function _loopRelockAfterGridChange() {
+// The single writer for a NON-NULL S.barSel: assign the region and keep its
+// beat-coordinate cache in sync (charrette §1.6). Bar/grid loop edges are
+// anchored to beat coordinates (β) — the truth that makes a loop follow a tempo
+// flex by staying on its bars — while their seconds are the derived cache; free
+// loops are absolute seconds (D17) and carry no β. (Clears still assign null
+// directly; a null loop has no β to maintain.)
+function _setBarSel(region) {
+    S.barSel = region ? _loopSyncBeats(region) : null;
+    return S.barSel;
+}
+
+// Sync a loop region's beat-coordinate edges from its seconds against the
+// current grid. Bar/grid edges resolve to integer / subdivided beats; a free
+// loop drops its β so a later grid edit leaves it untouched.
+function _loopSyncBeats(r) {
+    if (!r) return r;
+    if (r.mode === 'free') { delete r.startBeat; delete r.endBeat; }
+    else {
+        r.startBeat = beatOf(S.beats, r.startTime);
+        r.endBeat = beatOf(S.beats, r.endTime);
+    }
+    return r;
+}
+
+// A tempo-map FLEX (grid times move, indexing preserved) keeps a bar/grid
+// loop's beat coordinates and re-derives its seconds on the new grid, so it
+// stays on the same bars; a free loop keeps its seconds (D17). β is unchanged,
+// so this is an exact inverse — undo just reprojects back, no barSel snapshot.
+function _loopReprojectFromBeats(beats) {
     const r = S.barSel;
     if (!r || r.mode === 'free') return;
-    const mode = r.mode === 'grid' ? 'grid' : 'bar';
-    // Bar spans use "downbeat strictly AFTER the input" for the end edge, so
-    // feeding the region's own end back in verbatim would grow it by a bar
-    // whenever that end lands exactly on a new downbeat — pull it in a hair.
-    const endProbe = mode === 'bar'
-        ? Math.max(r.startTime, r.endTime - 0.01) : r.endTime;
-    const next = _loopRegionForDragPure(
-        mode, r.startTime, endProbe, _downbeatTimes(),
-        S.duration || r.endTime, snapTime);
-    if (next) S.barSel = next;
-    _renderLoopStrip();
-    _updateLoopIn3DBtn();
+    if (!Number.isFinite(r.startBeat) || !Number.isFinite(r.endBeat)) return;
+    r.startTime = timeOf(beats, r.startBeat);
+    r.endTime = timeOf(beats, r.endBeat);
+}
+
+// A grid RE-INDEX (insert/delete sync-point, time-sig) keeps loop SECONDS put
+// but shifts what each beat coordinate means, so re-lift the loop's β from its
+// unchanged seconds — exactly as notes re-lift (_liftAllBeats). Free loops keep
+// no β. Seconds never move here, so exec/rollback round-trips with no snapshot.
+function _loopReliftBeats(beats) {
+    const r = S.barSel;
+    if (!r || r.mode === 'free') return;
+    r.startBeat = beatOf(beats, r.startTime);
+    r.endBeat = beatOf(beats, r.endTime);
 }
 
 function _selectedLoopRegion() {
@@ -936,9 +963,9 @@ function _loopStripOnMouseDown(e) {
         }
     }
     S.drag = { type: 'loopstrip', mode: 'create', startTime: rawTime };
-    S.barSel = _loopRegionForDragPure(
+    _setBarSel(_loopRegionForDragPure(
         _loopLiveMode(e.shiftKey), rawTime, rawTime,
-        _downbeatTimes(), S.duration || rawTime, snapTime);
+        _downbeatTimes(), S.duration || rawTime, snapTime));
     _updateLoopIn3DBtn();
     draw();
     e.preventDefault();
@@ -952,14 +979,14 @@ function _loopStripOnMouseMove(e) {
     // between snapped and free without restarting the gesture.
     const mode = _loopLiveMode(e.shiftKey);
     if (S.drag.mode === 'create') {
-        S.barSel = _loopRegionForDragPure(
-            mode, S.drag.startTime, rawTime, downbeats, S.duration || rawTime, snapTime);
+        _setBarSel(_loopRegionForDragPure(
+            mode, S.drag.startTime, rawTime, downbeats, S.duration || rawTime, snapTime));
     } else if (S.drag.mode === 'start' && S.barSel) {
-        S.barSel = _loopEdgeAdjustPure(
-            mode, S.barSel, 'start', rawTime, downbeats, S.duration || rawTime, snapTime);
+        _setBarSel(_loopEdgeAdjustPure(
+            mode, S.barSel, 'start', rawTime, downbeats, S.duration || rawTime, snapTime));
     } else if (S.drag.mode === 'end' && S.barSel) {
-        S.barSel = _loopEdgeAdjustPure(
-            mode, S.barSel, 'end', rawTime, downbeats, S.duration || rawTime, snapTime);
+        _setBarSel(_loopEdgeAdjustPure(
+            mode, S.barSel, 'end', rawTime, downbeats, S.duration || rawTime, snapTime));
     }
     _updateLoopIn3DBtn();
     draw();
@@ -4004,7 +4031,7 @@ function onMouseDown(e) {
         if (y >= bbTop && y < bbTop + BEAT_H) {
             const t = xToTime(x);
             S.drag = { type: 'barsel', startTime: t };
-            S.barSel = _barSpanForTimes(t, t);
+            _setBarSel(_barSpanForTimes(t, t));
             draw();
             return;
         }
@@ -4156,7 +4183,7 @@ function _onMouseMoveBody(e, x, y, L) {
 
     // Bar-range drag on the beat bar — re-snap the span to the cursor.
     if (S.drag && S.drag.type === 'barsel') {
-        S.barSel = _barSpanForTimes(S.drag.startTime, xToTime(x));
+        _setBarSel(_barSpanForTimes(S.drag.startTime, xToTime(x)));
         draw();
         return;
     }
@@ -9841,7 +9868,7 @@ window.editorLoopIn3D = async () => {
     }
     // Pin the resolved region as the bar selection so it's highlighted and
     // carried in the return context.
-    S.barSel = { startTime: region.startTime, endTime: region.endTime, mode: region.mode };
+    _setBarSel({ startTime: region.startTime, endTime: region.endTime, mode: region.mode });
     const sel = { startTime: region.startTime, endTime: region.endTime, mode: region.mode };
     // Persist edits in place so the highway streams the latest chart. Uses
     // the same save path as the Save button (in-place sloppak write, not the
@@ -9880,7 +9907,7 @@ function _applyEditorPendingView(filename) {
     const viewW = canvas ? (canvas.width / DPR) : 800;
     const next = _resolvePendingViewStatePure(pv, S.zoom, viewW, LABEL_W);
     S.returnToHighway = next.returnToHighway;
-    if (next.barSel) S.barSel = next.barSel;
+    if (next.barSel) _setBarSel(next.barSel);
     if (typeof next.zoom === 'number' && next.zoom > 0) { S.zoom = next.zoom; updateZoomDisplay(); }
     if (typeof next.cursorTime === 'number') S.cursorTime = next.cursorTime;
     if (typeof next.scrollX === 'number') S.scrollX = _editorClampScrollX(next.scrollX);
@@ -16610,35 +16637,26 @@ class TempoGridCmd {
         // imported MIDI's tempo map right after a drums import (active part
         // still fretted-in-roll) would be silently blocked.
         this.songScope = true;
-        // Snapshot of the loop selection captured on first exec so rollback can
-        // restore it verbatim (see rollback).
-        this.beforeBarSel = undefined;
     }
     exec() {
-        // Snapshot the pre-edit loop selection BEFORE relocking. Relock
-        // re-derives S.barSel from the NEW grid and is lossy / not self-inverse,
-        // so replaying it on rollback would MOVE the loop instead of restoring
-        // it. Forward relock stays here so a live grid edit still re-snaps the
-        // loop onto the new grid.
-        if (this.beforeBarSel === undefined) {
-            this.beforeBarSel = S.barSel ? { ...S.barSel } : null;
-        }
         S.beats = this.newBeats.map(b => ({ ...b }));
         // Grid re-INDEXES (insert/delete sync-point, time-sig): note SECONDS
         // stay put, but a note's beat coordinate changed (a beat was added /
         // removed before it), so re-lift beats from the unchanged seconds
         // against the new grid. No reproject — seconds don't move here.
         _liftAllBeats(S.beats);
-        _loopRelockAfterGridChange();
+        // The loop rides the same rule: its seconds stay put, its β re-lifts
+        // from the new indexing (a free loop carries no β). Seconds never move,
+        // so exec/rollback round-trips with no barSel snapshot.
+        _loopReliftBeats(S.beats);
+        _renderLoopStrip();
+        _updateLoopIn3DBtn();
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
         // Seconds are unchanged; re-lift beats back onto the old indexing.
         _liftAllBeats(S.beats);
-        // Restore the EXACT pre-edit loop selection rather than relocking
-        // (relock is not self-inverse — a bar loop [2,4] would resurface as
-        // [1,6] after edit+undo).
-        S.barSel = this.beforeBarSel ? { ...this.beforeBarSel } : null;
+        _loopReliftBeats(S.beats);
         _renderLoopStrip();
         _updateLoopIn3DBtn();
     }
@@ -17332,20 +17350,12 @@ class TempoMapCmd {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
         this.label = label || 'tempo';
-        // Snapshot of the loop selection captured on first exec so rollback can
-        // restore it verbatim (see rollback).
-        this.beforeBarSel = undefined;
     }
     exec() {
         // Invariant: oldBeats / newBeats have equal length — TempoMapCmd only
         // carries time-shift (drag) edits. _tempoMapOnDragEnd validates this
         // before the command is created, so a length-changing edit can't reach
         // here (those use TempoGridCmd).
-        // Snapshot the pre-edit loop selection BEFORE relocking (see rollback);
-        // relock re-derives it from the new grid and is not self-inverse.
-        if (this.beforeBarSel === undefined) {
-            this.beforeBarSel = S.barSel ? { ...S.barSel } : null;
-        }
         _liftAllBeats(this.oldBeats);
         // Snapshot the EXACT pre-edit seconds — the fields _reprojectAll overwrites
         // (o[tf], plus sustain / end_time for a span) — so rollback restores them
@@ -17360,7 +17370,13 @@ class TempoMapCmd {
         });
         S.beats = this.newBeats.map(b => ({ ...b }));
         _reprojectAll(S.beats);
-        _loopRelockAfterGridChange();
+        // A bar/grid loop keeps its beat coordinates and re-derives its seconds
+        // on the new grid, so it stays on its bars; a free loop keeps its
+        // seconds. β is unchanged ⇒ exact inverse, so no barSel snapshot is
+        // needed — rollback just reprojects onto the old grid.
+        _loopReprojectFromBeats(S.beats);
+        _renderLoopStrip();
+        _updateLoopIn3DBtn();
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
@@ -17373,9 +17389,12 @@ class TempoMapCmd {
             if (endKind === 'sustain') { if (endVal !== undefined) o.sustain = endVal; }
             else if (endKind === 'span') { if (endVal !== undefined) o.end_time = endVal; }
         }
-        // Restore the EXACT pre-edit loop selection rather than relocking
-        // (relock is lossy — an undone tempo edit would otherwise move the loop).
-        S.barSel = this.beforeBarSel ? { ...this.beforeBarSel } : null;
+        // The loop rides its beat coordinates (Phase A4): a bar/grid loop
+        // reprojects onto the restored old grid — an exact inverse, since loop
+        // edges are grid-aligned (no _r3 sub-ms drift, unlike notes above) — and
+        // a free loop keeps its absolute seconds. β is unchanged by a flex, so no
+        // barSel snapshot is needed.
+        _loopReprojectFromBeats(S.beats);
         _renderLoopStrip();
         _updateLoopIn3DBtn();
     }
