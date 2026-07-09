@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Regression test: a 4-string bass feedpak whose tuning is RS-padded to 6 slots
  * must NOT be read as a 6-string bass. Before the fix, _seedExtendedStringsFromTuning
@@ -7,30 +6,10 @@
  * The fix ignores the ambiguous length-6 bass tuning (matching core
  * arrangement_string_count) and lets note string indices decide.
  *
- * Run: node tests/bass_string_count.test.js
+ * Run: node tests/bass_string_count.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-function extractFn(src, name) {
-    const start = src.indexOf('function ' + name);
-    assert.ok(start >= 0, `function ${name} must exist`);
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-    }
-    throw new Error(`unbalanced braces extracting ${name}`);
-}
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const { _seedExtendedStringsFromTuning, _stringCountFor } = new Function(
-    '"use strict"; const MAX_LANES = 8;' +
-    extractFn(src, '_seedExtendedStringsFromTuning') +
-    extractFn(src, '_stringCountFor') +
-    '\nreturn { _seedExtendedStringsFromTuning, _stringCountFor };')();
+import assert from 'node:assert';
+import { _seedExtendedStringsFromTuning, _stringCountFor } from '../src/lanes.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {
