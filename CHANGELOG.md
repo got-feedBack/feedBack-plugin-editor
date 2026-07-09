@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 9a — the render surface (R2).** `src/canvas.js`:
+  the `<canvas>` element, its 2D context, and `DPR`. `canvas` and `ctx` are live
+  `export let` bindings whose sole writer, `setCanvas`, moved with them — so the
+  ~410 read sites across `main.js` are untouched and none of them can assign one.
+  `init()` becomes `if (!setCanvas(document.getElementById('editor-canvas'))) return;`.
+  This also fixes a latent staleness: the old code re-read the element on every
+  `init()` but only ever built `ctx` once, so a host that replaced the canvas node
+  would have left `ctx` pointing at the old element's context. `DPR` is guarded
+  with a `typeof window` check so `canvas.js`, and everything downstream of it,
+  stays importable under node.
+
 - **ES-module migration, step 8b — the keys / piano-roll model (R2).**
   `src/keys.js` (`main.js` 20,127 → 19,963, under 20k): which view a part opens in
   (`viewFor`, `isKeysMode`, `isKeysArr`, `_rollReadOnly`) and the persisted

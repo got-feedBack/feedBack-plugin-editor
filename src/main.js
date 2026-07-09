@@ -15,6 +15,7 @@ import {
     _scaleDegreeColorPure,
     _scaleDegreeSemisPure,
 } from './theory.js';
+import { DPR, canvas, ctx, setCanvas } from './canvas.js';
 import { S } from './state.js';
 import {
     LC,
@@ -111,7 +112,6 @@ import {
 
 const MIN_NOTE_W = 18;
 const NOTE_PAD = 3;
-const DPR = window.devicePixelRatio || 1;
 
 // ════════════════════════════════════════════════════════════════════
 // State
@@ -127,7 +127,6 @@ const _TONE_SLOT_DEFAULTS = ['Clean', 'Drive', 'Lead', 'Crunch', 'Effect'];
 const _TONE_SLOT_COLORS = ['#7dd3fc', '#f87171', '#fbbf24', '#a78bfa', '#34d399'];
 
 
-let canvas, ctx;
 let rafId = null;
 
 // ════════════════════════════════════════════════════════════════════
@@ -12610,14 +12609,14 @@ function _applyV3Layout() {
 
 let _editorInited = false;
 function init() {
-    canvas = document.getElementById('editor-canvas');
-    if (!canvas) return;
+    // setCanvas is the only writer of `canvas`/`ctx` (src/canvas.js); everything
+    // else imports them as live, read-only bindings.
+    if (!setCanvas(document.getElementById('editor-canvas'))) return;
     // Idempotency guard: within a single injection init() must run exactly
     // once. A re-injection re-executes this whole IIFE fresh (flag resets), so
     // this only blocks a stray double-invocation (e.g. a late boot-poll tick).
     if (_editorInited) return;
     _editorInited = true;
-    ctx = canvas.getContext('2d');
     _applyV3Layout();
     S.history = new EditHistory();
 
