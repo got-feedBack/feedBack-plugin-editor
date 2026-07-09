@@ -28,6 +28,7 @@
  * Run: node tests/compose_transport.test.mjs
  */
 import assert from 'node:assert';
+import { _composeSongDurationPure, _transportChartTimePure } from '../src/transport.js';
 import fs from 'node:fs';
 import { timeOf } from '../src/beats.js';
 
@@ -50,11 +51,8 @@ function extractFn(name) {
     throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-// The A3 pures still live in src/main.js; the A1 converter (beatOf/timeOf) is a
-// real import from src/beats.js.
-const pures = new Function('"use strict";' + extractBlock('transport')
-    + '\nreturn { _transportChartTimePure, _composeSongDurationPure };')();
-const { _transportChartTimePure, _composeSongDurationPure } = pures;
+// The A3 pures are real imports from src/transport.js; the A1 converter
+// (beatOf/timeOf) from src/beats.js.
 
 // Live _composeSongDuration with real timeOf + a stubbed guide source (so we
 // exercise the actual grid→seconds resolution, not a copy).

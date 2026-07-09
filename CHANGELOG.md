@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The MIDI keyboard recorder now lives in `src/midi-record.js` (R2, step 23),
+  and the transport clock in `src/transport.js`.** `src/main.js` is down to
+  9,779 — under ten thousand for the first time.
+  It needed **no new host hooks**. Two of its dependencies were not hooks waiting
+  to happen: `_transportChartTimePure` is pure time math and is now the whole of
+  `transport.js` (the one formula the playback tick, the guide scheduler and the
+  recorder must agree on), and `_uniqueKeysName` names a Keys arrangement, so it
+  went to `keys.js`. Everything else it wanted was already on `host`.
+  `_recState` is exported as a live `export let`. Every writer is inside the
+  recorder, so the rest of the editor reads it and cannot reassign it — which is
+  exactly the guarantee an import binding gives for free.
+
+
 ### Fixed
 
 - **From-scratch song creation now behaves the way the button, the markup and the

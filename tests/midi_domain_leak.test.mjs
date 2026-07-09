@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Regression tests for the STATEFUL host midi-input domain acquire/release
  * path in the editor's live-record flow (the untested half of PR #121).
@@ -15,13 +14,18 @@
  * All three FAIL on pre-fix src/main.js (no generation guard; Stop only
  * removed the listener and left the refcounted session open).
  *
- * Run: node tests/midi_domain_leak.test.js
+ * Run: node tests/midi_domain_leak.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+// The recorder moved to src/midi-record.js; the internals these cases drive are
+// module-private, so they are still sliced — from their new home.
+const src = fs.readFileSync(new URL('../src/midi-record.js', import.meta.url), 'utf8');
+// `src` is a module: the declarations it slices carry `export`, which is a
+// SyntaxError inside `new Function`. Strip it — nothing here cares.
+const unexport = (code) => code.replace(/^export\s+/gm, '');
+
 
 function extractFn(name) {
     let start = src.indexOf('function ' + name);
@@ -31,18 +35,21 @@ function extractFn(name) {
     let depth = 0;
     for (let i = open; i < src.length; i++) {
         if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+        else if (src[i] === '}' && --depth === 0) return unexport(src.slice(start, i + 1));
     }
     throw new Error(`unbalanced braces extracting ${name}`);
 }
+// The record handlers used to be `window.editorX = () => {…}` arrows; in a
+// module they are exported function declarations, re-attached to window by
+// main.js. Same body, different header.
 function extractArrow(winName) {
-    const start = src.indexOf('window.' + winName + ' = ');
-    assert.ok(start >= 0, `window.${winName} must exist`);
+    const start = src.indexOf('export function ' + winName + '(');
+    assert.ok(start >= 0, `export function ${winName} must exist`);
     const open = src.indexOf('{', start);
     let depth = 0;
     for (let i = open; i < src.length; i++) {
         if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+        else if (src[i] === '}' && --depth === 0) return unexport(src.slice(start, i + 1));
     }
     throw new Error(`unbalanced braces extracting ${winName}`);
 }
@@ -113,7 +120,10 @@ function makeStopEnv() {
         + 'function draw() {}\n'
         + 'function setStatus() {}\n'
         + 'const __el = { classList: { add() {}, remove() {}, toggle() {} }, value: "", disabled: false };\n'
-        + 'const document = { getElementById() { return __el; } };\n';
+        + 'const document = { getElementById() { return __el; } };\n'
+        // The module reaches main.js through the shared host object.
+        + 'const host = { draw() {}, startPlayback() {}, stopPlayback() {},'
+        + '  updateArrangementSelector() {}, updateStatus() {}, updateTimeDisplay() {} };\n';
     return new Function(
         '"use strict";' + preamble
         + extractFn('_recMidiDomain') + '\n'
@@ -122,7 +132,7 @@ function makeStopEnv() {
         + 'return {'
         + '  setDomain: (d) => { __state.domain = d; },'
         + '  openHandle: (key) => { _recMidiHandle = { removeListener() {}, addListener() {} }; _recMidiOpenKey = key; },'
-        + '  stop: () => window.editorStopRecordMidi(),'
+        + '  stop: () => editorStopRecordMidi(),'
         + '  snap: () => ({ handle: _recMidiHandle, key: _recMidiOpenKey }),'
         + '};'
     )();
