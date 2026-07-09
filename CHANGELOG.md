@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`_editorDoBlankCreate` was defined twice, and the wrong one was running.**
+  `main.js` carried two definitions of it. Inside the file's IIFE that is legal
+  — function declarations hoist, and the last one in source order silently wins
+  — so the version added by the Create-New redesign (#45) never executed. The
+  one that has actually been running came from the earlier "restore audio-only
+  project creation" fix, and it requires an artist and audio, where the redesign
+  intended audio to be optional for a draft-now project and validated the roster
+  instead. The collision only surfaced because `src/create.js` is a module,
+  where a duplicate declaration is a SyntaxError.
+  This release removes the dead definition and keeps the one that was executing,
+  so behaviour is unchanged. **Restoring the redesign's intent is a product
+  decision and needs its own change.**
+
+### Changed
+
+- **The song-creation flow now lives in `src/create.js` (R2, step 22).** 2,380
+  lines: the format picker, the create modal, the roster, the MusicBrainz match,
+  the album-art picker, and the `createState` object they all read. `main.js` is
+  down to 10,380 — **51%** of what it was.
+  It keeps the load/audio pipeline and the transport readouts, which arrive as
+  host hooks, and the entry landing, which is screen-entry UI that happens to
+  open two of these dialogs. The 22 `window.editor*` handlers the HTML calls are
+  exported as plain functions and re-attached by `main.js`.
+  The module's one import-time side effect — a global `input` listener — became
+  an exported `initCreate()` that `init()` calls. A module must not do work when
+  it is loaded, or its tests cannot import it without a DOM.
+
+
 ### Changed
 
 - **The modal primitives moved into `src/ui.js` (R2, step 21).** The focus trap

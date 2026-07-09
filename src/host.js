@@ -90,6 +90,23 @@ export const host = {
     refreshTempoMapButton: () => {},
     /** The Parts-view toggle, whose enabled state tracks the active mode. */
     refreshPartsViewButton: () => {},
+
+    // ── The load/audio pipeline, for src/create.js ───────────────────
+    /** Open a pack into the editor (fetch, parse, seed S, redraw). */
+    loadCDLC: () => {},
+    /** Decode an audio URL into the playback graph and the waveform peaks. */
+    loadAudio: () => {},
+    /** Ask the host app to re-scan the song library after a build. */
+    kickLibraryRescan: () => {},
+    /** Clear the audio-offset input and its applied-delta dataset. */
+    resetOffsetUI: () => {},
+    /** Toolbar transport readout. */
+    updateTimeDisplay: () => {},
+    /**
+     * Register a listener on the teardown-tracked global registry, so a
+     * re-injected editor screen doesn't leak it.
+     */
+    addGlobalListener: () => {},
     /**
      * Commit or clear whatever canvas drag is in flight before a mode switch.
      * It dispatches across tempo, drum, handshape and pan drags, so it belongs
