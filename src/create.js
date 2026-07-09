@@ -45,8 +45,6 @@ export let createState = {
     artPath: null,
     previewPath: null,
     eofFiles: null,    // FileList[] of selected EOF arrangement XMLs
-    initialArrangement: 'Lead',
-    initDrumTab: true,
 };
 
 // ════════════════════════════════════════════════════════════════════
@@ -1560,20 +1558,20 @@ async function _editorPickCaaCover(id, group) {
     document.getElementById('editor-art-popup')?.remove();
 }
 
-// UNREACHABLE, both of these. `_populateCreateArrButtons` is called only by
-// itself (a re-render on click) and `_populateStringCountButtons` only by it, so
-// nothing outside this pair ever enters them. `npm run lint` has been warning
-// about the first one for as long as the warning list has existed.
+// UNREACHABLE, both of these, and now also SUPERSEDED. `_populateCreateArrButtons`
+// is called only by itself (a re-render on click) and `_populateStringCountButtons`
+// only by it, so nothing outside the pair ever enters them.
 //
-// They read and write `createState.initialArr`. Nothing else does: the create
-// payload sends `createState.initialArrangement` (see _editorDoBlankCreate),
-// which this UI would never set. If it were ever wired up, the arrangement the
-// user picked would not reach the server (Copilot, #173).
+// They pick a single initial arrangement and a string count. The roster chips do
+// the first properly (one arrangement per role), and the server chooses string
+// counts itself — "String counts are NOT chosen here", says create_sloppak; a
+// fretted role gets a default tuning and the editor extends the range afterwards.
+// They also read and write `createState.initialArr`, which now has no reader at
+// all: the payload sends `arrangements` (Copilot, #173).
 //
-// Both arrived with the Create-New redesign (977ec65, #45) — the same commit
-// whose `_editorDoBlankCreate` never ran either, for a different reason. That
-// redesign is half-wired, and finishing it is a product decision, not a
-// refactor's. Left exactly as found.
+// Left in place rather than deleted, because deleting them is a separate change
+// from the bug fix that made them redundant. They arrived with the same
+// half-wired Create-New redesign (977ec65, #45).
 function _populateCreateArrButtons() {
     const wrap = document.getElementById('editor-create-arr-buttons');
     if (!wrap) return;
@@ -2054,69 +2052,76 @@ async function _editorDoBlankCreate() {
     const btn = document.getElementById('editor-create-go');
     const val = (id) => ((document.getElementById(id)?.value) || '').trim();
     const title = val('editor-create-title');
-    const artist = val('editor-create-artist');
     if (!title) {
-        if (status) status.textContent = 'Title is required.';
+        if (status) status.textContent = 'A title is required.';
         if (btn) btn.disabled = false;
         return;
     }
-    if (!artist) {
-        if (status) status.textContent = 'Artist is required.';
-        if (btn) btn.disabled = false;
-        return;
-    }
-    if (!_createHasAudioInput()) {
-        if (status) status.textContent = 'Audio is required for an audio-only project.';
+    // Defence in depth: _createGateOpen() already refuses to enable the button
+    // without one, but the roster is what the server seeds arrangements from and
+    // it rejects an empty list.
+    const roster = (createState.roster || []).slice();
+    if (!roster.some((r) => _CREATE_INSTRUMENTS.includes(r))) {
+        if (status) status.textContent = 'Add at least one instrument to arrange (Lead, Rhythm, Bass, Keys, or Drums).';
         if (btn) btn.disabled = false;
         return;
     }
     if (btn) btn.disabled = true;
-
-    if (!createState.audioUrl) {
-        status.textContent = 'Uploading audio...';
+    // Audio is optional (draft-now, audio-later): only resolve a pasted YouTube
+    // URL here — file audio was uploaded already on selection. With none, the
+    // server creates an audio-less work-in-progress pack (`stems: []`) and the
+    // author supplies audio later via Replace Audio.
+    if (!createState.audioUrl && _createHasAudioInput()) {
+        if (status) status.textContent = 'Uploading audio…';
         const ok = await uploadCreateAudio();
         if (!ok) { if (btn) btn.disabled = false; return; }
     }
-
+    // Art normally uploads the moment it is chosen (editorArtFileSelected sets
+    // createState.artPath). This retries a selection whose upload failed, rather
+    // than silently baking a pack with no cover.
     const artInput = document.getElementById('editor-create-art');
     if (artInput && artInput.files && artInput.files.length && !createState.artPath) {
         const form = new FormData();
         form.append('file', artInput.files[0]);
         try {
             const r = await fetch('/api/plugins/editor/upload-art', { method: 'POST', body: form });
-            const d = await r.json();
-            if (d.art_path) createState.artPath = d.art_path;
-        } catch (_) {}
+            const dd = await r.json();
+            if (dd.art_path) createState.artPath = dd.art_path;
+        } catch (_) { /* art just won't be baked if the upload fails */ }
     }
-
-    createState.initDrumTab = !!document.getElementById('editor-create-drum-tab')?.checked;
-    const metadata = {
+    const meta = {
         title,
-        artist,
+        // Optional for a draft; the server writes "" through as-is.
+        artist: val('editor-create-artist'),
         album: val('editor-create-album'),
         year: val('editor-create-year'),
+        // album_artist / track / disc / genres / language / isrc / mbid / authors.
+        // The same helper the Guitar Pro and EOF paths use, so every create route
+        // carries the spec-complete metadata the modal collects.
+        ..._createExtendedMeta(),
+        // "What are you arranging?" — the roster the user built. The server seeds
+        // one arrangement per role. `initial_arrangement` + `init_drum_tab` are
+        // its documented BACK-COMPAT shape for older clients; do not send them.
+        arrangements: roster,
         audio_url: createState.audioUrl,
-        initial_arrangement: createState.initialArrangement || 'Lead',
-        init_drum_tab: !!createState.initDrumTab,
     };
-    if (createState.artPath) metadata.art_path = createState.artPath;
-
-    const form = new FormData();
-    form.append('metadata', JSON.stringify(metadata));
-    status.textContent = 'Building sloppak...';
+    if (createState.artPath) meta.art_path = createState.artPath;
+    const fd = new FormData();
+    fd.append('metadata', JSON.stringify(meta));
+    if (status) status.textContent = 'Building feedpak…';
     try {
-        const resp = await fetch('/api/plugins/editor/create_sloppak', { method: 'POST', body: form });
+        const resp = await fetch('/api/plugins/editor/create_sloppak', { method: 'POST', body: fd });
         const data = await resp.json();
         if (!resp.ok || !data.success) {
-            status.textContent = 'Error: ' + (data.error || resp.statusText);
+            if (status) status.textContent = 'Error: ' + (data.error || resp.statusText);
             if (btn) btn.disabled = false;
             return;
         }
-        window.editorHideCreateModal();
+        editorHideCreateModal();
         host.kickLibraryRescan();
         await host.loadCDLC(data.filename);
     } catch (e) {
-        status.textContent = 'Failed: ' + e.message;
+        if (status) status.textContent = 'Failed: ' + e.message;
         if (btn) btn.disabled = false;
     }
 }
