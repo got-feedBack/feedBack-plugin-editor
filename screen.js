@@ -7638,11 +7638,17 @@ function _transportChartTimePure(playStartTime, playStartWall, ctxNow) {
 // time of the last grid beat (timeOf(lastBeat)), extended if authored content
 // runs past the grid so a note beyond the last bar still plays out. Non-finite
 // or non-positive inputs collapse to 0.
+const COMPOSE_CONTENT_TAIL = 0.25; // seconds past the last authored onset, so its
+                                   // guide clap (a ~60 ms voice) rings out before
+                                   // playbackTick hits duration and cancels voices.
 function _composeSongDurationPure(gridEndTime, contentEndTime, userLen) {
     if (Number.isFinite(userLen) && userLen > 0) return userLen;
     const g = Number.isFinite(gridEndTime) && gridEndTime > 0 ? gridEndTime : 0;
     const c = Number.isFinite(contentEndTime) && contentEndTime > 0 ? contentEndTime : 0;
-    return Math.max(g, c);
+    // Content-bound (a note past the last grid beat): pad by a tail so the final
+    // clap plays out. Grid-bound and explicit userLen stay exact.
+    if (c > g) return c + COMPOSE_CONTENT_TAIL;
+    return g;
 }
 /* @pure:transport:end */
 
@@ -8269,7 +8275,10 @@ function _abRefTargetPure(abActive, playing, phase, faderGain) {
 let _abOn = false;
 let _abPhase = 'recording';   // every play starts by hearing the real thing
 
-function _abActive() { return _abOn && !!S.loopEnabled; }
+// A/B compares the recording against the guide — meaningless with no reference
+// buffer (compose mode), where it would only gate half of each loop's claps to
+// silence. Require a buffer so compose loops keep every clap.
+function _abActive() { return _abOn && !!S.loopEnabled && !!S.audioBuffer; }
 
 function _abApplyRefGain() {
     const rg = _ensureRefGain();

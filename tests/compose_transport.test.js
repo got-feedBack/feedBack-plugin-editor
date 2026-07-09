@@ -116,9 +116,17 @@ t('_transportChartTimePure is monotonic in ctx time', () => {
 t('_composeSongDurationPure: an explicit user length wins', () => {
     assert.strictEqual(_composeSongDurationPure(2.30, 9.9, 7.5), 7.5);
 });
-t('_composeSongDurationPure: no user length ⇒ max(grid end, content end)', () => {
-    assert.strictEqual(_composeSongDurationPure(2.30, 1.0, NaN), 2.30);  // grid past content
-    assert.strictEqual(_composeSongDurationPure(2.30, 4.0, NaN), 4.0);   // content past grid
+t('_composeSongDurationPure: no user length ⇒ grid end when grid past content', () => {
+    assert.strictEqual(_composeSongDurationPure(2.30, 1.0, NaN), 2.30);  // grid past content, exact
+});
+t('_composeSongDurationPure: content past grid pads past the onset (final clap rings out)', () => {
+    const onset = 4.0;
+    const end = _composeSongDurationPure(2.30, onset, NaN);
+    assert.ok(end > onset, `content-bound end ${end} must exceed last onset ${onset} so the clap plays`);
+    assert.ok(end <= onset + 1.0, 'tail is a small pad, not a whole extra beat-plus');
+});
+t('_composeSongDurationPure: explicit user length is exact — no tail even past content', () => {
+    assert.strictEqual(_composeSongDurationPure(2.30, 9.9, 7.5), 7.5);   // userLen wins, unpadded
 });
 t('_composeSongDurationPure: junk inputs collapse to 0 (never NaN/negative)', () => {
     assert.strictEqual(_composeSongDurationPure(NaN, NaN, NaN), 0);
@@ -133,10 +141,11 @@ t('_composeSongDuration derives length from the GRID with no audio buffer', () =
     const dur = makeComposeDuration(S, [0.5, 1.1])();          // content ends inside the grid
     close(dur, gridEnd);                                        // = timeOf(lastBeat)
 });
-t('_composeSongDuration extends past the grid for late content', () => {
+t('_composeSongDuration extends past the grid AND past the late onset for its clap', () => {
     const S = { audioBuffer: null, beats: grid };
-    const dur = makeComposeDuration(S, [1.0, 3.9])();           // a note past the last bar
-    close(dur, 3.9);
+    const lastOnset = 3.9;
+    const dur = makeComposeDuration(S, [1.0, lastOnset])();     // a note past the last bar
+    assert.ok(dur > lastOnset, `dur ${dur} must exceed the last onset ${lastOnset} so its clap plays`);
 });
 t('_composeSongDuration honours an explicit S.composeLength', () => {
     const S = { audioBuffer: null, beats: grid, composeLength: 12.0 };
@@ -185,6 +194,32 @@ t('_guideTick gates on S.audioCtx and NEVER requires S.audioBuffer', () => {
     assert.ok(/S\.audioCtx/.test(body), 'guide tick must gate on the audio context');
     assert.ok(!/S\.audioBuffer/.test(body),
         'guide tick must not require an audio buffer — it is the sound source in compose mode');
+});
+
+// ── 6. A/B compare is inert with no reference buffer (compose mode) ──────────
+// _abActive gates the guide-clap enable path; without a buffer there is nothing
+// to compare against, so it must read false and let every clap fire.
+const abPures = new Function('"use strict";'
+    + extractBlock('loop-ab') + '\nreturn { _abClapsEnabledPure };')();
+const { _abClapsEnabledPure } = abPures;
+function makeAbActive(S, abOn) {
+    return new Function('S', '_abOn',
+        extractFn('_abActive') + '\nreturn _abActive;'
+    )(S, abOn);
+}
+t('_abActive is false with no audio buffer even when armed on a loop', () => {
+    const active = makeAbActive({ loopEnabled: true, audioBuffer: null }, true)();
+    assert.strictEqual(active, false, 'A/B must be inert in compose mode (no reference)');
+});
+t('_abActive stays true in buffered mode (no regression)', () => {
+    const active = makeAbActive({ loopEnabled: true, audioBuffer: {} }, true)();
+    assert.strictEqual(active, true, 'buffered A/B must still arm');
+});
+t('compose-mode claps are NOT gated to the guide phase (both passes clap)', () => {
+    const active = makeAbActive({ loopEnabled: true, audioBuffer: null }, true)();
+    // On the 'recording' phase the pre-fix code (abActive true) would mute claps.
+    assert.strictEqual(_abClapsEnabledPure(active, 'recording', true), true);
+    assert.strictEqual(_abClapsEnabledPure(active, 'guide', true), true);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

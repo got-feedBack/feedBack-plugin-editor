@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cross `t=0` — rigid, with spacing preserved. Also adds DAW-style grid
   unlock: **hold Alt while dragging to move free of the grid** (vertical
   stays semitone/string-quantized). Tests: `tests/group_move_snap.test.js`.
+### Fixed
+- **Compose transport: final guide clap plays, and A/B never mutes claps
+  without a recording.** The content-bound compose length now pads a small
+  tail past the last authored onset so its guide clap rings out instead of
+  being cut by `stopPlayback()` (explicit lengths stay exact). And A/B compare
+  is treated as inactive with no reference buffer, so compose-mode loops keep
+  every clap rather than gating half of each pass to silence.
 
 ### Changed
 - **Loop edges follow the grid by beat (bar/grid loops).** A bar or grid loop's

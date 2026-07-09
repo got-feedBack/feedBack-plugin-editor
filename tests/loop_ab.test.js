@@ -134,6 +134,9 @@ function buildAB(opts) {
     const S = {
         audioCtx: stubCtx(), playing: !!opts.playing,
         loopEnabled: !!opts.loopEnabled, cursorTime: opts.cursorTime || 0,
+        // A/B compares against a reference recording, so it only arms with a
+        // buffer present (compose mode has none). Default to buffered here.
+        audioBuffer: 'audioBuffer' in opts ? opts.audioBuffer : {},
     };
     const spies = { setLoopRegionEnabled: [] };
     const region = opts.region || { startTime: 5, endTime: 9 };
