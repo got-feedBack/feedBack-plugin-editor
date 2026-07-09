@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Tempo-map guidance helper tests for screen.js.
+ * Tempo-map guidance helper tests for src/main.js.
  *
  * Run: node tests/tempo_map_guidance.test.js
  */
@@ -11,7 +11,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:tempo-map-guidance:start \*\/[\s\S]*?\/\* @pure:tempo-map-guidance:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:tempo-map-guidance block not found in screen.js');
+    console.error('FAIL: @pure:tempo-map-guidance block not found in src/main.js');
     process.exit(1);
 }
 

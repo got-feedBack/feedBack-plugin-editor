@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Tests for `_shiftArrangementTimes` in screen.js — the per-arrangement rigid
+ * Tests for `_shiftArrangementTimes` in src/main.js — the per-arrangement rigid
  * time shift used by editorApplyOffset. The bug (#2): editorApplyOffset only
  * shifted the CURRENT arrangement's notes while beats/sections/drums shifted
  * globally, so other arrangements (and all arrangements' chords/anchors/

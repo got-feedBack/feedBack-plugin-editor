@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Tempo-map sync-point inspector helper tests for screen.js.
+ * Tempo-map sync-point inspector helper tests for src/main.js.
  *
  * Run: node tests/tempo_sync_inspector.test.js
  */
@@ -11,7 +11,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:tempo-sync-inspector:start \*\/[\s\S]*?\/\* @pure:tempo-sync-inspector:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:tempo-sync-inspector block not found in screen.js');
+    console.error('FAIL: @pure:tempo-sync-inspector block not found in src/main.js');
     process.exit(1);
 }
 

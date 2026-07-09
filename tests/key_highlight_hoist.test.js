@@ -26,7 +26,7 @@ function body(name) {
     // then strip line comments so prose (which may mention localStorage etc.)
     // never trips the code-shape assertions below.
     const start = src.indexOf('function ' + name + '(');
-    assert.notStrictEqual(start, -1, name + ' should exist in screen.js');
+    assert.notStrictEqual(start, -1, name + ' should exist in src/main.js');
     const open = src.indexOf('{', start);
     let depth = 0;
     for (let i = open; i < src.length; i++) {

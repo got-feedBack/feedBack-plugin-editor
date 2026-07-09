@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Tests for `_buildWaveformPeaks` in screen.js — the pure min/max/RMS cache
+ * Tests for `_buildWaveformPeaks` in src/main.js — the pure min/max/RMS cache
  * builder behind the editor's waveform. It must capture the true (asymmetric)
  * signed extremes per bin plus per-bin RMS, soak the remainder into the last
  * bin, and stay sane for tiny inputs. The helper is pure; extract it by

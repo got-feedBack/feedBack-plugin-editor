@@ -22,7 +22,7 @@ function extract(name) {
         '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
     const m = src.match(re);
     if (!m) {
-        console.error(`FAIL: @pure:${name} block not found in screen.js`);
+        console.error(`FAIL: @pure:${name} block not found in src/main.js`);
         process.exit(1);
     }
     return m[0];

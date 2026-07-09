@@ -170,10 +170,10 @@ t('editorApplySync reprojection keeps notes on the warped grid at a lock (FIX 2)
 });
 
 t('editorApplySync reprojects SECTION times onto the warped grid under a lock (FIX A)', () => {
-    // Extract and RUN the actual "Scale section times" loop from screen.js, so a
+    // Extract and RUN the actual "Scale section times" loop from src/main.js, so a
     // pre-fix linear-scale body genuinely fails here (would-fail-on-main).
     const secLoop = src.match(/\/\/ Scale section times[\s\S]*?\n    for \(const s of S\.sections\) \{[\s\S]*?\n    \}/);
-    assert.ok(secLoop, 'section-scaling loop found in screen.js');
+    assert.ok(secLoop, 'section-scaling loop found in src/main.js');
     const runSectionScale = new Function(
         'S', 'locked', 'respaced', 'oldBeats', 'factor', 'offset', 'timeOf', 'beatOf',
         '"use strict";' + secLoop[0]);

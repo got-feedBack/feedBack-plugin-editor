@@ -24,7 +24,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8'
 
 const m = src.match(/\/\* @pure:tempo-beat-drag:start \*\/[\s\S]*?\/\* @pure:tempo-beat-drag:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:tempo-beat-drag block not found in screen.js');
+    console.error('FAIL: @pure:tempo-beat-drag block not found in src/main.js');
     process.exit(1);
 }
 const { _tempoBeatDragBoundsPure } = new Function(

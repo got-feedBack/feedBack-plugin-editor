@@ -3,7 +3,7 @@
  * Live-mode tests for the impure `_loopNudgeEdge` (arrow-key loop nudge).
  *
  * Unlike loop_nudge.test.js (which unit-tests the pure probe/adjust helpers),
- * this pulls the REAL `_loopNudgeEdge` + `_loopLiveMode` out of screen.js and
+ * this pulls the REAL `_loopNudgeEdge` + `_loopLiveMode` out of src/main.js and
  * runs them against lightweight stubs, so it validates the mode RESOLUTION:
  *   - Shift forces Free even when the region was drawn in bar mode (the
  *     editor-wide "Shift = temporary Free" idiom — nudge now matches the drag

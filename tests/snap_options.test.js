@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Snap option model tests for screen.js.
+ * Snap option model tests for src/main.js.
  *
  * Run: node tests/snap_options.test.js
  */
@@ -11,7 +11,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:snap-options:start \*\/[\s\S]*?\/\* @pure:snap-options:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:snap-options block not found in screen.js');
+    console.error('FAIL: @pure:snap-options block not found in src/main.js');
     process.exit(1);
 }
 
@@ -28,7 +28,7 @@ function t(name, fn) {
 
 t('keeps 1/4 as the default snap index', () => {
     // 1/4 shifts to index 3 once 1/3T is inserted ahead of it; the S.snapIdx
-    // default in screen.js must track this (default 1/4).
+    // default in src/main.js must track this (default 1/4).
     assert.strictEqual(api.SNAP_OPTIONS[3].label, '1/4');
     assert.strictEqual(api.SNAP_VALUES[3], 0.25);
 });

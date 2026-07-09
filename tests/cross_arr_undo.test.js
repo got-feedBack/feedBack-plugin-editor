@@ -45,7 +45,7 @@ function extractBlock(name) {
 }
 function extractRe(re, label) {
     const m = src.match(re);
-    if (!m) { console.error(`FAIL: could not extract ${label} from screen.js`); process.exit(1); }
+    if (!m) { console.error(`FAIL: could not extract ${label} from src/main.js`); process.exit(1); }
     return m[0];
 }
 

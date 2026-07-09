@@ -1,8 +1,8 @@
 'use strict';
 /*
- * E0 regression test for the chord-template re-link logic in screen.js.
+ * E0 regression test for the chord-template re-link logic in src/main.js.
  *
- * screen.js is a single browser IIFE (no module exports), so this test
+ * src/main.js is a single browser IIFE (no module exports), so this test
  * extracts the `@pure:chord-relink` marked block — which is self-contained and
  * browser-free — and eval's it in isolation. Tests the real source, no drift.
  *
@@ -15,7 +15,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:chord-relink:start[\s\S]*?@pure:chord-relink:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:chord-relink block not found in screen.js');
+    console.error('FAIL: @pure:chord-relink block not found in src/main.js');
     process.exit(1);
 }
 const api = new Function(

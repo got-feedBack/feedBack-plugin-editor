@@ -21,7 +21,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:draw-coalesce:start \*\/[\s\S]*?\/\* @pure:draw-coalesce:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:draw-coalesce block not found in screen.js');
+    console.error('FAIL: @pure:draw-coalesce block not found in src/main.js');
     process.exit(1);
 }
 

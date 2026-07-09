@@ -17,7 +17,7 @@
  *   - exec() tags each command with the active arrangement (`_arrIdx`) so
  *     undo/redo can route back to it; `songScope` commands tag -1.
  *
- * screen.js is a single browser IIFE, so this extracts the marked
+ * src/main.js is a single browser IIFE, so this extracts the marked
  * `@pure:drum-cmds` + `@pure:edit-history` blocks (browser-free) and eval's
  * them in isolation — real source, no drift.
  *
@@ -34,7 +34,7 @@ function extract(name) {
         '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
     const m = src.match(re);
     if (!m) {
-        console.error(`FAIL: @pure:${name} block not found in screen.js`);
+        console.error(`FAIL: @pure:${name} block not found in src/main.js`);
         process.exit(1);
     }
     return m[0];

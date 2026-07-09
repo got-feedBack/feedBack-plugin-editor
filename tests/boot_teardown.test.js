@@ -21,7 +21,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:boot-teardown:start \*\/[\s\S]*?\/\* @pure:boot-teardown:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:boot-teardown block not found in screen.js');
+    console.error('FAIL: @pure:boot-teardown block not found in src/main.js');
     process.exit(1);
 }
 const { _makeListenerRegistry } = new Function(
@@ -114,7 +114,7 @@ t('re-boot simulation: two registries never double-register', () => {
 // clearInterval actually happen.
 const tm = src.match(/window\.__editorScreenTeardown = \(\) => \{([\s\S]*?)\n\};/);
 if (!tm) {
-    console.error('FAIL: window.__editorScreenTeardown closure not found in screen.js');
+    console.error('FAIL: window.__editorScreenTeardown closure not found in src/main.js');
     process.exit(1);
 }
 function runTeardown(over) {

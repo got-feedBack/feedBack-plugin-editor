@@ -17,7 +17,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:tap-tempo:start \*\/[\s\S]*?\/\* @pure:tap-tempo:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:tap-tempo block not found in screen.js');
+    console.error('FAIL: @pure:tap-tempo block not found in src/main.js');
     process.exit(1);
 }
 const { _tapTempoBpmPure, _tapTempoStatusReasonPure } = new Function(
@@ -26,7 +26,7 @@ const { _tapTempoBpmPure, _tapTempoStatusReasonPure } = new Function(
 
 const ma = src.match(/\/\* @pure:tap-tempo-apply:start \*\/[\s\S]*?\/\* @pure:tap-tempo-apply:end \*\//);
 if (!ma) {
-    console.error('FAIL: @pure:tap-tempo-apply block not found in screen.js');
+    console.error('FAIL: @pure:tap-tempo-apply block not found in src/main.js');
     process.exit(1);
 }
 const { _tapTempoApplyDecisionPure } = new Function(

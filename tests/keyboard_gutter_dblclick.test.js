@@ -7,10 +7,10 @@
  * showAddNote() at time 0 — silently inserting a note the user never asked for.
  * This violates the PR contract ("it never adds or selects a note").
  *
- * Pins the real onDblClick + the real _inKeyboardGutterPure from screen.js
+ * Pins the real onDblClick + the real _inKeyboardGutterPure from src/main.js
  * (single browser IIFE) by brace-matching, and asserts showAddNote is NOT
  * called for a gutter double-click, but IS called for a click in the note area.
- * Fails on pre-fix screen.js (showAddNote fires in the gutter).
+ * Fails on pre-fix src/main.js (showAddNote fires in the gutter).
  *
  * Run: node tests/keyboard_gutter_dblclick.test.js
  */
@@ -43,7 +43,7 @@ const { _inKeyboardGutterPure } = new Function(
     '"use strict";' + extractBlock('midi-freq') + '\nreturn { _inKeyboardGutterPure };'
 )();
 
-// Geometry matching screen.js defaults.
+// Geometry matching src/main.js defaults.
 const LABEL_W = 52, WAVEFORM_H = 70, PIANO_LANE_H = 10;
 const pianoRange = { lo: 36, hi: 96 };
 

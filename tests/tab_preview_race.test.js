@@ -10,7 +10,7 @@
  * that await; without a seq re-check afterwards the stale error would
  * destroy the newer render's alphaTab api and stomp its status. This drives
  * that exact interleaving deterministically: the faked response bumps the
- * shared sequence counter mid-body-read. Fails on pre-fix screen.js (no
+ * shared sequence counter mid-body-read. Fails on pre-fix src/main.js (no
  * re-check → destroy called, status stomped).
  *
  * Run: node tests/tab_preview_race.test.js
@@ -22,7 +22,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/async function _tabPreviewRender\(\)\s*\{[\s\S]*?\n\}/);
 if (!m) {
-    console.error('FAIL: _tabPreviewRender not found in screen.js');
+    console.error('FAIL: _tabPreviewRender not found in src/main.js');
     process.exit(1);
 }
 

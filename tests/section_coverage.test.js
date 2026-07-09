@@ -19,7 +19,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:section-coverage:start \*\/[\s\S]*?\/\* @pure:section-coverage:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:section-coverage block not found in screen.js');
+    console.error('FAIL: @pure:section-coverage block not found in src/main.js');
     process.exit(1);
 }
 const { _sectionCoveragePure } = new Function(

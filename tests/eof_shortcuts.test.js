@@ -1,6 +1,6 @@
 'use strict';
 /*
- * EOF legacy shortcut profile mapping tests for screen.js.
+ * EOF legacy shortcut profile mapping tests for src/main.js.
  *
  * Run: node tests/eof_shortcuts.test.js
  */
@@ -11,7 +11,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:shortcut-profile:start \*\/[\s\S]*?\/\* @pure:shortcut-profile:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:shortcut-profile block not found in screen.js');
+    console.error('FAIL: @pure:shortcut-profile block not found in src/main.js');
     process.exit(1);
 }
 

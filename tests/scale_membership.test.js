@@ -18,7 +18,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:scale:start \*\/[\s\S]*?\/\* @pure:scale:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:scale block not found in screen.js');
+    console.error('FAIL: @pure:scale block not found in src/main.js');
     process.exit(1);
 }
 const { SCALE_INTERVALS, _pcInScalePure } = new Function(

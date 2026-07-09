@@ -8,7 +8,7 @@
  * wins over filename sniffing.
  *
  * _normalizeSongList is a browser-free top-level function (String + regex +
- * Array.map), so this extracts it from screen.js and eval's it in isolation —
+ * Array.map), so this extracts it from src/main.js and eval's it in isolation —
  * real source, no drift — the same approach as edit_history_reset.test.js.
  *
  * Run: node tests/feedpak_song_list.test.js
@@ -22,7 +22,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8'
 // column-0 `\n}` is the function's own close.
 const m = src.match(/function _normalizeSongList\(raw\) \{[\s\S]*?\n\}/);
 if (!m) {
-    console.error('FAIL: _normalizeSongList not found in screen.js');
+    console.error('FAIL: _normalizeSongList not found in src/main.js');
     process.exit(1);
 }
 const _normalizeSongList = new Function(

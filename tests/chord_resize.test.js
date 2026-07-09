@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Chord sustain resize helper tests for screen.js.
+ * Chord sustain resize helper tests for src/main.js.
  *
  * Run: node tests/chord_resize.test.js
  */
@@ -11,7 +11,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:chord-resize:start \*\/[\s\S]*?\/\* @pure:chord-resize:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:chord-resize block not found in screen.js');
+    console.error('FAIL: @pure:chord-resize block not found in src/main.js');
     process.exit(1);
 }
 

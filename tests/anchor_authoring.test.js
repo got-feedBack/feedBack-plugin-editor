@@ -8,7 +8,7 @@
  * promoted only the clicked computed/source anchor into `anchors_user`, so the
  * first interaction collapsed a whole computed set down to one anchor and
  * dropped the rest on save. This test pulls the REAL anchor authoring source
- * (screen.js is a single browser IIFE) by brace-matching, runs it against a
+ * (src/main.js is a single browser IIFE) by brace-matching, runs it against a
  * fake `S` + undo history, and pins that both authoring entry points — clicking
  * a fallback marker and adding a new anchor in empty space — materialize the
  * WHOLE fallback set first.

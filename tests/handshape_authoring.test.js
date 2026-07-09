@@ -2,9 +2,9 @@
 /*
  * E2 (PR-B) integration test for handshape authoring → save round-trip.
  *
- * screen.js is a single browser IIFE, so this test pulls the REAL source for
+ * src/main.js is a single browser IIFE, so this test pulls the REAL source for
  * the two pieces that actually carry the logic:
- *   1. `_handshapeSpanFrets` — extracted by brace-matching from screen.js
+ *   1. `_handshapeSpanFrets` — extracted by brace-matching from src/main.js
  *      (it's self-contained: only uses its args + Array/Object/Number), and
  *   2. the `@pure:chord-relink` helpers (eval'd from the marked block).
  * It then replays the authoring path (AddHandshapeCmd._resolve: voicing ->
