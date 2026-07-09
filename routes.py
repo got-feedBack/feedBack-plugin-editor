@@ -275,10 +275,37 @@ def _refresh_save_backup(output_path, backup_path) -> None:
 
 
 def _timeline_round_time(value) -> float:
+    # 6 decimals (microseconds), not 3 (ms): the timeline DERIVES per-bar BPM
+    # from beat spans (bpm = beats·60/span), which amplifies rounding — at 3
+    # decimals a constant-tempo song drifts ±0.05–0.7 BPM per bar because most
+    # bar lengths don't land on a ms boundary. 6 decimals keeps a saved/reloaded
+    # grid deriving to the exact tempo (mirrors gp2rs's 6-decimal ebeat output).
     try:
-        return round(float(value), 3)
+        return round(float(value), 6)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _wire_beats_sections(beats, sections):
+    """Serialize the timeline grid for the first arrangement's wire dict.
+
+    Beat/section times use 6-decimal precision (via `_timeline_round_time`) so a
+    downstream consumer that derives tempo from this arrangement-JSON beat array
+    sees the same drift-free grid as `song_timeline.json` and the arrangement
+    XML `<ebeat>`s. Shared by the two save paths so precision can't skew again.
+    """
+    beats_wire = [
+        {"time": _timeline_round_time(b.get("time", 0)),
+         "measure": int(b.get("measure", -1))}
+        for b in beats
+    ]
+    sections_wire = [
+        {"name": s.get("name", ""),
+         "number": int(s.get("number", 0)),
+         "time": _timeline_round_time(s.get("start_time", 0))}
+        for s in sections
+    ]
+    return beats_wire, sections_wire
 
 
 def _timeline_denominator(value) -> int:
@@ -2706,7 +2733,9 @@ def _build_arrangement_xml(
     for b in beats:
         ET.SubElement(
             ebeats_el, "ebeat",
-            time=f"{b['time']:.3f}", measure=str(b["measure"]),
+            # 6-decimal beat times so the derived per-bar tempo stays exact on
+            # save/reload (see _timeline_round_time / gp2rs ebeat precision).
+            time=f"{b['time']:.6f}", measure=str(b["measure"]),
         )
 
     if not sections:
@@ -3776,17 +3805,8 @@ def setup(app, context):
                         ph, wire["notes"], wire["chords"], wire["anchors"],
                     )
                 if is_first:
-                    wire["beats"] = [
-                        {"time": round(float(b.get("time", 0)), 3),
-                         "measure": int(b.get("measure", -1))}
-                        for b in beats
-                    ]
-                    wire["sections"] = [
-                        {"name": s.get("name", ""),
-                         "number": int(s.get("number", 0)),
-                         "time": round(float(s.get("start_time", 0)), 3)}
-                        for s in sections
-                    ]
+                    wire["beats"], wire["sections"] = _wire_beats_sections(
+                        beats, sections)
                 return wire
 
             # Determine the arrangement set to write. If `arrangements` was
@@ -7161,17 +7181,8 @@ def setup(app, context):
                     anchors_user=authored_anchors,
                 )
                 if i == 0:
-                    wire["beats"] = [
-                        {"time": round(float(b.get("time", 0)), 3),
-                         "measure": int(b.get("measure", -1))}
-                        for b in beats
-                    ]
-                    wire["sections"] = [
-                        {"name": s.get("name", ""),
-                         "number": int(s.get("number", 0)),
-                         "time": round(float(s.get("start_time", 0)), 3)}
-                        for s in sections
-                    ]
+                    wire["beats"], wire["sections"] = _wire_beats_sections(
+                        beats, sections)
                 (arr_dir / f"{aid}.json").write_text(
                     json.dumps(wire, separators=(",", ":")),
                     encoding="utf-8",
