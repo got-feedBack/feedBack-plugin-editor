@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Loop-undo symmetry + mode round-trip tests for src/main.js.
  *
@@ -19,13 +18,13 @@
  * from src/main.js and run against the real beat converter, so this validates the
  * shipping code path.
  *
- * Run: node tests/loop_undo_mode.test.js
+ * Run: node tests/loop_undo_mode.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { beatOf, timeOf } from '../src/beats.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractFn(name) {
     const start = src.indexOf('function ' + name + '(');
@@ -42,8 +41,6 @@ function extractFn(name) {
 // ── Extract the real TempoMapCmd class + the A4 loop helpers + the converter ──
 const cm = src.match(/class TempoMapCmd \{[\s\S]*?\n\}/);
 if (!cm) { console.error('FAIL: TempoMapCmd class not found'); process.exit(1); }
-const conv = src.match(/\/\* @pure:beat-converter:start \*\/[\s\S]*?\/\* @pure:beat-converter:end \*\//);
-if (!conv) { console.error('FAIL: @pure:beat-converter block not found'); process.exit(1); }
 const pm = src.match(/\/\* @pure:pending-view:start \*\/[\s\S]*?\/\* @pure:pending-view:end \*\//);
 if (!pm) { console.error('FAIL: @pure:pending-view block not found'); process.exit(1); }
 
@@ -58,12 +55,13 @@ const { _resolvePendingViewStatePure } = new Function(
 function makeEnv(S) {
     return new Function(
         'S', '_renderLoopStrip', '_updateLoopIn3DBtn', '_liftAllBeats', '_reprojectAll', '_eachTimed',
-        '"use strict";' + conv[0] + '\n'
+        'beatOf', 'timeOf',
+        '"use strict";'
         + extractFn('_loopReprojectFromBeats') + '\n'
         + extractFn('_loopSyncBeats') + '\n'
         + cm[0]
         + '\nreturn { TempoMapCmd, _loopReprojectFromBeats, _loopSyncBeats, beatOf, timeOf };'
-    )(S, () => {}, () => {}, () => {}, () => {}, () => {});
+    )(S, () => {}, () => {}, () => {}, () => {}, () => {}, beatOf, timeOf);
 }
 
 // Old grid: 5 beats, downbeats (measure > 0) at indices 0,2,4 → times 0,2,4.

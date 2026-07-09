@@ -48,6 +48,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 11 — the tempo-grid converter (R2).** `src/beats.js`:
+  `beatOf` / `timeOf`, the one musical-beat ⇄ seconds mapping (charrette §1.1).
+  Pure — it takes the grid as an argument and touches nothing else, so it imports
+  nothing. 38 call sites, none of which changed; `main.js`'s only added line is the
+  import.
+  `@pure:beat-converter` was the second-most-sliced block in the suite: **six**
+  suites concatenated it into sandboxes. All six now take the real functions —
+  `beat_converter` and `beat_lock` import them outright, and `beat_primary`,
+  `compose_transport`, `loop_beats` and `loop_undo_mode` inject them into the
+  sandboxes they still need for `TempoMapCmd`/`TempoGridCmd` and the loop helpers
+  that remain in `main.js`.
+
 - **ES-module migration, step 10 — hit testing, shortcuts, and the status line
   (R2).** Three modules, `main.js` 19,339 → 18,852.
   `src/hit-test.js` — `hitNote` / `hitNoteEdge`, the pointer→note resolution and

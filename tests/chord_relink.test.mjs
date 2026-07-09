@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert';
 import {
-    _buildPreservedTemplates, _fretKeyForL, _groupFn, _mergeChordFn, _normChordFn,
+    _buildPreservedTemplates, _groupFn, _mergeChordFn, _normChordFn,
     _normFingers, _parseGuideTones, _sanitizeCaged, _sanitizeGuideTones,
     buildHandshapeChordIdMap, dropOrphanedHandshapes, relinkChordTemplate,
     remapHandshapeChordIds,

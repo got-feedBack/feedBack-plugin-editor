@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Beat-converter tests for src/main.js (charrette §1.1/§1.10, Phase A1).
  *
@@ -15,19 +14,14 @@
  * These reference beatOf/timeOf, which do not exist on origin/main, so the whole
  * suite fails on main (extraction returns null) — a would-fail-on-main test.
  *
- * Run: node tests/beat_converter.test.js
+ * Run: node tests/beat_converter.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { beatOf, timeOf } from '../src/beats.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
-const conv = src.match(/\/\* @pure:beat-converter:start \*\/[\s\S]*?\/\* @pure:beat-converter:end \*\//);
-if (!conv) {
-    console.error('FAIL: @pure:beat-converter block not found in src/main.js');
-    process.exit(1);
-}
 // _makeTimeRemap now depends only on the converter, so it lifts cleanly into the
 // same sandbox — letting us test the ACTUAL shipped remap, not a copy of it.
 const remapM = src.match(/\nfunction _makeTimeRemap\(oldBeats, newBeats\) \{[\s\S]*?\n\}/);
@@ -36,11 +30,10 @@ if (!remapM) {
     process.exit(1);
 }
 
-const api = new Function(
-    '"use strict";' + conv[0] + '\n' + remapM[0] +
-    '\nreturn { beatOf, timeOf, _makeTimeRemap };'
-)();
-const { beatOf, timeOf, _makeTimeRemap } = api;
+// beatOf/timeOf are real imports (src/beats.js); _makeTimeRemap still lives in
+// src/main.js and is still sliced, with the converter injected.
+const { _makeTimeRemap } = new Function('beatOf', 'timeOf',
+    '"use strict";' + remapM[0] + '\nreturn { _makeTimeRemap };')(beatOf, timeOf);
 
 // ── Reference implementations (the pre-A1 code, verbatim) ───────────────────
 // The golden baselines: if the extracted/rewired functions match these across

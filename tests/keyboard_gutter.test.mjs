@@ -14,12 +14,6 @@ import { _inKeyboardGutterPure, midiToFreq } from '../src/keys.js';
 
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
-function extractBlock(name) {
-    const re = new RegExp('/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) { console.error(`FAIL: @pure:${name} not found`); process.exit(1); }
-    return m[0];
-}
 function extractFn(name) {
     const start = src.indexOf('function ' + name);
     assert.ok(start >= 0, `function ${name} must exist`);

@@ -4,6 +4,6 @@
     "private": true,
     "scripts": {
         "test": "node --test",
-        "lint": "npx --yes eslint@9.39.4 src"
+        "lint": "npx --yes eslint@9.39.4 src tests"
     }
 }
