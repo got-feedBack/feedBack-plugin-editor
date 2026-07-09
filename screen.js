@@ -290,6 +290,10 @@ const S = {
     zoom: 120,     // px per second
     snapIdx: 3,    // default 1/4 (index 3 after the 1/3T insert)
     snapEnabled: true,
+    // Snap target: 'grid' = tempo-map subdivisions; 'onset' = nearest detected
+    // audio transient within ONSET_SNAP_TOL (falls back to grid when none near).
+    // UI pref only (persisted to localStorage), never written to the pack.
+    snapMode: 'grid',
 
     // Selection
     sel: new Set(),
@@ -1183,7 +1187,23 @@ function updatePianoRange(expandOnly = false) {
     PIANO_LANE_H = Math.max(4, Math.min(14, 350 / (nhi - nlo + 1)));
 }
 
+// Onset-snap tolerance (seconds): how close a note's placement must be to a
+// detected transient to snap onto it instead of the grid. ~70 ms spans the
+// grid-vs-attack gap on real recordings without hijacking clearly off-onset
+// placements; beyond it, snapTime falls back to grid snap.
+const ONSET_SNAP_TOL = 0.07;
+
 function snapTime(t) {
+    // Onset-snap mode (charrette §1.6): when snapping is on and the target is
+    // 'onset', prefer the nearest detected audio transient within ONSET_SNAP_TOL
+    // — the bridge between musical time and audio-attack time for transcription
+    // (no warp; just snap placement to the onset time). Falls back to grid snap
+    // when no onset is near, or none is computed, so placement stays sensible.
+    if (S.snapEnabled && S.snapMode === 'onset') {
+        const onsets = (typeof _ensureOnsets === 'function') ? _ensureOnsets() : null;
+        const near = _nearestOnsetTimePure(onsets, t, ONSET_SNAP_TOL);
+        if (near !== null) return near;
+    }
     const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
     if (!sv || S.beats.length < 2) return t;
     // Snap in the beat domain, then convert back (charrette §1.1):
@@ -5152,6 +5172,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleSnap', label: 'Toggle snap on/off', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'G', eof: '' } },
     { id: 'snapDown', label: 'Decrease snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: ',', eof: ',' } },
     { id: 'snapUp', label: 'Increase snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: '.', eof: '.' } },
+    { id: 'toggleSnapMode', label: 'Toggle snap target (grid / audio onset)', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'editFret', label: 'Edit fret / fingering', group: 'Notes', status: 'ready', keys: { feedback: 'F', eof: 'F / Ctrl+F' } },
     { id: 'setFretDigit', label: 'Set selected fret 0-9', group: 'Notes', status: 'ready', keys: { feedback: '0-9', eof: '0-9' } },
     { id: 'setFretTen', label: 'Set selected fret 10', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+0', eof: 'Shift+0' } },
@@ -6429,6 +6450,7 @@ function _editorRunEofCommand(cmd) {
     case 'lengthenSustain': return _editorAdjustSelectedSustain(+_editorSnapStepSeconds());
     case 'snapDown': window.editorSetSnap(Math.max(0, S.snapIdx - 1)); return true;
     case 'snapUp': window.editorSetSnap(Math.min(SNAP_VALUES.length - 1, S.snapIdx + 1)); return true;
+    case 'toggleSnapMode': return _editorToggleSnapMode();
     case 'editFret': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptFret(idxs[0]); else setStatus('Select a note first'); return true; }
     case 'setFretTen': return _editorSetSelectedFret(10);
     case 'noteMenu': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) showContextMenu(window.innerWidth / 2, window.innerHeight / 2, idxs[0]); else setStatus('Select a note first'); return true; }
@@ -7572,6 +7594,33 @@ function _onsetTimesFromPeaksPure(rms, binSec, opts) {
 }
 /* @pure:onset-strip:end */
 
+/* @pure:onset-snap:start */
+// Nearest-onset snap: given time-sorted onsets [{t,...}], return the onset
+// time nearest to `t` when it lies within `tol` seconds, else null (the caller
+// falls back to grid snap). Binary-searches the sorted onsets so the hot drag
+// path stays O(log n). Guards non-finite t, empty onsets, and tol <= 0.
+function _nearestOnsetTimePure(onsets, t, tol) {
+    if (!Array.isArray(onsets) || onsets.length === 0) return null;
+    if (!Number.isFinite(t) || !(tol > 0)) return null;
+    // First onset with .t >= t.
+    let lo = 0, hi = onsets.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (onsets[mid].t < t) lo = mid + 1; else hi = mid;
+    }
+    // The nearest onset is one of onsets[lo-1] (last before t) / onsets[lo].
+    let best = null, bestD = Infinity;
+    for (let i = lo - 1; i <= lo; i++) {
+        if (i < 0 || i >= onsets.length) continue;
+        const o = onsets[i];
+        if (!o || !Number.isFinite(o.t)) continue;
+        const d = Math.abs(o.t - t);
+        if (d < bestD) { bestD = d; best = o.t; }
+    }
+    return bestD <= tol ? best : null;
+}
+/* @pure:onset-snap:end */
+
 // ── Onset strip toggle + lazy cache ──────────────────────────────────
 let _onsetCache = null;   // [{t, s}] for the CURRENT waveformPeaks
 let _onsetStripOn = null; // cached enabled flag; null until first read
@@ -7620,6 +7669,41 @@ function _editorToggleOnsetStrip() {
 }
 window.editorToggleOnsetStrip = _editorToggleOnsetStrip;
 _refreshOnsetBtn();
+
+// ── Snap target: grid ↔ audio onset ──────────────────────────────────
+function _refreshSnapModeBtn() {
+    const btn = document.getElementById('editor-snapmode-btn');
+    if (!btn) return;
+    const onset = S.snapMode === 'onset';
+    btn.textContent = onset ? 'Onset' : 'Grid';
+    btn.classList.toggle('bg-accent', onset);
+    btn.classList.toggle('hover:bg-accent-light', onset);
+    btn.classList.toggle('bg-dark-600', !onset);
+    btn.classList.toggle('hover:bg-dark-500', !onset);
+    btn.setAttribute('aria-pressed', onset ? 'true' : 'false');
+}
+
+function _editorToggleSnapMode() {
+    S.snapMode = S.snapMode === 'onset' ? 'grid' : 'onset';
+    try { localStorage.setItem('editorSnapMode', S.snapMode); } catch (_) {}
+    _refreshSnapModeBtn();
+    if (S.snapMode === 'onset') {
+        const onsets = _ensureOnsets();
+        setStatus(onsets && onsets.length
+            ? 'Snap to onset — placement snaps to the nearest detected attack (falls back to grid when none is near)'
+            : 'Snap to onset — no transients detected yet (load a recording, turn on Onsets); snapping to grid until then');
+    } else {
+        setStatus('Snap to grid — placement snaps to the tempo-map subdivisions');
+    }
+    return true;
+}
+window.editorToggleSnapMode = _editorToggleSnapMode;
+
+// Seed the snap target from the persisted editor pref (grid by default).
+try {
+    if (localStorage.getItem('editorSnapMode') === 'onset') S.snapMode = 'onset';
+} catch (_) {}
+_refreshSnapModeBtn();
 
 function _startAudioSourceAtCursor() {
     S.audioSource = S.audioCtx.createBufferSource();

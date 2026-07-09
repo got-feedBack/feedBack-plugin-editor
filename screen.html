@@ -121,6 +121,7 @@
         <label class="flex items-center gap-1 text-xs text-gray-400" title="Toggle grid snapping without changing the selected resolution">
             <input id="editor-snap-enabled" type="checkbox" checked onchange="editorSetSnapEnabled(this.checked)" class="accent-accent"> On
         </label>
+        <button id="editor-snapmode-btn" onclick="editorToggleSnapMode()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Snap target — Grid: tempo-map subdivisions. Onset: nearest detected audio attack (falls back to grid when no transient is near). Turn on Onsets to see the attacks." aria-pressed="false">Grid</button>
 
         <!-- Key / scale (piano-roll in-key highlight). Hidden unless a keys
              arrangement is active; populated + gated by _refreshKeyControls(). -->
