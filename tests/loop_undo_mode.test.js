@@ -2,17 +2,22 @@
 /*
  * Loop-undo symmetry + mode round-trip tests for screen.js.
  *
- * Covers two reviewer-confirmed fixes:
- *   1. TempoMapCmd.exec/rollback must be a self-inverse for the loop region:
- *      undo of a tempo edit restores the EXACT pre-edit S.barSel instead of
- *      re-deriving it from the (already relocked) grid — which was lossy and
- *      turned a bar loop [2,4] into [1,6] after edit+undo.
- *   2. The editor<->3D-highway handoff must carry region.mode so a freely
- *      drawn loop survives the round-trip (and isn't demoted to 'bar').
+ * Since Phase A4 a bar/grid loop's edges are anchored to BEAT COORDINATES (β);
+ * their seconds are a cache. So TempoMapCmd's exec/rollback symmetry no longer
+ * relies on a barSel snapshot — the loop keeps its β and its seconds are simply
+ * re-derived on whichever grid is in effect (timeOf), which is an exact inverse.
+ * This suite proves:
+ *   1. TempoMapCmd.exec reprojects a bar loop onto the flexed grid (it stays on
+ *      the SAME bars — its β is unchanged) and rollback restores the exact
+ *      pre-edit seconds, with NO beforeBarSel snapshot field on the command.
+ *   2. a FREE loop is absolute seconds (D17) — a flex never moves it.
+ *   3. a null loop round-trips as null.
+ *   4. the editor<->3D-highway handoff carries region.mode so a freely drawn
+ *      loop survives the round-trip (isn't demoted to 'bar').
  *
- * The TempoMapCmd class is pulled verbatim from screen.js and run against
- * lightweight stubs, so the test validates the shipping code path. The relock
- * stub deliberately MOVES the loop, proving rollback ignores it.
+ * The TempoMapCmd class + the loop reproject/sync helpers are pulled verbatim
+ * from screen.js and run against the real beat converter, so this validates the
+ * shipping code path.
  *
  * Run: node tests/loop_undo_mode.test.js
  */
@@ -22,22 +27,57 @@ const assert = require('assert');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
 
-// ── Extract the real TempoMapCmd class body ──────────────────────────────────
-const cm = src.match(/class TempoMapCmd \{[\s\S]*?\n\}/);
-if (!cm) {
-    console.error('FAIL: TempoMapCmd class not found in screen.js');
-    process.exit(1);
+function extractFn(name) {
+    const start = src.indexOf('function ' + name + '(');
+    assert.ok(start >= 0, `function ${name} must exist`);
+    const open = src.indexOf('{', start);
+    let d = 0;
+    for (let i = open; i < src.length; i++) {
+        if (src[i] === '{') d++;
+        else if (src[i] === '}' && --d === 0) return src.slice(start, i + 1);
+    }
+    throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-// ── Extract the pending-view pure block (3D-handoff resolver) ────────────────
+// ── Extract the real TempoMapCmd class + the A4 loop helpers + the converter ──
+const cm = src.match(/class TempoMapCmd \{[\s\S]*?\n\}/);
+if (!cm) { console.error('FAIL: TempoMapCmd class not found'); process.exit(1); }
+const conv = src.match(/\/\* @pure:beat-converter:start \*\/[\s\S]*?\/\* @pure:beat-converter:end \*\//);
+if (!conv) { console.error('FAIL: @pure:beat-converter block not found'); process.exit(1); }
 const pm = src.match(/\/\* @pure:pending-view:start \*\/[\s\S]*?\/\* @pure:pending-view:end \*\//);
-if (!pm) {
-    console.error('FAIL: @pure:pending-view block not found in screen.js');
-    process.exit(1);
-}
+if (!pm) { console.error('FAIL: @pure:pending-view block not found'); process.exit(1); }
+
 const { _resolvePendingViewStatePure } = new Function(
     '"use strict";' + pm[0] + '\nreturn { _resolvePendingViewStatePure };'
 )();
+
+// A sandbox: the real TempoMapCmd + _loopReprojectFromBeats + _loopSyncBeats,
+// all reading the injected S, over the real beatOf/timeOf. _liftAllBeats /
+// _reprojectAll / _eachTimed are no-ops here (this suite checks the LOOP, not
+// note times — the note-seconds snapshot/restore has nothing to walk).
+function makeEnv(S) {
+    return new Function(
+        'S', '_renderLoopStrip', '_updateLoopIn3DBtn', '_liftAllBeats', '_reprojectAll', '_eachTimed',
+        '"use strict";' + conv[0] + '\n'
+        + extractFn('_loopReprojectFromBeats') + '\n'
+        + extractFn('_loopSyncBeats') + '\n'
+        + cm[0]
+        + '\nreturn { TempoMapCmd, _loopReprojectFromBeats, _loopSyncBeats, beatOf, timeOf };'
+    )(S, () => {}, () => {}, () => {}, () => {}, () => {});
+}
+
+// Old grid: 5 beats, downbeats (measure > 0) at indices 0,2,4 → times 0,2,4.
+const OLD = [
+    { time: 0, measure: 1 }, { time: 1, measure: -1 }, { time: 2, measure: 2 },
+    { time: 3, measure: -1 }, { time: 4, measure: 3 },
+];
+// A same-length FLEX (indexing preserved): downbeats 0,2,4 → times 0,3,6.
+const NEW = [
+    { time: 0, measure: 1 }, { time: 1.5, measure: -1 }, { time: 3, measure: 2 },
+    { time: 4.5, measure: -1 }, { time: 6, measure: 3 },
+];
+const clone = g => g.map(b => ({ ...b }));
+const near = (a, b) => Math.abs(a - b) < 1e-9;
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -45,62 +85,53 @@ function t(name, fn) {
     catch (e) { fail++; console.error('  FAIL ' + name + ': ' + e.message); }
 }
 
-// Build a TempoMapCmd bound to stub globals. `_loopRelockAfterGridChange`
-// simulates the lossy forward relock by MOVING the loop, so we can prove
-// rollback restores the snapshot rather than re-running relock.
-function makeCmd(S) {
-    const relockMoved = { startTime: 1, endTime: 6, mode: 'bar' };
-    const TempoMapCmd = new Function(
-        'S', '_loopRelockAfterGridChange', '_renderLoopStrip', '_updateLoopIn3DBtn',
-        '_liftAllBeats', '_reprojectAll', '_eachTimed',
-        '"use strict";' + cm[0] + '\nreturn TempoMapCmd;'
-    )(
-        S,
-        () => { S.barSel = { ...relockMoved }; },   // lossy relock: moves the loop
-        () => {},                                    // _renderLoopStrip
-        () => {},                                    // _updateLoopIn3DBtn
-        () => {},                                    // _liftAllBeats (no-op: this test checks loop/barSel undo)
-        () => {},                                    // _reprojectAll
-        () => {}                                     // _eachTimed (no-op: no timed objects to snapshot here)
-    );
-    return { TempoMapCmd, relockMoved };
-}
+t('TempoMapCmd: a bar loop keeps its beats through a flex; undo restores exact seconds', () => {
+    // Loop on bars: downbeat index 2 (t=2) → index 4 (t=4) on the OLD grid.
+    const S = { beats: clone(OLD), barSel: { startTime: 2, endTime: 4, mode: 'bar' }, duration: 10 };
+    const env = makeEnv(S);
+    env._loopSyncBeats(S.barSel);                 // β from the OLD grid, as _setBarSel would
+    assert.strictEqual(S.barSel.startBeat, 2, 'edge on beat 2');
+    assert.strictEqual(S.barSel.endBeat, 4, 'edge on beat 4');
 
-t('TempoMapCmd: exec relocks the loop, rollback restores the EXACT original', () => {
-    const oldBeats = [{ time: 0, measure: 1 }, { time: 2, measure: 2 }];
-    const newBeats = [{ time: 0, measure: 1 }, { time: 3, measure: 2 }];
-    const S = {
-        beats: oldBeats.map(b => ({ ...b })),
-        barSel: { startTime: 2, endTime: 4, mode: 'bar' },
-        tempoRideScope: 'selection',
-        duration: 10,
-    };
-    const original = { ...S.barSel };
-    const { TempoMapCmd, relockMoved } = makeCmd(S);
-    const cmd = new TempoMapCmd(oldBeats, newBeats, 'bpm');
+    const cmd = new env.TempoMapCmd(OLD, NEW, 'bpm');
+    assert.ok(!('beforeBarSel' in cmd), 'no barSel snapshot field (reproject is self-inverse)');
 
     cmd.exec();
-    // Forward relock still runs on exec (live edit re-snaps the loop).
-    assert.deepStrictEqual(S.barSel, relockMoved, 'exec should relock (move) the loop');
+    assert.ok(near(S.barSel.startTime, 3) && near(S.barSel.endTime, 6),
+        `exec keeps the loop on beats 2 & 4 → new times 3 & 6 (got ${S.barSel.startTime},${S.barSel.endTime})`);
+    assert.strictEqual(S.barSel.startBeat, 2, 'β is unchanged by a flex');
+    assert.strictEqual(S.barSel.endBeat, 4);
 
     cmd.rollback();
-    assert.deepStrictEqual(S.barSel, original, 'rollback must restore the exact original barSel');
-    assert.notStrictEqual(S.barSel, original, 'restored barSel must be a fresh copy');
+    assert.ok(near(S.barSel.startTime, 2) && near(S.barSel.endTime, 4),
+        'rollback reprojects onto the old grid — exact original seconds');
 
-    // Redo re-applies the forward relock.
+    cmd.exec(); // redo
+    assert.ok(near(S.barSel.startTime, 3) && near(S.barSel.endTime, 6), 'redo reprojects again');
+});
+
+t('TempoMapCmd: a FREE loop is absolute seconds — a flex never moves it (D17)', () => {
+    const S = { beats: clone(OLD), barSel: { startTime: 1.28, endTime: 3.71, mode: 'free' }, duration: 10 };
+    const env = makeEnv(S);
+    env._loopSyncBeats(S.barSel);
+    assert.ok(S.barSel.startBeat === undefined, 'a free loop carries no β');
+
+    const cmd = new env.TempoMapCmd(OLD, NEW, 'bpm');
     cmd.exec();
-    assert.deepStrictEqual(S.barSel, relockMoved, 'redo must re-apply the relock');
+    assert.ok(near(S.barSel.startTime, 1.28) && near(S.barSel.endTime, 3.71),
+        'free loop seconds unchanged by a flex');
+    cmd.rollback();
+    assert.ok(near(S.barSel.startTime, 1.28) && near(S.barSel.endTime, 3.71));
 });
 
 t('TempoMapCmd: a null loop selection round-trips as null', () => {
-    const oldBeats = [{ time: 0, measure: 1 }];
-    const newBeats = [{ time: 0, measure: 1 }];
-    const S = { beats: [], barSel: null, tempoRideScope: 'selection', duration: 10 };
-    const { TempoMapCmd } = makeCmd(S);
-    const cmd = new TempoMapCmd(oldBeats, newBeats, 'bpm');
+    const S = { beats: clone(OLD), barSel: null, duration: 10 };
+    const env = makeEnv(S);
+    const cmd = new env.TempoMapCmd(OLD, NEW, 'bpm');
     cmd.exec();
+    assert.strictEqual(S.barSel, null, 'exec leaves a null selection null');
     cmd.rollback();
-    assert.strictEqual(S.barSel, null, 'rollback restores the null selection');
+    assert.strictEqual(S.barSel, null, 'rollback leaves it null');
 });
 
 // ── 3D-handoff: region.mode survives the resolver ────────────────────────────

@@ -49,7 +49,7 @@ function build({ barSel, pref = 'bar', snapEnabled = false, snapIdx = 1,
     const factory = new Function(
         'S', '_downbeatTimes', '_loopSnapModePref', '_editorSnapStepSeconds',
         'snapTime', 'SNAP_VALUES', '_editorEffectiveSnapValuePure',
-        '_updateLoopIn3DBtn', '_renderLoopStrip', 'draw',
+        '_updateLoopIn3DBtn', '_renderLoopStrip', 'draw', '_setBarSel',
         '"use strict";'
         + region + '\n' + nudgePure + '\n' + liveModeSrc + '\n' + nudgeSrc
         + '\nreturn _loopNudgeEdge;'
@@ -62,7 +62,8 @@ function build({ barSel, pref = 'bar', snapEnabled = false, snapIdx = 1,
         (t) => t,                 // snapTime (identity)
         SNAP_VALUES,
         (en, v) => (en ? v : 0),  // _editorEffectiveSnapValuePure
-        () => {}, () => {}, () => {}
+        () => {}, () => {}, () => {},
+        (r) => { S.barSel = r; return r; }   // _setBarSel: assign (β-sync isn't under test here)
     );
     return { S, nudge };
 }

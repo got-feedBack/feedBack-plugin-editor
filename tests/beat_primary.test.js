@@ -108,7 +108,7 @@ function makeEnv(S) {
         extractClass('TempoMapCmd'),
     ].join('\n');
     return new Function(
-        'S', '_loopRelockAfterGridChange', '_renderLoopStrip', '_updateLoopIn3DBtn',
+        'S', '_loopReprojectFromBeats', '_renderLoopStrip', '_updateLoopIn3DBtn',
         '"use strict";' + body +
         '\nreturn { beatOf, timeOf, _liftAllBeats, _reprojectAll, _makeTimeRemap,' +
         ' _stripBeatsFromSaveBody, TempoMapCmd };'

@@ -155,7 +155,7 @@ t('_midiTempoSummaryPure: ellipsis when timing changes, defensive on partial map
 
 t('TempoGridCmd sets songScope so a grid can apply while a fretted part is in the roll', () => {
     const env = new Function(
-        'S', 'draw', 'updateStatus', '_loopRelockAfterGridChange', '_renderLoopStrip',
+        'S', 'draw', 'updateStatus', '_loopReliftBeats', '_renderLoopStrip',
         '_updateLoopIn3DBtn', '_liftAllBeats',
         '"use strict";' + extractClass('TempoGridCmd') + '\nreturn { TempoGridCmd };'
     )(
@@ -169,7 +169,7 @@ t('TempoGridCmd sets songScope so a grid can apply while a fretted part is in th
 t('TempoGridCmd round-trips S.beats: exec sets the new grid, rollback restores', () => {
     const S = { beats: [{ time: 0, measure: 1 }], barSel: null };
     const env = new Function(
-        'S', 'draw', 'updateStatus', '_loopRelockAfterGridChange', '_renderLoopStrip',
+        'S', 'draw', 'updateStatus', '_loopReliftBeats', '_renderLoopStrip',
         '_updateLoopIn3DBtn', '_liftAllBeats',
         '"use strict";' + extractClass('TempoGridCmd') + '\nreturn { TempoGridCmd };'
     )(S, () => {}, () => {}, () => {}, () => {}, () => {}, () => {});
