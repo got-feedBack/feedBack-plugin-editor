@@ -2,8 +2,9 @@
  *
  * Which view a part opens in (fretted lanes vs piano roll), the persisted
  * per-part preference behind that, and the roll's own MIDI⇄y geometry. Reads
- * `S`, the lane model and the canvas geometry; the only DOM it touches is
- * `localStorage`, inside `_viewPrefs`/`_viewPrefsSave`.
+ * `S`, the lane model and the canvas geometry. It touches the browser in two
+ * places only: `localStorage`, inside `_viewPrefs`/`_viewPrefsSave`; and
+ * `_rollLockNotice`, which reports through `setStatus` (src/ui.js).
  *
  * `PIANO_LANE_H` and `pianoRange` are `export let`, not consts: they are
  * re-derived per arrangement. Their sole writer, `updatePianoRange`, lives here,
