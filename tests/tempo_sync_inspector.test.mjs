@@ -1,23 +1,12 @@
-'use strict';
 /*
- * Tempo-map sync-point inspector helper tests for src/main.js.
+ * Tempo-map sync-point inspector helper tests for src/tempo.js.
  *
- * Run: node tests/tempo_sync_inspector.test.js
+ * Run: node tests/tempo_sync_inspector.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:tempo-sync-inspector:start \*\/[\s\S]*?\/\* @pure:tempo-sync-inspector:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:tempo-sync-inspector block not found in src/main.js');
-    process.exit(1);
-}
-
-const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _tempoSyncInspectorStatePure };'
-)();
+import assert from 'node:assert';
+import {
+    _tempoSyncInspectorStatePure,
+} from '../src/tempo.js';
 
 let pass = 0;
 let fail = 0;
@@ -33,7 +22,7 @@ const measures = [
 ];
 
 t('asks for a selected sync point before enabling edits', () => {
-    const state = api._tempoSyncInspectorStatePure(measures, -1);
+    const state = _tempoSyncInspectorStatePure(measures, -1);
     assert.strictEqual(state.label, 'No sync point selected');
     assert.strictEqual(state.bpmDisabled, true);
     assert.strictEqual(state.signatureDisabled, true);
@@ -43,7 +32,7 @@ t('asks for a selected sync point before enabling edits', () => {
 });
 
 t('shows editable BPM and signature for a selected non-final measure', () => {
-    const state = api._tempoSyncInspectorStatePure(measures, 4);
+    const state = _tempoSyncInspectorStatePure(measures, 4);
     assert.strictEqual(state.label, 'Measure 2');
     assert.strictEqual(state.bpmValue, '96.25');
     assert.strictEqual(state.bpmDisabled, false);
@@ -57,7 +46,7 @@ t('shows editable BPM and signature for a selected non-final measure', () => {
 });
 
 t('keeps signature editable but disables BPM for the final measure', () => {
-    const state = api._tempoSyncInspectorStatePure(measures, 11);
+    const state = _tempoSyncInspectorStatePure(measures, 11);
     assert.strictEqual(state.label, 'Measure 3');
     assert.strictEqual(state.bpmValue, '');
     assert.strictEqual(state.bpmDisabled, true);

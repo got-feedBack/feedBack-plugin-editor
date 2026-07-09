@@ -27,17 +27,15 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import { beatOf, timeOf } from '../src/beats.js';
+import { setHostHooks } from '../src/host.js';
+import { S as realS } from '../src/state.js';
+import { TempoGridCmd } from '../src/tempo.js';
 
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractFn(name) {
     const start = src.indexOf('function ' + name + '(');
     assert.ok(start >= 0, `function ${name} must exist (absent on main ⇒ A4 not applied)`);
-    return braceSlice(start);
-}
-function extractClass(name) {
-    const start = src.indexOf('class ' + name + ' {');
-    assert.ok(start >= 0, `class ${name} must exist`);
     return braceSlice(start);
 }
 function braceSlice(start) {
@@ -60,14 +58,17 @@ function helperEnv(S) {
         + '\nreturn { _loopSyncBeats, _loopReprojectFromBeats, _loopReliftBeats, beatOf, timeOf };'
     )(S, beatOf, timeOf);
 }
-// Sandbox exposing the real TempoGridCmd + _loopReliftBeats over S.
+// TempoGridCmd is a real import (src/tempo.js) and closes over the REAL `S`, so
+// seed that. Its three main.js callbacks are host hooks — loopReliftBeats is the
+// one that matters here, and it is still sliced out of main.js above.
 function gridEnv(S) {
-    return new Function('S', '_renderLoopStrip', '_updateLoopIn3DBtn', '_liftAllBeats',
-        'beatOf', 'timeOf',
-        '"use strict";' + extractFn('_loopReliftBeats') + '\n'
-        + extractClass('TempoGridCmd')
-        + '\nreturn { TempoGridCmd };'
-    )(S, () => {}, () => {}, () => {}, beatOf, timeOf);
+    Object.assign(realS, S);
+    setHostHooks({
+        renderLoopStrip: () => {},
+        updateLoopIn3DBtn: () => {},
+        loopReliftBeats: helperEnv(realS)._loopReliftBeats,
+    });
+    return { TempoGridCmd };
 }
 
 const clone = g => g.map(b => ({ ...b }));

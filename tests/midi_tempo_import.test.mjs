@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Tests for the MIDI tempo-map import (DAW 3.2) frontend:
  * the @pure:midi-tempo-choice block (project-grid detection, beat-row
@@ -9,13 +8,18 @@
  * All fail on main: the pure block doesn't exist there, and TempoGridCmd was
  * not song-scoped (so the grid apply would be blocked by the #119 lock).
  *
- * Run: node tests/midi_tempo_import.test.js
+ * Run: node tests/midi_tempo_import.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { S as realS } from '../src/state.js';
+import { TempoGridCmd } from '../src/tempo.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+// The MIDI-tempo choice pures are still inline in src/main.js (they belong to
+// the import flow, not the tempo map), so they are still sliced. TempoGridCmd is
+// a real import; its three host callbacks (the loop strip) are left at their
+// inert defaults, which is exactly what this suite used to inject as no-ops.
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const re = new RegExp(
@@ -23,17 +27,6 @@ function extractBlock(name) {
     const m = src.match(re);
     if (!m) { console.error(`FAIL: @pure:${name} block not found`); process.exit(1); }
     return m[0];
-}
-function extractClass(name) {
-    const start = src.indexOf('class ' + name);
-    assert.ok(start >= 0, `class ${name} must exist`);
-    const open = src.indexOf('{', start);
-    let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
-    }
-    throw new Error('unbalanced braces extracting ' + name);
 }
 
 let passed = 0, failed = 0;
@@ -154,28 +147,18 @@ t('_midiTempoSummaryPure: ellipsis when timing changes, defensive on partial map
 // ── TempoGridCmd is song-scoped (applies through the #119 roll lock) ──
 
 t('TempoGridCmd sets songScope so a grid can apply while a fretted part is in the roll', () => {
-    const env = new Function(
-        'S', 'draw', 'updateStatus', '_loopReliftBeats', '_renderLoopStrip',
-        '_updateLoopIn3DBtn', '_liftAllBeats',
-        '"use strict";' + extractClass('TempoGridCmd') + '\nreturn { TempoGridCmd };'
-    )(
-        { beats: [], barSel: null }, () => {}, () => {}, () => {}, () => {}, () => {}, () => {},
-    );
-    const cmd = new env.TempoGridCmd([], grid(2).beats, 'MIDI tempo map');
+    Object.assign(realS, { beats: [], barSel: null, arrangements: [], sections: [] });
+    const cmd = new TempoGridCmd([], grid(2).beats, 'MIDI tempo map');
     assert.strictEqual(cmd.songScope, true,
         'a song-level grid edit must opt out of the read-only-roll (note) lock');
 });
 
 t('TempoGridCmd round-trips S.beats: exec sets the new grid, rollback restores', () => {
-    const S = { beats: [{ time: 0, measure: 1 }], barSel: null };
-    const env = new Function(
-        'S', 'draw', 'updateStatus', '_loopReliftBeats', '_renderLoopStrip',
-        '_updateLoopIn3DBtn', '_liftAllBeats',
-        '"use strict";' + extractClass('TempoGridCmd') + '\nreturn { TempoGridCmd };'
-    )(S, () => {}, () => {}, () => {}, () => {}, () => {}, () => {});
+    const S = Object.assign(realS, {
+        beats: [{ time: 0, measure: 1 }], barSel: null, arrangements: [], sections: [] });
     const before = JSON.parse(JSON.stringify(S.beats));
     const newBeats = grid(2).beats;
-    const cmd = new env.TempoGridCmd(S.beats, newBeats, 'MIDI tempo map');
+    const cmd = new TempoGridCmd(S.beats, newBeats, 'MIDI tempo map');
     cmd.exec();
     assert.strictEqual(S.beats.length, 4, 'new grid applied');
     assert.notStrictEqual(S.beats, newBeats, 'stored as a copy, not the caller array');

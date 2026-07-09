@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Tests for tap tempo's pure estimator (@pure:tap-tempo block).
  *
@@ -8,30 +7,14 @@
  * Median — not mean — so one flubbed tap doesn't skew the estimate; the
  * highest-value tool for hand-syncing recordings made without a click.
  *
- * Run: node tests/tap_tempo.test.js
+ * Run: node tests/tap_tempo.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:tap-tempo:start \*\/[\s\S]*?\/\* @pure:tap-tempo:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:tap-tempo block not found in src/main.js');
-    process.exit(1);
-}
-const { _tapTempoBpmPure, _tapTempoStatusReasonPure } = new Function(
-    '"use strict";' + m[0] + '\nreturn { _tapTempoBpmPure, _tapTempoStatusReasonPure };'
-)();
-
-const ma = src.match(/\/\* @pure:tap-tempo-apply:start \*\/[\s\S]*?\/\* @pure:tap-tempo-apply:end \*\//);
-if (!ma) {
-    console.error('FAIL: @pure:tap-tempo-apply block not found in src/main.js');
-    process.exit(1);
-}
-const { _tapTempoApplyDecisionPure } = new Function(
-    '"use strict";' + ma[0] + '\nreturn { _tapTempoApplyDecisionPure };'
-)();
+import assert from 'node:assert';
+import {
+    _tapTempoApplyDecisionPure,
+    _tapTempoBpmPure,
+    _tapTempoStatusReasonPure,
+} from '../src/tempo.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {

@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Tempo Map editor now lives in `src/tempo.js` (R2, step 19).** 1,720
+  lines: the measure model, the draw pass, the mouse handlers, the sync
+  inspector, tap-tempo, beat-lock respacing, and its two undo commands
+  (`TempoGridCmd`, `TempoMapCmd`). `src/main.js` is down to 13,347 — a **37%**
+  reduction from the 21,176 it started at.
+  `main.js` keeps `_finalizeActiveDrag`: it dispatches whatever canvas drag is in
+  flight (tempo, drum, handshape, pan) before a mode switch, so it belongs to
+  none of them and reaches back as `host.finalizeActiveDrag()`.
+  Fifteen `main.js` symbols travel the other way — the transport, the A/B loop
+  strip, the toolbar readouts. `_recState` is a reassigned scalar rather than a
+  function, so it crosses as the predicate `host.isRecording()`.
+  Fifteen suites stopped slicing `@pure:` blocks and command classes out of
+  `main.js`; ten of them were CJS and are now `.mjs`.
+
+
 - **The note command classes now live in `src/commands.js` (R2, step 18).** All
   18 of them, plus the helpers that construct and execute them — `src/main.js`
   is down to 15,042. They are the classes `history.js` has been duck-typing all
