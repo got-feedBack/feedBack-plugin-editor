@@ -1,23 +1,10 @@
-'use strict';
 /*
  * Chord sustain resize helper tests for src/main.js.
  *
- * Run: node tests/chord_resize.test.js
+ * Run: node tests/chord_resize.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
-
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:chord-resize:start \*\/[\s\S]*?\/\* @pure:chord-resize:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:chord-resize block not found in src/main.js');
-    process.exit(1);
-}
-
-const api = new Function(
-    '"use strict";' + m[0] + '\nreturn { _resizeTargetIndicesPure, _resizeSustainsForDeltaPure, _maxSustainBeforeCollisionPure };'
-)();
+import assert from 'node:assert';
+import * as api from '../src/notes.js';
 
 let pass = 0;
 let fail = 0;
