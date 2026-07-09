@@ -19,14 +19,16 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+// The note painters moved to src/draw.js (R2 step 9b); the shape assertions
+// below are unchanged.
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'draw.js'), 'utf8');
 
 function body(name) {
     // Grab the function body from `function name(` to its matching close brace,
     // then strip line comments so prose (which may mention localStorage etc.)
     // never trips the code-shape assertions below.
     const start = src.indexOf('function ' + name + '(');
-    assert.notStrictEqual(start, -1, name + ' should exist in src/main.js');
+    assert.notStrictEqual(start, -1, name + ' should exist in src/draw.js');
     const open = src.indexOf('{', start);
     let depth = 0;
     for (let i = open; i < src.length; i++) {

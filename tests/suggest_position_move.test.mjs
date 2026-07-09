@@ -18,6 +18,7 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import { _soundingPitchPure } from '../src/lanes.js';
+import { _clearSuggested, _isSuggested, _markSuggested } from '../src/notes.js';
 
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 function extractBlock(name) {
@@ -56,7 +57,6 @@ function makeMoveEnv(seed) {
                          notes: seed.map(n => ({ ...n, techniques: { ...(n.techniques || {}) } })) }],
     };
     const body = '"use strict";'
-        + extractBlock('suggest-marks')
         + extractBlock('suggest-position')
         + '\n' + extractFn('_rollAnchorList')
         + '\n' + extractFn('_occupiedStringsAt')
@@ -65,14 +65,18 @@ function makeMoveEnv(seed) {
         + '\n' + extractClass('MoveNoteCmd')
         + '\nreturn { _rollDragPitchMove, _positionLocked, MoveNoteCmd,'
         + ' _isSuggested, _markSuggested, _clearSuggested };';
+    // The suggested-mark WeakSet moved to src/notes.js — inject the real fns.
+    // Each env builds fresh note objects, so a module-shared WeakSet keyed by
+    // object identity cannot leak marks between cases.
     const env = new Function('S', 'notes', '_rollPitchCtx', 'snapTime', 'PIANO_LANE_H',
-        '_soundingPitchPure', body)(
+        '_soundingPitchPure', '_markSuggested', '_clearSuggested', '_isSuggested', body)(
         S,
         () => S.arrangements[S.currentArr].notes,
         () => ({ openMidi: OPEN, tuning: [0, 0, 0, 0, 0, 0], capo: 0 }),
         tm => tm,                                  // snapTime: identity
         PIANO_LANE_H,
         _soundingPitchPure,                        // the REAL one, from src/lanes.js
+        _markSuggested, _clearSuggested, _isSuggested,
     );
     return { S, env, notes: () => S.arrangements[0].notes };
 }

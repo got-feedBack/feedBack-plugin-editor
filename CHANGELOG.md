@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ES-module migration, step 9b — the painters (R2).** `src/draw.js` (`main.js`
+  19,963 → 19,340): the lane and grid backgrounds, beat bar, section-coverage
+  strip, the fretted and piano-roll note painters, cursor and marquee, plus the
+  song-key highlight state they consult and `canvasH`. `drawNow()` — the per-frame
+  orchestrator — stays in `main.js` and calls in, so the edge is one-way and no
+  injected seam was needed. `drawWaveform` stays too: it paints the onset-strip
+  and bookmark overlays, which live in `main.js`.
+  The suggested-position mark `WeakSet` moves to `notes.js` (it is note metadata),
+  and the note-body constants `MIN_NOTE_W`/`NOTE_PAD` join `geometry.js`.
+  **`_coverageEditGen` is now `editGen` in `state.js`.** It was never a drawing
+  concern: three memos key on it — the coverage strip, the chord-at-cursor readout
+  and the drum-limb lint — because an in-place note-time move keeps the notes
+  array's identity *and* length, so a cheap cache key cannot see the change.
+  `EditHistory._afterEdit()` calls the exported `bumpEditGen()`, since a counter
+  cannot be written across a module boundary.
+  Five more suites leave the slicer path (`section_coverage`,
+  `suggest_position_persist`, and the three suggest-mark sandboxes now inject the
+  real `WeakSet`); `key_highlight_hoist` keeps its source-shape assertions and
+  reads `src/draw.js`.
+
 - **ES-module migration, step 9a — the render surface (R2).** `src/canvas.js`:
   the `<canvas>` element, its 2D context, and `DPR`. `canvas` and `ctx` are live
   `export let` bindings whose sole writer, `setCanvas`, moved with them — so the

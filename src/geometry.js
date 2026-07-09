@@ -17,6 +17,10 @@ import { laneToStr, lanes, strToLane } from './lanes.js';
 
 export const LABEL_W = 52;
 
+// Note-body geometry, shared by the painters and by hit-testing.
+export const MIN_NOTE_W = 18;
+export const NOTE_PAD = 3;
+
 // ─── Anchor-lane constants (PR3d) ──────────────────────────────────
 // Anchor lane lives below the beat bar so its time axis stays
 // aligned with notes and tones. 18px gives enough room for a fret

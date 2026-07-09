@@ -25,6 +25,9 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import { reconstructChords } from '../src/chords.js';
+import {
+    _clearSuggested, _isSuggested, _markSuggested, _suggestedNotes,
+} from '../src/notes.js';
 import { LC, lanes } from '../src/lanes.js';
 import { S as realS } from '../src/state.js';
 
@@ -87,7 +90,6 @@ function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
     const statuses = [];
     const refusals = [];   // records _rollConfirmPosition handoffs
     const fullSrc = '"use strict";'
-        + extractBlock('suggest-marks')
         + extractBlock('suggest-position')
         + extractBlock('edit-history')
         + '\n' + extractFn('_withStableSelection')
@@ -110,6 +112,7 @@ function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
         'S', 'document', 'notes', 'setStatus', 'draw', 'updateStatus', '_renderInspector',
         '_editBlipAt', '_rollReadOnly', '_rollLockNotice', '_editorCurrentNoteIndices',
         '_rollPitchCtx', '_rollConfirmPosition',
+        '_markSuggested', '_clearSuggested', '_isSuggested', '_suggestedNotes',
         fullSrc
     )(
         S,
@@ -122,6 +125,7 @@ function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
         () => (S.sel && S.sel.size ? [...S.sel] : []),
         () => ({ openMidi: OPEN, tuning: TUN.slice(), capo: 0 }),
         (res, pitch, time) => refusals.push({ reason: res.reason, pitch, time, candidates: res.candidates }),
+        _markSuggested, _clearSuggested, _isSuggested, _suggestedNotes,  // src/notes.js
     );
     return { S, env, statuses, refusals, notes: () => S.arrangements[0].notes };
 }

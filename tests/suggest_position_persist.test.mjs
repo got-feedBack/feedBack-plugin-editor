@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Suggest-position MARK PERSISTENCE — P6 review follow-up (design V4, D15).
  *
@@ -18,13 +17,15 @@
  *
  * References review-fix code absent on main / pre-fix, so the suite fails there.
  *
- * Run: node tests/suggest_position_persist.test.js
+ * Run: node tests/suggest_position_persist.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import {
+    _clearSuggested, _isSuggested, _markSuggested, _suggestedNotes,
+} from '../src/notes.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 function extractBlock(name) {
     const re = new RegExp('/\\* @pure:' + name + ':start[\\s\\S]*?@pure:' + name + ':end \\*/');
     const m = src.match(re);
@@ -68,7 +69,6 @@ function makeEnv(seed, filename) {
     };
     const localStorage = fakeStore();
     const body = '"use strict";'
-        + extractBlock('suggest-marks')
         + extractBlock('suggest-marks-persist')
         + '\n' + extractFn('_suggestedCount')
         + '\n' + extractFn('_saveSuggestedMarks')
@@ -76,7 +76,11 @@ function makeEnv(seed, filename) {
         + '\nreturn { _suggestedCount, _saveSuggestedMarks, _restoreSuggestedMarks,'
         + ' _markSuggested, _clearSuggested, _isSuggested,'
         + ' _suggestedParsePure, _suggestedStorageKeyPure, _applySuggestedMarksPure };';
-    const env = new Function('S', 'localStorage', body)(S, localStorage);
+    // The mark WeakSet moved to src/notes.js; inject the real fns. Each env makes
+    // fresh note objects, so identity-keyed marks cannot leak between cases.
+    const env = new Function('S', 'localStorage',
+        '_markSuggested', '_clearSuggested', '_isSuggested', '_suggestedNotes', body)(
+        S, localStorage, _markSuggested, _clearSuggested, _isSuggested, _suggestedNotes);
     return { S, env, localStorage, notes: () => S.arrangements[0].notes };
 }
 

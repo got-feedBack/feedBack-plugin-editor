@@ -156,7 +156,8 @@ t('_drumConflictIndexSetPure flattens every conflicted index, skips clean hits',
 // The pure clusterer is well-covered above; the real bugs live in the
 // draw-loop integration (per-frame recompute + the sorted-input assumption
 // vs. a live drum-move drag that mutates times in place before re-sorting).
-// The wrapper reads browser globals (S, _coverageEditGen), so we extract it
+// The wrapper reads globals (S, editGen — the shared edit generation, now in
+// src/state.js), so we extract it
 // by brace-matching and eval it over injected fakes. These FAIL on pre-fix
 // code: the wrapper didn't exist and the draw called the pure fn directly.
 
@@ -174,7 +175,7 @@ function braceEnd(fnStart) {
 }
 
 // Extract `let _drumLintCache … function _drumLimbConflicts(hits){…}` and run
-// it with the pure block + a mutable fake S / _coverageEditGen in scope.
+// it with the pure block + a mutable fake S / editGen in scope.
 function buildWrapper() {
     const cacheAt = src.indexOf('let _drumLintCache');
     const fnAt = src.indexOf('function _drumLimbConflicts(hits) {', cacheAt);
@@ -186,13 +187,13 @@ function buildWrapper() {
     return new Function(
         '"use strict";'
         + 'let S = { drag: null };'
-        + 'let _coverageEditGen = 0;'
+        + 'let editGen = 0;'
         + extractBlock('drum-limb-lint')
         + wrapperSrc
         + '\nreturn {'
         + '  fn: _drumLimbConflicts,'
         + '  setDrag: d => { S.drag = d; },'
-        + '  setGen: g => { _coverageEditGen = g; },'
+        + '  setGen: g => { editGen = g; },'
         + '};'
     )();
 }
@@ -260,13 +261,13 @@ t('the drum draw loop calls the memoized wrapper, not the O(n) pure fn', () => {
 });
 
 t('the lint memo key is built from the shared edit-generation counter', () => {
-    // Assert _coverageEditGen participates in the CACHE KEY inside the wrapper
+    // Assert editGen participates in the CACHE KEY inside the wrapper
     // itself — not merely that the two identifiers sit near each other in src.
     const fnStart = src.indexOf('function _drumLimbConflicts(hits) {');
     assert.ok(fnStart >= 0, '_drumLimbConflicts wrapper must exist');
     const body = src.slice(fnStart, braceEnd(fnStart));
-    assert.ok(/_coverageEditGen/.test(body),
-        'the wrapper must read _coverageEditGen');
+    assert.ok(/editGen/.test(body),
+        'the wrapper must read editGen');
     assert.ok(/const key\s*=[\s\S]*?gen/.test(body),
         'the memo key must incorporate the edit generation');
 });

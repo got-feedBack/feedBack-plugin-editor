@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Tests for the section-completeness strip's pure core (@pure:section-coverage):
  * _sectionCoveragePure marks each section span with whether the active
@@ -10,21 +9,18 @@
  * arguments (notes AND duration change the result). Every case drives the
  * real function.
  *
- * Run: node tests/section_coverage.test.js
+ * Run: node tests/section_coverage.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
+import { _sectionCoveragePure } from '../src/draw.js';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:section-coverage:start \*\/[\s\S]*?\/\* @pure:section-coverage:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:section-coverage block not found in src/main.js');
-    process.exit(1);
-}
-const { _sectionCoveragePure } = new Function(
-    '"use strict";' + m[0] + '\nreturn { _sectionCoveragePure };'
-)();
+// The pure helper is a real import now. Two cases still assert on code SHAPE —
+// that drawSections goes through the memo, and that EditHistory._afterEdit()
+// invalidates it — so they read the two files those live in.
+const drawSrc = fs.readFileSync(new URL('../src/draw.js', import.meta.url), 'utf8');
+const mainSrc = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const stateSrc = fs.readFileSync(new URL('../src/state.js', import.meta.url), 'utf8');
 
 const sec = (t, name) => ({ name: name || 's', start_time: t });
 
@@ -127,11 +123,11 @@ t('duplicate start_times make a harmless zero-width span (behavior lock)', () =>
 // which is what proves coverage updates after an edit without recomputing
 // every frame.
 t('drawSections uses the memo, not a per-frame recompute', () => {
-    assert.ok(/const cov = _sectionCoverage\(\);/.test(src),
+    assert.ok(/const cov = _sectionCoverage\(\);/.test(drawSrc),
         'drawSections should call the memoized _sectionCoverage()');
-    const fnStart = src.indexOf('function drawSections');
-    const nextFnStart = src.indexOf('\nfunction ', fnStart + 1);
-    const fnBody = src.slice(fnStart, nextFnStart === -1 ? undefined : nextFnStart);
+    const fnStart = drawSrc.indexOf('function drawSections');
+    const nextFnStart = drawSrc.indexOf('\nfunction ', fnStart + 1);
+    const fnBody = drawSrc.slice(fnStart, nextFnStart === -1 ? undefined : nextFnStart);
     assert.ok(!/_sectionCoveragePure\(/.test(fnBody),
         'drawSections must not call the O(N) pure helper directly every frame');
 });
@@ -142,20 +138,25 @@ t('the coverage memo is invalidated on edit via _afterEdit()', () => {
     // CRLF (Windows) checkout, and comment growth inside the method had
     // already pushed the bump statement past the old 400-char cutoff —
     // green on CI's LF checkout, red on every Windows clone.
-    const start = src.indexOf('_afterEdit() {');
+    const start = mainSrc.indexOf('_afterEdit() {');
     assert.ok(start >= 0, '_afterEdit() must exist');
-    const open = src.indexOf('{', start);
+    const open = mainSrc.indexOf('{', start);
     let depth = 0, end = -1;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) { end = i + 1; break; }
+    for (let i = open; i < mainSrc.length; i++) {
+        if (mainSrc[i] === '{') depth++;
+        else if (mainSrc[i] === '}' && --depth === 0) { end = i + 1; break; }
     }
     assert.ok(end > 0, '_afterEdit() must have a balanced body');
-    const body = src.slice(start, end);
-    assert.ok(/_coverageEditGen\+\+/.test(body),
-        '_afterEdit() must bump _coverageEditGen so in-place note moves invalidate the memo');
-    assert.ok(/_coverageEditGen[\s\S]*?_covCache/.test(src),
-        'the memo must key on the edit generation counter');
+    const body = mainSrc.slice(start, end);
+    // The shared edit generation lives in src/state.js now. A counter cannot be
+    // written across a module boundary (import bindings are read-only), so
+    // _afterEdit calls the exported bumper instead of incrementing it directly.
+    assert.ok(/bumpEditGen\(\)/.test(body),
+        '_afterEdit() must bump the shared edit generation so in-place moves recompute');
+    assert.ok(/editGen\+\+/.test(stateSrc),
+        'bumpEditGen() must increment the shared edit generation');
+    assert.ok(/editGen[\s\S]*?_covCache/.test(drawSrc),
+        'the coverage memo must key on the edit generation counter');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

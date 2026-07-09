@@ -174,3 +174,14 @@ export function nextUnusedStrumGroup(noteList) {
     }
     return max + 1;
 }
+
+// ── Suggested-position marks ────────────────────────────────────────
+// A WeakSet, not a note field: reconstructChords serializes solo notes BY
+// REFERENCE (an underscore field would leak to the wire) and rebuilds chord
+// members through an explicit field mapper (an extra field would vanish). A
+// WeakSet is invisible to serialization by construction, and lets a
+// rebuilt/replaced note object drop its mark for free.
+export const _suggestedNotes = new WeakSet();
+export function _markSuggested(note)  { if (note) _suggestedNotes.add(note); }
+export function _clearSuggested(note) { if (note) _suggestedNotes.delete(note); }
+export function _isSuggested(note)    { return !!note && _suggestedNotes.has(note); }
