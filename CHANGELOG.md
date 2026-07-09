@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Beat-lock — pin a hand-verified sync point.** Lock a Tempo-Map sync point
+  (press **S**, or right-click the pole → **Lock sync point**) and its time
+  becomes **immune to global tempo re-fits** — detect-tempo / sync-to-audio,
+  metric modulation, and measure BPM re-space now hold every locked anchor and
+  **interpolate the grid around it** (each run between fixed points is
+  affine-remapped, so the song ends still carry the tempo change and no beat is
+  ever pushed before the start). Locked poles render **emerald** on the beat
+  bar. This is the guard that makes the beat-primary model safe for placing
+  notes by ear before the grid is trusted: a nailed passage can't be walked off
+  by a later global tempo op. A re-fit that would push a locked anchor out of
+  order **releases that one anchor** (it rides the interpolation) so the grid
+  stays **strictly monotonic** — never a backwards beat that would corrupt the
+  `beatOf`/`timeOf` lookup. Sync-to-audio **reprojects notes from their beats**
+  so they stay on a locked grid instead of drifting near the anchor. Locks are
+  a **per-filename editor preference** (localStorage `editorBeatLocks:<filename>`),
+  restored on load — **never written to the pack**. Tests:
+  `tests/beat_lock.test.js`.
+
 ### Changed
 - **Loop edges follow the grid by beat (bar/grid loops).** A bar or grid loop's
   edges are now anchored to **beat coordinates** — like `note.beat` — with their

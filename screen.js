@@ -4613,7 +4613,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'tempoTapBpm', label: 'Tap tempo for selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+B (Tempo Map)', eof: 'Shift+B (Tempo Map)' } },
     { id: 'tempoInsertSync', label: 'Insert sync point at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
     { id: 'tempoDeleteSync', label: 'Delete selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
-    { id: 'tempoToggleSyncLock', label: 'Split or lock selected sync point', group: 'Tempo map', status: 'planned', keys: { feedback: 'S (Tempo Map)', eof: 'S (Tempo Map)' } },
+    { id: 'tempoToggleSyncLock', label: 'Lock/unlock selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'S (Tempo Map)', eof: 'S (Tempo Map)' } },
     { id: 'tempoFullDialog', label: 'Open full tempo dialog', group: 'Tempo map', status: 'planned', keys: { feedback: 'Alt+T (Tempo Map)', eof: 'Alt+T (Tempo Map)' } },
     { id: 'tempoRebuildGrid', label: 'Rebuild visible beat grid', group: 'Tempo map', status: 'planned', keys: { feedback: 'Ctrl+Shift+T (Tempo Map)', eof: 'Ctrl+Shift+T (Tempo Map)' } },
     { id: 'toggleGridDisplay', label: 'Toggle grid display density', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Shift+G', eof: 'Shift+G' } },
@@ -5897,7 +5897,7 @@ function _editorRunEofCommand(cmd) {
     case 'tempoTapBpm': return _editorTapTempoAtSelection();
     case 'tempoInsertSync': return _editorInsertTempoSyncAtCursor();
     case 'tempoDeleteSync': return _editorDeleteTempoSyncSelection();
-    case 'tempoToggleSyncLock': return _editorUnsupportedEofCommand('Sync-point split/lock');
+    case 'tempoToggleSyncLock': return _editorToggleSyncLock();
     case 'tempoFullDialog': return _editorUnsupportedEofCommand('Full tempo dialog');
     case 'tempoRebuildGrid': return _editorUnsupportedEofCommand('Beat-grid rebuild');
     case 'toggleGridDisplay': return _editorUnsupportedEofCommand('Grid display toggle');
@@ -7984,6 +7984,8 @@ async function loadCDLC(filename) {
         // Beat-primary (§1.3): lift note.beat from the loaded seconds against
         // the loaded grid, so beat is the truth from load onward.
         _liftAllBeats(S.beats);
+        // Beat-lock (§1.8): re-attach persisted sync-point locks (editor-pref).
+        _restoreBeatLocks();
         if (isKeysMode()) updatePianoRange();
 
         // Update UI
@@ -9602,7 +9604,8 @@ window.editorSetBPM = (val) => {
             updateBPMDisplay();
             return;
         }
-        S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })), newBeats, 'bpm'));
+        S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })),
+            _respaceWithLocksPure(S.beats, newBeats), 'bpm'));
         updateBPMDisplay();
         draw();
         setStatus(`Measure ${m.measure} tempo changed: ${m.bpm.toFixed(2)} → ${newBPM.toFixed(2)} BPM`);
@@ -10117,21 +10120,44 @@ window.editorApplySync = () => {
 
     if (factor <= 0 || !isFinite(factor)) return;
 
-    // Scale all note times and sustains
+    // Build the new grid first: unlocked beats scale, but a locked sync point
+    // holds its time through the re-fit and the runs re-space around the locks.
+    const oldBeats = S.beats.map(b => ({ ...b }));
+    const scaledBeats = S.beats.map(b => ({ ...b, time: b.time / factor + offset }));
+    const respaced = _respaceWithLocksPure(oldBeats, scaledBeats);
+
+    // With a lock present the grid warps, so reproject note times from the OLD
+    // grid onto the new one (beat is truth), exactly as the TempoMapCmd tempo
+    // paths do — a note stays on the grid even right next to a lock. Without a
+    // lock _respaceWithLocksPure hands back `scaledBeats` unchanged; keep the
+    // plain linear scale there — it is identical to the reproject for a real
+    // grid (timeOf∘beatOf round-trips through an affine map) and, unlike the
+    // reproject, still scales notes on a degenerate <2-beat grid (where
+    // beatOf/timeOf are identity).
+    const locked = respaced !== scaledBeats;
     const nn = notes();
     for (const n of nn) {
-        n.time = n.time / factor + offset;
-        if (n.sustain) n.sustain = n.sustain / factor;
+        if (locked) {
+            const t = timeOf(respaced, beatOf(oldBeats, n.time));
+            if (n.sustain) {
+                const endT = timeOf(respaced, beatOf(oldBeats, n.time + n.sustain));
+                n.sustain = Math.max(0, endT - t);
+            }
+            n.time = t;
+        } else {
+            n.time = n.time / factor + offset;
+            if (n.sustain) n.sustain = n.sustain / factor;
+        }
     }
 
-    // Scale beat times
-    for (const b of S.beats) {
-        b.time = b.time / factor + offset;
-    }
+    for (let i = 0; i < S.beats.length; i++) S.beats[i].time = respaced[i].time;
 
-    // Scale section times
+    // Scale section times — like notes, reproject onto the warped grid under a
+    // lock (beat is truth) and keep the plain linear scale when unlocked.
     for (const s of S.sections) {
-        s.start_time = s.start_time / factor + offset;
+        s.start_time = locked
+            ? timeOf(respaced, beatOf(oldBeats, s.start_time))
+            : s.start_time / factor + offset;
     }
 
     editorHideSyncDialog();
@@ -12540,6 +12566,7 @@ window.editorApplyCreateResult = async (data) => {
     flattenChords();
     // Beat-primary (§1.3): lift note.beat from the loaded seconds.
     _liftAllBeats(S.beats);
+    _restoreBeatLocks();
     if (isKeysMode()) updatePianoRange();
 
     document.getElementById('editor-song-title').textContent =
@@ -15932,6 +15959,10 @@ function _tempoMapDraw(w, h) {
         if (x >= LABEL_W && x <= w) {
             const sel = (m.i === S.tempoSel);
             const hov = (m.i === S.tempoHover);
+            // Beat-lock: a locked sync point renders EMERALD — its time is held
+            // by global tempo re-fits (detect / modulate / re-space). The
+            // selection halo still shows through, so lock ≠ selection.
+            const locked = !!(S.beats[m.i] && S.beats[m.i].locked);
             if (sel) {
                 ctx.strokeStyle = 'rgba(251,191,36,0.25)';
                 ctx.lineWidth = 7;
@@ -15940,13 +15971,13 @@ function _tempoMapDraw(w, h) {
                 ctx.lineTo(x, gridBottom);
                 ctx.stroke();
             }
-            ctx.strokeStyle = sel ? '#fbbf24' : hov ? '#93c5fd' : '#64748b';
+            ctx.strokeStyle = locked ? '#34d399' : sel ? '#fbbf24' : hov ? '#93c5fd' : '#64748b';
             ctx.lineWidth = sel ? 3 : 2;
             ctx.beginPath();
             ctx.moveTo(x, WAVEFORM_H);
             ctx.lineTo(x, gridBottom);
             ctx.stroke();
-            ctx.fillStyle = sel ? '#fbbf24' : hov ? '#93c5fd' : '#94a3b8';
+            ctx.fillStyle = locked ? '#34d399' : sel ? '#fbbf24' : hov ? '#93c5fd' : '#94a3b8';
             ctx.fillRect(x - TEMPO_POLE_HALF, WAVEFORM_H, TEMPO_POLE_HALF * 2, 13);
             ctx.fillStyle = '#0c0c1c';
             ctx.font = 'bold 9px monospace';
@@ -16421,6 +16452,8 @@ function _tempoMapOnContextMenu(e) {
         if (cur < 16) html += mkBtn('tsplus', 'Add a beat (time signature +)');
         if (cur > 1) html += mkBtn('tsminus', 'Remove a beat (time signature −)');
         html += '<div class="border-t border-gray-700 my-1"></div>';
+        html += mkBtn('togglelock',
+            (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock sync point' : 'Lock sync point');
         html += mkBtn('delete', 'Delete sync point', 'text-red-400');
     } else {
         html += mkBtn('insert', 'Insert sync point here');
@@ -16431,6 +16464,7 @@ function _tempoMapOnContextMenu(e) {
             hideContextMenu();
             const a = btn.dataset.action;
             if (a === 'delete') _tempoDeleteSyncPoint(onPole);
+            else if (a === 'togglelock') { S.tempoSel = onPole; _editorToggleSyncLock(); }
             else if (a === 'insert') _tempoInsertSyncPoint(xToTime(x));
             else if (a === 'bpmedit') _tempoPromptMeasureBpm(onPole);
             else if (a === 'tsedit') _tempoPromptTimeSignature(onPole);
@@ -16869,6 +16903,137 @@ function _tempoApplyDrag(beats, d, newT) {
 // (the uniform-run boundary — hand-authored downstream tempo is a natural
 // pole the re-space never crosses). One undoable TempoMapCmd; notes ride
 // per the current tempo-ride scope, exactly like a BPM edit.
+/* @pure:beat-lock:start */
+// Beat-lock (charrette §1.8/D-T5): a hand-verified sync point carries a
+// `locked` flag, and its TIME is immune to later GLOBAL tempo re-fits (detect /
+// metric-modulation / measure re-space) so a nailed-by-ear passage can't be
+// walked off. Given the pre-edit grid `oldBeats` (the lock source of truth) and
+// a candidate index-preserving re-fit `newBeats` of the SAME length, the FIXED
+// points are the two array ends (which carry the re-fit, so a global tempo
+// change still lengthens/shortens the song) PLUS every locked anchor (pinned to
+// its OLD time). Every run between two consecutive fixed points is affine-
+// remapped so it keeps the re-fit's internal proportions while landing exactly
+// on both endpoints — locked anchors hold, the grid interpolates around them,
+// and no beat is ever pushed before the song start. No locks ⇒ identity
+// (returns newBeats untouched). A length change (a re-index) is a no-op guard —
+// locks only constrain index-preserving re-fits.
+function _respaceWithLocksPure(oldBeats, newBeats) {
+    const n = oldBeats.length;
+    if (n < 2 || !Array.isArray(newBeats) || newBeats.length !== n) return newBeats;
+    const isLocked = i => !!(oldBeats[i] && oldBeats[i].locked);
+    let anyLock = false;
+    for (let i = 0; i < n && !anyLock; i++) anyLock = isLocked(i);
+    if (!anyLock) return newBeats;
+    const out = newBeats.map(b => ({ ...b }));
+    // The `locked` flag is a persistent editor-pref — it rides onto every locked
+    // beat whether or not this particular re-fit can honour its held time.
+    for (let i = 0; i < n; i++) if (isLocked(i)) out[i].locked = true;
+    // Fixed points: the two song ends ALWAYS carry the re-fit's own time (a
+    // global tempo change must be free to lengthen/shift the song — a locked end
+    // can't pin the total span, or a re-fit that moves the far end past it would
+    // write a backwards grid); a locked interior anchor holds its old time.
+    // Nothing guarantees those held times stay INCREASING once a global re-fit
+    // pushes an end (or a neighbour) past a lock — a naive mix writes a
+    // non-monotonic grid that silently corrupts beatOf/timeOf's binary search. So
+    // we DROP any interior lock whose held time no longer falls strictly between
+    // the surrounding kept fixed points; a dropped lock stops being a fixed point
+    // and simply rides the affine remap of its run (its flag stays). Lock held
+    // times are increasing in index (the old grid is sorted), so a single greedy
+    // pass keeps the maximal satisfiable set and the kept fixed times are strictly
+    // increasing by construction — the affine runs below then stay monotonic.
+    out[0].time = newBeats[0].time;
+    out[n - 1].time = newBeats[n - 1].time;
+    const endTime = out[n - 1].time;
+    const fixed = [0];
+    let lastTime = out[0].time;
+    for (let i = 1; i < n - 1; i++) {
+        if (!isLocked(i)) continue;
+        const held = oldBeats[i].time;
+        if (held > lastTime && held < endTime) {
+            out[i].time = held;
+            fixed.push(i);
+            lastTime = held;
+        }
+    }
+    fixed.push(n - 1);
+    for (let k = 0; k + 1 < fixed.length; k++) {
+        const a = fixed[k], b = fixed[k + 1];
+        const na = newBeats[a].time, span = newBeats[b].time - na;
+        const ta = out[a].time, tspan = out[b].time - ta;
+        for (let i = a + 1; i < b; i++) {
+            out[i].time = span > 1e-9
+                ? ta + (newBeats[i].time - na) * tspan / span
+                : ta + tspan * (i - a) / (b - a);
+        }
+    }
+    return out;
+}
+
+// Beat-lock persistence is EDITOR-PREF, keyed by filename, NEVER in the pack
+// (D15). We persist the SECONDS of every locked sync point (times survive
+// save/reload — the pack rebuilds the grid to the same times); on load we
+// re-attach `locked` to the beats whose time matches (±tol).
+function _beatLockStorageKeyPure(filename) {
+    return 'editorBeatLocks:' + (filename || '');
+}
+function _beatLockParsePure(raw) {
+    let arr = null;
+    try { arr = JSON.parse(raw); } catch (_) { return []; }
+    if (!Array.isArray(arr)) return [];
+    return arr.map(Number).filter(t => Number.isFinite(t) && t >= 0);
+}
+// Reset every beat's `locked` from a persisted time list, matching each locked
+// time to its nearest beat within `tol` seconds. Mutates + returns `beats`.
+function _applyBeatLocksPure(beats, lockedTimes, tol) {
+    for (const b of beats) if (b) b.locked = false;
+    for (const lt of lockedTimes) {
+        let best = -1, bestD = tol;
+        for (let i = 0; i < beats.length; i++) {
+            if (!beats[i]) continue;
+            const d = Math.abs(beats[i].time - lt);
+            if (d <= bestD) { bestD = d; best = i; }
+        }
+        if (best >= 0) beats[best].locked = true;
+    }
+    return beats;
+}
+/* @pure:beat-lock:end */
+
+// Persist the current locked sync points for this song (editor-pref).
+function _saveBeatLocks() {
+    const times = S.beats.filter(b => b && b.locked).map(b => Math.round(b.time * 1000) / 1000);
+    const key = _beatLockStorageKeyPure(S.filename);
+    try {
+        if (times.length) localStorage.setItem(key, JSON.stringify(times));
+        else localStorage.removeItem(key);
+    } catch (_) { /* localStorage unavailable */ }
+}
+// Re-attach persisted locks onto S.beats after a load (times match the pack).
+function _restoreBeatLocks() {
+    const key = _beatLockStorageKeyPure(S.filename);
+    let raw = null;
+    try { raw = localStorage.getItem(key); } catch (_) {}
+    _applyBeatLocksPure(S.beats, _beatLockParsePure(raw), 0.02);
+}
+
+// Toggle the lock on the selected sync point: a locked anchor's time is held by
+// later global tempo re-fits (see _respaceWithLocksPure). Editor-pref, persisted.
+function _editorToggleSyncLock() {
+    if (!S.tempoMapMode || S.tempoSel < 0) {
+        setStatus('Select a Tempo Map sync point to lock.');
+        return true;
+    }
+    const b = S.beats[S.tempoSel];
+    if (!b) return true;
+    b.locked = !b.locked;
+    _saveBeatLocks();
+    draw();
+    setStatus(b.locked
+        ? 'Sync point locked — global tempo re-fits will hold this beat.'
+        : 'Sync point unlocked.');
+    return true;
+}
+
 function _editorModulateTempoAtSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
         setStatus('Select a Tempo Map sync point first.');
@@ -16903,7 +17068,8 @@ function _editorModulateTempoAtSelection() {
         setStatus('Could not modulate — the resulting measures would be too short.');
         return true;
     }
-    S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })), res.beats, 'modulate'));
+    S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })),
+        _respaceWithLocksPure(S.beats, res.beats), 'modulate'));
     updateBPMDisplay();
     draw();
     setStatus(`Modulated ${m.bpm.toFixed(1)} → ${res.newBpm.toFixed(1)} BPM across `
@@ -16918,7 +17084,8 @@ function _tempoSetMeasureBpm(d, newBPM) {
     if (!m || m.isLast || !(m.bpm > 0)) return false;
     const newBeats = _tempoSetMeasureBpmPure(beats, d, newBPM, MIN_MEASURE, _r3);
     if (!newBeats) return false;
-    S.history.exec(new TempoMapCmd(beats.map(b => ({ ...b })), newBeats, 'bpm'));
+    S.history.exec(new TempoMapCmd(beats.map(b => ({ ...b })),
+        _respaceWithLocksPure(beats, newBeats), 'bpm'));
     updateBPMDisplay();
     draw();
     return true;
