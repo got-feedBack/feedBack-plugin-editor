@@ -87,6 +87,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tests: `tests/beat_converter.test.js`.
 
 ### Added
+- **Suggest-position: author fretted parts directly in the piano roll.**
+  A fretted part shown in the piano roll was read-only (adding a note would
+  force a silent string/fret guess). Now double-clicking — or an EOF-style
+  right-click — in the roll adds by **sounding pitch**: a resolver
+  (`_suggestPositionPure`) picks the string/fret (biased to the current
+  fret-hand anchor window, then least hand-travel, then lowest fret) and
+  writes it **marked "suggested"** (dimmed + dashed until you confirm), or
+  opens a confirm popover when the choice is genuinely ambiguous
+  (open-vs-fretted, out of the hand window, every string occupied). Dragging
+  a fretted note vertically **re-pitches** it through the same resolver,
+  holding position when a technique locks the fret or the pitch can't be
+  reached. New notes land at the grid length (`_defaultAddSustain`), so you
+  can drag-resize the edge instead of typing a duration. A status nudge shows
+  how many positions are still unconfirmed; **✓ Accept position** clears the
+  mark (undo re-marks). "Suggested" is a module `WeakSet`, never a note field
+  — so nothing leaks to the wire (proven end-to-end through
+  `reconstructChords`). Tests: `tests/suggest_position.test.js`,
+  `tests/suggest_position_wiring.test.js`, `tests/suggest_position_move.test.js`.
 - **Detect key from the notes.** A new **Detect** button in the key controls
   guesses the current part's key from its pitch-class content (the
   Krumhansl–Schmuckler algorithm — Pearson correlation against the standard
