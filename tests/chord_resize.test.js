@@ -49,10 +49,15 @@ t('group resize applies one sustain to every chord member', () => {
     );
 });
 
-t('group resize clamps before the next same-string event', () => {
+t('group resize clamps each member independently at its own collision limit', () => {
+    // Same +2.5 delta from orig 0.25 wants 2.75 for every member, but each is
+    // capped by its OWN next same-string onset: string 0 → idx4 @ t=3 (cap 2),
+    // string 1 → idx3 @ t=2 (cap 1), string 2 → no later onset (uncapped). A
+    // member that would collide stops at its limit while the others extend —
+    // it is NOT flattened to the group-wide minimum.
     assert.deepStrictEqual(
         api._resizeSustainsForDeltaPure(notes, [0, 1, 2], 0.25, 2.5),
-        [1, 1, 1],
+        [2, 1, 2.75],
     );
 });
 

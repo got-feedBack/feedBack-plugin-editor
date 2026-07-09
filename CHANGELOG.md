@@ -150,6 +150,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   formula (`playStartTime + ctxNow − playStartWall`), previously copy-pasted at
   four call sites, is now one pure `_transportChartTimePure`. Tests:
   `tests/compose_transport.test.js`.
+- **Edge-drag note-duration resize works in the read-only fretted roll.**
+  A fretted part shown in the piano roll is edit-locked (no silent
+  string/fret writes until suggest-position lands), but a *duration* edit
+  never changes what a note sounds like — only how long it rings — so it
+  now applies directly, like the position-cycle's `pitchPreserving`
+  carve-out. Grabbing a note's right edge is re-enabled in the read-only
+  roll, and `ResizeSustainCmd` / `ResizeSustainGroupCmd` carry
+  `pitchPreserving = true` so they pass the edit lock and round-trip
+  through undo/redo. Lets you tighten an imported fretted note's duration
+  without switching to String view; the lock still blocks every
+  pitch/position write. A group edge-drag now applies the drag delta to
+  each chord member's *own* original ring-out (`sustain_i =
+  clamp(origSustain_i + delta)`) instead of flattening every member to one
+  value — so an imported chord whose members had different durations (e.g.
+  bass 1.0, top 0.5) keeps its relative shape, and each member clamps
+  independently at its own next same-string onset (one member can stop at
+  its collision limit while the others keep extending).
+  Tests: `tests/roll_edge_resize.test.js`, `tests/chord_resize.test.js`.
 - **Detect key from the notes.** A new **Detect** button in the key controls
   guesses the current part's key from its pitch-class content (the
   Krumhansl–Schmuckler algorithm — Pearson correlation against the standard

@@ -1239,13 +1239,20 @@ function _resizeTargetIndicesPure(noteList, index, expandChord) {
     return out.length ? out : [index];
 }
 
-function _maxSustainBeforeCollisionPure(noteList, targetIndices) {
+// Collision limit for a resize. With `onlyIdx` omitted this is the group-wide
+// limit (min over every member) — kept for callers that want one shared cap.
+// With `onlyIdx` given it's that single member's own limit (its next same-string
+// onset), while the whole group is still excluded from the collision candidates
+// so chord siblings never count as colliders. Per-member group resize uses the
+// latter so each member clamps independently.
+function _maxSustainBeforeCollisionPure(noteList, targetIndices, onlyIdx) {
     if (!Array.isArray(noteList) || !Array.isArray(targetIndices) || !targetIndices.length) {
         return Infinity;
     }
     const targetSet = new Set(targetIndices);
+    const checkIndices = (onlyIdx === undefined || onlyIdx === null) ? targetIndices : [onlyIdx];
     let limit = Infinity;
-    for (const idx of targetIndices) {
+    for (const idx of checkIndices) {
         const n = noteList[idx];
         if (!n || typeof n.time !== 'number') continue;
         for (let i = 0; i < noteList.length; i++) {
@@ -1260,11 +1267,21 @@ function _maxSustainBeforeCollisionPure(noteList, targetIndices) {
     return limit;
 }
 
-function _resizeSustainsForDeltaPure(noteList, targetIndices, anchorOrigSustain, delta) {
-    const desired = Math.max(0, (Number(anchorOrigSustain) || 0) + (Number(delta) || 0));
-    const limit = _maxSustainBeforeCollisionPure(noteList, targetIndices);
-    const sustain = Math.max(0, Math.min(desired, limit));
-    return targetIndices.map(() => sustain);
+// Apply the same edge-drag `delta` to EACH target's own original sustain, so a
+// group resize preserves the members' relative ring-out lengths instead of
+// flattening every member to one value. `origSustains` is an array aligned to
+// `targetIndices` (per member); a scalar is broadcast to all (single-note path).
+// Each member is clamped independently to ≥0 and to its own collision limit — a
+// member that would collide stops at its limit while the others keep extending.
+function _resizeSustainsForDeltaPure(noteList, targetIndices, origSustains, delta) {
+    const d = Number(delta) || 0;
+    const perMember = Array.isArray(origSustains);
+    return targetIndices.map((idx, k) => {
+        const orig = Number(perMember ? origSustains[k] : origSustains) || 0;
+        const desired = Math.max(0, orig + d);
+        const limit = _maxSustainBeforeCollisionPure(noteList, targetIndices, idx);
+        return Math.max(0, Math.min(desired, limit));
+    });
 }
 /* @pure:chord-resize:end */
 
@@ -3174,6 +3191,10 @@ class ResizeSustainCmd {
         this.index = index;
         this.newSustain = newSustain;
         this.oldSustain = notes()[index].sustain || 0;
+        // A sustain (duration) edit never changes what a note SOUNDS like — only
+        // how long it rings — so it preserves pitch and passes the read-only-roll
+        // lock (V4: duration edits, the roll's native strength, apply directly).
+        this.pitchPreserving = true;
     }
     exec() { notes()[this.index].sustain = this.newSustain; }
     rollback() { notes()[this.index].sustain = this.oldSustain; }
@@ -3185,6 +3206,7 @@ class ResizeSustainGroupCmd {
         this.newSustains = newSustains.slice();
         const nn = notes();
         this.oldSustains = this.indices.map(i => nn[i] ? (nn[i].sustain || 0) : 0);
+        this.pitchPreserving = true;   // duration edit — passes the read-only-roll lock (see ResizeSustainCmd)
     }
     exec() {
         const nn = notes();
@@ -4604,10 +4626,13 @@ function onMouseDown(e) {
     // silently overwritten by _recNotes when the take is finalized on Stop.
     if (_recState === 'recording') return;
 
-    // Check for sustain edge grab first. Read-only roll (V4): resize
-    // mutates sustains LIVE during the drag (before any command), so the
-    // drag must not start at all — selection stays available below.
-    const edgeIdx = _rollReadOnly() ? -1 : hitNoteEdge(x, y);
+    // Check for sustain edge grab first. Edge-drag sustain resize is a DURATION
+    // edit — it changes only how long a note rings, never its pitch — so it
+    // applies directly even in the read-only fretted roll (V4): the resize
+    // commands are pitchPreserving and pass the edit lock, so grabbing an edge
+    // is allowed here (unlike a pitch/position write). Resize mutates sustains
+    // LIVE during the drag (before any command); the commit is pitchPreserving.
+    const edgeIdx = hitNoteEdge(x, y);
     if (edgeIdx >= 0) {
         const nn = notes();
         const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, !isKeysArr() && !e.altKey);
@@ -4616,13 +4641,11 @@ function onMouseDown(e) {
             S.sel.clear();
             for (const i of resizeIndices) S.sel.add(i);
         }
-        const n = nn[edgeIdx];
         S.drag = {
             type: 'resize',
             noteIdx: edgeIdx,
             indices: resizeIndices,
             startX: x,
-            origSustain: n.sustain || 0,
             origSustains: resizeIndices.map(i => nn[i].sustain || 0),
         };
         draw();
@@ -4823,7 +4846,7 @@ function _onMouseMoveBody(e, x, y, L) {
         const dt = (x - S.drag.startX) / S.zoom;
         const nn = notes();
         const nextSustains = _resizeSustainsForDeltaPure(
-            nn, S.drag.indices, S.drag.origSustain, dt);
+            nn, S.drag.indices, S.drag.origSustains, dt);
         for (let i = 0; i < S.drag.indices.length; i++) {
             nn[S.drag.indices[i]].sustain = nextSustains[i];
         }
