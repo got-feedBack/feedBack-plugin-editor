@@ -763,9 +763,11 @@ function _drumEditorAddHit(x, y) {
     if (x < LABEL_W) return false;
     const rawT = xToTime(x);
     // Snap using host.snapTime() so drum hits align with the rest of the editor.
-    // Clamp after snapping: when the first beat is offset from 0, snapTime
-    // can round backward past zero and produce a negative timestamp.
-    let t = Math.max(0, host.snapTime(Math.max(0, rawT)));
+    // Clamped on BOTH sides, for two different reasons: before, because the
+    // padding region left of t=0 would hand snapTime a negative time; after,
+    // because when the first beat is offset from 0 snapTime can still round
+    // backward past zero.
+    const t = Math.max(0, host.snapTime(Math.max(0, rawT)));
     // Sort, dirty flag, and the ⟳ Drums (N) toolbar count all live in the
     // command's exec() so undo/redo replay them identically.
     S.history.exec(new AddDrumHitCmd({ t: Math.round(t * 1000) / 1000, p: piece, v: 100 }));
