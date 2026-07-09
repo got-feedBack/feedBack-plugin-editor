@@ -32,7 +32,7 @@ function extractFn(src, name) {
     throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const {
     _isGuitarBassTrack, _guitarImportName, _swapChartFields, _restoreChartFields,
 } = new Function(

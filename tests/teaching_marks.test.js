@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:teaching-marks:start[\s\S]*?@pure:teaching-marks:end \*\//);
 if (!m) {
     console.error('FAIL: @pure:teaching-marks block not found in screen.js');

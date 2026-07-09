@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/async function _tabPreviewRender\(\)\s*\{[\s\S]*?\n\}/);
 if (!m) {
     console.error('FAIL: _tabPreviewRender not found in screen.js');

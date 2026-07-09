@@ -27,7 +27,7 @@ function extractFn(src, name) {
     throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 
 const WAVEFORM_H = 70, LABEL_W = 60;
 const ZOOM = 180, SCROLLX = 0;          // px/sec, seconds

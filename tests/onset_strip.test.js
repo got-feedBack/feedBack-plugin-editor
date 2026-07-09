@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:onset-strip:start \*\/[\s\S]*?\/\* @pure:onset-strip:end \*\//);
 if (!m) {
     console.error('FAIL: @pure:onset-strip block not found in screen.js');

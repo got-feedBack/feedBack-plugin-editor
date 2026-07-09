@@ -26,7 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const block = src.match(/\/\* @pure:beat-lock:start \*\/[\s\S]*?\/\* @pure:beat-lock:end \*\//);
 if (!block) { console.error('FAIL: @pure:beat-lock block not found (A5 not applied)'); process.exit(1); }
 const {

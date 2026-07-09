@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 // Top-level function: body has only indented closing braces, so the first
 // column-0 `\n}` is the function's own close.
 const m = src.match(/function _normalizeSongList\(raw\) \{[\s\S]*?\n\}/);

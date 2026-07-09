@@ -26,7 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'screen.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
 const m = src.match(/\/\* @pure:edit-history:start \*\/[\s\S]*?\/\* @pure:edit-history:end \*\//);
 if (!m) {
     console.error('FAIL: @pure:edit-history block not found in screen.js');

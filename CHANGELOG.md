@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **ES-module migration, step 1 — the bootstrap flip (R2).** `screen.js` is now a
+  one-line `import './src/main.js'`; the IIFE body moved verbatim to `src/main.js`
+  (`git mv`, sha256-identical). `plugin.json` declares `"scriptType": "module"` +
+  `"minHost": "0.3.0-alpha.1"`. No `document.currentScript`/worklet/relative-asset
+  URLs (all `/static` + `/api/plugins/editor/...` absolute), and the ~190 inline
+  `window.*` handlers keep working in module scope. The 82 JS tests now read
+  `src/main.js`. **Re-init caveat (R2's key risk):** the editor is written for
+  re-injection (`window.__editorScreenTeardown` + per-injection `init()` guard); a
+  module loads once, so that teardown path no longer fires on re-entry — the
+  leave/re-enter behaviour is validated on-device, and a `screen:changed`-based
+  re-init hook will be added iff needed.
+
 ### Added
 - **Beat-lock — pin a hand-verified sync point.** Lock a Tempo-Map sync point
   (press **S**, or right-click the pole → **Lock sync point**) and its time
