@@ -26,7 +26,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import { reconstructChords } from '../src/chords.js';
 import {
-    _clearSuggested, _isSuggested, _markSuggested, _suggestedNotes,
+    _clearSuggested, _isSuggested, _markSuggested, _suggestedCount, _suggestedNotes,
 } from '../src/notes.js';
 import {
     _activeAnchorAtPure, _enumerateFrettedPositionsPure, _suggestPositionPure,
@@ -83,13 +83,17 @@ function assertNoForbidden(obj, label) {
 }
 
 // ── The write-path harness (locked roll: _rollReadOnly ⇒ true) ────────────────
+// `_suggestedCount` moved to src/notes.js and closes over the REAL `S`, so the
+// sandbox has to share that object rather than fabricate its own — otherwise the
+// count would read an arrangement the commands never touched.
 function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
-    const S = {
+    Object.assign(realS, {
         currentArr: 0,
         arrangements: [{ id: 'a1', name: arrName, tuning: TUN.slice(),
                          notes: seed.map(n => ({ ...n })), anchors_user: [], anchors: [] }],
         sel: new Set(),
-    };
+    });
+    const S = realS;
     const statuses = [];
     const refusals = [];   // records _rollConfirmPosition handoffs
     const fullSrc = '"use strict";'
@@ -105,7 +109,6 @@ function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
         + '\n' + extractFn('_commitAddResolved')
         + '\n' + extractFn('_rollAddByPitch')
         + '\n' + extractFn('_execAcceptPositions')
-        + '\n' + extractFn('_suggestedCount')
         + '\nconst history = new EditHistory(); S.history = history;'
         + '\nreturn { history, _rollAddByPitch, _commitAddResolved, _execAcceptPositions,'
         + ' _isSuggested, _markSuggested, _clearSuggested, _suggestedCount,'
@@ -116,6 +119,7 @@ function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
         '_rollPitchCtx', '_rollConfirmPosition',
         '_markSuggested', '_clearSuggested', '_isSuggested', '_suggestedNotes',
         '_suggestPositionPure', '_enumerateFrettedPositionsPure', '_activeAnchorAtPure',
+        '_suggestedCount',
         fullSrc
     )(
         S,
@@ -130,6 +134,7 @@ function makeEnv({ notes: seed = [], arrName = 'Lead' } = {}) {
         (res, pitch, time) => refusals.push({ reason: res.reason, pitch, time, candidates: res.candidates }),
         _markSuggested, _clearSuggested, _isSuggested, _suggestedNotes,  // src/notes.js
         _suggestPositionPure, _enumerateFrettedPositionsPure, _activeAnchorAtPure,
+        _suggestedCount,
     );
     return { S, env, statuses, refusals, notes: () => S.arrangements[0].notes };
 }

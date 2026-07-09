@@ -13,6 +13,7 @@
  */
 
 import { WAVEFORM_H } from './geometry.js';
+import { setStatus } from './ui.js';
 import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
@@ -107,6 +108,10 @@ export function isKeysMode() {
 // stays locked until the suggest-position write path exists — the roll
 // must never write string/fret by silent guess.
 export function _rollReadOnly() { return isKeysMode() && !isKeysArr(); }
+
+export function _rollLockNotice() {
+    setStatus('Piano roll is read-only for fretted parts — Shift+↑/↓ cycles same-pitch positions; switch to String view to edit (suggest-position editing is coming)');
+}
 
 // Sounding-pitch context for showing a FRETTED part in the roll — hoisted
 // once per draw/hit-test pass, never per note. Null for keys parts (their
