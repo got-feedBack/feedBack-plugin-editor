@@ -5,8 +5,10 @@
  * remapping authored handshapes onto the rebuilt template indices) on save.
  * Plus the handshape wire-coercion and dirty-count helpers.
  *
- * Reads `S` and `lanes()`; no DOM. `reconstructChords` resets `S.history`
- * because it replaces every note object, invalidating index-based undo.
+ * Reads `S` and `lanes()`; no DOM. `reconstructChords` resets `S.history`: solo
+ * notes survive by reference, but chord members are rebuilt as fresh objects and
+ * `arr.notes` / `arr.chords` are replaced wholesale, so every index-based undo
+ * command would point at the wrong note.
  */
 
 import { S } from './state.js';
@@ -329,7 +331,6 @@ export function reconstructChords() {
     // indices) can be remapped to the rebuilt indices below.
     const oldTemplates = arr.chord_templates;
     const byTime = {};
-    const soloNotes = [];
     for (const n of arr.notes) {
         const key = n.time.toFixed(4);
         if (!byTime[key]) byTime[key] = [];
@@ -357,7 +358,15 @@ export function reconstructChords() {
             for (const n of group) {
                 if (n.string >= 0 && n.string < L) frets[n.string] = n.fret;
             }
-            const fretKey = frets.join(',');
+            // Key exactly as `relinkChordTemplate` looks preserved templates up
+            // (and as `buildHandshapeChordIdMap` re-keys the rebuilt ones):
+            // `_fretKeyForL` maps every non-finite slot to -1. A raw
+            // `frets.join(',')` would mint a SEPARATE template for a chord whose
+            // only difference is `NaN` vs `undefined` in a slot, and both would
+            // then relink to the same preserved entry — duplicate templates, and
+            // a handshape `chord_id` remap that lands on whichever came first.
+            // Identical to `join(',')` whenever every fret is finite.
+            const fretKey = _fretKeyForL(frets, L);
             let tmplIdx;
             if (fretKey in templateMap) {
                 tmplIdx = templateMap[fretKey];
