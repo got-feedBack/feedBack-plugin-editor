@@ -114,6 +114,12 @@ export const host = {
      */
     finalizeActiveDrag: () => {},
 
+    // ── Seek and snap, for src/loop.js ────────────────────────────────
+    /** Move the cursor/transport to a chart time. */
+    editorSeekToTime: () => {},
+    /** The current snap step in seconds. */
+    editorSnapStepSeconds: () => 0,
+
     // ── Rendering and scroll, for src/audio.js ────────────────────────
     /** Force an immediate synchronous repaint (draw() is rAF-coalesced). */
     drawNow: () => {},

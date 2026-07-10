@@ -28,7 +28,10 @@ import { setHostHooks } from '../src/host.js';
 import { S as realS } from '../src/state.js';
 import { TempoMapCmd } from '../src/tempo.js';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+// The loop helpers moved to src/loop.js; the @pure:pending-view block stayed in
+// src/main.js. Slice each from its own source.
+const src = fs.readFileSync(new URL('../src/loop.js', import.meta.url), 'utf8');
+const mainSrc = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 function extractFn(name) {
     const start = src.indexOf('function ' + name + '(');
@@ -43,7 +46,7 @@ function extractFn(name) {
 }
 
 // ── The A4 loop helpers are still inline in main.js; TempoMapCmd is imported ──
-const pm = src.match(/\/\* @pure:pending-view:start \*\/[\s\S]*?\/\* @pure:pending-view:end \*\//);
+const pm = mainSrc.match(/\/\* @pure:pending-view:start \*\/[\s\S]*?\/\* @pure:pending-view:end \*\//);
 if (!pm) { console.error('FAIL: @pure:pending-view block not found'); process.exit(1); }
 
 const { _resolvePendingViewStatePure } = new Function(

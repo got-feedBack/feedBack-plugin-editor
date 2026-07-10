@@ -19,9 +19,9 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-// @pure:onset-snap moved to src/audio.js; snapTime is still in src/main.js.
+// @pure:onset-snap moved to src/audio.js; snapTime moved to src/loop.js.
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'audio.js'), 'utf8');
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'loop.js'), 'utf8');
 
 const _m0 = src.match(/\/\* @pure:onset-snap:start \*\/[\s\S]*?\/\* @pure:onset-snap:end \*\//);
 if (!_m0) {
@@ -33,7 +33,7 @@ const { _nearestOnsetTimePure } = new Function(
     '"use strict";' + m[0] + '\nreturn { _nearestOnsetTimePure };'
 )();
 
-// Extract snapTime by name (brace matching — the tempo_beat_drag harness) and
+// Extract snapTime (moved to src/loop.js) by name (brace matching) and
 // inject its free identifiers so we can drive the onset-vs-grid routing.
 function extractFn(name) {
     const start = mainSrc.indexOf('function ' + name);

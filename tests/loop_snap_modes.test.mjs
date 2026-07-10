@@ -19,7 +19,7 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../src/loop.js', import.meta.url), 'utf8');
 // The two loop pures moved to src/transport.js (#178). The rest of this file's
 // sliced @pure:loop-region block still calls them by name, so prepend their real
 // source to the slice — same scope, same behaviour, no re-implementation.
@@ -42,11 +42,12 @@ function _loopPuresSrc() {
     return out.join('\n') + '\n';
 }
 
-const m = src.match(/\/\* @pure:loop-region:start \*\/[\s\S]*?\/\* @pure:loop-region:end \*\//);
-if (!m) {
-    console.error('FAIL: @pure:loop-region block not found in src/main.js');
+const _mRaw = src.match(/\/\* @pure:loop-region:start \*\/[\s\S]*?\/\* @pure:loop-region:end \*\//);
+if (!_mRaw) {
+    console.error('FAIL: @pure:loop-region block not found in src/loop.js');
     process.exit(1);
 }
+const m = [_mRaw[0].replace(/^export\s+/gm, '')];
 
 const api = new Function(
     '"use strict";' + _loopPuresSrc() + m[0]
