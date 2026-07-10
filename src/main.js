@@ -16,7 +16,8 @@ import { beatOf, timeOf } from './beats.js';
 import {
 } from './position.js';
 import {
-    _composeSongDurationPure, _loopPlaybackRestartTimePure, _normalizeLoopRegionPure, _transportChartTimePure
+    _composeSongDurationPure, _loopPlaybackRestartTimePure, _normalizeLoopRegionPure,
+    _transportChartTimePure,
 } from './transport.js';
 import { _editorEscHtml, _editorPromptText, _installModalKeyboard, setStatus } from './ui.js';
 import { hitNote, hitNoteEdge } from './hit-test.js';
