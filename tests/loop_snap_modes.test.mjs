@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Tests for the loop snap modes (@pure:loop-region block): the mode-aware
  * region resolver `_loopRegionForDragPure` and edge adjuster
@@ -15,13 +14,34 @@
  * Regions carry `mode` so tempo-map edits can relock bar/grid loops while
  * never moving a freely drawn one.
  *
- * Run: node tests/loop_snap_modes.test.js
+ * Run: node tests/loop_snap_modes.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+// The two loop pures moved to src/transport.js (#178). The rest of this file's
+// sliced @pure:loop-region block still calls them by name, so prepend their real
+// source to the slice — same scope, same behaviour, no re-implementation.
+const _transportSrc = fs.readFileSync(new URL('../src/transport.js', import.meta.url), 'utf8');
+function _loopPuresSrc() {
+    const out = [];
+    for (const name of ['_normalizeLoopRegionPure', '_loopPlaybackRestartTimePure']) {
+        const start = _transportSrc.indexOf('export function ' + name);
+        if (start < 0) throw new Error('missing in transport.js: ' + name);
+        const open = _transportSrc.indexOf('{', start);
+        let d = 0;
+        for (let i = open; i < _transportSrc.length; i++) {
+            if (_transportSrc[i] === '{') d++;
+            else if (_transportSrc[i] === '}' && --d === 0) {
+                out.push(_transportSrc.slice(start, i + 1).replace(/^export /, ''));
+                break;
+            }
+        }
+    }
+    return out.join('\n') + '\n';
+}
+
 const m = src.match(/\/\* @pure:loop-region:start \*\/[\s\S]*?\/\* @pure:loop-region:end \*\//);
 if (!m) {
     console.error('FAIL: @pure:loop-region block not found in src/main.js');
@@ -29,7 +49,7 @@ if (!m) {
 }
 
 const api = new Function(
-    '"use strict";' + m[0]
+    '"use strict";' + _loopPuresSrc() + m[0]
     + '\nreturn { _loopRegionForDragPure, _loopEdgeAdjustPure, _normalizeLoopRegionPure };'
 )();
 const { _loopRegionForDragPure, _loopEdgeAdjustPure } = api;

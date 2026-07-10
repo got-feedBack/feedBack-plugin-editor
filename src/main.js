@@ -15,7 +15,9 @@ import { DPR, canvas, ctx, setCanvas } from './canvas.js';
 import { beatOf, timeOf } from './beats.js';
 import {
 } from './position.js';
-import { _composeSongDurationPure, _transportChartTimePure } from './transport.js';
+import {
+    _composeSongDurationPure, _loopPlaybackRestartTimePure, _normalizeLoopRegionPure, _transportChartTimePure
+} from './transport.js';
 import { _editorEscHtml, _editorPromptText, _installModalKeyboard, setStatus } from './ui.js';
 import { hitNote, hitNoteEdge } from './hit-test.js';
 import { EditHistory } from './history.js';
@@ -242,32 +244,6 @@ function _adjustBarSelEdgePure(region, edge, rawTime, downbeats, duration) {
         return end > region.startTime ? { startTime: region.startTime, endTime: end } : region;
     }
     return region;
-}
-
-function _normalizeLoopRegionPure(region, duration) {
-    if (!region) return null;
-    let start = Number(region.startTime);
-    let end = Number(region.endTime);
-    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-    if (end < start) [start, end] = [end, start];
-    const maxT = Number(duration);
-    if (Number.isFinite(maxT) && maxT > 0) {
-        start = Math.max(0, Math.min(start, maxT));
-        end = Math.max(0, Math.min(end, maxT));
-    } else {
-        start = Math.max(0, start);
-        end = Math.max(0, end);
-    }
-    return end > start + 0.001 ? { startTime: start, endTime: end } : null;
-}
-
-function _loopPlaybackRestartTimePure(cursorTime, region, enabled, duration) {
-    if (!enabled) return null;
-    const r = _normalizeLoopRegionPure(region, duration);
-    if (!r) return null;
-    const t = Number(cursorTime);
-    if (!Number.isFinite(t)) return null;
-    return t >= r.endTime - 0.001 ? r.startTime : null;
 }
 
 // ── Loop snap modes ──────────────────────────────────────────────────

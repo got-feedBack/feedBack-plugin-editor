@@ -39,3 +39,33 @@ export function _composeSongDurationPure(gridEndTime, contentEndTime, userLen) {
     return g;
 }
 /* @pure:transport:end */
+
+// Loop-region math (charrette §1.6). Pure: _normalizeLoopRegionPure clamps a
+// {startTime,endTime} to the song and orders it; _loopPlaybackRestartTimePure
+// says where playback resumes when the cursor runs off the loop. Both the loop
+// UI in main.js and the playback engine in src/audio.js read them.
+export function _normalizeLoopRegionPure(region, duration) {
+    if (!region) return null;
+    let start = Number(region.startTime);
+    let end = Number(region.endTime);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    if (end < start) [start, end] = [end, start];
+    const maxT = Number(duration);
+    if (Number.isFinite(maxT) && maxT > 0) {
+        start = Math.max(0, Math.min(start, maxT));
+        end = Math.max(0, Math.min(end, maxT));
+    } else {
+        start = Math.max(0, start);
+        end = Math.max(0, end);
+    }
+    return end > start + 0.001 ? { startTime: start, endTime: end } : null;
+}
+
+export function _loopPlaybackRestartTimePure(cursorTime, region, enabled, duration) {
+    if (!enabled) return null;
+    const r = _normalizeLoopRegionPure(region, duration);
+    if (!r) return null;
+    const t = Number(cursorTime);
+    if (!Number.isFinite(t)) return null;
+    return t >= r.endTime - 0.001 ? r.startTime : null;
+}
