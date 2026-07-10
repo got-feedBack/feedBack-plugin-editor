@@ -910,7 +910,7 @@ export async function _tempoPromptPickup() {
     for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) { d0 = i; break; }
     if (d0 < 0) { setStatus('No measure grid to set a pickup on.'); return true; }
     let ndb = beats.length;
-    for (let i = d0 + 1; i < beats.length; i++) if (beats[i].measure > 0) { ndb = i; break; }
+    for (let i = d0 + 1; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) { ndb = i; break; }
     const barLen = ndb - d0;
     if (barLen < 2) { setStatus('The first bar has a single beat — no room for a pickup.'); return true; }
     const raw = await _editorPromptText({
