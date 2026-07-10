@@ -1,0 +1,190 @@
+// Key & view controls: the in-key highlight (tonic/scale selectors + auto-detect)
+// and the per-part view switcher (String / Piano roll / Parts). The window.editor*
+// entry points are re-attached by main.js; repaint / status / canvas-resize go
+// through host.
+
+import { hideAddNote } from './add-note.js';
+import { hideContextMenu } from './context-menu.js';
+import { _loadEditorKeyIfNeeded, _persistEditorKey, editorKeyHighlightEnabled } from './draw.js';
+import { KEYS_PATTERN, _partViewKeyPure, _rollMidiForNote, _rollPitchCtx, _viewPrefs, _viewPrefsSave, updatePianoRange, viewFor } from './keys.js';
+import { notes } from './notes.js';
+import { S } from './state.js';
+import { PIANO_NOTE_NAMES, SCALE_INTERVALS, SCALE_LABELS, _detectKeyPure } from './theory.js';
+import { setStatus } from './ui.js';
+import { host } from './host.js';
+
+export const editorSetKeyTonic = (v) => {
+    const tonic = parseInt(v, 10);
+    if (!(tonic >= 0 && tonic <= 11)) return;
+    S.editorKey = { tonic, scale: (S.editorKey && S.editorKey.scale) || 'major' };
+    _persistEditorKey();
+    _refreshKeyControls();
+    host.draw();
+};
+export const editorSetKeyScale = (v) => {
+    if (!SCALE_INTERVALS[v]) return;
+    S.editorKey = { tonic: (S.editorKey ? S.editorKey.tonic : 0), scale: v };
+    _persistEditorKey();
+    _refreshKeyControls();
+    host.draw();
+};
+export function _editorToggleKeyHighlight() {
+    const next = !editorKeyHighlightEnabled();
+    try { localStorage.setItem('editorKeyHighlight', next ? '1' : '0'); } catch (_) {}
+    if (next && !S.editorKey) S.editorKey = { tonic: 0, scale: 'major' };
+    _persistEditorKey();
+    _refreshKeyControls();
+    host.draw();
+    setStatus(next
+        ? 'In-key highlight on — out-of-key notes dim (piano roll also shades out-of-key rows)'
+        : 'In-key highlight off');
+    return true;
+}
+
+
+// Detect the active arrangement's key from its pitch-class content (DAW 4.17)
+// and set it as the editor key, turning the in-key highlight on so the result
+// is visible. A best-guess suggestion, not authoritative — the picker stays
+// editable. Duration-weighted (a held note counts more than a passing one),
+// with a small floor so staccato notes still register. Fretted parts resolve
+// to sounding pitch (capo/tuning-aware); keys parts use their packed pitch.
+export const editorDetectKey = () => {
+    if (!S.arrangements || !S.arrangements.length) { setStatus('No arrangement to analyse'); return; }
+    const nn = notes();
+    if (!nn.length) { setStatus('No notes yet — add some before detecting a key'); return; }
+    const rctx = typeof _rollPitchCtx === 'function' ? _rollPitchCtx() : null;
+    const weights = new Array(12).fill(0);
+    let counted = 0;
+    for (const n of nn) {
+        const midi = _rollMidiForNote(n, rctx);
+        if (!Number.isFinite(midi)) continue;
+        const pc = ((Math.round(midi) % 12) + 12) % 12;
+        weights[pc] += Math.max(Number(n.sustain) || 0, 0.1);
+        counted++;
+    }
+    const res = counted ? _detectKeyPure(weights) : null;
+    if (!res) { setStatus('Could not detect a key from this part'); return; }
+    S.editorKey = { tonic: res.tonic, scale: res.scale };
+    try { localStorage.setItem('editorKeyHighlight', '1'); } catch (_) { /* private mode */ }
+    _persistEditorKey();
+    _refreshKeyControls();
+    host.draw();
+    const label = (typeof SCALE_LABELS !== 'undefined' && SCALE_LABELS[res.scale]) || res.scale;
+    setStatus(`Detected key: ${PIANO_NOTE_NAMES[res.tonic]} ${label} — adjust in the picker if it's off`);
+};
+
+// ── Per-part view switcher (String · Piano roll) ─────────────────────
+let _viewSwitchState = '';
+export function _refreshViewSwitch() {
+    const el = document.getElementById('editor-view-switch');
+    if (!el) return;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    const fretted = !!arr && !KEYS_PATTERN.test(arr.name || '');
+    // Only fretted parts get a choice (keys are piano-locked), and only
+    // when a focus editor is showing (not drum/tempo/parts modes).
+    const visible = fretted && !S.drumEditMode && !S.tempoMapMode && !S.partsViewMode;
+    const mode = arr ? viewFor(arr) : 'string';
+    const sig = `${visible}|${mode}`;
+    if (sig === _viewSwitchState) return;
+    _viewSwitchState = sig;
+    el.classList.toggle('hidden', !visible);
+    el.classList.toggle('flex', visible);
+    el.querySelectorAll('button[data-view]').forEach(b => {
+        const active = b.dataset.view === mode;
+        b.classList.toggle('bg-accent', active);
+        b.classList.toggle('text-white', active);
+        b.classList.toggle('text-gray-400', !active);
+        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    const pill = document.getElementById('editor-roll-lock-pill');
+    if (pill) pill.classList.toggle('hidden', !(visible && mode === 'piano'));
+}
+
+export const editorSetViewMode = (mode) => {
+    if (mode !== 'string' && mode !== 'piano') return;
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    if (!arr) return;
+    if (KEYS_PATTERN.test(arr.name || '')) {
+        setStatus('Keys parts always use the piano roll');
+        return;
+    }
+    if (viewFor(arr) === mode) return;
+    const prefs = _viewPrefs();
+    const key = _partViewKeyPure(arr);
+    if (mode === 'piano') prefs[key] = 'piano';
+    else delete prefs[key];
+    _viewPrefsSave();
+    // V3: selection/interaction semantics are per-view — clear both, and
+    // close any note UI anchored to the old geometry.
+    S.sel.clear();
+    S.drag = null;
+    hideContextMenu();
+    hideAddNote();
+    if (mode === 'piano') updatePianoRange();
+    _refreshViewSwitch();
+    // Lane heights differ between views; recompute after the reflow the
+    // same way the string-count change path does.
+    requestAnimationFrame(() => host.resizeCanvas());
+    host.draw();
+    host.updateStatus();
+    setStatus(mode === 'piano'
+        ? 'Piano roll — fretted notes shown at sounding pitch (read-only until suggest-position lands)'
+        : 'String view');
+};
+
+export function _editorCycleViewMode() {
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    if (!arr) { setStatus('Load a song first'); return true; }
+    if (KEYS_PATTERN.test(arr.name || '')) {
+        setStatus('Keys parts always use the piano roll');
+        return true;
+    }
+    window.editorSetViewMode(viewFor(arr) === 'piano' ? 'string' : 'piano');
+    return true;
+}
+
+let _keyControlsPopulated = false;
+let _keyControlsState = '';
+export function _refreshKeyControls() {
+    const group = document.getElementById('editor-key-group');
+    if (!group) return;
+    _loadEditorKeyIfNeeded();
+    // Populate the selects once.
+    if (!_keyControlsPopulated) {
+        const tonicSel = document.getElementById('editor-key-tonic');
+        const scaleSel = document.getElementById('editor-key-scale');
+        if (tonicSel && scaleSel) {
+            tonicSel.innerHTML = PIANO_NOTE_NAMES
+                .map((n, i) => `<option value="${i}">${n}</option>`).join('');
+            scaleSel.innerHTML = Object.keys(SCALE_INTERVALS)
+                .map(id => `<option value="${id}">${SCALE_LABELS[id] || id}</option>`).join('');
+            _keyControlsPopulated = true;
+        }
+    }
+    // The highlight applies to any pitched arrangement view — the piano
+    // roll AND the fretted lanes (notes resolve to sounding pitch via
+    // tuning + capo). The drum grid and Parts overview have no per-note
+    // pitch surface, so the controls hide there.
+    const visible = !!(S.arrangements && S.arrangements.length)
+        && !S.drumEditMode && !S.partsViewMode;
+    const on = editorKeyHighlightEnabled();
+    const tonic = S.editorKey ? S.editorKey.tonic : 0;
+    const scale = S.editorKey ? S.editorKey.scale : 'major';
+    const sig = `${visible}|${on}|${tonic}|${scale}`;
+    if (sig === _keyControlsState) return;
+    _keyControlsState = sig;
+    group.classList.toggle('hidden', !visible);
+    group.classList.toggle('flex', visible);
+    const tonicSel = document.getElementById('editor-key-tonic');
+    const scaleSel = document.getElementById('editor-key-scale');
+    if (tonicSel) tonicSel.value = String(tonic);
+    if (scaleSel) scaleSel.value = scale;
+    const btn = document.getElementById('editor-key-highlight-btn');
+    if (btn) {
+        btn.classList.toggle('bg-accent', on);
+        btn.classList.toggle('hover:bg-accent-light', on);
+        btn.classList.toggle('bg-dark-600', !on);
+        btn.classList.toggle('hover:bg-dark-500', !on);
+        btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+}
