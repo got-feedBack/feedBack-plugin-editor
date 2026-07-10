@@ -78,7 +78,7 @@ The frontend is ~40 ES modules under `src/`, orchestrated by a thin
   main.js callbacks they need through one hook table. Anything main.js
   *reassigns* must be wired as a thunk — read the warning at the top of that
   file before adding a hook.
-- **`src/beats.js` is the one time converter** (`beatOf`/`timeOf`). Beat
+- **`src/beats.js` is the single time converter** (`beatOf`/`timeOf`). Beat
   coordinates are truth; seconds are derived. `TempoMapCmd` recomputes
   seconds from beats, `TempoGridCmd` re-lifts beats from seconds.
 - **Modules must degrade under node** (no DOM, no host): inert defaults,
