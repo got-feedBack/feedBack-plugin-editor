@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The inspector panel now lives in `src/inspector.js` (R2, step 24).** 639
+  lines: note attributes on one face, chord name/voicing/fingering/function on the
+  other, every edit committed through a command so undo and the read-only-roll
+  lock keep working. `src/main.js` is down to 9,144.
+  Its 19 `window.editor*` handlers — the ones the panel's own `innerHTML` calls
+  by name — are exported plain functions that `main.js` re-attaches. `main.js`
+  keeps the bend-curve dialog and the canvas-resize scheduler.
+
+
 - **The MIDI keyboard recorder now lives in `src/midi-record.js` (R2, step 23),
   and the transport clock in `src/transport.js`.** `src/main.js` is down to
   9,779 — under ten thousand for the first time.
