@@ -287,9 +287,11 @@ function draw() {
         }
     }
 
-    // Candidates + current positions.
+    // Candidates + current positions. Open positions (current AND candidate)
+    // sit just right of the effective nut — the ONE rule the hit-test uses,
+    // so a selected capo'd open string draws where right-click finds it.
     for (const a of ann) {
-        const x = g.xNote(actx.capo + a.fret);
+        const x = (a.open && actx.capo > 0) ? g.xLine(actx.capo) + 9 : g.xNote(actx.capo + a.fret);
         const y = g.rowY(a.string);
         const col = STRIP_STRING_COLORS[a.string % STRIP_STRING_COLORS.length];
         ctx2.globalAlpha = a.inWindow ? 0.95 : 0.35;
@@ -302,11 +304,10 @@ function draw() {
             ctx2.textAlign = 'center'; ctx2.textBaseline = 'middle';
             ctx2.fillText(label, x, y);
         } else if (a.open) {
-            // Open-string candidates read differently: a square, just right of
-            // the effective nut (the capo bar when one is fitted).
-            const ox = actx.capo > 0 ? g.xLine(actx.capo) + 9 : x;
+            // Open-string candidates read differently: a square (x already
+            // sits at the effective nut via the shared placement above).
             ctx2.strokeStyle = col; ctx2.lineWidth = 1.8;
-            ctx2.strokeRect(ox - 5, y - 5, 10, 10);
+            ctx2.strokeRect(x - 5, y - 5, 10, 10);
         } else {
             ctx2.strokeStyle = col; ctx2.lineWidth = 1.8;
             ctx2.beginPath(); ctx2.arc(x, y, 7, 0, 6.2832); ctx2.stroke();

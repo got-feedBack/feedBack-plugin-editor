@@ -118,6 +118,10 @@ t('hit-test: nearest annotation within radius, physical (capo) space', () => {
     ann[1].open = true;
     const hitOpen = _stripHitTestPure(g.xLine(2) + 9, g.rowY(1), g, ann, 2);
     assert.strictEqual(hitOpen, ann[1]);
+    // A CURRENT open note under a capo uses the same placement — right-click
+    // (finger cycling) must land on the drawn dot.
+    ann[1].current = true;
+    assert.strictEqual(_stripHitTestPure(g.xLine(2) + 9, g.rowY(1), g, ann, 2), ann[1]);
 });
 
 t('finger cycle: none → 1 → 2 → 3 → 4 → T → none, garbage restarts', () => {
