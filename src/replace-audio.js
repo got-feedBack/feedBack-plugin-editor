@@ -1,0 +1,118 @@
+// Replace-audio modal: swap the session's audio track from a file or a YouTube
+// URL, decode it, and re-sync playback state. The window.editor* entry points
+// are re-attached by main.js; display refreshers (draw, updateTimeDisplay) are
+// reached through host.
+
+import { loadAudio, stopPlayback } from './audio.js';
+import { _uploadAudioForMode, createState } from './create.js';
+import { _editorApplyScrollBounds } from './loop.js';
+import { S } from './state.js';
+import { setStatus } from './ui.js';
+import { host } from './host.js';
+
+let replaceAudioState = { audioMode: 'file' };
+
+export function editorShowReplaceAudioModal() {
+    if (!S.sessionId) return;
+    replaceAudioState = { audioMode: 'file' };
+    document.getElementById('editor-replace-audio').value = '';
+    document.getElementById('editor-replace-yt-url').value = '';
+    document.getElementById('editor-replace-audio-status').textContent = '';
+    document.getElementById('editor-replace-audio-apply').disabled = false;
+    document.getElementById('editor-replace-audio-modal').classList.remove('hidden');
+    editorSetReplaceAudioMode('file');
+}
+
+export function editorHideReplaceAudioModal() {
+    document.getElementById('editor-replace-audio-modal').classList.add('hidden');
+}
+
+export function editorSetReplaceAudioMode(mode) {
+    replaceAudioState.audioMode = mode;
+    document.getElementById('editor-replace-audio-file-input').classList.toggle('hidden', mode !== 'file');
+    document.getElementById('editor-replace-audio-yt-input').classList.toggle('hidden', mode !== 'youtube');
+    document.getElementById('editor-replace-mode-file').classList.toggle('is-active', mode === 'file');
+    document.getElementById('editor-replace-mode-yt').classList.toggle('is-active', mode === 'youtube');
+}
+
+async function _uploadReplaceAudio() {
+    const statusEl = document.getElementById('editor-replace-audio-status');
+    // Pre-check missing input so we surface a hint here (the shared helper
+    // returns null silently on missing input so the create-modal flow's
+    // optional-audio path keeps its existing no-status behavior).
+    if (replaceAudioState.audioMode === 'youtube') {
+        if (!document.getElementById('editor-replace-yt-url').value.trim()) {
+            statusEl.textContent = 'Enter a YouTube URL';
+            return null;
+        }
+    } else if (!document.getElementById('editor-replace-audio').files.length) {
+        statusEl.textContent = 'Choose a file';
+        return null;
+    }
+    return _uploadAudioForMode({
+        mode: replaceAudioState.audioMode,
+        ytInputId: 'editor-replace-yt-url',
+        fileInputId: 'editor-replace-audio',
+        statusEl,
+    });
+}
+
+export async function editorApplyReplaceAudio() {
+    if (!S.sessionId) return;
+    const status = document.getElementById('editor-replace-audio-status');
+    const apply = document.getElementById('editor-replace-audio-apply');
+    apply.disabled = true;
+    try {
+        const audioUrl = await _uploadReplaceAudio();
+        if (!audioUrl) { apply.disabled = false; return; }
+
+        const resp = await fetch('/api/plugins/editor/replace-audio', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: S.sessionId, audio_url: audioUrl }),
+        });
+        const data = await resp.json();
+        if (data.error) {
+            status.textContent = 'Error: ' + data.error;
+            apply.disabled = false;
+            return;
+        }
+
+        // Keep create-mode build in sync — Build Song reads createState.audioUrl.
+        if (S.createMode) createState.audioUrl = audioUrl;
+
+        // Stop active playback before swapping the buffer; otherwise the old
+        // BufferSource keeps playing under the new S.audioBuffer/duration and
+        // playbackTick desyncs against the new track length.
+        if (S.playing) stopPlayback();
+        // loadAudio() swallows fetch/decode errors and only logs to console,
+        // so detect failure by checking that the buffer reference actually
+        // changed. Without this we would close the modal and announce
+        // "Audio replaced" even on an unsupported / corrupt upload.
+        const prevBuffer = S.audioBuffer;
+        await loadAudio(audioUrl);
+        if (!S.audioBuffer || S.audioBuffer === prevBuffer) {
+            status.textContent = 'Failed to decode audio (unsupported format?)';
+            apply.disabled = false;
+            return;
+        }
+        if (S.cursorTime > S.duration) S.cursorTime = 0;
+        _editorApplyScrollBounds();
+        document.getElementById('editor-play-btn').disabled = false;
+        document.getElementById('editor-sync-btn').classList.remove('hidden');
+        host.updateTimeDisplay();
+        host.draw();
+
+        const HINTS = {
+            none:    'Audio replaced',
+            save:    'Audio replaced (Save to persist to .sloppak)',
+            build:   'Audio replaced (will persist on next Build feedpak)',
+            rebuild: "Audio replaced (playback only — archive won't be repacked)",
+        };
+        editorHideReplaceAudioModal();
+        setStatus(HINTS[data.next_step] || (data.persisted ? HINTS.none : HINTS.rebuild));
+    } catch (e) {
+        status.textContent = 'Failed: ' + e.message;
+        apply.disabled = false;
+    }
+}
