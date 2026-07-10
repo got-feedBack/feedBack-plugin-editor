@@ -17,7 +17,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import { _inKeyboardGutterPure } from '../src/keys.js';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../src/mouse.js', import.meta.url), 'utf8');
 
 function extractFn(name) {
     const start = src.indexOf('function ' + name);
@@ -31,8 +31,8 @@ function extractFn(name) {
     throw new Error('unbalanced braces extracting ' + name);
 }
 
-// _inKeyboardGutterPure is a real import from src/keys.js; `onDblClick` still
-// lives in src/main.js and is still brace-extracted.
+// _inKeyboardGutterPure is a real import from src/keys.js; `onDblClick` now lives in src/mouse.js and is still
+// brace-extracted.
 
 // Geometry matching src/main.js defaults.
 const LABEL_W = 52, WAVEFORM_H = 70, PIANO_LANE_H = 10;
@@ -43,7 +43,8 @@ function makeDblClick(keysMode) {
     const calls = { showAddNote: 0, lockNotice: 0 };
     const deps = {
         S: { partsViewMode: false, drumEditMode: false, tempoMapMode: false },
-        _partsViewOnDblClick: () => {},
+        // onDblClick now reaches showAddNote / partsViewOnDblClick through host.
+        host: { partsViewOnDblClick: () => {}, showAddNote: () => { calls.showAddNote++; } },
         _recState: 'idle',
         getMousePos: (e) => ({ x: e.x, y: e.y }),
         isKeysMode: () => keysMode,
@@ -60,7 +61,6 @@ function makeDblClick(keysMode) {
         midiToString: (m) => Math.floor(m / 24),
         midiToFret: (m) => m % 24,
         yToStr: () => 0,
-        showAddNote: () => { calls.showAddNote++; },
     };
     const names = Object.keys(deps);
     const fn = new Function(...names, '"use strict";' + extractFn('onDblClick') + '\nreturn onDblClick;')(
