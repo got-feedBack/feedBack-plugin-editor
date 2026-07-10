@@ -230,7 +230,7 @@ export function _partsViewOnMouseDown(e, x, y) {
 }
 
 export function _partsViewOnDblClick(e) {
-    const { x, y } = getMousePos(e);
+    const { y } = getMousePos(e);
     const parts = _partsListPure(S.arrangements, S.drumTab);
     const { laneH } = _partsLaneLayoutPure((canvas.height / DPR) - WAVEFORM_H, parts.length);
     const i = _partsLaneAtYPure(y, WAVEFORM_H, laneH, parts.length);
