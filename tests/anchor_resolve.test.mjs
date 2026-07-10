@@ -93,6 +93,21 @@ t('resolve: an earlier repick claims its string for later notes', () => {
     assert.strictEqual(r.refused.length, 1, 'second refuses rather than guessing');
 });
 
+t('resolve: the least-travel tie-break sees IN-PASS repicks, not stale frets', () => {
+    // A (s0 f8, sounds 48) repicks into the window at s1 f3. B (s3 f6,
+    // sounds 61) has TWO in-window candidates: s3 f6 and s4 f2. From A's
+    // IN-PASS hand (f3) the closer pick is f2; from A's stale pre-pass fret
+    // (f8) it would be f6 — the pre-fix behavior.
+    const nn = [N(1, 0, 8), N(2, 3, 6)];
+    const anchors = [{ time: 0, fret: 2, width: 5 }];
+    const ctx = { ...CTX, prevFretAt: (t, i) => (i === 1 ? { idx: 0, fret: 8 } : null) };
+    const r = _resolveWindowPure(nn, { start: 0, end: Infinity }, anchors, ctx, () => true);
+    const moveB = r.moves.find((m) => m.index === 1);
+    assert.ok(moveB, 'B repicks');
+    assert.deepStrictEqual({ s: moveB.newString, f: moveB.newFret }, { s: 4, f: 2 },
+        'travel measured from the in-pass f3, not the stale f8');
+});
+
 t('resolve: window boundaries are honored (end-exclusive)', () => {
     const nn = [N(7.999, 0, 8), N(8.0, 0, 8)];
     const anchors = [{ time: 0, fret: 2, width: 4 }, { time: 8, fret: 5, width: 4 }];

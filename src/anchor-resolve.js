@@ -69,9 +69,12 @@ export function _resolveWindowPure(nn, win, anchors, ctx, isSuggestedFn) {
     out.targets = targets.map(({ i }) => i);
     if (!targets.length) return out;
 
-    // Working string assignment: current positions, updated as repicks land.
+    // Working assignment: current positions, updated as repicks land — the
+    // occupancy AND the least-travel hand reference both see in-pass state,
+    // so note k's repick informs note k+1's tie-break (CodeRabbit, #201).
     const strOf = new Map();
-    nn.forEach((n, i) => { if (n) strOf.set(i, n.string); });
+    const fretOf = new Map();
+    nn.forEach((n, i) => { if (n) { strOf.set(i, n.string); fretOf.set(i, n.fret); } });
 
     for (const { n, i } of targets) {
         const pitch = _soundingPitchPure(ctx.openMidi, ctx.tuning, ctx.capo, n.string, n.fret);
@@ -83,13 +86,19 @@ export function _resolveWindowPure(nn, win, anchors, ctx, isSuggestedFn) {
             const oEnd = o.time + (Number(o.sustain) || 0);
             if (n.time <= oEnd + 1e-6 && nEnd >= o.time - 1e-6) occ.add(strOf.get(j));
         });
-        const res = _suggestPositionPure(
-            pitch, n.time,
-            ctx.prevFretAt ? { fret: ctx.prevFretAt(n.time, i) } : null,
-            anchors, occ, ctx);
+        // ctx.prevFretAt returns { idx, fret } (or null): the fret comes from
+        // the arrangement, so override it with this pass's repick when the
+        // previous note was one of ours.
+        let prev = null;
+        if (ctx.prevFretAt) {
+            const p = ctx.prevFretAt(n.time, i);
+            if (p && Number.isFinite(p.fret)) {
+                prev = { fret: fretOf.has(p.idx) ? fretOf.get(p.idx) : p.fret };
+            }
+        }
+        const res = _suggestPositionPure(pitch, n.time, prev, anchors, occ, ctx);
         if (!res.resolved) { out.refused.push({ index: i, reason: res.reason }); continue; }
         if (res.resolved.string === n.string && res.resolved.fret === n.fret) {
-            strOf.set(i, n.string);
             continue;   // already where the resolver wants it
         }
         out.moves.push({
@@ -98,6 +107,7 @@ export function _resolveWindowPure(nn, win, anchors, ctx, isSuggestedFn) {
             newString: res.resolved.string, newFret: res.resolved.fret,
         });
         strOf.set(i, res.resolved.string);
+        fretOf.set(i, res.resolved.fret);
     }
     return out;
 }
@@ -208,7 +218,8 @@ export function editorResolveAnchorWindow(anchor) {
         capo: Number(arr.capo) || 0,
         prevFretAt: (t, exceptIdx) => {
             const p = _prevNoteBefore(arr, t, exceptIdx);
-            return p && Number.isFinite(p.fret) ? p.fret : null;
+            if (!p || !Number.isFinite(p.fret)) return null;
+            return { idx: arr.notes.indexOf(p), fret: p.fret };
         },
     };
     const nn = notes();
@@ -239,6 +250,8 @@ export function initAnchorResolve() {
     // teardown-registered.
     host.addGlobalListener(document, 'keydown', (e) => {
         if (!sweep) return;
+        // Modifier chords pass through untouched — Ctrl/Cmd+A stays select-all.
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
         const k = e.key;
         if (k === 'Enter') { e.preventDefault(); e.stopPropagation(); sweepAccept(); }
         else if (k === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); sweepStep('next'); }
