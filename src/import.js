@@ -20,8 +20,8 @@ import { host } from './host.js';
 // ════════════════════════════════════════════════════════════════════
 
 let _addKeysSourcePath = null;       // server-side path to the uploaded file
-let _addKeysSourceFormat = null;     // 'gp' or 'midi'
-// Cached after a successful list-tracks call; the keys-track radio value
+let _addKeysSourceFormat = null;     // 'gp', 'midi', or 'musicxml'
+// Cached after a successful list-tracks call; each keys-track checkbox value
 // is an index into this array, not the track's MIDI/GP index, because
 // format-0 channel splits can yield multiple picker entries sharing the
 // same MIDI `index`.
