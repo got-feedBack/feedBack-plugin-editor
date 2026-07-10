@@ -114,6 +114,18 @@ export const host = {
      */
     finalizeActiveDrag: () => {},
 
+    // ── Rendering and scroll, for src/audio.js ────────────────────────
+    /** Force an immediate synchronous repaint (draw() is rAF-coalesced). */
+    drawNow: () => {},
+    /** Clamp a scrollX to the song bounds. */
+    editorClampScrollX: (x) => x,
+    /** Re-apply scroll bounds after the viewport or duration changed. */
+    editorApplyScrollBounds: () => {},
+    /** The A/B loop region currently selected, or null. */
+    selectedLoopRegion: () => null,
+    /** Enable/disable looping over the selected region. */
+    setLoopRegionEnabled: () => {},
+
     // ── Dialogs and canvas geometry, for src/inspector.js ────────────
     /** Open the bend-curve editor for a note. Async: resolves when it closes. */
     promptBend: async () => {},

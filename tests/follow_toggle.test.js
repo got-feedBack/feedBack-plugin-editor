@@ -13,12 +13,13 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:follow-scroll:start \*\/[\s\S]*?\/\* @pure:follow-scroll:end \*\//);
-if (!m) {
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'audio.js'), 'utf8');
+const _m0 = src.match(/\/\* @pure:follow-scroll:start \*\/[\s\S]*?\/\* @pure:follow-scroll:end \*\//);
+if (!_m0) {
     console.error('FAIL: @pure:follow-scroll block not found in src/main.js');
     process.exit(1);
 }
+const m = [_m0[0].replace(/^export\s+/gm, '')];
 const { _followScrollTargetPure } = new Function(
     '"use strict";' + m[0] + '\nreturn { _followScrollTargetPure };'
 )();

@@ -122,22 +122,23 @@ function runTeardown(over) {
     const state = Object.assign({
         _globalListeners: { removeAll() {} },
         S: {},
-        rafId: null,
         _editorScreenObs: null,
         _v3TopbarWatch: null,
         _v3LayoutObs: null,
         _bootPollInterval: null,
-        cancelAnimationFrame: () => {},
         clearInterval: (id) => { cleared.push(id); },
+        // playback + rAF teardown moved to src/audio.js; the closure delegates to
+        // it now. Its own effects are covered by the audio suite.
+        teardownAudio: () => {},
     }, over);
     const fn = new Function(
-        '_globalListeners', 'S', 'rafId', '_editorScreenObs', '_v3TopbarWatch',
-        '_v3LayoutObs', '_bootPollInterval', 'cancelAnimationFrame', 'clearInterval',
+        '_globalListeners', 'S', '_editorScreenObs', '_v3TopbarWatch',
+        '_v3LayoutObs', '_bootPollInterval', 'clearInterval', 'teardownAudio',
         tm[1] + '\nreturn { _v3LayoutObs, _bootPollInterval };'
     );
-    const out = fn(state._globalListeners, state.S, state.rafId, state._editorScreenObs,
+    const out = fn(state._globalListeners, state.S, state._editorScreenObs,
         state._v3TopbarWatch, state._v3LayoutObs, state._bootPollInterval,
-        state.cancelAnimationFrame, state.clearInterval);
+        state.clearInterval, state.teardownAudio);
     return { out, cleared };
 }
 

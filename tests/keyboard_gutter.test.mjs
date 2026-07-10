@@ -12,7 +12,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import { _inKeyboardGutterPure, midiToFreq } from '../src/keys.js';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../src/audio.js', import.meta.url), 'utf8');
 
 function extractFn(name) {
     const start = src.indexOf('function ' + name);
@@ -21,7 +21,7 @@ function extractFn(name) {
     let depth = 0;
     for (let i = open; i < src.length; i++) {
         if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1).replace(/^export\s+/gm, '');
     }
     throw new Error('unbalanced braces extracting ' + name);
 }

@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The screen teardown left the guide/metronome timer running.** The audio
+  extraction (below) surfaced it: the old inline teardown cancelled the audio
+  source and the rAF frame but not the `setInterval` that schedules guide claps,
+  and that timer is module-scope, so it kept firing after a re-injected editor
+  screen replaced the old one. `teardownAudio()` now stops it. Latent since the
+  timer was introduced; found by Codex on review.
+
 ### Changed
+
+- **The audio subsystem now lives in `src/audio.js` (R2, step 27).** 1,039 lines:
+  the playback engine, the waveform, the onset strip, follow-scroll, and the
+  WebAudio graph, plus the guide claps, the metronome, the A/B reference loop,
+  the per-bus mixer and the edit blip. `src/main.js` is down to 7,715 — **64%**
+  below where this refactor started.
+  It owns the rAF loop (`rafId`) and exports `teardownAudio()`. Five main.js
+  symbols arrive as host hooks (`draw`/`drawNow`, the scroll-bounds math, the A/B
+  loop-region selection). The eight `window.editor*` toolbar handlers are exported
+  and re-attached; the import-time button seeding became `initAudio()`.
+
 
 - **The canvas context menu now lives in `src/context-menu.js` (R2, step 25).**
   362 lines: the right-click menu and the prompt dialogs it opens (fret, bend,
