@@ -13,10 +13,10 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'parts-view.js'), 'utf8');
 const m = src.match(/\/\* @pure:parts-view:start \*\/[\s\S]*?\/\* @pure:parts-view:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:parts-view block not found in src/main.js');
+    console.error('FAIL: @pure:parts-view block not found in src/parts-view.js');
     process.exit(1);
 }
 const api = new Function(
