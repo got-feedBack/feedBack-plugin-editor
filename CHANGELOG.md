@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Transport control bar + dual-domain LCD (workspace-shell B2).** One
+  always-present bar directly above the timeline: go-to-start · rewind-a-bar ·
+  stop · play/pause · forward-a-bar · record, plus an LCD that shows
+  **Position (bars:beats:ticks) and Time (m:ss.mmm) together** — both computed
+  through the `beatOf`/`timeOf` tempo-map converter, with a `▸` toggle for
+  which is primary — and Tempo · Meter · Key · Sel · a mode badge. The LCD
+  skin ports Virtuoso's recessed-panel grammar (`.editor-lcd-*`); the commit
+  wiring is the editor's own: Position/Time edits seek, the Key selects write
+  through to the Key controls, and the **Tempo cell is an input only in free
+  (no-audio) mode** — with a recording the grid is fitted to the audio, so
+  Tempo becomes a derived readout wearing the AUDIO badge and BPM editing
+  stays with the Tempo Map/Sync tools. Left/right utility groups (Parts ·
+  Mix · Follow / Click · Clap · A/B · Snap) mirror the existing toolbar
+  commands; `▾` or right-click opens Customize Control Bar (show/hide groups
+  and cells, persisted as an editor pref, never in the pack). Typing in an
+  LCD cell never reaches the canvas shortcut layer; Enter applies, Escape
+  reverts. LCD refreshes ride the transport tick, skip-if-unchanged — zero
+  per-frame draw cost. No master-mute (mute/solo stay per-track, §2.6); no
+  Count-in cell yet (the editor has no count-in feature to write through to).
+  `src/transport-bar.js` + `tests/transport_lcd.test.mjs` (12).
+
 ### Fixed
 
 - **The screen teardown left the guide/metronome timer running.** The audio
