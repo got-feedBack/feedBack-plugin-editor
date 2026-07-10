@@ -21,7 +21,7 @@ const assert = require('assert');
 
 // @pure:onset-snap moved to src/audio.js; snapTime is still in src/main.js.
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'audio.js'), 'utf8');
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'loop.js'), 'utf8');
 
 const _m0 = src.match(/\/\* @pure:onset-snap:start \*\/[\s\S]*?\/\* @pure:onset-snap:end \*\//);
 if (!_m0) {

@@ -17,7 +17,7 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../src/loop.js', import.meta.url), 'utf8');
 // The two loop pures moved to src/transport.js (#178). The rest of this file's
 // sliced @pure:loop-region block still calls them by name, so prepend their real
 // source to the slice — same scope, same behaviour, no re-implementation.
@@ -45,12 +45,12 @@ function extract(name) {
         '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
     const m = src.match(re);
     if (!m) { console.error(`FAIL: @pure:${name} block missing`); process.exit(1); }
-    return m[0];
+    return m[0].replace(/^export\s+/gm, '');
 }
 function fn(name) {
-    const m = src.match(new RegExp('function ' + name + '\\([\\s\\S]*?\\n\\}'));
+    const m = src.match(new RegExp('(?:export )?function ' + name + '\\([\\s\\S]*?\\n\\}'));
     if (!m) { console.error(`FAIL: function ${name} not found`); process.exit(1); }
-    return m[0];
+    return m[0].replace(/^export\s+/gm, '');
 }
 
 const region = extract('loop-region');
@@ -66,23 +66,28 @@ const DUR = 10;
 function build({ barSel, pref = 'bar', snapEnabled = false, snapIdx = 1,
                  downbeats = DOWNBEATS, snapStep = 0.5, duration = DUR }) {
     const S = { barSel, beats: [], duration, snapEnabled, snapIdx };
+    // _loopNudgeEdge reaches main.js through `host` now (seek, snap step, the
+    // Loop-in-3D refresh, draw). Snap step comes from host.editorSnapStepSeconds.
+    const host = {
+        editorSnapStepSeconds: () => snapStep,
+        editorSeekToTime: () => {}, updateLoopIn3DBtn: () => {}, draw: () => {},
+    };
     const factory = new Function(
-        'S', '_downbeatTimes', '_loopSnapModePref', '_editorSnapStepSeconds',
+        'S', 'host', '_downbeatTimes', '_loopSnapModePref',
         'snapTime', 'SNAP_VALUES', '_editorEffectiveSnapValuePure',
-        '_updateLoopIn3DBtn', '_renderLoopStrip', 'draw', '_setBarSel',
+        '_renderLoopStrip', '_setBarSel',
         '"use strict";'
         + _loopPuresSrc() + region + '\n' + nudgePure + '\n' + liveModeSrc + '\n' + nudgeSrc
         + '\nreturn _loopNudgeEdge;'
     );
     const nudge = factory(
-        S,
+        S, host,
         () => downbeats,          // _downbeatTimes
         pref,                     // _loopSnapModePref
-        () => snapStep,           // _editorSnapStepSeconds
         (t) => t,                 // snapTime (identity)
         SNAP_VALUES,
         (en, v) => (en ? v : 0),  // _editorEffectiveSnapValuePure
-        () => {}, () => {}, () => {},
+        () => {},                 // _renderLoopStrip
         (r) => { S.barSel = r; return r; }   // _setBarSel: assign (β-sync isn't under test here)
     );
     return { S, nudge };

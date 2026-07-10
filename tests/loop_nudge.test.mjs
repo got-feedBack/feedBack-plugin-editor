@@ -12,7 +12,7 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../src/loop.js', import.meta.url), 'utf8');
 // The two loop pures moved to src/transport.js (#178). The rest of this file's
 // sliced @pure:loop-region block still calls them by name, so prepend their real
 // source to the slice — same scope, same behaviour, no re-implementation.
@@ -40,7 +40,7 @@ function extract(name) {
         '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
     const m = src.match(re);
     if (!m) { console.error(`FAIL: @pure:${name} block missing`); process.exit(1); }
-    return m[0];
+    return m[0].replace(/^export\s+/gm, '');
 }
 
 const api = new Function(

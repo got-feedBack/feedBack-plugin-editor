@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The loop region, bar selection and scroll viewport moved to `src/loop.js`
+  (R2, step 28).** 528 lines: the A/B loop strip and its drag/nudge/keyboard
+  handling, bar-range selection, the scroll-bounds math, and `snapTime` — the one
+  place a raw time becomes a snapped one, which every timeline placement goes
+  through. `src/main.js` is down to 7,183 — **66%** below where it started.
+  Three main.js symbols arrive as host hooks (seek, snap step, Loop-in-3D
+  refresh); the loop-region and scroll functions and `snapTime` are themselves
+  host hooks now resolving here. Also removes a leftover dead `_guideTimerSync`
+  import in main.js from the audio step.
+
+
 - **The audio subsystem now lives in `src/audio.js` (R2, step 27).** 1,039 lines:
   the playback engine, the waveform, the onset strip, follow-scroll, and the
   WebAudio graph, plus the guide claps, the metronome, the A/B reference loop,

@@ -31,7 +31,8 @@ import { setHostHooks } from '../src/host.js';
 import { S as realS } from '../src/state.js';
 import { TempoGridCmd } from '../src/tempo.js';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+// The loop-beats helpers moved to src/loop.js; slice them from there.
+const src = fs.readFileSync(new URL('../src/loop.js', import.meta.url), 'utf8');
 
 function extractFn(name) {
     const start = src.indexOf('function ' + name + '(');

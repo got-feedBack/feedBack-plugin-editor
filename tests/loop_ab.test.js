@@ -15,7 +15,7 @@ const assert = require('assert');
 const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'audio.js'), 'utf8');
 // _setLoopRegionEnabled stayed in main.js (it drives the loop-region UI, not the
 // audio engine); slice it from there when a case needs the real disarm path.
-const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const loopSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'loop.js'), 'utf8');
 const _m0 = src.match(/\/\* @pure:loop-ab:start \*\/[\s\S]*?\/\* @pure:loop-ab:end \*\//);
 if (!_m0) {
     console.error('FAIL: @pure:loop-ab block not found in src/main.js');
@@ -154,9 +154,9 @@ function buildAB(opts) {
     // drives the true loop-disarm path (for the "restore ref on disable" test).
     let loopArm = '';
     if (opts.withLoopArm) {
-        const mm = mainSrc.match(/function _setLoopRegionEnabled\(enabled\) \{[\s\S]*?\n\}/);
+        const mm = loopSrc.match(/(?:export )?function _setLoopRegionEnabled\(enabled\) \{[\s\S]*?\n\}/);
         if (!mm) { console.error('FAIL: _setLoopRegionEnabled not found'); process.exit(1); }
-        loopArm = '\n' + mm[0];
+        loopArm = '\n' + mm[0].replace(/^export\s+/gm, '');
     }
     // The A/B runtime reaches main.js through `host` now; map its two methods to
     // the same spies the injected params used to be.
