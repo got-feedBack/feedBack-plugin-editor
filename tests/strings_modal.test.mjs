@@ -22,14 +22,14 @@ import { seedState, trackHooks } from './_history_env.mjs';
 import fs from 'node:fs';
 import { _stringCountFor } from '../src/lanes.js';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../src/strings.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const re = new RegExp(
         '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
     const m = src.match(re);
     if (!m) {
-        console.error(`FAIL: @pure:${name} block not found in src/main.js`);
+        console.error(`FAIL: @pure:${name} block not found in src/strings.js`);
         process.exit(1);
     }
     return m[0];
@@ -46,11 +46,12 @@ function extractFn(name) {
     }
     throw new Error(`unbalanced braces extracting ${name}`);
 }
-// Extract a `window.<name> = (…) => { … };` arrow assignment whole.
+// Extract an `export const <name> = (…) => { … };` arrow assignment whole, with
+// the `export ` stripped so it drops into a `new Function` body as a plain const.
 function extractWindowFn(name) {
-    const marker = 'window.' + name + ' = ';
+    const marker = 'export const ' + name + ' = ';
     const start = src.indexOf(marker);
-    assert.ok(start >= 0, `window.${name} must exist`);
+    assert.ok(start >= 0, `export const ${name} must exist`);
     const open = src.indexOf('{', start);
     let depth = 0;
     for (let i = open; i < src.length; i++) {
@@ -58,10 +59,10 @@ function extractWindowFn(name) {
         else if (src[i] === '}' && --depth === 0) {
             let end = i + 1;
             if (src[end] === ';') end++;
-            return src.slice(start, end);
+            return src.slice(start, end).replace(/^export /, '');
         }
     }
-    throw new Error(`unbalanced braces extracting window.${name}`);
+    throw new Error(`unbalanced braces extracting ${name}`);
 }
 
 const tuningBlock = extractBlock('string-tuning');
@@ -76,19 +77,20 @@ const removeStringHandlerSrc = extractWindowFn('editorRemoveString');
 // the pitch/label model can't represent.
 function makeHandlerEnv(seed) {
     const S = seedState(seed);
+    // editorAddString / editorRemoveString reach draw / updateStatus through host
+    // now (they moved to src/strings.js), so inject a host stub for those two.
     const env = new Function(
-        'window', 'S', 'draw', 'updateStatus', '_renderStringsModal', '_stringCountFor',
+        'window', 'S', 'host', '_renderStringsModal', '_stringCountFor',
         'AddStringCmd', 'RemoveStringCmd',
         '"use strict";'
         + tuningBlock + '\n' + notesOnStringSrc + '\n'
         + addStringHandlerSrc + '\n' + removeStringHandlerSrc + '\n'
-        + 'return { window, _stringCountFor, _addPositionPure,'
-        + ' _removePositionPure };'
+        + 'return { editorAddString, editorRemoveString, _stringCountFor,'
+        + ' _addPositionPure, _removePositionPure };'
     )(
-        {},                       // window
+        {},                       // window (unused by the arrow bodies)
         S,
-        () => {},                 // draw
-        () => {},                 // updateStatus
+        { draw: () => {}, updateStatus: () => {} },   // host
         () => {},                 // _renderStringsModal (DOM-free)
         _stringCountFor,          // the REAL one, imported from src/lanes.js
         AddStringCmd, RemoveStringCmd,
@@ -283,7 +285,7 @@ function guitar6(notesArr) {
 t('REGRESSION: guitar high-add is refused (no phantom 7th / relabelled notes)', () => {
     const S = guitar6([{ time: 1, string: 2, fret: 3 }]);
     const env = makeHandlerEnv(S);
-    env.window.editorAddString('high');            // guitar has no valid high end
+    env.editorAddString('high');            // guitar has no valid high end
     const arr = S.arrangements[0];
     assert.strictEqual(arr.tuning.length, 6, 'string count unchanged');
     assert.strictEqual(env._stringCountFor(arr), 6);
@@ -295,7 +297,7 @@ t('REGRESSION: guitar remove-low from 6 is refused (no silent note shift)', () =
     // the remove — shifting every note down a lane while the count stayed 6.
     const S = guitar6([{ time: 1, string: 3, fret: 5 }]);
     const env = makeHandlerEnv(S);
-    env.window.editorRemoveString('low');
+    env.editorRemoveString('low');
     const arr = S.arrangements[0];
     assert.strictEqual(arr.tuning.length, 6, 'string count unchanged');
     assert.strictEqual(arr.notes[0].string, 3, 'note index untouched');
@@ -314,7 +316,7 @@ t('REGRESSION: guitar remove-high from a 7-string is refused (Codex #2)', () => 
     };
     const env = makeHandlerEnv(S);
     assert.strictEqual(env._stringCountFor(S.arrangements[0]), 7);
-    env.window.editorRemoveString('high');
+    env.editorRemoveString('high');
     const arr = S.arrangements[0];
     assert.strictEqual(arr.tuning.length, 7, 'string count unchanged');
     assert.strictEqual(arr.notes[0].string, 1, 'note index untouched');
@@ -330,7 +332,7 @@ t('REGRESSION: bass high-add at 4 strings is refused (5th must be low B)', () =>
         }],
     };
     const env = makeHandlerEnv(S);
-    env.window.editorAddString('high');            // 4-string bass grows low, not high
+    env.editorAddString('high');            // 4-string bass grows low, not high
     const arr = S.arrangements[0];
     assert.strictEqual(arr.tuning.length, 4, 'string count unchanged');
     assert.strictEqual(arr.notes[0].string, 3, 'note index untouched');
@@ -339,7 +341,7 @@ t('REGRESSION: bass high-add at 4 strings is refused (5th must be low B)', () =>
 t('model-valid ops still work: guitar low-add (6→7) shifts notes up', () => {
     const S = guitar6([{ time: 1, string: 2, fret: 3 }]);
     const env = makeHandlerEnv(S);
-    env.window.editorAddString('low');
+    env.editorAddString('low');
     const arr = S.arrangements[0];
     assert.strictEqual(arr.tuning.length, 7);
     assert.strictEqual(arr.notes[0].string, 3, 'low add renumbers notes up one lane');
@@ -355,11 +357,11 @@ t('model-valid ops still work: bass low-add (4→5) then high-add (5→6 high C)
         }],
     };
     const env = makeHandlerEnv(S);
-    env.window.editorAddString('low');             // 4→5 low B
+    env.editorAddString('low');             // 4→5 low B
     let arr = S.arrangements[0];
     assert.strictEqual(arr.tuning.length, 5);
     assert.strictEqual(arr.notes[0].string, 2, 'notes shift up on the low add');
-    env.window.editorAddString('high');            // 5→6 high C, no renumber
+    env.editorAddString('high');            // 5→6 high C, no renumber
     arr = S.arrangements[0];
     assert.strictEqual(arr.tuning.length, 6);
     assert.strictEqual(arr.notes[0].string, 2, 'high-C add leaves note lanes alone');
@@ -376,7 +378,7 @@ t('remove refuses an end string that carries notes (notes guard intact)', () => 
         }],
     };
     const env = makeHandlerEnv(S);
-    env.window.editorRemoveString('low');
+    env.editorRemoveString('low');
     const arr = S.arrangements[0];
     assert.strictEqual(arr.tuning.length, 7, 'removal blocked while a note lives on the low string');
     assert.strictEqual(arr.notes[0].string, 0);
