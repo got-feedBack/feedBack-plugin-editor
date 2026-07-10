@@ -106,18 +106,25 @@ export function _lintOverlapPure(nn) {
     for (const list of byString.values()) {
         list.sort((a, b) => a.n.time - b.n.time);
         for (let k = 1; k < list.length; k++) {
-            const prev = list[k - 1], cur = list[k];
-            const prevEnd = prev.n.time + (Number(prev.n.sustain) || 0);
-            const overlap = prevEnd - cur.n.time;
-            const sameInstant = Math.abs(cur.n.time - prev.n.time) < LINT_CLUSTER_EPSILON;
-            if (overlap > LINT_OVERLAP_EPSILON || sameInstant) {
-                issues.push({
-                    rule: 'overlap', time: cur.n.time,
-                    indices: [prev.i, cur.i],
-                    detail: sameInstant
-                        ? `two notes on string ${cur.n.string} at one instant`
-                        : `string ${cur.n.string}: sustain overlaps the next note by ${overlap.toFixed(3)}s`,
-                });
+            const cur = list[k];
+            // Scan EVERY still-active predecessor, not just the immediate one:
+            // a long sustain (t=1..6) overlaps attacks at t=2 AND t=3, and the
+            // second conflict is just as real (CodeRabbit, #200).
+            for (let j = k - 1; j >= 0; j--) {
+                const prev = list[j];
+                const prevEnd = prev.n.time + (Number(prev.n.sustain) || 0);
+                const overlap = prevEnd - cur.n.time;
+                const sameInstant = j === k - 1
+                    && Math.abs(cur.n.time - prev.n.time) < LINT_CLUSTER_EPSILON;
+                if (overlap > LINT_OVERLAP_EPSILON || sameInstant) {
+                    issues.push({
+                        rule: 'overlap', time: cur.n.time,
+                        indices: [prev.i, cur.i],
+                        detail: sameInstant
+                            ? `two notes on string ${cur.n.string} at one instant`
+                            : `string ${cur.n.string}: sustain overlaps a later note by ${overlap.toFixed(3)}s`,
+                    });
+                }
             }
         }
     }
@@ -233,16 +240,25 @@ export function _lintChipRefresh() {
     if (chip.classList.contains('hidden') !== !show) chip.classList.toggle('hidden', !show);
     const label = `⚠ ${issues.length}`;
     if (show && chip.textContent !== label) chip.textContent = label;
+    const pop = document.getElementById('editor-lint-pop');
     if (!show) {
-        const pop = document.getElementById('editor-lint-pop');
         if (pop) pop.classList.add('hidden');
+        if (chip.getAttribute('aria-expanded') !== 'false') chip.setAttribute('aria-expanded', 'false');
+    } else if (pop && !pop.classList.contains('hidden')
+        && (issues.length !== _popIssues.length || issues.some((iss, k) => iss !== _popIssues[k]))) {
+        renderPopover();   // the lint moved under an open popover — keep rows honest
     }
 }
 
+// The popover renders from a SNAPSHOT: rows bind to these entries, never to
+// indices into fresh lint results (an edit while it is open would silently
+// remap clicks). The chip refresh re-renders an open popover on change.
+let _popIssues = [];
 function renderPopover() {
     const pop = document.getElementById('editor-lint-pop');
     if (!pop) return;
     const { issues } = _lintResults();
+    _popIssues = issues.slice();
     pop.innerHTML = `<div class="editor-lint-head">Playability — advisory, never blocking</div>`
         + issues.map((iss, k) =>
             `<button class="editor-lint-row" data-issue="${k}">`
@@ -252,10 +268,20 @@ function renderPopover() {
 
 export function editorToggleLintPopover() {
     const pop = document.getElementById('editor-lint-pop');
+    const chip = document.getElementById('editor-lint-chip');
     if (!pop) return;
     const show = pop.classList.contains('hidden');
     if (show) renderPopover();
     pop.classList.toggle('hidden', !show);
+    if (chip) chip.setAttribute('aria-expanded', show ? 'true' : 'false');
+    // Focus round-trip: opening lands on the first issue row, closing
+    // returns to the chip — keyboard/screen-reader users stay oriented.
+    if (show) {
+        const first = pop.querySelector('.editor-lint-row');
+        if (first) first.focus();
+    } else if (chip) {
+        chip.focus();
+    }
 }
 
 export function initPlayabilityLint() {
@@ -264,7 +290,7 @@ export function initPlayabilityLint() {
         pop.addEventListener('click', (e) => {
             const row = e.target instanceof Element ? e.target.closest('.editor-lint-row') : null;
             if (!row) return;
-            const iss = _lintResults().issues[Number(row.dataset.issue)];
+            const iss = _popIssues[Number(row.dataset.issue)];
             if (!iss) return;
             // Seek + select the flagged notes — the fix is the charter's call.
             S.sel = new Set(iss.indices);
@@ -272,6 +298,14 @@ export function initPlayabilityLint() {
             host.updateStatus();
             host.draw();
             pop.classList.add('hidden');
+        });
+    }
+    // Escape closes and returns focus to the chip (keyboard round-trip).
+    if (pop) {
+        pop.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            e.stopPropagation();
+            editorToggleLintPopover();
         });
     }
     // Click-away for the popover — teardown-registered.

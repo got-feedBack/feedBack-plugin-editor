@@ -17,13 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   overlapping in time, sustain-aware), **open-string bend** (needs a
   bender — worth a look) with an out-of-range-fret **data-bug catcher**,
   and **legato jump** (an HO/PO arrival or pitched-slide reach spanning
-  more than the anchor window). Flagged notes wear a yellow underline in
+  more than the anchor window). Flagged notes wear an amber underline in
   both String view and the roll; a count chip appears by the note-count
   readout; its popover lists every issue and clicking one seeks and
   selects the notes. Never blocks, never auto-fixes (the drum limb-lint
   posture): guitar has real outliers, so the lint names the physical
-  question and the charter answers it. Thresholds are named constants,
-  tuning invited. Note: the prompt's "open-string pitch vs tuning" check
+  question and the author decides. Thresholds are named constants,
+  tuning invited. Note: the planned "open-string pitch vs tuning" check
   has no independent pitch field to cross-check (pitch is always derived
   from string+fret), so it ships as the open-bend + bad-fret pair.
   `src/playability-lint.js` + `tests/playability_lint.test.mjs` (9).

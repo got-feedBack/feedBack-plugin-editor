@@ -149,7 +149,7 @@
     <div class="flex-1 flex overflow-hidden">
         <div id="editor-canvas-wrap" class="flex-1 relative overflow-hidden bg-dark-900">
             <!-- Playability-lint popover (P9) — anchored bottom-right of the timeline. -->
-            <div id="editor-lint-pop" class="hidden absolute right-3 bottom-2 z-30 editor-lint-pop"></div>
+            <div id="editor-lint-pop" role="dialog" aria-label="Playability notes" class="hidden absolute right-3 bottom-2 z-30 editor-lint-pop"></div>
             <div id="editor-loop-strip" class="absolute top-2 left-[52px] right-3 z-20 h-8 select-none">
                 <div id="editor-loop-strip-track" class="relative h-full rounded-md border border-gray-700/80 bg-dark-800/85 backdrop-blur-sm">
                     <div id="editor-loop-strip-empty" class="absolute inset-0 flex items-center px-3 text-[10px] uppercase tracking-wide text-gray-500">Loop region</div>
@@ -247,7 +247,7 @@
     <div class="flex items-center gap-4 px-4 py-1 bg-dark-800 border-t border-gray-800 shrink-0">
         <span id="editor-status" class="text-xs text-gray-500">Ready</span>
         <div class="flex-1"></div>
-        <button id="editor-lint-chip" onclick="editorToggleLintPopover()" class="hidden px-1.5 rounded text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-400/30 hover:bg-amber-500/25" title="Playability notes for this part — advisory only, never blocking. Click to review; each row seeks and selects."></button>
+        <button id="editor-lint-chip" onclick="editorToggleLintPopover()" aria-controls="editor-lint-pop" aria-expanded="false" class="hidden px-1.5 rounded text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-400/30 hover:bg-amber-500/25" title="Playability notes for this part — advisory only, never blocking. Click to review; each row seeks and selects."></button>
         <span id="editor-note-count" class="text-xs text-gray-600"></span>
         <span class="text-xs text-gray-600">Scroll: zoom | Middle-drag: pan | Dbl-click: add note | Del: delete | Select notes or drag the ⇆ bars strip → ▶ Loop in 3D</span>
     </div>

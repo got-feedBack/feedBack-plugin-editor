@@ -59,6 +59,11 @@ t('overlap: sustain-aware, same-instant, and the clean case', () => {
     assert.strictEqual(_lintOverlapPure([N(1, 2, 5), N(1.005, 2, 7)]).length, 1);
     // Different strings, or a sustain that ends first: clean.
     assert.strictEqual(_lintOverlapPure([N(1, 2, 5, 0.3), N(1.5, 2, 7)]).length, 0);
+    // A LONG sustain smothers several later notes — every conflict is named,
+    // not just the adjacent pair (the first cut only compared neighbours).
+    const smother = _lintOverlapPure([N(1, 2, 5, 5.0), N(2, 2, 7), N(3, 2, 9)]);
+    assert.strictEqual(smother.length, 2, 'both later attacks conflict with the long sustain');
+    assert.deepStrictEqual(smother.map((i) => i.indices), [[0, 1], [0, 2]]);
     assert.strictEqual(_lintOverlapPure([N(1, 2, 5, 1.0), N(1.5, 3, 7)]).length, 0);
 });
 
