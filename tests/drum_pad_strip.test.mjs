@@ -18,7 +18,7 @@ globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setI
 globalThis.window = globalThis.window || globalThis;
 
 const {
-    GM_DRUM_MAP, _padLitPiecesPure, _padModelPure, _padNoteOnPure,
+    GM_DRUM_MAP, KIT_VIEW_ROWS, _padLitPiecesPure, _padModelPure, _padNoteOnPure,
 } = await import('../src/drum-pad-strip.js');
 const { AddDrumHitCmd, DRUM_COMPACT_LANES, DRUM_PIECE_ORDER } = await import('../src/drum.js');
 const { EditHistory } = await import('../src/history.js');
@@ -45,6 +45,14 @@ t('GM map: canonical assignments, every target is a real chart piece', () => {
         assert.ok(pieces.has(piece), `GM ${note} → ${piece} is not a chart piece`);
     }
     assert.strictEqual(GM_DRUM_MAP[39], undefined, 'hand clap has no chart piece — unmapped, never wrong');
+});
+
+t('kit view: every chart piece exactly once across the three kit rows', () => {
+    const laid = KIT_VIEW_ROWS.flat().map((c) => c.piece);
+    assert.strictEqual(laid.length, new Set(laid).size, 'no piece appears twice');
+    assert.deepStrictEqual([...laid].sort(), [...DRUM_PIECE_ORDER].sort(),
+        'the layout and the chart piece set are the same kit');
+    assert.strictEqual(KIT_VIEW_ROWS.length, 3, 'cymbals / hats+toms / feet+snare');
 });
 
 t('pad model: the whole kit exactly once, grouped by family', () => {

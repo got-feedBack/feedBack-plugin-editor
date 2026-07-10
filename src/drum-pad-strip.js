@@ -16,6 +16,12 @@
  *                before recording. Mapping is read-only here; per-kit custom
  *                maps are a follow-up.
  *
+ * LAYOUT (product owner, 2026-07-10): a performance-style KIT VIEW, not a
+ * flat row — pads arranged the way the kit faces the player (cymbal arc on
+ * top, hats left / tom arc in the middle, feet + snare at the bottom with a
+ * wide kick), occupying the SAME companion slot as the fretboard strip, so
+ * fretted parts get a neck and drum parts get a kit in one consistent place.
+ *
  * Pads are DOM buttons (accessibility + CSS flash for free), never canvas —
  * this sidecar renders a fixed ~18 elements and repaints nothing per frame.
  * Shown only in drum edit mode; the toggle persists as an editor pref.
@@ -88,6 +94,28 @@ export function _padModelPure(pieceOrder, compactLanes, gmMap) {
     }));
 }
 
+// The kit-view layout: pads arranged like a kit from the player's seat —
+// cymbal arc on top, hi-hats left of the tom arc in the middle, feet and
+// snare at the bottom (kick wide, it's the biggest target on a real kit and
+// the busiest piece in a chart). Every piece appears exactly once; `wide`
+// pads span two cells. Pure data so the coverage test can pin it against
+// DRUM_PIECE_ORDER.
+export const KIT_VIEW_ROWS = Object.freeze([
+    Object.freeze([
+        { piece: 'splash' }, { piece: 'crash_l' }, { piece: 'china' },
+        { piece: 'stack' }, { piece: 'crash_r' },
+        { piece: 'ride' }, { piece: 'ride_bell' }, { piece: 'bell' },
+    ]),
+    Object.freeze([
+        { piece: 'hh_open' }, { piece: 'hh_closed' },
+        { piece: 'tom_hi' }, { piece: 'tom_mid' }, { piece: 'tom_low' }, { piece: 'tom_floor' },
+    ]),
+    Object.freeze([
+        { piece: 'hh_pedal' }, { piece: 'snare_xstick' }, { piece: 'snare', wide: true },
+        { piece: 'kick', wide: true },
+    ]),
+]);
+
 // Which pads a selection lights: the distinct piece-ids of the selected hits.
 export function _padLitPiecesPure(hits, selIdxs) {
     const out = new Set();
@@ -123,21 +151,19 @@ export function drumPadStripEnabled() {
 function buildPads() {
     const wrap = $pads();
     if (!wrap) return;
-    const model = _padModelPure(DRUM_PIECE_ORDER, DRUM_COMPACT_LANES, GM_DRUM_MAP);
-    let lastFamily = null;
-    const parts = [];
-    for (const pad of model) {
-        if (pad.family !== lastFamily) {
-            if (lastFamily !== null) parts.push('<span class="editor-drumpad-sep"></span>');
-            lastFamily = pad.family;
-        }
-        const gm = pad.gmNotes.length ? ` — GM ${pad.gmNotes.join('/')}` : ' — no GM note';
-        parts.push(
-            `<button class="editor-drumpad" data-piece="${pad.piece}"`
-            + ` title="${pad.family}: ${pad.piece}${gm}. Click to add a hit at the cursor.">`
-            + `${PAD_LABELS[pad.piece] || pad.piece}</button>`);
-    }
-    wrap.innerHTML = parts.join('');
+    const meta = new Map(
+        _padModelPure(DRUM_PIECE_ORDER, DRUM_COMPACT_LANES, GM_DRUM_MAP).map((m) => [m.piece, m]));
+    const rows = KIT_VIEW_ROWS.map((row) => {
+        const cells = row.map((cell) => {
+            const m = meta.get(cell.piece) || { family: '', gmNotes: [] };
+            const gm = m.gmNotes.length ? ` — GM ${m.gmNotes.join('/')}` : ' — no GM note';
+            return `<button class="editor-drumpad${cell.wide ? ' is-wide' : ''}" data-piece="${cell.piece}"`
+                + ` title="${m.family}: ${cell.piece}${gm}. Click to add a hit at the cursor.">`
+                + `${PAD_LABELS[cell.piece] || cell.piece}</button>`;
+        });
+        return `<div class="editor-drumpad-row">${cells.join('')}</div>`;
+    });
+    wrap.innerHTML = rows.join('');
 }
 
 function flashPad(piece) {

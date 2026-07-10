@@ -101,12 +101,17 @@
 /* Kit legend / cursor input / GM MIDI monitor (src/drum-pad-strip.js).
    Pads are buttons: lit = selection contains that piece; flash = a MIDI
    note-on (or a pad click) just landed on it. */
+#plugin-editor .editor-drumpad-row {
+    display: flex; justify-content: center; gap: 4px;
+}
 #plugin-editor .editor-drumpad {
-    min-width: 34px; padding: 4px 6px; border: 1px solid #334155; border-radius: 6px;
+    min-width: 52px; min-height: 26px; padding: 4px 8px;
+    border: 1px solid #334155; border-radius: 7px;
     background: #16223a; color: #94a3b8; cursor: pointer;
-    font-size: 10px; font-weight: 700; letter-spacing: .02em; line-height: 1.1;
+    font-size: 11px; font-weight: 700; letter-spacing: .02em; line-height: 1.1;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+#plugin-editor .editor-drumpad.is-wide { min-width: 112px; }
 #plugin-editor .editor-drumpad:hover { background: #24324a; color: #e2e8f0; }
 #plugin-editor .editor-drumpad.is-lit {
     background: #0ea5e9; border-color: #38bdf8; color: #f8fafc;
