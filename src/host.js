@@ -58,6 +58,8 @@ export const host = {
     renderInspector: () => {},
     /** Re-derive lane metrics after a string was added/removed, on the next frame. */
     resizeForLaneChange: () => {},
+    /** The session audio offset an import should shift its notes by (seconds). */
+    effectiveAudioOffset: () => 0,
     /** Ambiguous-pitch popover: let the user pick a string/fret for a roll add. */
     rollConfirmPosition: () => {},
 

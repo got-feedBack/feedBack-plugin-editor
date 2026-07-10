@@ -1,6 +1,6 @@
 /*
  * Unit tests for the "Import Guitar / Bass from GP" feature's pure helpers in
- * src/main.js:
+ * src/import.js:
  *   - _isGuitarBassTrack  — the track picker / backend-guard filter
  *   - _guitarImportName   — Add-case naming (bass MUST be /bass/i for 4 lanes,
  *                           keys/drums-named guitars renamed so they don't
@@ -11,7 +11,7 @@
  *     anchors/handshapes/_extendedStrings, round-trips exactly on undo).
  *
  * Extract-and-eval pattern (matches tests/bass_string_count.test.js): pull the
- * function source straight out of src/main.js so the test pins the shipping code.
+ * function source straight out of src/import.js so the test pins the shipping code.
  *
  * Run: node tests/import_guitar_track.test.mjs
  */
@@ -21,8 +21,8 @@ import { _restoreChartFields, _swapChartFields } from '../src/commands.js';
 
 // _swapChartFields / _restoreChartFields (and the _REPLACE_CHART_FIELDS table
 // they close over) are real imports now. The two import-side helpers still live
-// in src/main.js, so they are still brace-matched out of it.
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+// in src/import.js, so they are still brace-matched out of it.
+const src = fs.readFileSync(new URL('../src/import.js', import.meta.url), 'utf8');
 function extractFn(source, name) {
     const start = source.indexOf('function ' + name);
     assert.ok(start >= 0, 'function ' + name + ' not found');
