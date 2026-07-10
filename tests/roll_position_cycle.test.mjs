@@ -22,7 +22,7 @@ import {
     _cyclePositionCandidatesPure, _cycleStepPure,
 } from '../src/position.js';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../src/input.js', import.meta.url), 'utf8');
 
 function extractFn(name) {
     const start = src.indexOf('function ' + name);
@@ -45,7 +45,7 @@ function t(name, fn) {
 // ── Candidate enumeration ────────────────────────────────────────────
 
 // The cycle pures moved to src/position.js; _execCyclePosition (below) is still
-// sliced out of src/main.js.
+// sliced out of src/input.js.
 const P = { _cyclePositionCandidatesPure, _cycleStepPure, _soundingPitchPure };
 
 const STD = [40, 45, 50, 55, 59, 64];       // EADGBe standard
@@ -139,7 +139,7 @@ function makeCycleEnv({ arrName = 'Lead', noteSeed, sel, locked = true } = {}) {
     assert.strictEqual(_rollReadOnly(), locked, 'harness precondition: lock state');
     trackHooks();
     const statuses = statusMessages;   // live array of real setStatus() writes
-    // Everything the sandbox used to slice is a real import now; the two main.js
+    // Everything the sandbox used to slice is a real import now; the two input.js
     // callbacks it stubbed are host hooks.
     setHostHooks({ editorCurrentNoteIndices: () => (S.sel && S.sel.size ? [...S.sel] : []) });
     S.history = new EditHistory();

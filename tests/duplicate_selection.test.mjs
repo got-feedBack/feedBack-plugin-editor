@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import { EditHistory } from '../src/history.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../src/input.js', import.meta.url), 'utf8');
 function extract(name) {
     const re = new RegExp(
         '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
