@@ -12,12 +12,16 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-const m = src.match(/\/\* @pure:loop-ab:start \*\/[\s\S]*?\/\* @pure:loop-ab:end \*\//);
-if (!m) {
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'audio.js'), 'utf8');
+// _setLoopRegionEnabled stayed in main.js (it drives the loop-region UI, not the
+// audio engine); slice it from there when a case needs the real disarm path.
+const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const _m0 = src.match(/\/\* @pure:loop-ab:start \*\/[\s\S]*?\/\* @pure:loop-ab:end \*\//);
+if (!_m0) {
     console.error('FAIL: @pure:loop-ab block not found in src/main.js');
     process.exit(1);
 }
+const m = [_m0[0].replace(/^export\s+/gm, '')];
 const { _abClapsEnabledPure, _abNextPhasePure, _abRefTargetPure } = new Function(
     '"use strict";' + m[0]
     + '\nreturn { _abClapsEnabledPure, _abNextPhasePure, _abRefTargetPure };'
@@ -89,16 +93,16 @@ function extractBlock(name) {
         '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
     const mm = src.match(re);
     if (!mm) { console.error('FAIL: @pure:' + name + ' block not found'); process.exit(1); }
-    return mm[0];
+    return mm[0].replace(/^export\s+/gm, '');
 }
 // The loose A/B runtime (state + _abActive/_abApplyRefGain/_abOnLoopWrap/
 // _refreshLoopABBtn/_editorToggleLoopAB) is not a @pure block — slice it by
 // its stable endpoints.
 const abRuntime = (() => {
     const mm = src.match(
-        /let _abOn = false;[\s\S]*?window\.editorToggleLoopAB = _editorToggleLoopAB;/);
+        /let _abOn = false;[\s\S]*?\n\/\/ window\.editorToggleLoopAB re-attached in main\.js/);
     if (!mm) { console.error('FAIL: A/B runtime slice not found'); process.exit(1); }
-    return mm[0];
+    return mm[0].replace(/^export\s+/gm, '');
 })();
 
 function stubParam() {
@@ -150,12 +154,22 @@ function buildAB(opts) {
     // drives the true loop-disarm path (for the "restore ref on disable" test).
     let loopArm = '';
     if (opts.withLoopArm) {
-        const mm = src.match(/function _setLoopRegionEnabled\(enabled\) \{[\s\S]*?\n\}/);
+        const mm = mainSrc.match(/function _setLoopRegionEnabled\(enabled\) \{[\s\S]*?\n\}/);
         if (!mm) { console.error('FAIL: _setLoopRegionEnabled not found'); process.exit(1); }
         loopArm = '\n' + mm[0];
     }
+    // The A/B runtime reaches main.js through `host` now; map its two methods to
+    // the same spies the injected params used to be.
+    const host = {
+        selectedLoopRegion: () => region,
+        setLoopRegionEnabled: (enabled) => {
+            spies.setLoopRegionEnabled.push(enabled); S.loopEnabled = !!enabled;
+        },
+        draw: () => {}, drawNow: () => {}, updateTimeDisplay: () => {},
+        editorClampScrollX: (x) => x, editorApplyScrollBounds: () => {},
+    };
     const env = new Function(
-        'S', 'localStorage', 'document', 'window', '_guideVoices',
+        'S', 'localStorage', 'document', 'window', '_guideVoices', 'host',
         '_selectedLoopRegion', '_setLoopRegionEnabled', '_updateLoopRegionControls',
         '_guideTimerSync', 'setStatus', '_editorSeekToTime', 'draw',
         '"use strict";' + mixBlock + '\n' + busBlock + '\n' + abPure + '\n' + abRuntime + loopArm
@@ -164,7 +178,7 @@ function buildAB(opts) {
         + ' setPhase: (p) => { _abPhase = p; }, setOn: (v) => { _abOn = v; },'
         + ' getOn: () => _abOn, getPhase: () => _abPhase };'
     )(
-        S, stubLocalStorage(), doc, win, [],
+        S, stubLocalStorage(), doc, win, [], host,
         () => region,
         (enabled) => { spies.setLoopRegionEnabled.push(enabled); S.loopEnabled = !!enabled; },
         () => {},   // _updateLoopRegionControls (pre-fix arming path uses this)

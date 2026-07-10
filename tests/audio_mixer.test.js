@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'audio.js'), 'utf8');
 
 function extract(name) {
     const re = new RegExp(
@@ -25,7 +25,7 @@ function extract(name) {
         console.error(`FAIL: @pure:${name} block not found in src/main.js`);
         process.exit(1);
     }
-    return m[0];
+    return m[0].replace(/^export\s+/gm, '');
 }
 
 const mixBlock = extract('audio-mixer');

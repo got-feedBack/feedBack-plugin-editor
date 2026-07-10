@@ -32,7 +32,10 @@ import { _composeSongDurationPure, _transportChartTimePure } from '../src/transp
 import fs from 'node:fs';
 import { timeOf } from '../src/beats.js';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+// _composeSongDuration / _anchorTransportAtCursor / the guide-tick helpers moved
+// to src/audio.js; the pures (_transportChartTimePure, _composeSongDurationPure)
+// are real imports from src/transport.js.
+const src = fs.readFileSync(new URL('../src/audio.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const m = src.match(new RegExp('/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/'));
