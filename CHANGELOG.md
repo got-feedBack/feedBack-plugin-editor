@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The menu bar (workspace-shell B4).** Nine menus — File · Edit · Add ·
+  Note · Part · View · Transport · **Tempo/Grid** · Help — re-homing the
+  existing command registry, organized by musical object (Tempo/Grid is the
+  time-model pillar's own top-level home). A re-presentation, not a re-plumb:
+  registry items dispatch through the same switch the keyboard uses, and the
+  pre-registry file/panel actions call their existing entry points. Menu
+  accelerators **follow the active shortcut profile** (FeedBack ⇄ EOF Legacy —
+  dropdowns render at open time, so a swap relabels everything); planned
+  commands render greyed with a "soon" tag and never dispatch; sync-point
+  items grey outside Tempo Map mode; Sync-to-audio hides without a recording.
+  Click-open with arrow-key navigation and Enter/Escape (no Alt-mnemonics —
+  browsers own those). The document-level click-away listener rides the
+  teardown registry, so a re-injected screen can't stack copies.
+  `src/menu-bar.js` + `tests/menu_model.test.mjs` (10).
+
 ### Fixed
 
 - **The screen teardown left the guide/metronome timer running.** The audio
