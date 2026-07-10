@@ -412,6 +412,7 @@ function _buildSaveBody(forceFullSnapshot) {
     const savedArr = S.currentArr;
     if (S.format === 'sloppak' || forceFullSnapshot) {
         for (let i = 0; i < S.arrangements.length; i++) {
+            if (!S.arrangements[i]) continue;  // defensive: a hole must not abort the whole save
             S.currentArr = i;
             flattenChords();
             if (i !== savedArr) _restoreSuggestedMarks();
@@ -603,6 +604,7 @@ export const editorSaveAsSloppakConfirm = async () => {
         // `_extendedStrings` from the padded length and mis-detect a
         // 4-string bass as 6-string.
         for (const arr of S.arrangements) {
+            if (!arr) continue;  // defensive: a hole must not abort the archive save
             _normalizeTuningToLanes(arr, _stringCountFor(arr));
         }
         // `updateArrangementSelector` is what owns the + Keys / Strings /
