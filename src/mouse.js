@@ -431,7 +431,7 @@ function _onMouseMoveBody(e, x, y, L) {
 export function onMouseUp(e) {
     if (!S.drag) return;
     if (_loopStripOnMouseUp()) return;
-    const { x, y } = getMousePos(e);
+    const { y } = getMousePos(e);
 
     // Bar-range select finalise — refresh the Loop-in-3D button state.
     if (S.drag.type === 'barsel') {
