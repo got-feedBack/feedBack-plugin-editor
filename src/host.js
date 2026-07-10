@@ -74,8 +74,9 @@ export const host = {
     editorMovePart: () => {},
     editorToggleKeyHighlight: () => {},
     editorTogglePartsView: () => {},
-    /** Resolve the measure index at the current selection (tempo layer, main.js). */
-    tempoResolvedMeasureIdx: () => 0,
+    /** Resolve the measure index at the current selection (tempo layer, main.js).
+     *  -1 = none resolved, so the default is inert (callers apply only on >= 0). */
+    tempoResolvedMeasureIdx: () => -1,
     /** Ambiguous-pitch popover: let the user pick a string/fret for a roll add. */
     rollConfirmPosition: () => {},
 

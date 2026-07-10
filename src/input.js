@@ -931,13 +931,22 @@ function showSectionMenu(cx, cy, time) {
     const nearIdx = _sectionNearestIndexPure(S.sections, time, 1.0);
     const nearSection = nearIdx >= 0 ? S.sections[nearIdx] : null;
 
-    let html = '';
-    html += `<button class="w-full text-left px-3 py-1 text-xs hover:bg-dark-500" data-action="add">Add Section Here</button>`;
+    // Build the buttons as DOM nodes with textContent — the section name is
+    // user-authored (rename), so interpolating it into innerHTML would be a
+    // stored-XSS sink when the menu opens.
+    const mkBtn = (action, label, danger) => {
+        const btn = document.createElement('button');
+        btn.className = 'w-full text-left px-3 py-1 text-xs hover:bg-dark-500' + (danger ? ' text-red-400' : '');
+        btn.dataset.action = action;
+        btn.textContent = label;
+        return btn;
+    };
+    menu.innerHTML = '';
+    menu.appendChild(mkBtn('add', 'Add Section Here'));
     if (nearSection) {
-        html += `<button class="w-full text-left px-3 py-1 text-xs hover:bg-dark-500" data-action="rename">Rename "${nearSection.name}"</button>`;
-        html += `<button class="w-full text-left px-3 py-1 text-xs hover:bg-dark-500 text-red-400" data-action="delete">Delete "${nearSection.name}"</button>`;
+        menu.appendChild(mkBtn('rename', `Rename "${nearSection.name}"`));
+        menu.appendChild(mkBtn('delete', `Delete "${nearSection.name}"`, true));
     }
-    menu.innerHTML = html;
     menu.querySelectorAll('[data-action]').forEach(btn => {
         btn.onclick = async () => {
             hideContextMenu();
@@ -1148,7 +1157,7 @@ export function onKeyDown(e) {
         // selection from before mode entry; deleting those notes while the
         // user thinks they're editing drums would be surprising. Only run
         // the guitar/keys delete path when drum-edit mode is inactive.
-        if (!S.drumEditMode && S.sel.size && !e.target.matches('input, select, textarea')) {
+        if (!S.drumEditMode && !S.tempoMapMode && S.sel.size && !e.target.matches('input, select, textarea')) {
             e.preventDefault();
             S.history.exec(new DeleteNotesCmd([...S.sel]));
             host.draw();
