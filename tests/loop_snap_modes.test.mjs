@@ -44,7 +44,7 @@ function _loopPuresSrc() {
 
 const _mRaw = src.match(/\/\* @pure:loop-region:start \*\/[\s\S]*?\/\* @pure:loop-region:end \*\//);
 if (!_mRaw) {
-    console.error('FAIL: @pure:loop-region block not found in src/main.js');
+    console.error('FAIL: @pure:loop-region block not found in src/loop.js');
     process.exit(1);
 }
 const m = [_mRaw[0].replace(/^export\s+/gm, '')];
