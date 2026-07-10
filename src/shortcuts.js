@@ -118,6 +118,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'tempoInsertSync', label: 'Insert sync point at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
     { id: 'tempoDeleteSync', label: 'Delete selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
     { id: 'tempoToggleSyncLock', label: 'Lock/unlock selected sync point', group: 'Tempo map', status: 'ready', keys: { feedback: 'S (Tempo Map)', eof: 'S (Tempo Map)' } },
+    { id: 'tempoSetPickup', label: 'Set pickup (partial first bar)', group: 'Tempo map', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'tempoFullDialog', label: 'Open full tempo dialog', group: 'Tempo map', status: 'planned', keys: { feedback: 'Alt+T (Tempo Map)', eof: 'Alt+T (Tempo Map)' } },
     { id: 'tempoRebuildGrid', label: 'Rebuild visible beat grid', group: 'Tempo map', status: 'planned', keys: { feedback: 'Ctrl+Shift+T (Tempo Map)', eof: 'Ctrl+Shift+T (Tempo Map)' } },
     { id: 'toggleGridDisplay', label: 'Toggle grid display density', group: 'Grid and sustain', status: 'planned', keys: { feedback: 'Shift+G', eof: 'Shift+G' } },

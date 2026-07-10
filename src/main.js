@@ -1005,7 +1005,16 @@ function _editorMeasureSignatureReadoutPure(beats, time, selectedIdx) {
     }
     const den = _tempoNormalizeDenominatorPure(downbeat.den);
     const measure = downbeat.measure;
-    return { label: `M${measure} ${numerator}/${den}`, measure, numerator, denominator: den };
+    // Pickup display shift (D3): with a partial first bar the first FULL bar
+    // reads as bar 1 and the pickup as bar 0. Inlined (not imported) so this
+    // pure stays sliceable and dependency-free — the same 5-line rule lives
+    // in tempo.js as _pickupBarShiftPure; keep the two in lockstep.
+    const dbs = [];
+    for (let i = 0; i < beats.length && dbs.length < 3; i++) {
+        if (beats[i] && beats[i].measure > 0) dbs.push(i);
+    }
+    const shift = dbs.length === 3 && (dbs[1] - dbs[0]) < (dbs[2] - dbs[1]) ? 1 : 0;
+    return { label: `M${measure - shift} ${numerator}/${den}`, measure, numerator, denominator: den };
 }
 /* @pure:measure-readout:end */
 

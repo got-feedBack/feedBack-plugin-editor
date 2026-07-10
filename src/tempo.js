@@ -27,7 +27,7 @@ import { LABEL_W, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
 import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S } from './state.js';
-import { setStatus } from './ui.js';
+import { _editorPromptText, setStatus } from './ui.js';
 
 // ════════════════════════════════════════════════════════════════════
 // Tempo Map editor — EOF-style sync-point editing of the song-wide
@@ -169,6 +169,9 @@ export function _tempoMapDraw(w, h) {
 
     // Measures: per-measure labels + draggable sync-point poles.
     const measures = _tempoMeasures();
+    // Pickup display shift (D3): with a partial first bar, the first FULL
+    // bar reads as bar 1 and the pickup as bar 0. Hoisted out of the loop.
+    const _pickupShift = _pickupBarShiftPure(S.beats);
     for (const m of measures) {
         const x = timeToX(m.time);
 
@@ -181,7 +184,7 @@ export function _tempoMapDraw(w, h) {
                 ctx.textBaseline = 'top';
                 ctx.fillStyle = '#cbd5e1';
                 ctx.font = 'bold 10px monospace';
-                ctx.fillText(`M${m.measure}`, xMid, WAVEFORM_H + 4);
+                ctx.fillText(`M${m.measure - _pickupShift}`, xMid, WAVEFORM_H + 4);
                 ctx.fillStyle = m.isLast ? '#64748b' : '#fbbf24';
                 ctx.font = '10px monospace';
                 ctx.fillText(`${m.bpm.toFixed(2)} BPM`, xMid, WAVEFORM_H + 17);
@@ -690,6 +693,9 @@ export function _tempoMapOnContextMenu(e) {
         html += mkBtn('tsedit', 'Set time signature…');
         if (cur < 16) html += mkBtn('tsplus', 'Add a beat (time signature +)');
         if (cur > 1) html += mkBtn('tsminus', 'Remove a beat (time signature −)');
+        // Pickup lives on the FIRST measure only (D3): a partial first bar.
+        const _firstPole = _tempoMeasures()[0];
+        if (_firstPole && onPole === _firstPole.i && cur > 1) html += mkBtn('pickup', 'Set pickup (partial first bar)…');
         html += '<div class="border-t border-gray-700 my-1"></div>';
         html += mkBtn('togglelock',
             (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock sync point' : 'Lock sync point');
@@ -702,6 +708,7 @@ export function _tempoMapOnContextMenu(e) {
         btn.onclick = () => {
             host.hideContextMenu();
             const a = btn.dataset.action;
+            if (a === 'pickup') { _tempoPromptPickup(); return; }
             if (a === 'delete') _tempoDeleteSyncPoint(onPole);
             else if (a === 'togglelock') { S.tempoSel = onPole; _editorToggleSyncLock(); }
             else if (a === 'insert') _tempoInsertSyncPoint(xToTime(x));
@@ -841,6 +848,88 @@ export function _tempoSetBeatsPerMeasurePure(beats, d, newCount, duration, round
     return head.concat(interior, tail);
 }
 /* @pure:tempo-map-timesig:end */
+
+/* @pure:tempo-pickup:start */
+// Set a pickup (anacrusis, D3): PROMOTE the beat `pickupCount` steps after
+// the first downbeat into a downbeat of its own. The first bar becomes a
+// partial bar of `pickupCount` beats and the promoted beat starts the first
+// full bar. Times NEVER move — this is a numbering-only grid change (the
+// offset-vs-flex distinction stays clean by construction), so under
+// beat-primary every note keeps its seconds and its groove.
+export function _tempoSetPickupPure(beats, pickupCount) {
+    if (!Array.isArray(beats) || beats.length < 2) return null;
+    const n = Math.round(Number(pickupCount));
+    if (!Number.isInteger(n) || n < 1) return null;
+    const dbs = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) dbs.push(i);
+    if (!dbs.length) return null;
+    const d0 = dbs[0];
+    const barLen = (dbs.length > 1 ? dbs[1] : beats.length) - d0;
+    if (n >= barLen) return null;                 // a pickup is strictly partial
+    // RE-BAR, don't split: the true downbeats sit `n` beats after the grid
+    // start, so every bar boundary shifts EARLIER by (barLen − n) beats —
+    // each bar keeps its own length (varying meters survive), the first bar
+    // becomes the n-beat pickup, and the freed beats fall into the last bar.
+    const shift = barLen - n;
+    const out = beats.map(b => ({ ...b, measure: b && b.measure > 0 ? -1 : b.measure }));
+    const mark = (idx, den) => {
+        out[idx].measure = 1;                     // placeholder; renumber follows
+        if (den !== undefined) out[idx].den = den;
+    };
+    mark(d0, beats[d0].den);                      // the pickup bar's downbeat
+    for (const d of dbs) {
+        const nd = d - shift;
+        if (nd > d0 && nd < out.length) mark(nd, beats[d].den);
+    }
+    return out;
+}
+
+// Derived pickup display shift: when the FIRST measure is shorter than the
+// second, it reads as a pickup bar and display numbering shifts down one so
+// the first FULL bar is bar 1 and the pickup shows as bar 0 (the DAW
+// convention). Derived from the grid — no stored flag, nothing on the wire.
+// The measure readout in main.js inlines this same 5-line rule so it stays
+// sliceable/dependency-free; keep the two in lockstep.
+export function _pickupBarShiftPure(beats) {
+    if (!Array.isArray(beats)) return 0;
+    const dbs = [];
+    for (let i = 0; i < beats.length && dbs.length < 3; i++) {
+        if (beats[i] && beats[i].measure > 0) dbs.push(i);
+    }
+    if (dbs.length < 3) return 0;                 // need two complete bars to compare
+    return (dbs[1] - dbs[0]) < (dbs[2] - dbs[1]) ? 1 : 0;
+}
+/* @pure:tempo-pickup:end */
+
+// The verb: prompt for the pickup beat count and apply as one undoable
+// grid command. Reachable from the Tempo Map context menu (first measure)
+// and the command registry (the B4 menu lists it once both land).
+export async function _tempoPromptPickup() {
+    const beats = S.beats || [];
+    let d0 = -1;
+    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) { d0 = i; break; }
+    if (d0 < 0) { setStatus('No measure grid to set a pickup on.'); return true; }
+    let ndb = beats.length;
+    for (let i = d0 + 1; i < beats.length; i++) if (beats[i].measure > 0) { ndb = i; break; }
+    const barLen = ndb - d0;
+    if (barLen < 2) { setStatus('The first bar has a single beat — no room for a pickup.'); return true; }
+    const raw = await _editorPromptText({
+        title: 'Set pickup (anacrusis)',
+        label: `Pickup length in beats (1–${barLen - 1}) — the first full bar starts after them`,
+        value: '1',
+    });
+    if (raw === null) return true;
+    const m = raw.trim().match(/^\d+$/);
+    const count = m ? parseInt(m[0], 10) : NaN;
+    const newBeats = _tempoSetPickupPure(beats, count);
+    if (!newBeats) { setStatus(`Pickup must be 1–${barLen - 1} beats.`); return true; }
+    _tempoRenumberMeasures(newBeats);
+    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'pickup'));
+    host.updateTempoSigDisplay();
+    host.draw();
+    setStatus(`Pickup set: ${count} beat${count === 1 ? '' : 's'} — the partial bar displays as bar 0`);
+    return true;
+}
 
 export function _tempoSetBeatsPerMeasure(d, newCount) {
     const beats = S.beats || [];
