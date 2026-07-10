@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Tests for `_keysDefaultSelection` in src/main.js — the Add-Keys picker's
+ * Tests for `_keysDefaultSelection` in src/import.js — the Add-Keys picker's
  * default-selection logic that pre-checks a detected RH/LH piano pair (mirrors
  * gp2rs_gpx._find_piano_pairs) so both hands import and merge into one piano.
  * The function is pure (array in → Set of positions out); extract it by
@@ -24,7 +24,7 @@ function extractFn(src, name) {
     throw new Error(`unbalanced braces extracting ${name}`);
 }
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'import.js'), 'utf8');
 const _keysDefaultSelection = new Function(
     '"use strict";' + extractFn(src, '_keysDefaultSelection') +
     '\nreturn _keysDefaultSelection;')();

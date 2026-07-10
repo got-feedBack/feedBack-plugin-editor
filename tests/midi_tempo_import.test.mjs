@@ -15,11 +15,11 @@ import fs from 'node:fs';
 import { S as realS } from '../src/state.js';
 import { TempoGridCmd } from '../src/tempo.js';
 
-// The MIDI-tempo choice pures are still inline in src/main.js (they belong to
+// The MIDI-tempo choice pures are still inline in src/import.js (they belong to
 // the import flow, not the tempo map), so they are still sliced. TempoGridCmd is
 // a real import; its three host callbacks (the loop strip) are left at their
 // inert defaults, which is exactly what this suite used to inject as no-ops.
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../src/import.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const re = new RegExp(
