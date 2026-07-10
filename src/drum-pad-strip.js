@@ -16,14 +16,21 @@
  *                before recording. Mapping is read-only here; per-kit custom
  *                maps are a follow-up.
  *
- * LAYOUT (product owner, 2026-07-10): a performance-style KIT VIEW, not a
- * flat row — pads arranged the way the kit faces the player (cymbal arc on
- * top, hats left / tom arc in the middle, feet + snare at the bottom with a
- * wide kick), occupying the SAME companion slot as the fretboard strip, so
- * fretted parts get a neck and drum parts get a kit in one consistent place.
+ * LAYOUT (product owner, 2026-07-10): TWO switchable views in the SAME
+ * companion slot the fretboard strip uses (fretted parts get a neck, drum
+ * parts get a kit, one consistent place):
+ *   KIT   a VSTi-style kit GRAPHIC — a drawn drum kit (kick / snare with a
+ *         rim zone / rack + floor toms / hat pair with its pedal / the
+ *         cymbal wash, the ride's bell as its own zone — the drum-VSTi
+ *         hit-zone idiom).
+ *   PADS  a sampler-style pad GRID (the MPC idiom) — square pads, one per
+ *         piece, for fast clicking and a clean mapping legend.
+ * Both views light, flash and click through the same data-piece wiring;
+ * the choice persists as an editor pref.
  *
- * Pads are DOM buttons (accessibility + CSS flash for free), never canvas —
- * this sidecar renders a fixed ~18 elements and repaints nothing per frame.
+ * The graphic is inline SVG, never canvas: every piece is its own element
+ * (data-piece + <title> tooltip), so hit-testing, lit/flash state (CSS
+ * classes) and accessibility come free, and nothing repaints per frame.
  * Shown only in drum edit mode; the toggle persists as an editor pref.
  */
 
@@ -94,27 +101,51 @@ export function _padModelPure(pieceOrder, compactLanes, gmMap) {
     }));
 }
 
-// The kit-view layout: pads arranged like a kit from the player's seat —
-// cymbal arc on top, hi-hats left of the tom arc in the middle, feet and
-// snare at the bottom (kick wide, it's the biggest target on a real kit and
-// the busiest piece in a chart). Every piece appears exactly once; `wide`
-// pads span two cells. Pure data so the coverage test can pin it against
-// DRUM_PIECE_ORDER.
-export const KIT_VIEW_ROWS = Object.freeze([
-    Object.freeze([
-        { piece: 'splash' }, { piece: 'crash_l' }, { piece: 'china' },
-        { piece: 'stack' }, { piece: 'crash_r' },
-        { piece: 'ride' }, { piece: 'ride_bell' }, { piece: 'bell' },
-    ]),
-    Object.freeze([
-        { piece: 'hh_open' }, { piece: 'hh_closed' },
-        { piece: 'tom_hi' }, { piece: 'tom_mid' }, { piece: 'tom_low' }, { piece: 'tom_floor' },
-    ]),
-    Object.freeze([
-        { piece: 'hh_pedal' }, { piece: 'snare_xstick' }, { piece: 'snare', wide: true },
-        { piece: 'kick', wide: true },
-    ]),
+// The kit graphic's shape table — one entry per chart piece, drawn as a
+// stylized front-view kit (the drum-VSTi convention). Shapes are SVG
+// primitives in a 560×190 viewBox; `zoneOf` notes the pieces that are
+// ZONES of one physical instrument (snare rim, ride bell, the hat pair)
+// so the renderer draws them as such. Pure data — the coverage test pins
+// it against DRUM_PIECE_ORDER.
+export const KIT_GRAPHIC = Object.freeze([
+    // Cymbal wash (ellipses read as cymbals seen from the seat).
+    { piece: 'crash_l',   kind: 'cym',  cx: 128, cy: 34,  rx: 42, ry: 10, stand: true },
+    { piece: 'splash',    kind: 'cym',  cx: 205, cy: 24,  rx: 24, ry: 6,  stand: true },
+    { piece: 'stack',     kind: 'cym',  cx: 262, cy: 28,  rx: 20, ry: 6,  stand: true },
+    { piece: 'crash_r',   kind: 'cym',  cx: 330, cy: 26,  rx: 40, ry: 10, stand: true },
+    { piece: 'china',     kind: 'cym',  cx: 448, cy: 34,  rx: 38, ry: 10, stand: true },
+    { piece: 'ride',      kind: 'cym',  cx: 484, cy: 84,  rx: 46, ry: 12, stand: true },
+    { piece: 'ride_bell', kind: 'cym',  cx: 484, cy: 82,  rx: 13, ry: 5,  zoneOf: 'ride' },
+    // Hi-hat: the pair is two thin ellipses (top = open zone, bottom =
+    // closed zone — the VSTi hit-zone idiom), the pedal at the stand's foot.
+    { piece: 'hh_open',   kind: 'cym',  cx: 78,  cy: 74,  rx: 34, ry: 8,  zoneOf: 'hihat' },
+    { piece: 'hh_closed', kind: 'cym',  cx: 78,  cy: 87,  rx: 34, ry: 8,  zoneOf: 'hihat', stand: true },
+    { piece: 'hh_pedal',  kind: 'pedal', cx: 78, cy: 168, rx: 16, ry: 7 },
+    // Drums.
+    { piece: 'tom_hi',    kind: 'drum', cx: 233, cy: 76,  r: 24 },
+    { piece: 'tom_mid',   kind: 'drum', cx: 296, cy: 74,  r: 26 },
+    { piece: 'tom_low',   kind: 'drum', cx: 372, cy: 92,  r: 28 },
+    { piece: 'tom_floor', kind: 'drum', cx: 420, cy: 142, r: 32, legs: true },
+    { piece: 'snare_xstick', kind: 'rim', cx: 165, cy: 118, r: 31 },   // the rim ring under the head
+    { piece: 'snare',     kind: 'drum', cx: 165, cy: 118, r: 23 },
+    { piece: 'kick',      kind: 'kick', cx: 268, cy: 138, r: 46 },
+    { piece: 'bell',      kind: 'bell', cx: 268, cy: 84,  w: 22, h: 14 },  // cowbell on the kick mount
 ]);
+
+// The sample-pad grid (the MPC idiom): square pads, three banks of six,
+// kit-ordered left→right / cymbals→feet like the lane grid reads. Pure
+// data — the coverage test pins it against DRUM_PIECE_ORDER.
+export const PAD_GRID_ROWS = Object.freeze([
+    Object.freeze(['china', 'splash', 'crash_l', 'crash_r', 'stack', 'bell']),
+    Object.freeze(['hh_open', 'hh_closed', 'hh_pedal', 'ride', 'ride_bell', 'tom_hi']),
+    Object.freeze(['tom_mid', 'tom_low', 'tom_floor', 'snare', 'snare_xstick', 'kick']),
+]);
+
+// The drum companion view: 'kit' (graphic) | 'pads' (grid). Corrupt prefs
+// collapse to 'kit'.
+export function _drumViewPure(raw) {
+    return raw === 'pads' ? 'pads' : 'kit';
+}
 
 // Which pads a selection lights: the distinct piece-ids of the selected hits.
 export function _padLitPiecesPure(hits, selIdxs) {
@@ -148,22 +179,80 @@ export function drumPadStripEnabled() {
     try { return localStorage.getItem(PREF_KEY) !== '0'; } catch (_) { return true; }
 }
 
+const VIEW_KEY = 'editorDrumPadView';
+
+function gmTitle(meta, piece) {
+    const m = meta.get(piece) || { family: '', gmNotes: [] };
+    const gm = m.gmNotes.length ? ` — GM ${m.gmNotes.join('/')}` : ' — no GM note';
+    return `${m.family}: ${piece}${gm}. Click to add a hit at the cursor.`;
+}
+
+// The VSTi-style kit graphic: inline SVG, one element per piece. Stands and
+// legs are decorative (pointer-events:none via CSS class). Zones (ride bell,
+// snare rim) draw after their parent so they sit on top and win the click.
+function buildKitSvg(meta) {
+    const el = [];
+    // Decorative hardware first (under everything).
+    const stands = KIT_GRAPHIC.filter((s) => s.stand)
+        .map((s) => `<line class="editor-kit-hw" x1="${s.cx}" y1="${s.cy + (s.ry || 8)}" x2="${s.cx}" y2="176"/>`)
+        .join('');
+    el.push(stands);
+    for (const s of KIT_GRAPHIC) {
+        const cls = `editor-kit-piece is-${s.kind}`;
+        const title = `<title>${gmTitle(meta, s.piece)}</title>`;
+        if (s.kind === 'drum' || s.kind === 'rim' || s.kind === 'kick') {
+            el.push(`<circle class="${cls}" data-piece="${s.piece}" cx="${s.cx}" cy="${s.cy}" r="${s.r}">${title}</circle>`);
+            if (s.legs) el.push(`<line class="editor-kit-hw" x1="${s.cx - 18}" y1="${s.cy + s.r - 4}" x2="${s.cx - 22}" y2="176"/><line class="editor-kit-hw" x1="${s.cx + 18}" y1="${s.cy + s.r - 4}" x2="${s.cx + 22}" y2="176"/>`);
+        } else if (s.kind === 'cym' || s.kind === 'pedal') {
+            el.push(`<ellipse class="${cls}" data-piece="${s.piece}" cx="${s.cx}" cy="${s.cy}" rx="${s.rx}" ry="${s.ry}">${title}</ellipse>`);
+        } else if (s.kind === 'bell') {
+            el.push(`<rect class="${cls}" data-piece="${s.piece}" x="${s.cx - s.w / 2}" y="${s.cy - s.h / 2}" width="${s.w}" height="${s.h}" rx="2">${title}</rect>`);
+        }
+        // Tiny identity label; skip zones (their parent carries the label spot).
+        if (!s.zoneOf && s.kind !== 'rim') {
+            const ly = s.kind === 'cym' ? s.cy - ((s.ry || 8) + 3) : s.cy + 3;
+            el.push(`<text class="editor-kit-lbl" x="${s.cx}" y="${ly}" text-anchor="middle">${PAD_LABELS[s.piece] || s.piece}</text>`);
+        }
+    }
+    return `<svg class="editor-kit-svg" viewBox="0 0 560 190" preserveAspectRatio="xMidYMid meet">${el.join('')}</svg>`;
+}
+
+// The sampler-style pad grid: square pads, MPC idiom.
+function buildPadGrid(meta) {
+    return PAD_GRID_ROWS.map((row) =>
+        `<div class="editor-drumpad-row">` + row.map((piece) =>
+            `<button class="editor-drumpad" data-piece="${piece}" title="${gmTitle(meta, piece)}">`
+            + `${PAD_LABELS[piece] || piece}</button>`).join('') + `</div>`
+    ).join('');
+}
+
+export function drumPadView() {
+    let raw = null;
+    try { raw = localStorage.getItem(VIEW_KEY); } catch (_) {}
+    return _drumViewPure(raw);
+}
+
 function buildPads() {
     const wrap = $pads();
     if (!wrap) return;
     const meta = new Map(
         _padModelPure(DRUM_PIECE_ORDER, DRUM_COMPACT_LANES, GM_DRUM_MAP).map((m) => [m.piece, m]));
-    const rows = KIT_VIEW_ROWS.map((row) => {
-        const cells = row.map((cell) => {
-            const m = meta.get(cell.piece) || { family: '', gmNotes: [] };
-            const gm = m.gmNotes.length ? ` — GM ${m.gmNotes.join('/')}` : ' — no GM note';
-            return `<button class="editor-drumpad${cell.wide ? ' is-wide' : ''}" data-piece="${cell.piece}"`
-                + ` title="${m.family}: ${cell.piece}${gm}. Click to add a hit at the cursor.">`
-                + `${PAD_LABELS[cell.piece] || cell.piece}</button>`;
-        });
-        return `<div class="editor-drumpad-row">${cells.join('')}</div>`;
-    });
-    wrap.innerHTML = rows.join('');
+    wrap.innerHTML = drumPadView() === 'pads' ? buildPadGrid(meta) : buildKitSvg(meta);
+    const kitBtn = document.getElementById('editor-drum-view-kit');
+    const padsBtn = document.getElementById('editor-drum-view-pads');
+    const v = drumPadView();
+    if (kitBtn) kitBtn.setAttribute('aria-pressed', v === 'kit' ? 'true' : 'false');
+    if (padsBtn) padsBtn.setAttribute('aria-pressed', v === 'pads' ? 'true' : 'false');
+}
+
+export function editorSetDrumPadView(view) {
+    const v = _drumViewPure(view);
+    try { localStorage.setItem(VIEW_KEY, v); } catch (_) {}
+    buildPads();
+    _drumPadStripRefresh();
+    setStatus(v === 'pads'
+        ? 'Drum pads: sampler grid view'
+        : 'Drum pads: kit view — zones like a drum VSTi (snare rim, ride bell, open/closed hat)');
 }
 
 function flashPad(piece) {
@@ -204,7 +293,7 @@ export function _drumPadStripRefresh() {
     const lit = _padLitPiecesPure(S.drumTab.hits, S.drumSel);
     const wrap = $pads();
     if (!wrap) return;
-    for (const el of wrap.querySelectorAll('.editor-drumpad')) {
+    for (const el of wrap.querySelectorAll('[data-piece]')) {
         const on = lit.has(el.dataset.piece);
         if (el.classList.contains('is-lit') !== on) el.classList.toggle('is-lit', on);
     }
@@ -254,11 +343,14 @@ export function initDrumPadStrip() {
     if (!strip) return;
     buildPads();
     strip.addEventListener('click', (e) => {
-        const t = e.target instanceof HTMLElement ? e.target : null;
+        // Element, not HTMLElement: the kit view's pieces are SVG elements.
+        const t = e.target instanceof Element ? e.target : null;
         if (!t) return;
         if (t.id === 'editor-drum-pads-listen') { armListen(); return; }
         if (t.id === 'editor-drum-pads-hide') { editorToggleDrumPadStrip(); return; }
-        const pad = t.closest('.editor-drumpad');
+        if (t.id === 'editor-drum-view-kit') { editorSetDrumPadView('kit'); return; }
+        if (t.id === 'editor-drum-view-pads') { editorSetDrumPadView('pads'); return; }
+        const pad = t.closest('[data-piece]');
         if (pad) addHitAtCursor(pad.dataset.piece);
     });
     _drumPadStripRefresh();

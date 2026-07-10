@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Drum-pad companion strip (performance-style kit view).** The drum
-  editor's counterpart to the fretboard strip, in the SAME companion slot:
-  pads arranged like a kit from the player's seat — cymbal arc on top,
-  hi-hats and the tom arc in the middle, feet/snare/wide-kick at the
-  bottom — that is a **visual cue** (selected hits light
+- **Drum companion strip: a VSTi-style kit view + a sampler pad view.**
+  The drum editor's counterpart to the fretboard strip, in the SAME
+  companion slot, with two switchable views (Kit ⇄ Pads, persisted pref):
+  a **drawn kit graphic** with VSTi-style hit zones (snare head vs rim,
+  ride bow vs bell, the open/closed hat pair with its pedal, cowbell on
+  the kick mount) and a **sampler-style pad grid** (three banks of six).
+  Both are a **visual cue** (selected hits light
   their pads), an **input surface** (click a pad to add that piece at the
   snapped cursor, through the normal undo-able add command), and a **MIDI
   mapping tool**: arm *Listen* and note-ons from an e-kit flash their pads
