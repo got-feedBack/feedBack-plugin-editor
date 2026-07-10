@@ -69,6 +69,13 @@ export const host = {
     /** Parts-view mousedown / dblclick routing (parts view lives in main.js). */
     partsViewOnMouseDown: () => {},
     partsViewOnDblClick: () => {},
+    /** View-mode / part-move / key-highlight / parts-view toggles (main.js). */
+    editorCycleViewMode: () => {},
+    editorMovePart: () => {},
+    editorToggleKeyHighlight: () => {},
+    editorTogglePartsView: () => {},
+    /** Resolve the measure index at the current selection (tempo layer, main.js). */
+    tempoResolvedMeasureIdx: () => 0,
     /** Ambiguous-pitch popover: let the user pick a string/fret for a roll add. */
     rollConfirmPosition: () => {},
 
