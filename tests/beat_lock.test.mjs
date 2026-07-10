@@ -29,9 +29,9 @@ import {
 } from '../src/tempo.js';
 
 // The beat-lock pures are real imports. One case still slices: editorApplySync's
-// "Scale section times" loop is inline in src/main.js, and running the ACTUAL
+// "Scale section times" loop is inline in src/sync-tempo.js, and running the ACTUAL
 // loop is what makes that case fail on pre-fix code.
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../src/sync-tempo.js', import.meta.url), 'utf8');
 
 // beatOf / timeOf (the beat-primary converter) — used to prove the sync path now
 // reprojects notes onto the warped grid instead of drifting them off it.
@@ -164,10 +164,10 @@ t('editorApplySync reprojection keeps notes on the warped grid at a lock (FIX 2)
 });
 
 t('editorApplySync reprojects SECTION times onto the warped grid under a lock (FIX A)', () => {
-    // Extract and RUN the actual "Scale section times" loop from src/main.js, so a
+    // Extract and RUN the actual "Scale section times" loop from src/sync-tempo.js, so a
     // pre-fix linear-scale body genuinely fails here (would-fail-on-main).
     const secLoop = src.match(/\/\/ Scale section times[\s\S]*?\n    for \(const s of S\.sections\) \{[\s\S]*?\n    \}/);
-    assert.ok(secLoop, 'section-scaling loop found in src/main.js');
+    assert.ok(secLoop, 'section-scaling loop found in src/sync-tempo.js');
     const runSectionScale = new Function(
         'S', 'locked', 'respaced', 'oldBeats', 'factor', 'offset', 'timeOf', 'beatOf',
         '"use strict";' + secLoop[0]);
