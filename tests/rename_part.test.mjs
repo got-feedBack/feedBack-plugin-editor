@@ -16,14 +16,14 @@ import { seedState, trackHooks } from './_history_env.mjs';
 import fs from 'node:fs';
 import { KEYS_PATTERN } from '../src/keys.js';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const src = fs.readFileSync(new URL('../src/arrangement.js', import.meta.url), 'utf8');
 
 function extractBlock(name) {
     const re = new RegExp(
         '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
     const m = src.match(re);
     if (!m) {
-        console.error(`FAIL: @pure:${name} block not found in src/main.js`);
+        console.error(`FAIL: @pure:${name} block not found in src/arrangement.js`);
         process.exit(1);
     }
     return m[0];
@@ -49,7 +49,7 @@ function t(name, fn) {
 
 // ── Pure: kind inference + rename guard ──────────────────────────────
 
-// KEYS_PATTERN is a real import now; @pure:rename-arr is still in src/main.js.
+// KEYS_PATTERN is a real import now; @pure:rename-arr + RenameArrangementCmd now live in src/arrangement.js.
 const P = new Function('KEYS_PATTERN',
     '"use strict";' + extractBlock('rename-arr')
     + '\nreturn { _arrKindPure, _arrSaveKindPure, _renameGuardPure };'
@@ -134,13 +134,15 @@ function makeEnv() {
         arrangements: [{ id: 'a1', name: 'Lead', notes: [] }, { id: 'a2', name: 'Rhythm', notes: [] }],
     });
     const calls = { selector: 0 };
+    // RenameArrangementCmd refreshes the selector through host.updateArrangementSelector
+    // now (it moved to arrangement.js), so inject a host stub rather than the bare fn.
     const env = new Function(
-        'S', 'updateArrangementSelector',
+        'S', 'host',
         '"use strict";' + extractClass('RenameArrangementCmd')
         + '\nreturn { RenameArrangementCmd };'
     )(
         S,
-        () => { calls.selector++; },
+        { updateArrangementSelector: () => { calls.selector++; } },
     );
     trackHooks();
     return { ...env, S, calls, history: new EditHistory() };
