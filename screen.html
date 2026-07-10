@@ -148,6 +148,17 @@
     <!-- Canvas area + inspector panel -->
     <div class="flex-1 flex overflow-hidden">
         <div id="editor-canvas-wrap" class="flex-1 relative overflow-hidden bg-dark-900">
+            <!-- Position sweep bar (P8) - shown by anchor "Resolve positions in
+                 this window"; Enter accepts, arrows move, A accepts all, Esc done. -->
+            <div id="editor-sweep-bar" class="hidden absolute top-12 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-md border border-sky-500/50 bg-dark-800/95 backdrop-blur-sm px-3 py-1.5 text-xs">
+                <span class="text-sky-300 font-medium">Sweep</span>
+                <span id="editor-sweep-count" class="font-mono text-gray-300"></span>
+                <button id="editor-sweep-prev" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Previous (Left arrow)">&#8592;</button>
+                <button id="editor-sweep-accept" class="px-2 py-0.5 rounded bg-sky-700 text-white hover:bg-sky-600" title="Accept this position (Enter)">Accept</button>
+                <button id="editor-sweep-skip" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Skip (Right arrow)">&#8594;</button>
+                <button id="editor-sweep-all" class="px-2 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Accept all remaining (A)">Accept all</button>
+                <button id="editor-sweep-done" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Close (Esc)">&#10005;</button>
+            </div>
             <div id="editor-loop-strip" class="absolute top-2 left-[52px] right-3 z-20 h-8 select-none">
                 <div id="editor-loop-strip-track" class="relative h-full rounded-md border border-gray-700/80 bg-dark-800/85 backdrop-blur-sm">
                     <div id="editor-loop-strip-empty" class="absolute inset-0 flex items-center px-3 text-[10px] uppercase tracking-wide text-gray-500">Loop region</div>
