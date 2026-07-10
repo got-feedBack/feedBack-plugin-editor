@@ -62,6 +62,13 @@ export const host = {
     effectiveAudioOffset: () => 0,
     /** After a load, apply any pending view/part selection stashed for the song. */
     applyEditorPendingView: () => {},
+    /** Open the add-note dialog (a double-click on empty grid). */
+    showAddNote: () => {},
+    /** Refresh the zoom-level readout after a wheel zoom. */
+    updateZoomDisplay: () => {},
+    /** Parts-view mousedown / dblclick routing (parts view lives in main.js). */
+    partsViewOnMouseDown: () => {},
+    partsViewOnDblClick: () => {},
     /** Ambiguous-pitch popover: let the user pick a string/fret for a roll add. */
     rollConfirmPosition: () => {},
 
