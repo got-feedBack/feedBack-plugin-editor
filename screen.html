@@ -78,6 +78,7 @@
         <button onclick="editorZoom(1)" class="px-1.5 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs">+</button>
         <button id="editor-onset-btn" onclick="editorToggleOnsetStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Onset strip: amber blocks mark detected attacks in the recording (Shift+W). Display only — never places notes." aria-pressed="false">Onsets</button>
         <button id="editor-tab-preview-btn" onclick="editorShowTabPreview()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Preview the current part as engraved tab (read-only — renders the pack as last saved; needs the Tab View plugin)">Tab…</button>
+        <button id="editor-drum-pads-btn" onclick="editorToggleDrumPadStrip()" class="hidden px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Drum pads: kit legend + input strip — selected hits light up, click a pad to add a hit at the cursor, Listen flashes pads from a MIDI kit (GM map)" aria-pressed="true">Pads</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
 
@@ -148,6 +149,15 @@
     <!-- Canvas area + inspector panel -->
     <div class="flex-1 flex overflow-hidden">
         <div id="editor-canvas-wrap" class="flex-1 relative overflow-hidden bg-dark-900">
+            <!-- Drum-pad companion strip — kit legend / cursor input / GM MIDI
+                 monitor; built by src/drum-pad-strip.js, drum edit mode only. -->
+            <div id="editor-drum-pad-strip" class="hidden absolute bottom-2 left-[52px] right-3 z-20 select-none rounded-md border border-gray-700/80 bg-dark-800/90 backdrop-blur-sm px-2 py-1.5 flex items-center gap-2">
+                <div id="editor-drum-pads" class="flex items-center gap-1 flex-wrap"></div>
+                <div class="ml-auto flex items-center gap-1 shrink-0">
+                    <button id="editor-drum-pads-listen" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Flash pads from incoming MIDI notes (General MIDI percussion map) — verify your e-kit mapping before recording" aria-pressed="false">Listen</button>
+                    <button id="editor-drum-pads-hide" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Hide the drum pads">Hide</button>
+                </div>
+            </div>
             <div id="editor-loop-strip" class="absolute top-2 left-[52px] right-3 z-20 h-8 select-none">
                 <div id="editor-loop-strip-track" class="relative h-full rounded-md border border-gray-700/80 bg-dark-800/85 backdrop-blur-sm">
                     <div id="editor-loop-strip-empty" class="absolute inset-0 flex items-center px-3 text-[10px] uppercase tracking-wide text-gray-500">Loop region</div>

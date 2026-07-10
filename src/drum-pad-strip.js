@@ -1,0 +1,239 @@
+/* Slopsmith Arrangement Editor — the drum-pad companion strip.
+ *
+ * The drum editor's counterpart to the fretboard strip (Christian's ask,
+ * 2026-07-10): a docked row of kit pads — one per drum piece, grouped by
+ * family — that works three ways at once:
+ *
+ *   VISUAL CUE   selected hits light their pads, so the piece identity of a
+ *                selection reads at a glance (the lane grid shows rows;
+ *                pads show the KIT).
+ *   INPUT        click a pad → add a hit of that piece at the (snapped)
+ *                cursor, through the same AddDrumHitCmd the lane grid uses.
+ *   MIDI MAPPER  arm "Listen" and hits from an e-kit flash their pads live
+ *                via the record path's monitor tap — GENERAL MIDI percussion
+ *                mapped to start (the org's import default), so a drummer
+ *                can verify which physical pad lands on which chart piece
+ *                before recording. Mapping is read-only here; per-kit custom
+ *                maps are a follow-up.
+ *
+ * Pads are DOM buttons (accessibility + CSS flash for free), never canvas —
+ * this sidecar renders a fixed ~18 elements and repaints nothing per frame.
+ * Shown only in drum edit mode; the toggle persists as an editor pref.
+ */
+
+import { S } from './state.js';
+import { host } from './host.js';
+import { setStatus } from './ui.js';
+import { AddDrumHitCmd, DRUM_COMPACT_LANES, DRUM_PIECE_ORDER } from './drum.js';
+import { _midiMonitorEnsure, _midiMonitorTap, _midiMonitorUntap } from './midi-record.js';
+
+/* @pure:drum-pad-strip:start */
+
+// General MIDI percussion (notes 35–59) → drum piece-ids, the same
+// canonical assignments as the import path's defaults. Notes with no chart
+// piece (claps, tambourine, congas…) map to null — a flash-less monitor
+// hit, never a wrong pad. "GM mapped to start": per-kit custom maps layer
+// on later without touching this table.
+export const GM_DRUM_MAP = Object.freeze({
+    35: 'kick',          // Acoustic Bass Drum
+    36: 'kick',          // Bass Drum 1
+    37: 'snare_xstick',  // Side Stick
+    38: 'snare',         // Acoustic Snare
+    40: 'snare',         // Electric Snare
+    41: 'tom_floor',     // Low Floor Tom
+    42: 'hh_closed',     // Closed Hi-Hat
+    43: 'tom_floor',     // High Floor Tom
+    44: 'hh_pedal',      // Pedal Hi-Hat
+    45: 'tom_low',       // Low Tom
+    46: 'hh_open',       // Open Hi-Hat
+    47: 'tom_mid',       // Low-Mid Tom
+    48: 'tom_mid',       // Hi-Mid Tom
+    49: 'crash_l',       // Crash Cymbal 1
+    50: 'tom_hi',        // High Tom
+    51: 'ride',          // Ride Cymbal 1
+    52: 'china',         // Chinese Cymbal
+    53: 'ride_bell',     // Ride Bell
+    55: 'splash',        // Splash Cymbal
+    56: 'bell',          // Cowbell
+    57: 'crash_r',       // Crash Cymbal 2
+    59: 'ride',          // Ride Cymbal 2
+});
+
+// A raw MIDI packet → { note, velocity } for a NOTE-ON, else null (note-off,
+// running status oddities, CC, …). Velocity-0 note-ons are offs per spec.
+export function _padNoteOnPure(data) {
+    if (!data || data.length < 3) return null;
+    const cmd = data[0] & 0xF0;
+    if (cmd !== 0x90 || data[2] === 0) return null;
+    return { note: data[1], velocity: data[2] };
+}
+
+// The pad row model: one pad per piece in physical-kit order, tagged with
+// its family label (from the compact lane table) so the row reads in the
+// same groups as the compact grid. `gmNotes` lists the GM notes that land
+// on the pad (for the tooltip — the mapper's documentation surface).
+export function _padModelPure(pieceOrder, compactLanes, gmMap) {
+    const familyOf = (p) => {
+        for (const l of compactLanes) if (l.pieces.includes(p)) return l.label;
+        return '';
+    };
+    const notesFor = (p) => Object.keys(gmMap)
+        .filter((n) => gmMap[n] === p)
+        .map(Number)
+        .sort((a, b) => a - b);
+    return pieceOrder.map((p) => ({
+        piece: p,
+        family: familyOf(p),
+        gmNotes: notesFor(p),
+    }));
+}
+
+// Which pads a selection lights: the distinct piece-ids of the selected hits.
+export function _padLitPiecesPure(hits, selIdxs) {
+    const out = new Set();
+    if (!Array.isArray(hits)) return out;
+    for (const i of selIdxs || []) {
+        const h = hits[i];
+        if (h && typeof h.p === 'string') out.add(h.p);
+    }
+    return out;
+}
+/* @pure:drum-pad-strip:end */
+
+const PREF_KEY = 'editorDrumPadStrip';
+const PAD_LABELS = {
+    china: 'CH', splash: 'SP', crash_l: 'CR·L', crash_r: 'CR·R', stack: 'STK',
+    hh_open: 'HH○', hh_closed: 'HH×', hh_pedal: 'HH⋅P',
+    ride: 'RD', ride_bell: 'RD·B', bell: 'BELL',
+    tom_hi: 'T1', tom_mid: 'T2', tom_low: 'T3', tom_floor: 'FT',
+    snare: 'SN', snare_xstick: 'SN·X', kick: 'KICK',
+};
+
+let monitorArmed = false;
+const flashTimers = new Map();
+
+const $strip = () => document.getElementById('editor-drum-pad-strip');
+const $pads = () => document.getElementById('editor-drum-pads');
+
+export function drumPadStripEnabled() {
+    // Default ON: in drum mode the pads ARE the kit legend.
+    try { return localStorage.getItem(PREF_KEY) !== '0'; } catch (_) { return true; }
+}
+
+function buildPads() {
+    const wrap = $pads();
+    if (!wrap) return;
+    const model = _padModelPure(DRUM_PIECE_ORDER, DRUM_COMPACT_LANES, GM_DRUM_MAP);
+    let lastFamily = null;
+    const parts = [];
+    for (const pad of model) {
+        if (pad.family !== lastFamily) {
+            if (lastFamily !== null) parts.push('<span class="editor-drumpad-sep"></span>');
+            lastFamily = pad.family;
+        }
+        const gm = pad.gmNotes.length ? ` — GM ${pad.gmNotes.join('/')}` : ' — no GM note';
+        parts.push(
+            `<button class="editor-drumpad" data-piece="${pad.piece}"`
+            + ` title="${pad.family}: ${pad.piece}${gm}. Click to add a hit at the cursor.">`
+            + `${PAD_LABELS[pad.piece] || pad.piece}</button>`);
+    }
+    wrap.innerHTML = parts.join('');
+}
+
+function flashPad(piece) {
+    const wrap = $pads();
+    if (!wrap) return;
+    const el = wrap.querySelector(`[data-piece="${piece}"]`);
+    if (!el) return;
+    el.classList.add('is-flash');
+    const prior = flashTimers.get(piece);
+    if (prior) clearTimeout(prior);
+    flashTimers.set(piece, setTimeout(() => {
+        el.classList.remove('is-flash');
+        flashTimers.delete(piece);
+    }, 160));
+}
+
+function onMidiData(data) {
+    const on = _padNoteOnPure(data);
+    if (!on) return;
+    const piece = GM_DRUM_MAP[on.note];
+    if (piece) flashPad(piece);
+}
+
+export function _drumPadStripRefresh() {
+    const strip = $strip();
+    if (!strip) return;
+    const want = !!S.drumEditMode && !!S.drumTab && drumPadStripEnabled();
+    if (strip.classList.contains('hidden') !== !want) strip.classList.toggle('hidden', !want);
+    const btn = document.getElementById('editor-drum-pads-btn');
+    if (btn) {
+        const avail = !!S.drumEditMode && !!S.drumTab;
+        if (btn.classList.contains('hidden') !== !avail) btn.classList.toggle('hidden', !avail);
+        const pressed = drumPadStripEnabled() ? 'true' : 'false';
+        if (btn.getAttribute('aria-pressed') !== pressed) btn.setAttribute('aria-pressed', pressed);
+    }
+    if (!want) return;
+    // Selection lighting — a fixed handful of classList writes, skip-if-same.
+    const lit = _padLitPiecesPure(S.drumTab.hits, S.drumSel);
+    const wrap = $pads();
+    if (!wrap) return;
+    for (const el of wrap.querySelectorAll('.editor-drumpad')) {
+        const on = lit.has(el.dataset.piece);
+        if (el.classList.contains('is-lit') !== on) el.classList.toggle('is-lit', on);
+    }
+}
+
+export function editorToggleDrumPadStrip() {
+    const next = !drumPadStripEnabled();
+    try { localStorage.setItem(PREF_KEY, next ? '1' : '0'); } catch (_) {}
+    setStatus(next
+        ? 'Drum pads on — selected hits light up; click a pad to add a hit at the cursor; Listen flashes pads from your MIDI kit (GM map)'
+        : 'Drum pads off');
+    _drumPadStripRefresh();
+    return true;
+}
+
+function addHitAtCursor(piece) {
+    if (!S.drumEditMode || !S.drumTab) return;
+    // The exact add semantics of the lane grid's double-click (drum.js):
+    // snap through host.snapTime, clamp both sides, 3-decimal wire rounding.
+    const t = Math.max(0, host.snapTime(Math.max(0, S.cursorTime || 0)));
+    S.history.exec(new AddDrumHitCmd({ t: Math.round(t * 1000) / 1000, p: piece, v: 100 }));
+    setStatus(`Added ${piece} at the cursor`);
+    flashPad(piece);
+    host.draw();
+}
+
+async function armListen() {
+    const btn = document.getElementById('editor-drum-pads-listen');
+    if (monitorArmed) {
+        _midiMonitorUntap(onMidiData);
+        monitorArmed = false;
+        if (btn) btn.setAttribute('aria-pressed', 'false');
+        setStatus('MIDI listen off');
+        return;
+    }
+    _midiMonitorTap(onMidiData);
+    const ok = await _midiMonitorEnsure();
+    monitorArmed = true;   // the tap also works whenever the record modal has a session
+    if (btn) btn.setAttribute('aria-pressed', 'true');
+    setStatus(ok
+        ? 'MIDI listen on — hit your kit: the matching pad flashes (General MIDI map)'
+        : 'MIDI listen armed — no device session yet (pick a device in Record MIDI, or check the input wizard)');
+}
+
+export function initDrumPadStrip() {
+    const strip = $strip();
+    if (!strip) return;
+    buildPads();
+    strip.addEventListener('click', (e) => {
+        const t = e.target instanceof HTMLElement ? e.target : null;
+        if (!t) return;
+        if (t.id === 'editor-drum-pads-listen') { armListen(); return; }
+        if (t.id === 'editor-drum-pads-hide') { editorToggleDrumPadStrip(); return; }
+        const pad = t.closest('.editor-drumpad');
+        if (pad) addHitAtCursor(pad.dataset.piece);
+    });
+    _drumPadStripRefresh();
+}

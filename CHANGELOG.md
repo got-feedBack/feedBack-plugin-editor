@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Drum-pad companion strip.** The drum editor's counterpart to the
+  fretboard strip: a docked row of kit pads — one per drum piece, in
+  physical-kit family groups — that is a **visual cue** (selected hits light
+  their pads), an **input surface** (click a pad to add that piece at the
+  snapped cursor, through the normal undo-able add command), and a **MIDI
+  mapping tool**: arm *Listen* and note-ons from an e-kit flash their pads
+  live, mapped through **General MIDI percussion to start** (the import
+  default; unmapped GM notes — claps, tambourine — flash nothing rather
+  than the wrong pad). Each pad's tooltip documents its GM note numbers.
+  The monitor rides the record path's refcounted device session via a new
+  tap API in `src/midi-record.js` (never a second device path); on hosts
+  without the MIDI-input domain it listens whenever the Record modal has a
+  device connected. Shown in drum edit mode; the `Pads` toggle persists as
+  an editor pref, never in the pack. Per-kit custom maps are a follow-up.
+  `src/drum-pad-strip.js` + `tests/drum_pad_strip.test.mjs` (5).
+
 ### Fixed
 
 - **The screen teardown left the guide/metronome timer running.** The audio

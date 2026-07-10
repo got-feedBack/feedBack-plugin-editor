@@ -1138,6 +1138,7 @@ function _ensureDrumEditButton() {
             _refreshDrumEditButton();
             host.refreshTempoMapButton();
             host.refreshPartsViewButton();
+            host.refreshDrumPadStrip();
             host.draw();
         };
         drumsBtn.parentNode.insertBefore(btn, drumsBtn.nextSibling);

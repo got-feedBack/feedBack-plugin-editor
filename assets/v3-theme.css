@@ -96,3 +96,25 @@
 #plugin-editor .text-amber-300 { color: #fcd34d; }
 #plugin-editor .text-amber-400 { color: #fbbf24; }
 #plugin-editor .text-indigo-300 { color: #a5b4fc; }
+
+/* ── Drum-pad companion strip ─────────────────────────────────────── */
+/* Kit legend / cursor input / GM MIDI monitor (src/drum-pad-strip.js).
+   Pads are buttons: lit = selection contains that piece; flash = a MIDI
+   note-on (or a pad click) just landed on it. */
+#plugin-editor .editor-drumpad {
+    min-width: 34px; padding: 4px 6px; border: 1px solid #334155; border-radius: 6px;
+    background: #16223a; color: #94a3b8; cursor: pointer;
+    font-size: 10px; font-weight: 700; letter-spacing: .02em; line-height: 1.1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+#plugin-editor .editor-drumpad:hover { background: #24324a; color: #e2e8f0; }
+#plugin-editor .editor-drumpad.is-lit {
+    background: #0ea5e9; border-color: #38bdf8; color: #f8fafc;
+}
+#plugin-editor .editor-drumpad.is-flash {
+    background: #f59e0b; border-color: #fcd34d; color: #0b0b10;
+    transition: none;
+}
+#plugin-editor .editor-drumpad-sep {
+    display: inline-block; width: 1px; height: 18px; background: #334155; margin: 0 3px;
+}
