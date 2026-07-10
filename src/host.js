@@ -77,6 +77,8 @@ export const host = {
     /** Resolve the measure index at the current selection (tempo layer, main.js).
      *  -1 = none resolved, so the default is inert (callers apply only on >= 0). */
     tempoResolvedMeasureIdx: () => -1,
+    /** Recompute the canvas size / lane metrics after a view-mode reflow (main.js). */
+    resizeCanvas: () => {},
     /** Ambiguous-pitch popover: let the user pick a string/fret for a roll add. */
     rollConfirmPosition: () => {},
 
