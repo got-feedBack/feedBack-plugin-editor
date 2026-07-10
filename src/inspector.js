@@ -3,8 +3,18 @@
 //
 // Two faces over one selection: note attributes (fret, string, time, sustain,
 // techniques, bend intent, teaching marks) and, when the selection is a chord,
-// its name / voicing / fingering / function. Every edit goes through a command
-// in src/commands.js, so undo works and the read-only-roll lock applies.
+// its name / voicing / fingering / function.
+//
+// MOST edits commit through a command in src/commands.js and are undoable:
+// time/sustain (MoveNoteCmd, ResizeSustainGroupCmd), bend intent, the chord
+// patches, and everything routed through _applyTeachingMark — fret finger,
+// scale degree, strum grouping.
+//
+// The technique toggles (editorInspectorSetTech) and the boolean flags
+// (editorInspectorSetFlag) are the exception: they still mutate n.techniques in
+// place and are NOT undoable, a deliberate scope limit from PR3b. Both DO honour
+// the read-only-roll lock, so they cannot silently write a chart the roll is
+// showing read-only.
 //
 // It renders innerHTML and reads back through the window.editorInspector* and
 // window.editorChord* handlers that markup calls. Those are exported as plain
@@ -261,11 +271,15 @@ export function _renderInspector() {
     }
 }
 
-// Inspector mutators. All operate on the full S.sel so a multi-select
-// edit applies bulk-style. Edits skip the undo history for now — PR3b
-// keeps the scope tight; a TechBulkCmd lands when the inspector grows
-// to need richer per-edit undo (PR3c handles tone/anchor lanes, where
-// undo IS load-bearing).
+// Inspector mutators. All operate on the full S.sel so a multi-select edit
+// applies bulk-style.
+//
+// The TECHNIQUE toggles below (editorInspectorSetTech, editorInspectorSetFlag)
+// skip the undo history — PR3b kept that scope tight, and a TechBulkCmd lands
+// when the inspector grows to need richer per-edit undo. Everything else in this
+// file commits through a command: setField, setBendIntent, the chord patches,
+// and _applyTeachingMark's SetTeachingMarkCmd. (This comment used to say "edits"
+// without qualification, which stopped being true once those landed.)
 
 // Bounds for the inspector's numeric inputs. Mirrors the limits the
 // prompt-based editors (`promptFret`, `promptSlide`, `promptBend`)
