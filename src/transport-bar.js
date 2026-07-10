@@ -57,10 +57,11 @@ export const LCD_TICKS_PER_BEAT = 960;
 // m:ss.mmm — the Time cell. Clamps at 0; minutes unbounded (no h: field, songs
 // don't run that long and Logic's LCD doesn't either).
 export function _lcdClockPure(t) {
-    const v = Number.isFinite(t) && t > 0 ? t : 0;
-    const m = Math.floor(v / 60);
-    const s = Math.floor(v % 60);
-    const ms = Math.round((v - Math.floor(v)) * 1000) % 1000;
+    // Total-ms first so rounding carries: 59.9996 reads 1:00.000, not 0:59.000.
+    const totalMs = Math.round((Number.isFinite(t) && t > 0 ? t : 0) * 1000);
+    const m = Math.floor(totalMs / 60000);
+    const s = Math.floor(totalMs / 1000) % 60;
+    const ms = totalMs % 1000;
     return `${m}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
 }
 
@@ -83,8 +84,13 @@ export function _lcdParseClockPure(str) {
 // (< 2 beats — seconds-primary, §1.3.4) → null: the caller shows Time only.
 export function _lcdBBTPure(beats, t) {
     if (!Array.isArray(beats) || beats.length < 2) return null;
-    const beta = beatOf(beats, t);
-    let i = Math.max(0, Math.min(Math.floor(beta), beats.length - 1));
+    // Quantize the beat COORDINATE to the tick grid first: the rounding carry
+    // then crosses beat AND bar boundaries for free (1e-5 s before bar 2
+    // reads 2:1:000, never 1:5:000).
+    const qTicks = Math.round(beatOf(beats, t) * LCD_TICKS_PER_BEAT);
+    const whole = Math.floor(qTicks / LCD_TICKS_PER_BEAT);
+    const tick = qTicks - whole * LCD_TICKS_PER_BEAT;
+    const i = Math.max(0, Math.min(whole, beats.length - 1));
     let down = -1;
     for (let k = i; k >= 0; k--) {
         if (beats[k] && beats[k].measure > 0) { down = k; break; }
@@ -98,10 +104,8 @@ export function _lcdBBTPure(beats, t) {
         if (down < 0) return null;
     }
     const bar = beats[down].measure;
-    const beatInBar = Math.floor(beta) - down + 1;
-    let tick = Math.round((beta - Math.floor(beta)) * LCD_TICKS_PER_BEAT);
-    let beatField = beatInBar;
-    if (tick >= LCD_TICKS_PER_BEAT) { tick = 0; beatField += 1; }
+    // Pre-grid coordinates clamp at 1:1 — the readout never shows beat 0.
+    const beatField = Math.max(1, whole - down + 1);
     return {
         bar, beat: beatField, tick,
         label: `${bar}:${beatField}:${String(tick).padStart(3, '0')}`,
@@ -307,7 +311,7 @@ function buildBar() {
         + tbtn('editor-tp-stop', '■', 'Stop (stopped: go to start)')
         + tbtn('editor-tp-play', '▶', 'Play/Pause (Space)')
         + tbtn('editor-tp-fwd', '⏩', 'Forward one bar')
-        + tbtn('editor-tp-rec', '●', 'Record a Keys arrangement live from a MIDI keyboard', ' class="editor-transport-btn editor-transport-rec"')
+        + `<button id="editor-tp-rec" class="editor-transport-btn editor-transport-rec" title="Record a Keys arrangement live from a MIDI keyboard">●</button>`
         + `</div><div class="editor-transport-sep"></div>`
         + buildLcd(mode)
         + modes

@@ -54,6 +54,7 @@ t('clock format: zero, sub-minute, minute+, clamp', () => {
     assert.strictEqual(_lcdClockPure(83.5), '1:23.500');
     assert.strictEqual(_lcdClockPure(-3), '0:00.000');
     assert.strictEqual(_lcdClockPure(600.001), '10:00.001');
+    assert.strictEqual(_lcdClockPure(59.9996), '1:00.000', 'rounded ms carry into s/m');
 });
 
 t('clock parse: formats, round-trip, garbage', () => {
@@ -83,6 +84,9 @@ t('BBT: tick rollover carries into the beat field', () => {
     const r = _lcdBBTPure(beats, 2.5 - 1e-5);
     assert.strictEqual(r.label, '2:2:000');
     assert.ok(r.tick < LCD_TICKS_PER_BEAT);
+    // The carry crosses BAR boundaries too: a hair before beat 4 (= bar 2's
+    // downbeat) must read 2:1:000, never 1:5:000.
+    assert.strictEqual(_lcdBBTPure(beats, 2.0 - 1e-5).label, '2:1:000');
 });
 
 t('BBT: degenerate grid (seconds-primary) → null', () => {
