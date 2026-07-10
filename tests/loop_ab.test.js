@@ -100,7 +100,7 @@ function extractBlock(name) {
 // its stable endpoints.
 const abRuntime = (() => {
     const mm = src.match(
-        /let _abOn = false;[\s\S]*?\n\/\/ window\.editorToggleLoopAB re-attached in main\.js/);
+        /(?:export )?let _abOn = false;[\s\S]*?\n\/\/ window\.editorToggleLoopAB re-attached in main\.js/);
     if (!mm) { console.error('FAIL: A/B runtime slice not found'); process.exit(1); }
     return mm[0].replace(/^export\s+/gm, '');
 })();

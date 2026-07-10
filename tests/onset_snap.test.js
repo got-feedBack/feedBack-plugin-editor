@@ -25,7 +25,7 @@ const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'u
 
 const _m0 = src.match(/\/\* @pure:onset-snap:start \*\/[\s\S]*?\/\* @pure:onset-snap:end \*\//);
 if (!_m0) {
-    console.error('FAIL: @pure:onset-snap block not found in src/main.js');
+    console.error('FAIL: @pure:onset-snap block not found in src/audio.js');
     process.exit(1);
 }
 const m = [_m0[0].replace(/^export\s+/gm, '')];

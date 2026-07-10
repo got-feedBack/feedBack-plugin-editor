@@ -921,6 +921,9 @@ export function _abDisarm() {
     _abOn = false;
     _abPhase = 'recording';
     _abApplyRefGain();
+    // Disarming A/B can flip _guideTimerSync's "want" (it includes _abActive()),
+    // so re-sync here rather than leaving each caller to remember (CodeRabbit).
+    _guideTimerSync();
 }
 
 export function _abApplyRefGain() {

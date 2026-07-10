@@ -3700,8 +3700,7 @@ async function loadCDLC(filename) {
         // audio + UI too: clearing the flags alone would leave a guide-pass
         // mute on the ref gain and stale A/B button styling until the next
         // incidental control refresh.
-        _abDisarm();
-        _guideTimerSync();
+        _abDisarm();  // now syncs the guide scheduler itself
         _updateLoopRegionControls();
         // Abandon any in-progress drag — the global mouse handlers act on
         // S.drag regardless of mode, so a stale drag would otherwise keep
