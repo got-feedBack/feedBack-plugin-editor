@@ -62,6 +62,11 @@ export const S = {
     // audio transient within ONSET_SNAP_TOL (falls back to grid when none near).
     // UI pref only (persisted to localStorage), never written to the pack.
     snapMode: 'grid',
+    // Swing percentage for grid snap (D2): 50 = straight; >50 displaces the
+    // off subdivision of each pair (54/58/62 presets). Beat-domain — fed
+    // through the tempo-map converter, so a swung note survives a flex.
+    // UI pref only (persisted to localStorage), never written to the pack.
+    swingPct: 50,
 
     // Selection
     sel: new Set(),
