@@ -252,12 +252,11 @@ export async function _midiMonitorEnsure() {
     if (_recMidiBackend() !== 'domain') return false;
     const ok = await _recMidiInit();          // discover = the permission boundary
     if (!ok) return false;
+    // The SAVED record device only: the monitor never auto-picks a device
+    // (that would silently overwrite the user's record-device preference —
+    // picking a device stays the Record MIDI modal's job).
     let id = null;
     try { id = localStorage.getItem('editor.recordMidiDeviceId'); } catch (_) {}
-    if (!id) {
-        const rows = _recMidiDeviceRowsPure('domain', _recMidiDomain().listSources());
-        id = rows.length ? rows[0].id : null;
-    }
     if (!id) return false;
     const opened = await _recMidiEnsureOpen(id);
     if (opened && _recMidiHandle) {
@@ -267,6 +266,14 @@ export async function _midiMonitorEnsure() {
         _recMidiHandle.addListener(_recMidiOnData);
     }
     return opened;
+}
+
+// The monitor's release counterpart: drop the shared session ref UNLESS a
+// take is being recorded (never yank the device out from under the record
+// path). Refcounted at the domain, so other consumers are unaffected.
+export function _midiMonitorRelease() {
+    if (_recState === 'recording') return;
+    _recMidiDisconnectDomain();
 }
 
 function _recMidiOnData(data) {

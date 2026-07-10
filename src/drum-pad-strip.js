@@ -38,7 +38,7 @@ import { S } from './state.js';
 import { host } from './host.js';
 import { setStatus } from './ui.js';
 import { AddDrumHitCmd, DRUM_COMPACT_LANES, DRUM_PIECE_ORDER } from './drum.js';
-import { _midiMonitorEnsure, _midiMonitorTap, _midiMonitorUntap } from './midi-record.js';
+import { _midiMonitorEnsure, _midiMonitorRelease, _midiMonitorTap, _midiMonitorUntap } from './midi-record.js';
 
 /* @pure:drum-pad-strip:start */
 
@@ -324,6 +324,7 @@ async function armListen() {
     const btn = document.getElementById('editor-drum-pads-listen');
     if (monitorArmed) {
         _midiMonitorUntap(onMidiData);
+        _midiMonitorRelease();   // drop our session ref (no-op mid-recording)
         monitorArmed = false;
         if (btn) btn.setAttribute('aria-pressed', 'false');
         setStatus('MIDI listen off');
@@ -341,6 +342,11 @@ async function armListen() {
 export function initDrumPadStrip() {
     const strip = $strip();
     if (!strip) return;
+    // Self-heal across re-boots: a previous injection may have left Listen
+    // armed; the fresh DOM shows it off, so make the state match (idempotent
+    // when nothing was armed).
+    _midiMonitorUntap(onMidiData);
+    monitorArmed = false;
     buildPads();
     strip.addEventListener('click', (e) => {
         // Element, not HTMLElement: the kit view's pieces are SVG elements.
