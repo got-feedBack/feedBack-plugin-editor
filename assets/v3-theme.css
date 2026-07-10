@@ -96,3 +96,19 @@
 #plugin-editor .text-amber-300 { color: #fcd34d; }
 #plugin-editor .text-amber-400 { color: #fbbf24; }
 #plugin-editor .text-indigo-300 { color: #a5b4fc; }
+
+/* ── Immersive (full-screen) layout ───────────────────────────────── */
+/* The manifest declares `"fullscreen": true`, so on v3 the shell hides its
+   topbar, collapses the sidebar to a 4.5rem icon rail, and pins this screen
+   to `position:absolute; inset:0` (static/v3/v3.css "Immersive"). With the
+   host chrome gone the root's fixed-navbar allowance (`pt-16`) becomes a
+   4rem dead band, and Tailwind's `h-screen` (100vh) is exactly the pinned
+   slot's height — so drop the padding and size to the slot instead. Scoped
+   under `html.fb-immersive`, which only the v3 shell ever sets, so the v2 /
+   legacy layout (fixed navbar, block flow) is untouched. Specificity
+   (1,2,0) beats both utilities and sm-theme overrides, same as the palette
+   rules above. */
+html.fb-immersive #plugin-editor > .editor-root {
+    padding-top: 0;
+    height: 100%;
+}

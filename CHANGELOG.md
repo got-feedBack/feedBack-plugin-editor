@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Full-bleed on the v3 shell (workspace-shell B1).** The manifest now declares
+  `"fullscreen": true`, so navigating to the editor hides the v3 topbar,
+  collapses the sidebar to the icon rail, and pins the screen to the whole
+  content area — a DAW-style surface needs the viewport, not a scrolling page
+  under the navbar (the "cut off at the bottom" report). The screen root gains
+  an `editor-root` hook and one `html.fb-immersive`-scoped rule in
+  `assets/v3-theme.css` drops the now-meaningless `pt-16` navbar allowance and
+  sizes the root to the pinned slot. The v2/legacy layout keeps `pt-16` /
+  `h-screen` and is untouched (the class only ever appears on the v3 shell).
+  Zero core changes — the host capability landed with the v3 shell and Virtuoso
+  already exercises it. `tests/fullbleed.test.mjs` pins all three legs of the
+  manifest/HTML/CSS contract.
+
 ### Fixed
 
 - **The screen teardown left the guide/metronome timer running.** The audio
