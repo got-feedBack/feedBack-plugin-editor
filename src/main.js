@@ -16,7 +16,7 @@ import {
 import { _installModalKeyboard, setStatus } from './ui.js';
 import { EditHistory } from './history.js';
 import {
-    AddNoteCmd, _ROLL_REFUSE_REASONS,
+    _ROLL_REFUSE_REASONS,
     _commitAddResolved } from './commands.js';
 import {
     editorApplyCreateResult, editorArtSearch,
@@ -101,6 +101,9 @@ import {
     _partsViewOnMouseDown, _refreshPartsViewButton
 } from './parts-view.js';
 import { drawWaveform } from './waveform.js';
+import {
+    addNoteData, editorConfirmAddNote, hideAddNote, showAddNote
+} from './add-note.js';
 import { setHostHooks } from './host.js';
 import {
     MIN_MEASURE, TempoGridCmd, TempoMapCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
@@ -151,7 +154,7 @@ import {
 import {
     KEYS_PATTERN, _partViewKeyPure, _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, _viewPrefs,
-    _viewPrefsSave, isKeysMode, midiToNote, noteToMidi, updatePianoRange, viewFor } from './keys.js';
+    _viewPrefsSave, isKeysMode, midiToNote, updatePianoRange, viewFor } from './keys.js';
 import {
     _restoreSuggestedMarks,
     _saveSuggestedMarks, _suggestedCount, chords, notes
@@ -779,59 +782,6 @@ window.editorToggleDrumDensity = _editorToggleDrumDensity;
 // Add note dialog
 // ════════════════════════════════════════════════════════════════════
 
-let addNoteData = null;
-
-function showAddNote(cx, cy, time, string, fret) {
-    const isKeys = isKeysMode();
-    addNoteData = { time, string, fret, isKeys };
-    const dlg = document.getElementById('editor-add-note-dialog');
-    dlg.style.left = cx + 'px';
-    dlg.style.top = cy + 'px';
-    dlg.classList.remove('hidden');
-
-    document.getElementById('editor-add-fret-col').classList.toggle('hidden', isKeys);
-    document.getElementById('editor-add-pitch-col').classList.toggle('hidden', !isKeys);
-
-    if (isKeys) {
-        const midi = noteToMidi(string, fret);
-        document.getElementById('editor-add-pitch-label').textContent = midiToNote(midi);
-        const sus = document.getElementById('editor-add-sustain');
-        sus.focus();
-        sus.select();
-    } else {
-        const inp = document.getElementById('editor-add-fret');
-        inp.value = fret != null ? String(fret) : '0';
-        inp.focus();
-        inp.select();
-    }
-}
-
-function hideAddNote() {
-    document.getElementById('editor-add-note-dialog').classList.add('hidden');
-    addNoteData = null;
-}
-
-window.editorConfirmAddNote = function() {
-    if (!addNoteData) return;
-    const fret = addNoteData.isKeys
-        ? addNoteData.fret
-        : Math.max(0, Math.min(24, parseInt(document.getElementById('editor-add-fret').value) || 0));
-    const sustain = Math.max(0, parseFloat(document.getElementById('editor-add-sustain').value) || 0);
-    const note = {
-        time: addNoteData.time,
-        string: addNoteData.string,
-        fret,
-        sustain,
-        techniques: {},
-    };
-    S.history.exec(new AddNoteCmd(note));
-    _editBlipAt();
-    hideAddNote();
-    draw();
-    updateStatus();
-};
-
-window.editorHideAddNote = hideAddNote;
 
 /* @pure:boot-teardown:start */
 // Tracked registry for document/window-level listeners. The host can
@@ -2135,6 +2085,10 @@ function _finalizeActiveDrag() {
 
 // Parts overview toggle (parts-view.js owns the logic; HTML/toolbar call it).
 window.editorTogglePartsView = _editorTogglePartsView;
+
+// Add-note dialog (add-note.js owns the logic; HTML calls these by name).
+window.editorConfirmAddNote = editorConfirmAddNote;
+window.editorHideAddNote = hideAddNote;
 
 // Strings (tuning) editor (strings.js owns the logic; HTML calls these by name).
 window.editorShowStringsModal = editorShowStringsModal;
