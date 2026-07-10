@@ -261,6 +261,27 @@ t('read-only roll: SONG-scope undo still works (drum edit reverts)', () => {
 //    (regressions for #119: these bypass EditHistory, so the exec lock
 //     alone can't stop them — each entry point is guarded at its source).
 
+// The inspector moved to src/inspector.js, where its handlers are exported
+// function declarations rather than `window.NAME = (…) => {…}` arrows, and reach
+// main.js through `host`. Same body, different header.
+const inspSrc = fs.readFileSync(new URL('../src/inspector.js', import.meta.url), 'utf8');
+function extractInspectorFn(name, globals) {
+    const marker = 'export function ' + name + '(';
+    const start = inspSrc.indexOf(marker);
+    assert.ok(start >= 0, `export function ${name} must exist in inspector.js`);
+    const open = inspSrc.indexOf('{', start);
+    let depth = 0, end = -1;
+    for (let i = open; i < inspSrc.length; i++) {
+        if (inspSrc[i] === '{') depth++;
+        else if (inspSrc[i] === '}' && --depth === 0) { end = i; break; }
+    }
+    assert.ok(end > 0, `unbalanced braces extracting ${name}`);
+    const decl = inspSrc.slice(start, end + 1).replace(/^export\s+/, '');
+    const names = Object.keys(globals);
+    const fn = new Function(...names, '"use strict";' + decl + '\nreturn ' + name + ';');
+    return fn(...names.map(k => globals[k]));
+}
+
 // Extract a `window.NAME = (...) => { ... };` arrow assignment and rebuild
 // it as a callable with the named globals stubbed in.
 function extractWinFn(name, globals) {
@@ -304,13 +325,12 @@ t('read-only roll: inspector editorInspectorSetFlag does not mutate the fretted 
     const note = { string: 0, fret: 3, techniques: {} };
     const locked = { value: true };
     let notices = 0, renders = 0;
-    const setFlag = extractWinFn('editorInspectorSetFlag', {
+    const setFlag = extractInspectorFn('editorInspectorSetFlag', {
         _selectedNotes: () => [note],
         _rollReadOnly: () => locked.value,
         _rollLockNotice: () => { notices++; },
         _renderInspector: () => { renders++; },
-        draw: () => {},
-        updateStatus: () => {},
+        host: { draw() {}, updateStatus() {} },
     });
     setFlag('accent', true);
     assert.strictEqual(note.techniques.accent, undefined, 'no write while read-only');

@@ -113,6 +113,12 @@ export const host = {
      * to none of them and stays in main.js.
      */
     finalizeActiveDrag: () => {},
+
+    // ── Dialogs and canvas geometry, for src/inspector.js ────────────
+    /** Open the bend-curve editor for a note. Async: resolves when it closes. */
+    promptBend: async () => {},
+    /** Re-measure the canvas on the next frame (a lane count changed). */
+    scheduleCanvasResize: () => {},
 };
 
 export function setHostHooks(hooks) { Object.assign(host, hooks); }

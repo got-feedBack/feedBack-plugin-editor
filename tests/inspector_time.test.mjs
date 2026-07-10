@@ -22,21 +22,26 @@ import { S as realS } from '../src/state.js';
 import { EditHistory } from '../src/history.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 
-const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-
-// Brace-match extraction of a named class/function/const (the waveform_render
-// harness pattern) — drives the real source, no re-implementation.
-function extractNamed(decl) {
-    const start = src.indexOf(decl);
-    assert.ok(start >= 0, `not found: ${decl}`);
-    const open = src.indexOf('{', start);
+// The inspector's bounds table, coercion helper and field dispatcher are
+// module-private (the dispatcher only reaches the page as a re-attached
+// window.*), so they are still sliced — with the `export` keyword stripped,
+// since that is a SyntaxError inside `new Function`.
+const inspSrc = fs.readFileSync(new URL('../src/inspector.js', import.meta.url), 'utf8');
+const unexport = (code) => code.replace(/^export\s+/gm, '');
+function extractFromInspector(decl) {
+    const start = inspSrc.indexOf(decl);
+    assert.ok(start >= 0, `not found in inspector.js: ${decl}`);
+    const open = inspSrc.indexOf('{', start);
     let depth = 0;
-    for (let i = open; i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+    for (let i = open; i < inspSrc.length; i++) {
+        if (inspSrc[i] === '{') depth++;
+        else if (inspSrc[i] === '}' && --depth === 0) return unexport(inspSrc.slice(start, i + 1));
     }
     throw new Error(`unbalanced braces for ${decl}`);
 }
+
+// Brace-match extraction of a named class/function/const (the waveform_render
+// harness pattern) — drives the real source, no re-implementation.
 // The commands are real imports and resolve their target through notes(), which
 // reads the REAL S. Seed one arrangement and point it at CURRENT so the cases
 // can keep asserting on the array object they built.
@@ -49,8 +54,8 @@ const setCurrent = (arr) => { CURRENT = arr; realS.arrangements[0].notes = arr; 
 // helper are still in main.js, so they are still brace-matched out of it.
 const api = new Function(
     '"use strict";'
-    + extractNamed('const _INSPECTOR_BOUNDS =') + '\n'
-    + extractNamed('function _coerceInspectorNumber') + '\n'
+    + extractFromInspector('export const _INSPECTOR_BOUNDS =') + '\n'
+    + extractFromInspector('export function _coerceInspectorNumber') + '\n'
     + 'return { _INSPECTOR_BOUNDS, _coerceInspectorNumber };'
 )();
 const { _INSPECTOR_BOUNDS, _coerceInspectorNumber } = api;
@@ -139,28 +144,27 @@ t('time: a note already at the target gets a zero delta (no-op move)', () => {
 let DISPATCH_NOTES = [];
 const dispatchS = { sel: new Set(), drumEditMode: false, tempoMapMode: false, history: null };
 let renderCount = 0;                 // # of _renderInspector() calls (reject branch)
-const win = {};                      // captures `window.editorInspectorSetField = …`
 // `dispatchS` stays sandbox-local: editorInspectorSetField reads its `sel` and
 // mode flags. EditHistory itself closes over the real `S` (seeded above), which
 // only supplies the arrangement tag — irrelevant to these cases.
-new Function(
-    'notes', 'S', 'draw', 'updateStatus', '_renderInspector', 'window',
+// The dispatcher reaches main.js through `host` now, and calls the module-local
+// _renderInspector directly — both are injected here, so the reject branch's
+// re-render stays observable.
+const setField = new Function(
+    'notes', 'S', 'host', '_renderInspector',
     'MoveNoteCmd', 'ResizeSustainGroupCmd',
     '"use strict";'
-    + extractNamed('const _INSPECTOR_BOUNDS =') + '\n'
-    + extractNamed('function _coerceInspectorNumber') + '\n'
-    + extractNamed('function _editorCurrentNoteIndices') + '\n'
-    + extractNamed('window.editorInspectorSetField =') + '\n'
-    + 'return {};'
+    + extractFromInspector('export const _INSPECTOR_BOUNDS =') + '\n'
+    + extractFromInspector('export function _coerceInspectorNumber') + '\n'
+    + extractFromInspector('export function editorInspectorSetField') + '\n'
+    + 'return editorInspectorSetField;'
 )(
     () => DISPATCH_NOTES,
     dispatchS,
-    () => {}, () => {},          // editorInspectorSetField's own draw/updateStatus
+    { draw() {}, updateStatus() {}, editorCurrentNoteIndices: () => [...dispatchS.sel] },
     () => { renderCount++; },
-    win,
     MoveNoteCmd, ResizeSustainGroupCmd,
 );
-const setField = win.editorInspectorSetField;
 
 // Fresh notes + selection + history per case.
 // `dispatchS` stays sandbox-local for editorInspectorSetField's `sel` and mode
