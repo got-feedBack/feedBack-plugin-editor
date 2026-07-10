@@ -67,6 +67,12 @@
         <button id="editor-loop-ab-btn" onclick="editorToggleLoopAB()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled title="Set a loop region first — A/B alternates recording and guide per pass" aria-pressed="false">A/B</button>
         <button id="editor-guide-btn" onclick="editorToggleGuideClap()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Guide claps: tick each charted note during playback (C)" aria-pressed="false">Claps</button>
         <button id="editor-metronome-btn" onclick="editorToggleMetronome()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Metronome: click every beat, accented on downbeats" aria-pressed="false">Click</button>
+        <select id="editor-countin" onchange="editorSetCountIn(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Count-in: bars of metronome clicks before playback (and recording) starts — in the meter and tempo at the cursor">
+            <option value="0" selected>Count: off</option>
+            <option value="1">Count: 1 bar</option>
+            <option value="2">Count: 2 bars</option>
+            <option value="4">Count: 4 bars</option>
+        </select>
         <button id="editor-mixer-btn" onclick="editorToggleMixer()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Audio mixer: recording / guide / click levels and the edit blip (Shift+C)" aria-pressed="false">Mix</button>
 
         <div class="h-4 w-px bg-gray-700"></div>

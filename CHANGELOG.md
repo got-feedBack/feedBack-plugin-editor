@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Count-in.** A `Count: off / 1 / 2 / 4 bars` select next to the
+  metronome: playback (and, because the recorder rides the same transport
+  clock, MIDI recording) starts after N bars of metronome clicks **in the
+  meter and tempo at the cursor** — a 3/4 section counts three 100-BPM
+  beats, not four 120-BPM ones. Implementation is one anchor shift: the
+  transport's wall anchor pins into the future by the pre-roll, so the
+  audio source, guide/click scheduler, and record clock all follow with no
+  extra plumbing; the cursor holds at the start position during the
+  pre-roll. Loop wraps and mid-play seeks stay immediate. With no tempo
+  map yet, the count falls back to a 4/4 bar at 120 so a play gesture
+  never fails. Editor pref, never the pack. This is the feature the B2
+  transport bar's Count-in LCD cell and the charrette's Count toggle were
+  deferred behind — both can now follow.
+  `_countInPlanPure` in `src/transport.js` + `tests/count_in.test.mjs` (5).
+
 ### Fixed
 
 - **The screen teardown left the guide/metronome timer running.** The audio

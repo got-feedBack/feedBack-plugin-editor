@@ -44,7 +44,7 @@ import {
     _editBlipAt, _editorToggleGuideClap,
     _editorToggleLoopAB, _editorToggleMetronome, _editorToggleMixer,
     _editorToggleOnsetStrip, _editorToggleSnapMode, editorSetEditBlip, editorSetMixLevel, initAudio, loadAudio,
-    startPlayback, stopPlayback, teardownAudio
+    startPlayback, stopPlayback, teardownAudio, editorSetCountIn,
 } from './audio.js';
 import {
     _barSpanForTimes, _clearBarSelection, _editorApplyScrollBounds,
@@ -559,6 +559,7 @@ window.editorToggleGuideClap = _editorToggleGuideClap;
 window.editorToggleLoopAB = _editorToggleLoopAB;
 window.editorToggleMetronome = _editorToggleMetronome;
 window.editorToggleMixer = _editorToggleMixer;
+window.editorSetCountIn = editorSetCountIn;
 window.editorToggleOnsetStrip = _editorToggleOnsetStrip;
 window.editorToggleSnapMode = _editorToggleSnapMode;
 window.editorSetLoopSnapMode = editorSetLoopSnapMode;
