@@ -8,7 +8,7 @@
  * wins over filename sniffing.
  *
  * _normalizeSongList is a browser-free top-level function (String + regex +
- * Array.map), so this extracts it from src/main.js and eval's it in isolation —
+ * Array.map), so this extracts it from src/file-ops.js and eval's it in isolation —
  * real source, no drift — the same approach as edit_history_reset.test.js.
  *
  * Run: node tests/feedpak_song_list.test.js
@@ -17,12 +17,12 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'file-ops.js'), 'utf8');
 // Top-level function: body has only indented closing braces, so the first
 // column-0 `\n}` is the function's own close.
 const m = src.match(/function _normalizeSongList\(raw\) \{[\s\S]*?\n\}/);
 if (!m) {
-    console.error('FAIL: _normalizeSongList not found in src/main.js');
+    console.error('FAIL: _normalizeSongList not found in src/file-ops.js');
     process.exit(1);
 }
 const _normalizeSongList = new Function(
