@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The canvas context menu now lives in `src/context-menu.js` (R2, step 25).**
+  362 lines: the right-click menu and the prompt dialogs it opens (fret, bend,
+  slide). `src/main.js` is down to 8,786.
+  **Zero new host hooks.** Its three main.js dependencies were already there, and
+  it *owns* `promptBend` and `hideContextMenu` — both already host hooks that the
+  inspector and several modes call. They now resolve to the exports here instead
+  of definitions in `main.js`. `main.js` keeps the canvas `contextmenu` event
+  that decides when to open the menu.
+
+
 - **The inspector panel now lives in `src/inspector.js` (R2, step 24).** 639
   lines: note attributes on one face, chord name/voicing/fingering/function on
   the other. `src/main.js` is down to 9,144.
