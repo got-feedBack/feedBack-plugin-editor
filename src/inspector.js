@@ -118,7 +118,12 @@ export function _renderInspector() {
         ? '1 note selected'
         : `${sel.length} notes selected`;
     const mixed = '<span class="text-amber-400">(mixed)</span>';
-    const fmtStr = v => v === null ? mixed : v;
+    // Escape every note-derived value before it reaches innerHTML. The load
+    // path already coerces string/fret to ints server-side (_note in routes.py),
+    // so today nothing hostile survives to here — but that coupling is implicit,
+    // and a persisted note that ever reached the panel un-coerced would inject
+    // markup. Defence in depth at the trust boundary, not a defect being patched.
+    const fmtStr = v => v === null ? mixed : _chordAttrEsc(v);
     const fmtTime = v => v === null ? mixed : v.toFixed(3);
     const fmtSus = v => v === null ? mixed : (v || 0).toFixed(3);
 
@@ -150,7 +155,7 @@ export function _renderInspector() {
         const v = n.techniques && n.techniques.strum_group;
         return Number.isInteger(v) ? v : -1;
     });
-    const inputVal = v => v === null ? '' : String(v);
+    const inputVal = v => v === null ? '' : _chordAttrEsc(v);
 
     // Chord inspector (E1): when the selection is a chord (>=2 notes sharing a
     // time), author the shared chord template — name / displayName / per-string
