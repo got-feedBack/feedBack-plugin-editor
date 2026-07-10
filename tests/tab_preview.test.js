@@ -13,10 +13,10 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'tab-preview.js'), 'utf8');
 const m = src.match(/\/\* @pure:tab-preview:start \*\/[\s\S]*?\/\* @pure:tab-preview:end \*\//);
 if (!m) {
-    console.error('FAIL: @pure:tab-preview block not found in src/main.js');
+    console.error('FAIL: @pure:tab-preview block not found in src/tab-preview.js');
     process.exit(1);
 }
 // Extract the @pure block ALONE — no outer globals prepended. This is the
