@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Live-mode tests for the impure `_loopNudgeEdge` (arrow-key loop nudge).
  *
@@ -13,13 +12,34 @@
  *   - song-edge clamps: nudging an end past the song duration pins to DUR and
  *     nudging a start below 0 pins to 0.
  *
- * Run: node tests/loop_nudge_live.test.js
+ * Run: node tests/loop_nudge_live.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
+import fs from 'node:fs';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+// The two loop pures moved to src/transport.js (#178). The rest of this file's
+// sliced @pure:loop-region block still calls them by name, so prepend their real
+// source to the slice — same scope, same behaviour, no re-implementation.
+const _transportSrc = fs.readFileSync(new URL('../src/transport.js', import.meta.url), 'utf8');
+function _loopPuresSrc() {
+    const out = [];
+    for (const name of ['_normalizeLoopRegionPure', '_loopPlaybackRestartTimePure']) {
+        const start = _transportSrc.indexOf('export function ' + name);
+        if (start < 0) throw new Error('missing in transport.js: ' + name);
+        const open = _transportSrc.indexOf('{', start);
+        let d = 0;
+        for (let i = open; i < _transportSrc.length; i++) {
+            if (_transportSrc[i] === '{') d++;
+            else if (_transportSrc[i] === '}' && --d === 0) {
+                out.push(_transportSrc.slice(start, i + 1).replace(/^export /, ''));
+                break;
+            }
+        }
+    }
+    return out.join('\n') + '\n';
+}
+
 function extract(name) {
     const re = new RegExp(
         '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
@@ -51,7 +71,7 @@ function build({ barSel, pref = 'bar', snapEnabled = false, snapIdx = 1,
         'snapTime', 'SNAP_VALUES', '_editorEffectiveSnapValuePure',
         '_updateLoopIn3DBtn', '_renderLoopStrip', 'draw', '_setBarSel',
         '"use strict";'
-        + region + '\n' + nudgePure + '\n' + liveModeSrc + '\n' + nudgeSrc
+        + _loopPuresSrc() + region + '\n' + nudgePure + '\n' + liveModeSrc + '\n' + nudgeSrc
         + '\nreturn _loopNudgeEdge;'
     );
     const nudge = factory(
