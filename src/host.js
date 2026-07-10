@@ -60,6 +60,8 @@ export const host = {
     resizeForLaneChange: () => {},
     /** The session audio offset an import should shift its notes by (seconds). */
     effectiveAudioOffset: () => 0,
+    /** After a load, apply any pending view/part selection stashed for the song. */
+    applyEditorPendingView: () => {},
     /** Ambiguous-pitch popover: let the user pick a string/fret for a roll add. */
     rollConfirmPosition: () => {},
 
