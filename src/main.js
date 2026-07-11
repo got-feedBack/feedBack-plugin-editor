@@ -745,7 +745,12 @@ function updateChordDisplay() {
             if (midis.length) {
                 const pcs = _pcSetFromMidisPure(midis);
                 const bassPc = ((Math.round(Math.min(...midis)) % 12) + 12) % 12;
-                const chord = _identifyChordPure(pcs, bassPc, PIANO_NOTE_NAMES);
+                // Spell the chord root the way the song key does (Dbm, not
+                // C#m in a flat key). ponytail: root-letter respelling via the
+                // shared key→names table — the readout is only root+suffix, so
+                // there are no non-root chord tones to spell; full functional
+                // chord spelling is out of scope.
+                const chord = _identifyChordPure(pcs, bassPc, editorKeyNoteNames());
                 if (chord) {
                     text = chord.name;
                     title = `${midis.length} note${midis.length === 1 ? '' : 's'} sounding → ${chord.name}`;

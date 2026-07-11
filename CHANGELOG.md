@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Enharmonic note spelling follows the song key** (4.16a follow-up). With
   a flat key set (F, Bb, Eb, Ab, Db majors and their relative modes — the
   relative major's signature decides), the piano-roll note labels, the
-  add-note pitch readout, and the roll placement messages spell flats
+  add-note pitch readout, the roll placement messages, the fretboard
+  strip's open-string labels, and the chord-readout root spell flats
   (Bb4, never A#4); sharp keys and no-key keep today's sharp names.
   "Detect" now announces the found key in its own spelling (Eb minor,
   never D# minor). The key picker's tonic list stays sharp-named (stable

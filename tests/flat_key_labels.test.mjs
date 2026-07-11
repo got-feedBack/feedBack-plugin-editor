@@ -129,5 +129,15 @@ t('editorKeyNoteNames follows S.editorKey (and sharps when unset)', () => {
     }
 });
 
+t('Bb-major key: the shared table spells open strings and chord roots flat', () => {
+    // The fretboard-strip open-string labels and main.js chord identification
+    // both index this table, so a Bb-key song reads Bb/Eb — never A#/D#.
+    const names = _noteNamesForKeyPure({ tonic: PC['A#'], scale: 'major' });   // Bb major
+    assert.strictEqual(names, PIANO_NOTE_NAMES_FLAT);
+    assert.strictEqual(names[PC['A#']], 'Bb', 'open Bb string / Bb chord root');
+    assert.strictEqual(names[PC['D#']], 'Eb', 'open Eb string / Eb chord root');
+    assert.strictEqual(names[PC.E], 'E', 'naturals unchanged');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
