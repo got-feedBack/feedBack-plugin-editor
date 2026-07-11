@@ -44,6 +44,13 @@ export const S = {
     partsViewMode: false,
     drumSel: new Set(),
 
+    // Per-part mix state (mixer panel, B6) — 'arr:<idx>' / 'drums' →
+    // { vol, mute, solo }. Session-scoped UI state (never the pack): the
+    // canonical source for part mute/solo/volume that the mixer strips,
+    // the guide-clap gate (via host.partClapState) and the future
+    // Parts-gutter M/S/A all read. Reset when a song is installed.
+    partMix: {},
+
     // Tempo Map mode — EOF-style: drag the song-wide beat grid's measure
     // downbeats ("sync points") to fit it to the audio; BPM is derived
     // from sync-point spacing. tempoSel/tempoHover index into S.beats. Under

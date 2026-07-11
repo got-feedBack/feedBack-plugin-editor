@@ -42,10 +42,11 @@ import {
     hideContextMenu, promptBend } from './context-menu.js';
 import {
     _editBlipAt, _editorToggleGuideClap,
-    _editorToggleLoopAB, _editorToggleMetronome, _editorToggleMixer,
-    _editorToggleOnsetStrip, _editorToggleSnapMode, editorSetEditBlip, editorSetMixLevel, initAudio, loadAudio,
+    _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip,
+    _editorToggleSnapMode, _mixLoadPct, editorEditBlipEnabled, editorSetEditBlip, editorSetMixLevel, initAudio, loadAudio,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn,
 } from './audio.js';
+import { _mixerClapState, _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import {
     _barSpanForTimes, _editorApplyScrollBounds,
     _editorClampScrollX, _loopReliftBeats,
@@ -487,6 +488,8 @@ setHostHooks({
     editorToggleKeyHighlight: (...a) => _editorToggleKeyHighlight(...a),
     editorTogglePartsView: (...a) => _editorTogglePartsView(...a),
     tempoResolvedMeasureIdx: (...a) => _tempoResolvedMeasureIdx(...a),
+    partClapState: _mixerClapState,
+    mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML
@@ -563,7 +566,7 @@ window.editorSetMixLevel = editorSetMixLevel;
 window.editorToggleGuideClap = _editorToggleGuideClap;
 window.editorToggleLoopAB = _editorToggleLoopAB;
 window.editorToggleMetronome = _editorToggleMetronome;
-window.editorToggleMixer = _editorToggleMixer;
+window.editorToggleMixer = editorToggleMixerPanel;
 window.editorSetCountIn = editorSetCountIn;
 window.editorToggleLintPopover = editorToggleLintPopover;
 window.editorToggleDrumPadStrip = editorToggleDrumPadStrip;
@@ -973,6 +976,7 @@ function updateStatus() {
     _lintChipRefresh();
     _drumPadStripRefresh();
     _fretboardStripRefresh();
+    _mixerPanelRefresh();
     _transportBarTick();
     setStatus('Ready');
 }
@@ -1853,6 +1857,7 @@ function init() {
     initMenuBar();
     initTransportBar();
     initToolbars();
+    initMixerPanel();
 
     // Observe screen visibility for resize + the entry landing. Held in
     // _editorScreenObs so the teardown can disconnect it on re-injection.

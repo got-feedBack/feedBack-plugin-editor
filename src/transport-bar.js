@@ -324,7 +324,7 @@ function buildBar() {
     const util = prefs.groups.util
         ? `<div class="editor-transport-group" data-group="util">`
         + tbtn('editor-tp-parts', 'Parts', 'Parts overview — all parts stacked (mirrors the toolbar toggle)')
-        + tbtn('editor-tp-mixer', 'Mix', 'Audio mixer: recording / guide / click levels (Shift+C)')
+        + tbtn('editor-tp-mixer', 'Mix', 'Mixer panel: part volume / mute / solo + bus levels (Shift+C)', ' aria-pressed="false"')
         + tbtn('editor-tp-follow', 'Follow', 'Follow the playhead during playback (Shift+L)', ' aria-pressed="false"')
         + `</div><div class="editor-transport-sep"></div>` : '';
     const modes = prefs.groups.modes

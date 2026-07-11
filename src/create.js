@@ -2142,6 +2142,9 @@ export async function editorApplyCreateResult(data) {
     S.sessionId = data.session_id;
     S.format = 'sloppak';
     S.arrangements = data.arrangements || [];
+    // New song, new strips: part mute/solo/volume is session UI state keyed
+    // by part index, so it must not leak across installs (mixer panel, B6).
+    S.partMix = {};
     // Create-mode import — the source builds tuning to the actual string count,
     // so length 6 means a genuine 6-string bass / standard guitar (not a
     // padded tuning). Seed `_extendedStrings` to keep `_stringCountFor` honest.

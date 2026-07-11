@@ -166,6 +166,23 @@ export const host = {
     promptBend: async () => {},
     /** Re-measure the canvas on the next frame (a lane count changed). */
     scheduleCanvasResize: () => {},
+
+    // ── Mixer panel (B6), crossing both ways ──────────────────────────
+    /**
+     * Per-part gate for the guide claps, consulted by src/audio.js when it
+     * schedules voices. Lives in src/mixer-panel.js (the canonical
+     * `S.partMix` owner); audio.js must not import that module, so it
+     * crosses here. Inert default: audible at unity — exactly the
+     * pre-panel behavior. Part solo NEVER gates the reference recording
+     * (D5), which rides its own transparent gain path.
+     */
+    partClapState: () => ({ audible: true, vol: 1 }),
+    /**
+     * Bus-fader percents + edit-blip flag for seeding the panel's controls.
+     * Owned by src/audio.js (the `editorMix*` prefs); the panel reads them
+     * through here so it stays audio-import-free.
+     */
+    mixUiState: () => ({ pcts: { ref: 100, guide: 35, click: 25 }, blip: true }),
 };
 
 export function setHostHooks(hooks) { Object.assign(host, hooks); }
