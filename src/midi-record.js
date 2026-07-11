@@ -49,7 +49,13 @@ const REC_COUNT_THROTTLE_MS = 80;          // max DOM update rate for the note c
 function chartTimeNow() {
     // editorStartRecordMidi guards against !S.audioCtx, so this only runs
     // during an active recording with a loaded audio context.
-    return _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime);
+    // Clamp at the start position, mirroring playbackTick: during a count-in
+    // pre-roll the anchor sits in the future, so the raw chart time reads
+    // before playStartTime — a note the player fumbles over the count must not
+    // land at a negative/pre-region time. Post-start notes are >= playStartTime
+    // already, so the clamp is a no-op for them.
+    return Math.max(S.playStartTime,
+        _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime));
 }
 
 /* @pure:midi-adapter:start */
