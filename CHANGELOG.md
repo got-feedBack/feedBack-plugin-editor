@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Handshape-template lighting on the fretboard strip** (the P7 follow-up
+  the strip deferred). When the selection sits inside an authored handshape
+  span, the covered chord template's shape renders as ghost dots under the
+  candidate lights — hollow squares in the framing color (chord sky /
+  arpeggio violet), finger digits when the template carries them (thumb
+  included), the template's name top-right — the "hold this shape" context
+  behind the per-note candidates. Nested spans resolve to the innermost;
+  the fret window widens to keep a shape up the neck on screen. Advisory
+  display only: ghosts aren't hit-testable and never dispatch.
+
 - **Count-in.** A `Count: off / 1 / 2 / 4 bars` select next to the
   metronome: playback (and, because the recorder rides the same transport
   clock, MIDI recording) starts after N bars of metronome clicks **in the
