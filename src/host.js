@@ -37,6 +37,8 @@ export const host = {
     draw: () => {},
     /** Paint the waveform band. Called from inside the drum editor's frame. */
     drawWaveform: () => {},
+    /** Paint the shared minimap and ruler header. */
+    drawTimelineHeader: () => {},
     /** Refresh the status/transport readouts. */
     updateStatus: () => {},
     /** Rebuild the arrangement <select> after a structural edit. */

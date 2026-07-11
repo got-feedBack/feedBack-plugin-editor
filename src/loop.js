@@ -156,24 +156,9 @@ export function _barSpanForTimes(t0, t1) {
     return _barSpanForTimesPure(_downbeatTimes(), S.duration || Math.max(t0, t1), t0, t1);
 }
 
-// ── Piano roll mode helpers ─────────────────────────────────────────
+// ── Loop labels (painted on the ruler by src/ruler.js) ──────────────
 
-function _loopStripTrackBounds() {
-    const track = document.getElementById('editor-loop-strip-track');
-    if (!track) return null;
-    const r = track.getBoundingClientRect();
-    return { left: r.left, width: Math.max(1, r.width) };
-}
-
-function _loopStripTimeFromClientX(clientX) {
-    const b = _loopStripTrackBounds();
-    if (!b || !canvas) return 0;
-    const ratio = Math.max(0, Math.min(1, (clientX - b.left) / b.width));
-    const viewDur = Math.max(0, ((canvas.width / DPR) - LABEL_W) / S.zoom);
-    return S.scrollX + ratio * viewDur;
-}
-
-function _fmtLoopTime(t) {
+export function _fmtLoopTime(t) {
     const total = Math.max(0, t || 0);
     const m = Math.floor(total / 60);
     const s = Math.floor(total % 60);
@@ -181,7 +166,7 @@ function _fmtLoopTime(t) {
     return m + ':' + String(s).padStart(2, '0') + '.' + ms;
 }
 
-function _regionMeasureLabel(region) {
+export function _regionMeasureLabel(region) {
     const starts = _downbeatTimes();
     if (!region || !starts.length) return _fmtLoopTime(region && region.startTime || 0);
     let startMeasure = 1;
@@ -193,48 +178,15 @@ function _regionMeasureLabel(region) {
     return 'Bars ' + startMeasure + '–' + endMeasure;
 }
 
+// The old DOM loop strip retired into the canvas ruler (src/ruler.js, B3):
+// the ruler paints S.barSel every frame, so "refresh the loop surface" is
+// now just the button/A-B mirrors plus a coalesced repaint. The name (and
+// the host.renderLoopStrip hook) survive because tempo/grid ops call this
+// after moving the grid under the loop.
 export function _renderLoopStrip() {
-    const root = document.getElementById('editor-loop-strip');
-    const empty = document.getElementById('editor-loop-strip-empty');
-    const sel = document.getElementById('editor-loop-strip-selection');
-    const clear = document.getElementById('editor-loop-strip-clear');
-    const label = document.getElementById('editor-loop-strip-label');
-    if (!root || !empty || !sel || !clear || !label || !canvas) return;
-    const beatsReady = _downbeatTimes().length > 0;
-    // Never dim or disable the strip: free-mode loops work without a bar
-    // grid, so an un-gridded song can loop while its tempo map is authored.
-    root.classList.remove('opacity-60');
-    empty.textContent = beatsReady
-        ? 'Drag to set loop region'
-        : 'Drag to set loop (free — no bar grid yet)';
-    _refreshLoopModeButtons();
-    if (!S.barSel) {
-        sel.classList.add('hidden');
-        clear.classList.add('hidden');
-        empty.classList.remove('hidden');
-        _updateLoopRegionControls();
-        return;
-    }
     _updateLoopRegionControls();
-    empty.classList.add('hidden');
-    sel.classList.remove('hidden');
-    clear.classList.remove('hidden');
-    const viewDur = Math.max(0, ((canvas.width / DPR) - LABEL_W) / S.zoom);
-    const left = ((S.barSel.startTime - S.scrollX) / Math.max(0.0001, viewDur)) * 100;
-    const right = ((S.barSel.endTime - S.scrollX) / Math.max(0.0001, viewDur)) * 100;
-    const clampedLeft = Math.max(0, Math.min(100, left));
-    const clampedRight = Math.max(0, Math.min(100, right));
-    sel.style.left = clampedLeft + '%';
-    sel.style.width = Math.max(0, clampedRight - clampedLeft) + '%';
-    // "Bars X–Y" only describes a whole-bar span honestly — grid/free
-    // regions get the plain time range instead of a misleading bar label.
-    const barLabelOk = (S.barSel.mode === 'bar' || S.barSel.mode === undefined)
-        && _downbeatTimes().length > 0;
-    label.textContent = (barLabelOk ? _regionMeasureLabel(S.barSel) + '  ' : '')
-        + _fmtLoopTime(S.barSel.startTime) + '–' + _fmtLoopTime(S.barSel.endTime);
-    sel.classList.toggle('ring-2', !!S.loopEnabled);
-    sel.classList.toggle('ring-accent-light', !!S.loopEnabled);
-    _updateLoopRegionControls();
+    host.updateLoopIn3DBtn();
+    host.draw();
 }
 
 export function _clearBarSelection() {
@@ -261,32 +213,18 @@ export function _loopLiveMode(shiftKey) {
     return _loopSnapModePref;
 }
 
+export function editorLoopSnapMode() {
+    return _downbeatTimes().length ? _loopSnapModePref : 'free';
+}
+
 export function editorSetLoopSnapMode(mode) {
     if (mode !== 'bar' && mode !== 'grid' && mode !== 'free') return;
     _loopSnapModePref = mode;
     try { localStorage.setItem('editorLoopSnapMode', mode); } catch (_) {}
-    _refreshLoopModeButtons();
+    host.draw();
     setStatus(mode === 'bar' ? 'Loop snaps to whole bars'
         : mode === 'grid' ? 'Loop snaps to the current grid subdivision'
         : 'Loop edges are free — no snapping (hold Shift for this in any mode)');
-}
-
-function _refreshLoopModeButtons() {
-    const group = document.getElementById('editor-loop-strip-modes');
-    if (!group) return;
-    const gridless = !_downbeatTimes().length;
-    for (const btn of group.querySelectorAll('button[data-loop-mode]')) {
-        const mode = btn.dataset.loopMode;
-        const active = gridless ? mode === 'free' : mode === _loopSnapModePref;
-        btn.classList.toggle('bg-accent', active);
-        btn.classList.toggle('text-white', active);
-        btn.classList.toggle('text-gray-400', !active);
-        // Bar/Grid need a beat grid; until one exists Free is forced.
-        const disabled = gridless && mode !== 'free';
-        btn.disabled = disabled;
-        btn.classList.toggle('opacity-40', disabled);
-        btn.title = disabled ? 'Needs a bar grid — set up the tempo map first' : btn.dataset.loopTitle || '';
-    }
 }
 
 /* @pure:loop-nudge:start */
@@ -345,16 +283,6 @@ export function _loopNudgeEdge(edge, dir, coarse) {
     _renderLoopStrip();
     host.draw();
     return true;
-}
-
-// Arrow-key nudging on the focused loop handle. The handles are real
-// <button>s, so clicking one focuses it; Left/Right then nudge that edge
-// without claiming any new global shortcut.
-export function _loopHandleKeydown(edge, e) {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    e.preventDefault();
-    e.stopPropagation();
-    _loopNudgeEdge(edge, e.key === 'ArrowRight' ? 1 : -1, e.shiftKey);
 }
 
 // The single writer for a NON-NULL S.barSel: assign the region and keep its
@@ -427,8 +355,6 @@ export function _updateLoopRegionControls() {
         loopBtn.classList.toggle('bg-dark-600', !S.loopEnabled);
         loopBtn.classList.toggle('hover:bg-dark-500', !S.loopEnabled);
     }
-    const clearBtn = document.getElementById('editor-loop-strip-clear');
-    if (clearBtn) clearBtn.title = S.loopEnabled ? 'Clear loop region and disable looping' : 'Clear loop region';
 }
 
 export function _setLoopRegionEnabled(enabled) {
@@ -448,66 +374,6 @@ export function _setLoopRegionEnabled(enabled) {
 }
 
 export function editorToggleLoopRegion() { return _setLoopRegionEnabled(!S.loopEnabled); }
-export function _loopStripOnMouseDown(e) {
-    // Note: no beat-grid gate — free-mode loops must work on a chart with
-    // zero downbeats (the starting state of every drifting-tempo song).
-    if (!canvas) return;
-    const track = document.getElementById('editor-loop-strip-track');
-    if (!track || !track.contains(e.target)) return;
-    if (e.target && e.target.id === 'editor-loop-strip-clear') return;
-    if (e.target && e.target.closest && e.target.closest('#editor-loop-strip-modes')) return;
-    const region = S.barSel;
-    const rawTime = _loopStripTimeFromClientX(e.clientX);
-    if (region) {
-        if (e.target && e.target.id === 'editor-loop-strip-start') {
-            S.drag = { type: 'loopstrip', mode: 'start' };
-            e.preventDefault();
-            return;
-        }
-        if (e.target && e.target.id === 'editor-loop-strip-end') {
-            S.drag = { type: 'loopstrip', mode: 'end' };
-            e.preventDefault();
-            return;
-        }
-    }
-    S.drag = { type: 'loopstrip', mode: 'create', startTime: rawTime };
-    _setBarSel(_loopRegionForDragPure(
-        _loopLiveMode(e.shiftKey), rawTime, rawTime,
-        _downbeatTimes(), S.duration || rawTime, snapTime));
-    host.updateLoopIn3DBtn();
-    host.draw();
-    e.preventDefault();
-}
-
-export function _loopStripOnMouseMove(e) {
-    if (!S.drag || S.drag.type !== 'loopstrip') return false;
-    const rawTime = _loopStripTimeFromClientX(e.clientX);
-    const downbeats = _downbeatTimes();
-    // Mode is resolved live so pressing/releasing Shift mid-drag flips
-    // between snapped and free without restarting the gesture.
-    const mode = _loopLiveMode(e.shiftKey);
-    if (S.drag.mode === 'create') {
-        _setBarSel(_loopRegionForDragPure(
-            mode, S.drag.startTime, rawTime, downbeats, S.duration || rawTime, snapTime));
-    } else if (S.drag.mode === 'start' && S.barSel) {
-        _setBarSel(_loopEdgeAdjustPure(
-            mode, S.barSel, 'start', rawTime, downbeats, S.duration || rawTime, snapTime));
-    } else if (S.drag.mode === 'end' && S.barSel) {
-        _setBarSel(_loopEdgeAdjustPure(
-            mode, S.barSel, 'end', rawTime, downbeats, S.duration || rawTime, snapTime));
-    }
-    host.updateLoopIn3DBtn();
-    host.draw();
-    return true;
-}
-
-export function _loopStripOnMouseUp() {
-    if (!S.drag || S.drag.type !== 'loopstrip') return false;
-    S.drag = null;
-    host.updateLoopIn3DBtn();
-    host.draw();
-    return true;
-}
 // Onset-snap tolerance (seconds): how close a note's placement must be to a
 // detected transient to snap onto it instead of the grid. ~70 ms spans the
 // grid-vs-attack gap on real recordings without hijacking clearly off-onset

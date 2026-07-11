@@ -7,6 +7,34 @@
 
 // ── Pitch-class names ───────────────────────────────────────────────
 export const PIANO_NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+export const PIANO_NOTE_NAMES_FLAT = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+
+// ── Enharmonic spelling preference ──────────────────────────────────
+// A key signature spells its accidentals one way: F major writes B♭, never
+// A♯. The preference is the RELATIVE MAJOR's position on the circle of
+// fifths, so each mode maps to the major key whose signature it borrows
+// (semitones ABOVE the mode's tonic; e.g. dorian is degree 2 → +10).
+// `chromatic` has no signature and is deliberately absent → sharps.
+const _RELATIVE_MAJOR_OFFSET = {
+    major: 0, lydian: 7, mixolydian: 5, dorian: 10, phrygian: 8,
+    minor: 3, harmonic_minor: 3, melodic_minor: 3, locrian: 1,
+    major_pentatonic: 0, minor_pentatonic: 3, blues: 3,
+};
+// Db, Eb, F, Ab, Bb majors carry flats. F#/Gb (pc 6) stays SHARP because the
+// key picker's tonic list is sharp-named — the label must match the choice.
+const _FLAT_MAJOR_PCS = [1, 3, 5, 8, 10];
+export function _keyPrefersFlatsPure(tonicPc, scaleName) {
+    const t = Number(tonicPc);
+    const off = _RELATIVE_MAJOR_OFFSET[scaleName];
+    if (!Number.isFinite(t) || off === undefined) return false;
+    return _FLAT_MAJOR_PCS.includes(((Math.round(t) + off) % 12 + 12) % 12);
+}
+// The name table an editorKey ({tonic, scale} or null) spells with. Null /
+// malformed keys read as "no key" → the sharp table, today's behavior.
+export function _noteNamesForKeyPure(key) {
+    return key && _keyPrefersFlatsPure(key.tonic, key.scale)
+        ? PIANO_NOTE_NAMES_FLAT : PIANO_NOTE_NAMES;
+}
 
 // Scale/mode membership as tonic-relative pitch-class sets (semitones above
 // the tonic). Used by the piano-roll in-key highlight; the harmony charrette

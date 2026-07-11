@@ -23,7 +23,7 @@
 import { beatOf, timeOf } from './beats.js';
 import { DPR, canvas, ctx } from './canvas.js';
 import { _drumLaneIdxForPiece, _drumPieceCount } from './drum.js';
-import { LABEL_W, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
+import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
 import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S } from './state.js';
@@ -42,7 +42,7 @@ const TEMPO_POLE_HALF = 6;     // sync-point pole grab half-width (px)
 // current arrangement's notes (spread by string) and the drum_tab
 // hits (spread by piece), plotted at their absolute times.
 function _tempoDrawReferenceNotes(w, gridBottom, visStart, visEnd) {
-    const bandTop = WAVEFORM_H + 46;
+    const bandTop = (TIMELINE_TOP + WAVEFORM_H) + 46;
     const bandBot = gridBottom - 8;
     if (bandBot <= bandTop) return;
     const bandMid = (bandTop + bandBot) / 2;
@@ -132,11 +132,12 @@ export function _tempoMapDraw(w, h) {
     const visibleEnd = S.scrollX + (w - LABEL_W) / S.zoom + 0.5;
     const gridBottom = h - TEMPO_HUD_H;
 
+    host.drawTimelineHeader(w);
     host.drawWaveform(w);
 
     // Grid region background.
     ctx.fillStyle = '#0c0c1c';
-    ctx.fillRect(LABEL_W, WAVEFORM_H, w - LABEL_W, gridBottom - WAVEFORM_H);
+    ctx.fillRect(LABEL_W, (TIMELINE_TOP + WAVEFORM_H), w - LABEL_W, gridBottom - (TIMELINE_TOP + WAVEFORM_H));
 
     if (!S.beats || S.beats.length < 2) {
         ctx.fillStyle = '#64748b';
@@ -144,7 +145,7 @@ export function _tempoMapDraw(w, h) {
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         ctx.fillText('No beat grid on this song — nothing to tempo-map.',
-            LABEL_W + 12, WAVEFORM_H + 30);
+            LABEL_W + 12, (TIMELINE_TOP + WAVEFORM_H) + 30);
         return;
     }
 
@@ -157,7 +158,7 @@ export function _tempoMapDraw(w, h) {
         ctx.strokeStyle = meas ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)';
         ctx.lineWidth = meas ? 1 : 0.5;
         ctx.beginPath();
-        ctx.moveTo(x, WAVEFORM_H);
+        ctx.moveTo(x, (TIMELINE_TOP + WAVEFORM_H));
         ctx.lineTo(x, gridBottom);
         ctx.stroke();
     }
@@ -184,13 +185,13 @@ export function _tempoMapDraw(w, h) {
                 ctx.textBaseline = 'top';
                 ctx.fillStyle = '#cbd5e1';
                 ctx.font = 'bold 10px monospace';
-                ctx.fillText(`M${m.measure - _pickupShift}`, xMid, WAVEFORM_H + 4);
+                ctx.fillText(`M${m.measure - _pickupShift}`, xMid, (TIMELINE_TOP + WAVEFORM_H) + 4);
                 ctx.fillStyle = m.isLast ? '#64748b' : '#fbbf24';
                 ctx.font = '10px monospace';
-                ctx.fillText(`${m.bpm.toFixed(2)} BPM`, xMid, WAVEFORM_H + 17);
+                ctx.fillText(`${m.bpm.toFixed(2)} BPM`, xMid, (TIMELINE_TOP + WAVEFORM_H) + 17);
                 ctx.fillStyle = '#64748b';
                 ctx.font = '9px monospace';
-                ctx.fillText(`${m.beats}/${_tempoMeasureDenominator(m.i)}`, xMid, WAVEFORM_H + 30);
+                ctx.fillText(`${m.beats}/${_tempoMeasureDenominator(m.i)}`, xMid, (TIMELINE_TOP + WAVEFORM_H) + 30);
             }
         }
 
@@ -206,23 +207,23 @@ export function _tempoMapDraw(w, h) {
                 ctx.strokeStyle = 'rgba(251,191,36,0.25)';
                 ctx.lineWidth = 7;
                 ctx.beginPath();
-                ctx.moveTo(x, WAVEFORM_H);
+                ctx.moveTo(x, (TIMELINE_TOP + WAVEFORM_H));
                 ctx.lineTo(x, gridBottom);
                 ctx.stroke();
             }
             ctx.strokeStyle = locked ? '#34d399' : sel ? '#fbbf24' : hov ? '#93c5fd' : '#64748b';
             ctx.lineWidth = sel ? 3 : 2;
             ctx.beginPath();
-            ctx.moveTo(x, WAVEFORM_H);
+            ctx.moveTo(x, (TIMELINE_TOP + WAVEFORM_H));
             ctx.lineTo(x, gridBottom);
             ctx.stroke();
             ctx.fillStyle = locked ? '#34d399' : sel ? '#fbbf24' : hov ? '#93c5fd' : '#94a3b8';
-            ctx.fillRect(x - TEMPO_POLE_HALF, WAVEFORM_H, TEMPO_POLE_HALF * 2, 13);
+            ctx.fillRect(x - TEMPO_POLE_HALF, (TIMELINE_TOP + WAVEFORM_H), TEMPO_POLE_HALF * 2, 13);
             ctx.fillStyle = '#0c0c1c';
             ctx.font = 'bold 9px monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            ctx.fillText('↔', x, WAVEFORM_H + 2);
+            ctx.fillText('↔', x, (TIMELINE_TOP + WAVEFORM_H) + 2);
         }
     }
 
@@ -232,7 +233,7 @@ export function _tempoMapDraw(w, h) {
         ctx.strokeStyle = 'rgba(255,255,255,0.5)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(cx, WAVEFORM_H);
+        ctx.moveTo(cx, (TIMELINE_TOP + WAVEFORM_H));
         ctx.lineTo(cx, gridBottom);
         ctx.stroke();
     }
@@ -252,9 +253,9 @@ export function _tempoMapDraw(w, h) {
 export function _tempoMapHudTextPure(measureCount, width) {
     const n = Number.isFinite(Number(measureCount)) ? Number(measureCount) : 0;
     if (Number(width) < 760) {
-        return `Tempo Map - ${n} measures - right-click sync point: BPM / signature`;
+        return `Tempo Map - ${n} measures - right-click barline: BPM / signature`;
     }
-    return `Tempo Map - ${n} measures - drag poles to retime, beat ticks for rubato - right-click sync point: BPM / signature/delete - right-click grid: insert`;
+    return `Tempo Map - ${n} measures - drag poles to retime, beat ticks for rubato - right-click barline: BPM / signature/delete - right-click grid: mark barline`;
 }
 // Status shown right after an audio-synced GP import. Names the Tempo Map tool
 // so a drifting chart has an obvious, discoverable fix — the #1 confusion in the
@@ -282,10 +283,10 @@ export function _tempoSyncInspectorStatePure(measures, selectedIndex) {
     const selected = rows.find(m => m && m.i === selectedIndex) || null;
     if (!selected) {
         return {
-            label: 'No sync point selected',
+            label: 'No barline selected',
             bpmValue: '',
             bpmDisabled: true,
-            bpmTitle: 'Select a Tempo Map sync point to edit its BPM',
+            bpmTitle: 'Select a Tempo Map barline to edit its BPM',
             numeratorValue: '',
             denominatorValue: '4',
             signatureDisabled: true,
@@ -307,7 +308,7 @@ export function _tempoSyncInspectorStatePure(measures, selectedIndex) {
         bpmValue: hasBpm ? Number(selected.bpm).toFixed(2) : '',
         bpmDisabled: !hasBpm,
         bpmTitle: hasBpm
-            ? 'Edit selected sync point BPM'
+            ? 'Edit selected barline BPM'
             : 'Final measure has no closing downbeat for a local BPM calculation',
         numeratorValue: String(numerator),
         denominatorValue: String(denominator),
@@ -315,7 +316,7 @@ export function _tempoSyncInspectorStatePure(measures, selectedIndex) {
         canInsert: true,
         canDelete,
         deleteTitle: canDelete
-            ? 'Delete selected sync point'
+            ? 'Delete selected barline'
             : 'First and final sync points cannot be deleted',
         hint: hasBpm
             ? `${numerator}/${denominator}`
@@ -332,11 +333,11 @@ function _ensureTempoSyncInspector() {
     el = document.createElement('span');
     el.id = 'editor-tempo-sync-inspector';
     el.className = 'hidden items-center gap-1.5 px-2 py-0.5 rounded border border-gray-700 bg-dark-700/60 text-xs';
-    el.innerHTML = '<span class="text-gray-500">Sync point:</span>'
+    el.innerHTML = '<span class="text-gray-500">Barline:</span>'
         + '<span id="editor-tempo-sync-label" class="text-gray-200 font-medium min-w-[5.5rem]">No selection</span>'
         + '<span id="editor-tempo-sync-hint" class="text-gray-500"></span>'
-        + '<button type="button" id="editor-tempo-sync-insert" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Insert a sync point at the playhead">Insert</button>'
-        + '<button type="button" id="editor-tempo-sync-delete" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete selected sync point">Delete</button>'
+        + '<button type="button" id="editor-tempo-sync-insert" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Mark a barline at the playhead">Mark</button>'
+        + '<button type="button" id="editor-tempo-sync-delete" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete selected barline">Delete</button>'
         + '<button type="button" id="editor-tempo-sync-modulate" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Metric modulation: new tempo = current × ratio, from this measure to the next tempo change (M)">Modulate…</button>';
     const insertBtn = el.querySelector('#editor-tempo-sync-insert');
     const deleteBtn = el.querySelector('#editor-tempo-sync-delete');
@@ -410,7 +411,7 @@ export function _refreshTempoSyncInspector() {
     }
     if (insertBtn && visible) {
         insertBtn.disabled = !state.canInsert;
-        insertBtn.title = 'Insert a sync point at the playhead';
+        insertBtn.title = 'Mark a barline at the playhead';
     }
     // Modulate shares the BPM edit's enable condition: a selected,
     // non-final measure with a computable tempo.
@@ -557,7 +558,7 @@ export function _refreshTempoMapButton() {
 export function _tempoSyncAtX(x, y) {
     if (!canvas) return -1;
     const gridBottom = canvas.height / DPR - TEMPO_HUD_H;
-    if (y < WAVEFORM_H || y > gridBottom) return -1;
+    if (y < (TIMELINE_TOP + WAVEFORM_H) || y > gridBottom) return -1;
     let best = -1, bestDist = TEMPO_POLE_HALF + 2;
     const beats = S.beats || [];
     for (let i = 0; i < beats.length; i++) {
@@ -574,7 +575,7 @@ export function _tempoSyncAtX(x, y) {
 function _tempoSubBeatAtX(x, y) {
     if (!canvas) return -1;
     const gridBottom = canvas.height / DPR - TEMPO_HUD_H;
-    if (y < WAVEFORM_H || y > gridBottom) return -1;
+    if (y < (TIMELINE_TOP + WAVEFORM_H) || y > gridBottom) return -1;
     let best = -1, bestDist = 5;
     const beats = S.beats || [];
     for (let i = 0; i < beats.length; i++) {
@@ -632,7 +633,7 @@ export function _tempoMapOnMouseDown(e, x, y) {
     if (!canvas) return;
 
     // Waveform-area click sets the playback cursor.
-    if (y < WAVEFORM_H) {
+    if (y < (TIMELINE_TOP + WAVEFORM_H)) {
         // Block the seek while a MIDI take is recording — restarting the
         // source node would prematurely finalize the take (mirrors the
         // guard on the normal-mode waveform click).
@@ -699,9 +700,9 @@ export function _tempoMapOnContextMenu(e) {
         html += '<div class="border-t border-gray-700 my-1"></div>';
         html += mkBtn('togglelock',
             (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock sync point' : 'Lock sync point');
-        html += mkBtn('delete', 'Delete sync point', 'text-red-400');
+        html += mkBtn('delete', 'Delete barline', 'text-red-400');
     } else {
-        html += mkBtn('insert', 'Insert sync point here');
+        html += mkBtn('insert', 'Mark barline here');
     }
     menu.innerHTML = html;
     menu.querySelectorAll('[data-action]').forEach(btn => {
@@ -725,11 +726,10 @@ export function _tempoMapOnContextMenu(e) {
 
 // ── Insert / delete sync points ─────────────────────────────────────
 //
-// Both are pure `measure`-field edits on S.beats: insert promotes the
-// nearest interior sub-beat to a downbeat (splitting a measure), delete
-// demotes a downbeat back to a sub-beat (merging two measures). No beat
-// time moves, so no note re-timing is needed — TempoGridCmd just swaps
-// the beats array.
+// Marking inside the mapped range promotes the nearest interior beat. Marking
+// after the mapped range closes the open measure and appends its next downbeat.
+// Delete demotes a downbeat back to a sub-beat. These are topology edits:
+// observed seconds stay fixed and TempoGridCmd re-lifts musical coordinates.
 
 // Renumber every downbeat sequentially, preserving the first one's number.
 function _tempoRenumberMeasures(beats) {
@@ -742,12 +742,71 @@ function _tempoRenumberMeasures(beats) {
     }
 }
 
+/* @pure:tempo-barline-append:start */
+export function _tempoAppendBarlinePure(beats, time, minGap = 0.05) {
+    if (!Array.isArray(beats) || beats.length < 1 || !Number.isFinite(time)) return null;
+    const downbeats = [];
+    for (let i = 0; i < beats.length; i++) {
+        if (beats[i] && beats[i].measure > 0) downbeats.push(i);
+    }
+    if (!downbeats.length) return null;
+    const finalBeat = beats[beats.length - 1];
+    if (!finalBeat || !Number.isFinite(finalBeat.time) || time <= finalBeat.time + minGap) return null;
+
+    const lastDownbeat = downbeats[downbeats.length - 1];
+    const out = beats.map(b => ({ ...b }));
+    let denominator = 4;
+    for (let k = downbeats.length - 1; k >= 0; k--) {
+        const den = Number(beats[downbeats[k]].den);
+        if ([2, 4, 8, 16].includes(den)) { denominator = den; break; }
+    }
+    if (lastDownbeat === beats.length - 1) {
+        const previous = downbeats.length > 1 ? downbeats[downbeats.length - 2] : -1;
+        const beatCount = previous >= 0 ? lastDownbeat - previous : 4;
+        const count = Math.max(1, Math.min(16, beatCount));
+        const start = Number(beats[lastDownbeat].time);
+        for (let k = 1; k < count; k++) {
+            const t = start + (time - start) * k / count;
+            out.push({ time: Math.round(t * 1000000) / 1000000, measure: -1 });
+        }
+    }
+    const measure = Number(beats[lastDownbeat].measure) + 1;
+    out.push({ time, measure, den: denominator });
+    return { beats: out, index: out.length - 1, measure,
+        beatCount: out.length - 1 - lastDownbeat, denominator };
+}
+/* @pure:tempo-barline-append:end */
+
 export function _tempoInsertSyncPoint(time) {
     const beats = S.beats || [];
     if (beats.length < 2) return;
     const dbIdx = [];
     for (let i = 0; i < beats.length; i++) if (beats[i].measure > 0) dbIdx.push(i);
     if (!dbIdx.length) return;
+
+    let nearestPole = -1, nearestPoleDist = Infinity;
+    for (const i of dbIdx) {
+        const dist = Math.abs(beats[i].time - time);
+        if (dist < nearestPoleDist) { nearestPole = i; nearestPoleDist = dist; }
+    }
+    if (nearestPoleDist <= MIN_MEASURE) {
+        S.tempoSel = nearestPole;
+        setStatus(`Barline ${beats[nearestPole].measure} selected.`);
+        host.draw();
+        return;
+    }
+    const appended = _tempoAppendBarlinePure(beats, time, MIN_MEASURE);
+    if (appended) {
+        S.history.exec(new TempoGridCmd(
+            beats, appended.beats, 'mark barline', S.tempoSel, appended.index));
+        S.tempoSel = appended.index;
+        const start = beats[dbIdx[dbIdx.length - 1]].time;
+        const bpm = appended.beatCount * 60 / (time - start);
+        setStatus(`Barline ${appended.measure} marked — ${appended.beatCount}/${appended.denominator}, ${bpm.toFixed(2)} BPM.`);
+        host.draw();
+        return;
+    }
+
     // Locate the measure [d, ndb) containing `time`.
     let d = dbIdx[0], ndb = beats.length;
     for (let k = 0; k < dbIdx.length; k++) {
@@ -764,7 +823,7 @@ export function _tempoInsertSyncPoint(time) {
         if (dist < bestDist) { bestDist = dist; bestS = i; }
     }
     if (bestS < 0) {
-        setStatus('Measure has no beat to split on — nothing to insert.');
+        setStatus('The tempo map ends here. Move the playhead later to mark the next barline.');
         return;
     }
     const oldBeats = beats.map(b => ({ ...b }));
@@ -986,10 +1045,12 @@ export function _tempoMeasureDenominator(d) {
 // change `measure` fields / sub-beat layout, never beat times, so no
 // note re-timing is involved; it just swaps the beats array.
 export class TempoGridCmd {
-    constructor(oldBeats, newBeats, label) {
+    constructor(oldBeats, newBeats, label, oldSelection = null, newSelection = null) {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
         this.label = label || 'grid';
+        this.oldSelection = oldSelection;
+        this.newSelection = newSelection;
         // The beat grid is SONG-level state (like drum_tab), not per-
         // arrangement — so it opts out of the read-only-roll lock (a fretted
         // part shown in the piano roll must not freeze tempo editing) and undo
@@ -1002,6 +1063,7 @@ export class TempoGridCmd {
     }
     exec() {
         S.beats = this.newBeats.map(b => ({ ...b }));
+        if (Number.isInteger(this.newSelection)) S.tempoSel = this.newSelection;
         // Grid re-INDEXES (insert/delete sync-point, time-sig): note SECONDS
         // stay put, but a note's beat coordinate changed (a beat was added /
         // removed before it), so re-lift beats from the unchanged seconds
@@ -1016,6 +1078,7 @@ export class TempoGridCmd {
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
+        if (Number.isInteger(this.oldSelection)) S.tempoSel = this.oldSelection;
         // Seconds are unchanged; re-lift beats back onto the old indexing.
         _liftAllBeats(S.beats);
         host.loopReliftBeats(S.beats);
@@ -1242,7 +1305,7 @@ export function _tempoApplyDrag(beats, d, newT) {
     }
 }
 
-// Metric modulation prompt + apply for the selected sync point. New tempo
+// Metric modulation prompt + apply for the selected barline. New tempo
 // = current × ratio, from the selected measure to the next tempo change
 // (the uniform-run boundary — hand-authored downstream tempo is a natural
 // pole the re-space never crosses). One undoable TempoMapCmd; notes ride
@@ -1360,11 +1423,11 @@ export function _restoreBeatLocks() {
     _applyBeatLocksPure(S.beats, _beatLockParsePure(raw), 0.02);
 }
 
-// Toggle the lock on the selected sync point: a locked anchor's time is held by
+// Toggle the lock on the selected barline: a locked anchor's time is held by
 // later global tempo re-fits (see _respaceWithLocksPure). Editor-pref, persisted.
 export function _editorToggleSyncLock() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point to lock.');
+        setStatus('Select a Tempo Map barline to lock.');
         return true;
     }
     const b = S.beats[S.tempoSel];
@@ -1380,7 +1443,7 @@ export function _editorToggleSyncLock() {
 
 export function _editorModulateTempoAtSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     const measures = _tempoMeasures();
@@ -1495,7 +1558,7 @@ export function _tapTempoStatusReasonPure(taps) {
 
 // ── Tap tempo (Shift+B in Tempo Map mode) ────────────────────────────
 // Tap along to the recording; the median inter-tap interval becomes a
-// pending BPM for the selected sync point. Enter applies it as ONE
+// pending BPM for the selected barline. Enter applies it as ONE
 // undoable command (via _tempoSetMeasureBpm), Escape cancels. Pausing
 // longer than the reset window starts a fresh run, so a flubbed take is
 // recoverable by just waiting a beat and tapping again.
@@ -1505,7 +1568,7 @@ let _tapTempo = null;   // { d, measure, taps: [ms…], bpm: number|null }
 
 export function _editorTapTempoAtSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     const measures = _tempoMeasures();
@@ -1533,7 +1596,7 @@ export function _editorTapTempoAtSelection() {
 
 /* @pure:tap-tempo-apply:start */
 // Decide what an Enter press should do with a pending tap run `t`, given the
-// currently-selected sync point `tempoSel` and the current clock `now` (ms).
+// currently-selected barline `tempoSel` and the current clock `now` (ms).
 // Refuses a run captured against a different sync point ('stale-selection' —
 // the selection moved out from under the run) or one that has aged past
 // `staleMs`. Returns 'apply' only when the run still targets `tempoSel`.

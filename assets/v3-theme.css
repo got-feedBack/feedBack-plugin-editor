@@ -341,3 +341,19 @@ html.fb-immersive #plugin-editor .editor-root {
     padding-top: 0;
     height: 100%;
 }
+/* ── Toggleable toolbars (workspace-shell B5) ─────────────────────── */
+/* A toolbar-group wrapper is layout-inert: `display: contents` leaves its
+   children as direct flex items of the row, so the wrapped markup renders
+   pixel-identical to the old flat row. Hiding a group is one class flip —
+   `display: none` beats `contents` and suppresses the whole subtree
+   (including wrappers' ::before/::after, per css-display-3). */
+#plugin-editor .editor-tb { display: contents; }
+#plugin-editor .editor-tb.editor-tb-off { display: none; }
+/* The right-click toolbar checklist reuses the menu dropdown skin but is
+   cursor-positioned (fixed, fully rounded) instead of bar-anchored. */
+#plugin-editor .editor-tb-context {
+    position: fixed; top: auto;
+    z-index: 80;
+    min-width: 11rem;
+    border-radius: 8px;
+}

@@ -25,8 +25,12 @@
  * no selection; hidden entirely on keys parts, drum mode, tempo-map mode
  * and the parts overview.
  *
- * Deferred (PR body): chord-selection handshape-template lighting — the
- * anchor-window box ships now; shape-vocabulary matching layers on later.
+ * Handshape-template lighting (the P7 follow-up): when the selection sits
+ * inside an authored handshape span, the covered chord template's shape
+ * renders as GHOST dots under the candidate lights (chord sky / arpeggio
+ * violet, finger digits when the template carries them, label top-right) —
+ * the "hold this shape" context behind the per-note candidates. Advisory
+ * display only: ghosts aren't hit-testable and never dispatch.
  */
 
 import { S, editGen } from './state.js';
@@ -39,7 +43,7 @@ import { _enumerateFrettedPositionsPure, _activeAnchorAtPure } from './position.
 import {
     MoveToStringCmd, SetTeachingMarkCmd, _prevNoteBefore, _rollAnchorList,
 } from './commands.js';
-import { PIANO_NOTE_NAMES } from './theory.js';
+import { _noteNamesForKeyPure } from './theory.js';
 
 /* @pure:fretboard-strip:start */
 
@@ -103,6 +107,41 @@ export function _stripAnnotationsPure(sel, ctx, prevFretAt) {
     return out;
 }
 
+// The handshape template covering time `t` on this arrangement, resolved to
+// a drawable shape — { dots: [{string, fret, finger}], arp, label } — or null
+// when no span covers `t`, the chord_id dangles, or the template has no
+// played strings. Chart frets (capo-relative), same space as annotations.
+// Nested/overlapping spans: the latest-starting (innermost) span wins, the
+// same shape the player is holding NOW. Strings at/above L are dropped (GP
+// templates arrive padded to 6 on narrower charts).
+export function _stripHandshapeShapePure(arr, t, L) {
+    if (!arr || !Array.isArray(arr.handshapes) || !Number.isFinite(t)) return null;
+    const EPS = 1e-6;
+    let hs = null;
+    for (const h of arr.handshapes) {
+        if (!h || !Number.isFinite(h.start_time) || !Number.isFinite(h.end_time)) continue;
+        if (t < h.start_time - EPS || t > h.end_time + EPS) continue;
+        if (!hs || h.start_time > hs.start_time) hs = h;
+    }
+    if (!hs) return null;
+    const ct = Array.isArray(arr.chord_templates) ? arr.chord_templates[hs.chord_id] : null;
+    if (!ct || !Array.isArray(ct.frets)) return null;
+    const n = Number.isFinite(L) && L > 0 ? Math.min(L, ct.frets.length) : ct.frets.length;
+    const dots = [];
+    for (let s = 0; s < n; s++) {
+        const f = ct.frets[s];
+        if (!Number.isFinite(f) || f < 0) continue;
+        const fg = Array.isArray(ct.fingers) && Number.isFinite(ct.fingers[s]) && ct.fingers[s] >= 0
+            ? ct.fingers[s] : null;
+        dots.push({ string: s, fret: f, finger: fg });
+    }
+    if (!dots.length) return null;
+    const label = (typeof ct.displayName === 'string' && ct.displayName)
+        || (typeof ct.name === 'string' && ct.name)
+        || (hs.arp ? 'arp' : 'shape');
+    return { dots, arp: !!hs.arp, label };
+}
+
 // The display window in PHYSICAL frets: always show the nut and capo region,
 // stretch to cover every annotation (chart fret + capo), keep a workable
 // minimum span, never past fret 24.
@@ -114,6 +153,11 @@ export function _stripFretWindowPure(annotations, capo, minSpan = 12) {
         if (phys + 1 > hi) hi = phys + 1;
     }
     return { lo: 0, hi: Math.min(24, Math.max(hi, minSpan)) };
+}
+
+export function _stripDisplayWindowPure(annotations, shape, capo) {
+    const dots = shape && Array.isArray(shape.dots) ? shape.dots : [];
+    return _stripFretWindowPure((annotations || []).concat(dots), capo);
 }
 
 // Strip geometry (the Virtuoso §13 parametrization): map physical fret /
@@ -223,7 +267,12 @@ function draw() {
     ctx2.fillRect(0, 0, W, H);
 
     const ann = currentAnnotations(actx);
-    const { lo, hi } = _stripFretWindowPure(ann, actx.capo);
+    // Handshape-template lighting: the shape covering the selection's earliest
+    // time, if any. Its dots widen the fret window so a shape up the neck
+    // can't clip off the right edge.
+    const selT = ann.length ? Math.min(...selectedNotes().map((n) => n.time)) : null;
+    const shape = selT === null ? null : _stripHandshapeShapePure(actx.arr, selT, actx.laneCount);
+    const { lo, hi } = _stripDisplayWindowPure(ann, shape, actx.capo);
     const g = _stripGeometryPure(W, H, actx.laneCount, lo, hi);
 
     // Fret lines + nut.
@@ -253,8 +302,10 @@ function draw() {
         ctx2.fillStyle = '#f59e0b'; ctx2.font = '700 7px sans-serif'; ctx2.textAlign = 'center'; ctx2.textBaseline = 'top';
         ctx2.fillText('CAPO', x, g.rowY(0) + 4);
     }
-    // Strings + sounding-open labels (tuning + capo aware).
+    // Strings + sounding-open labels (tuning + capo aware). Spell them the
+    // way the song key does, same as the roll — Eb, not D#, in a flat key.
     ctx2.font = 'bold 10px sans-serif'; ctx2.textBaseline = 'middle';
+    const openNames = _noteNamesForKeyPure(S.editorKey);
     for (let s = 0; s < actx.laneCount; s++) {
         const y = g.rowY(s);
         const col = STRIP_STRING_COLORS[s % STRIP_STRING_COLORS.length];
@@ -263,7 +314,7 @@ function draw() {
         ctx2.beginPath(); ctx2.moveTo(g.xLine(lo), y); ctx2.lineTo(g.xLine(hi), y); ctx2.stroke();
         ctx2.globalAlpha = 1; ctx2.fillStyle = col; ctx2.textAlign = 'right';
         const openPitch = (actx.openMidi[s] || 0) + (actx.tuning[s] || 0) + actx.capo;
-        ctx2.fillText(PIANO_NOTE_NAMES[((openPitch % 12) + 12) % 12], g.xLine(lo) - 6, y);
+        ctx2.fillText(openNames[((openPitch % 12) + 12) % 12], g.xLine(lo) - 6, y);
     }
     // Fret numbers.
     ctx2.fillStyle = '#4a4a5a'; ctx2.font = '9px sans-serif'; ctx2.textAlign = 'center'; ctx2.textBaseline = 'top';
@@ -271,7 +322,7 @@ function draw() {
 
     // Anchor-window box for the selection's time (the home-box idiom).
     if (ann.length) {
-        const t0 = Math.min(...selectedNotes().map((n) => n.time));
+        const t0 = selT;
         const anchor = _activeAnchorAtPure(actx.anchors, t0);
         if (anchor && Number.isFinite(anchor.fret) && anchor.fret > 0) {
             const w = Number.isFinite(anchor.width) ? anchor.width : 4;
@@ -285,6 +336,36 @@ function draw() {
             ctx2.strokeRect(x0, yTop, x1 - x0, yH);
             ctx2.setLineDash([]); ctx2.globalAlpha = 1;
         }
+    }
+
+    // Handshape-template ghosts UNDER the candidate lights: hollow rounded
+    // squares in the framing color (chord sky / arpeggio violet), finger
+    // digit inside when the template carries one, label top-right. Advisory
+    // only — never hit-testable, never dispatches.
+    if (shape) {
+        const shapeCol = shape.arp ? '#7c3aed' : '#0ea5e9';
+        ctx2.lineWidth = 1.5;
+        for (const d of shape.dots) {
+            const x = (d.fret === 0 && actx.capo > 0) ? g.xLine(actx.capo) + 9 : g.xNote(actx.capo + d.fret);
+            const y = g.rowY(d.string);
+            ctx2.globalAlpha = 0.55;
+            ctx2.strokeStyle = shapeCol;
+            ctx2.strokeRect(x - 6, y - 6, 12, 12);
+            if (d.finger !== null && FINGER_LABELS[d.finger] !== undefined) {
+                ctx2.fillStyle = shapeCol;
+                ctx2.font = 'bold 8px monospace';
+                ctx2.textAlign = 'center';
+                ctx2.textBaseline = 'middle';
+                ctx2.fillText(FINGER_LABELS[d.finger], x, y);
+            }
+        }
+        ctx2.globalAlpha = 0.8;
+        ctx2.fillStyle = shapeCol;
+        ctx2.font = 'bold 9px sans-serif';
+        ctx2.textAlign = 'right';
+        ctx2.textBaseline = 'top';
+        ctx2.fillText(shape.label + (shape.arp ? ' (arp)' : ''), W - 12, 2);
+        ctx2.globalAlpha = 1;
     }
 
     // Candidates + current positions. Open positions (current AND candidate)
@@ -377,7 +458,9 @@ function hitAt(e) {
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
     const ann = currentAnnotations(actx);
     if (!ann.length) return null;
-    const { lo, hi } = _stripFretWindowPure(ann, actx.capo);
+    const selT = Math.min(...selectedNotes().map((n) => n.time));
+    const shape = _stripHandshapeShapePure(actx.arr, selT, actx.laneCount);
+    const { lo, hi } = _stripDisplayWindowPure(ann, shape, actx.capo);
     const g = _stripGeometryPure(rect.width, rect.height, actx.laneCount, lo, hi);
     return { hit: _stripHitTestPure(x, y, g, ann, actx.capo), actx };
 }

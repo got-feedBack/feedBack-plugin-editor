@@ -22,6 +22,10 @@ read this top-to-bottom once — the architecture section saves real time.
   set): Tempo Map mode fits the grid to a recording (sync points, tap tempo,
   metric modulation, beat-lock), snap rides the same converter (grid, onset,
   swing), and loop regions/bookmarks/count-in ride the transport.
+  The authoritative musical ruler fits bars and beats to fixed source audio;
+  authored musical content aligns through that ruler. See
+  [`docs/TEMPO-MAPPING-DESIGN.md`](docs/TEMPO-MAPPING-DESIGN.md) for the four
+  timing domains, marker model, assisted mapping, and audition-speed rules.
 - **Companion strips** — a fretboard strip for fretted parts (candidate
   positions from the suggest-position resolver, click to assign) and a drum
   kit / pad strip for drum parts (GM-mapped, MIDI-monitor capable).

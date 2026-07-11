@@ -23,7 +23,7 @@
 // ════════════════════════════════════════════════════════════════════
 import { ctx } from './canvas.js';
 import { drawSelectionRect } from './draw.js';
-import { LABEL_W, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
+import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
 import { host } from './host.js';
 import { S, editGen } from './state.js';
 import { setStatus } from './ui.js';
@@ -251,9 +251,9 @@ export const DRUM_HIT_RADIUS = 8;
 // Y" answers with the row's CANONICAL piece — the add-target; hit lookup
 // matches any member of the row (see _drumHitAtPoint).
 export function _drumPieceCount()        { return _drumLanes().length; }
-export function _drumLaneIdxToY(idx)     { return WAVEFORM_H + idx * DRUM_LANE_H; }
+export function _drumLaneIdxToY(idx)     { return (TIMELINE_TOP + WAVEFORM_H) + idx * DRUM_LANE_H; }
 export function _drumYToLaneIdx(y) {
-    const idx = Math.floor((y - WAVEFORM_H) / DRUM_LANE_H);
+    const idx = Math.floor((y - (TIMELINE_TOP + WAVEFORM_H)) / DRUM_LANE_H);
     if (idx < 0 || idx >= _drumPieceCount()) return -1;
     return idx;
 }
@@ -295,6 +295,7 @@ export function _drumEditorDraw(w, h) {
     const visibleStart = S.scrollX - 0.5;
     const visibleEnd = S.scrollX + (w - LABEL_W) / S.zoom + 0.5;
 
+    host.drawTimelineHeader(w);
     host.drawWaveform(w);
 
     // ── Lane grid ─────────────────────────────────────────────────────
@@ -331,8 +332,8 @@ export function _drumEditorDraw(w, h) {
         ctx.strokeStyle = b.measure > 0 ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)';
         ctx.lineWidth = b.measure > 0 ? 1 : 0.5;
         ctx.beginPath();
-        ctx.moveTo(x, WAVEFORM_H);
-        ctx.lineTo(x, WAVEFORM_H + _drumPieceCount() * DRUM_LANE_H);
+        ctx.moveTo(x, (TIMELINE_TOP + WAVEFORM_H));
+        ctx.lineTo(x, (TIMELINE_TOP + WAVEFORM_H) + _drumPieceCount() * DRUM_LANE_H);
         ctx.stroke();
     }
 
@@ -474,8 +475,8 @@ export function _drumEditorDraw(w, h) {
         ctx.strokeStyle = 'rgba(255,255,255,0.5)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(timeToX(S.cursorTime), WAVEFORM_H);
-        ctx.lineTo(timeToX(S.cursorTime), WAVEFORM_H + _drumPieceCount() * DRUM_LANE_H);
+        ctx.moveTo(timeToX(S.cursorTime), (TIMELINE_TOP + WAVEFORM_H));
+        ctx.lineTo(timeToX(S.cursorTime), (TIMELINE_TOP + WAVEFORM_H) + _drumPieceCount() * DRUM_LANE_H);
         ctx.stroke();
     }
 
@@ -488,7 +489,7 @@ export function _drumEditorDraw(w, h) {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     const hud = `Drum editor — ${hits.length} hits, ${S.drumSel.size} selected. Click empty: add. Drag empty: select box. Click hit: select. Del: remove. G/F/K: ghost/flam/choke. A/N: accent/normal. Alt+drag or Shift+↑/↓: velocity.`;
-    const hudY = WAVEFORM_H + _drumPieceCount() * DRUM_LANE_H + 6;
+    const hudY = (TIMELINE_TOP + WAVEFORM_H) + _drumPieceCount() * DRUM_LANE_H + 6;
     ctx.fillText(hud, LABEL_W + 6, hudY);
     // Advisory playability count on its own line — amber, non-blocking. Wording
     // stays gentle (these are hints for the human, not errors).
@@ -776,14 +777,14 @@ function _drumEditorAddHit(x, y) {
 
 export function _drumEditorOnMouseDown(e, x, y) {
     // Click in the waveform area above the lane grid → set cursor (no note edit).
-    if (y < WAVEFORM_H) {
+    if (y < (TIMELINE_TOP + WAVEFORM_H)) {
         // Waveform-area click sets the cursor like in guitar mode.
         S.cursorTime = Math.max(0, xToTime(x));
         if (S.playing) { host.stopPlayback(); host.startPlayback(); }
         host.draw();
         return;
     }
-    if (y > WAVEFORM_H + _drumPieceCount() * DRUM_LANE_H) return;
+    if (y > (TIMELINE_TOP + WAVEFORM_H) + _drumPieceCount() * DRUM_LANE_H) return;
     // Clicks in the left lane-label gutter aren't on the time grid —
     // ignore them so they neither hit-test nor add a hit.
     if (x < LABEL_W) return;

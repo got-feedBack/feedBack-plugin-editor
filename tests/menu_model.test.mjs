@@ -80,7 +80,7 @@ t('tempo-map-scoped items grey outside Tempo Map mode, enable inside', () => {
     const outside = _menuModelPure(EDITOR_MENUS, rows, { ...CTX, tempoMapMode: false });
     const inside = _menuModelPure(EDITOR_MENUS, rows, { ...CTX, tempoMapMode: true });
     const get = (model, label) => model.flatMap((m) => m.items).find((i) => i.label === label);
-    const syncItem = 'Insert sync point at cursor';
+    const syncItem = 'Mark barline at cursor';
     assert.strictEqual(get(outside, syncItem).disabled, true);
     assert.strictEqual(get(inside, syncItem).disabled, false);
     assert.ok(get(inside, syncItem).dispatch, 'enabled item dispatches');

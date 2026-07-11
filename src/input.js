@@ -10,12 +10,12 @@ import { canvas } from './canvas.js';
 import { AddNoteCmd, ChangeFretCmd, ChangeFretGroupCmd, DeleteNotesCmd, MoveNoteCmd, ResizeSustainGroupCmd, SetPitchedSlideTargetsCmd, SetTeachingMarkCmd, ToggleTechniqueCmd, _execCyclePosition, _execMoveString, _execMoveStringSameFret, _rollAddByPitch, _withStableSelection } from './commands.js';
 import { hideContextMenu, promptBend, promptFret, promptSlide, promptSlideUnpitch, showContextMenu } from './context-menu.js';
 import { _drumEditorDeleteSelection, _drumEditorNudgeVelocity, _drumEditorSetVelocity, _drumEditorToggleArticulation, _editorToggleDrumDensity } from './drum.js';
-import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, TONE_LANE_H, WAVEFORM_H, xToTime, yToStr } from './geometry.js';
+import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, TIMELINE_TOP, TONE_LANE_H, WAVEFORM_H, xToTime, yToStr } from './geometry.js';
 import { hitNote } from './hit-test.js';
 import { _renderInspector, _selectedChordContext } from './inspector.js';
 import { PIANO_LANE_H, _rollLockNotice, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, pianoLaneCount, yToMidi } from './keys.js';
 import { lanes } from './lanes.js';
-import { _editorClampScrollX, snapTime } from './loop.js';
+import { _editorClampScrollX, _loopNudgeEdge, snapTime } from './loop.js';
 import { _recState } from './midi-record.js';
 import { getMousePos } from './mouse.js';
 import { _resizeSustainsForDeltaPure, notes } from './notes.js';
@@ -601,7 +601,7 @@ function _editorUnsupportedEofCommand(label) {
 
 function _editorPromptTempoBpmAtSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     _tempoPromptMeasureBpm(S.tempoSel);
@@ -616,7 +616,7 @@ function _editorInsertTempoSyncAtCursor() {
 
 function _editorDeleteTempoSyncSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     _tempoDeleteSyncPoint(S.tempoSel);
@@ -625,7 +625,7 @@ function _editorDeleteTempoSyncSelection() {
 
 function _editorAdjustTempoMeasureBeats(delta) {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     const d = S.tempoSel;
@@ -637,7 +637,7 @@ function _editorAdjustTempoMeasureBeats(delta) {
 
 function _editorPromptTempoBeatCountAtSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     const d = S.tempoSel;
@@ -659,7 +659,7 @@ function _editorPromptTempoBeatCountAtSelection() {
 
 function _editorPromptTempoBeatUnitAtSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     const d = S.tempoSel;
@@ -831,9 +831,9 @@ function _editorRightClickNoteEdit(e, x, y) {
     // stays locked — this write path only adds/repitches, never deletes.
     const keysMode = isKeysMode();
     const laneBottom = keysMode
-        ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
-        : WAVEFORM_H + lanes() * LANE_H;
-    if (y < WAVEFORM_H || y > laneBottom) return false;
+        ? (TIMELINE_TOP + WAVEFORM_H) + pianoLaneCount() * PIANO_LANE_H
+        : (TIMELINE_TOP + WAVEFORM_H) + lanes() * LANE_H;
+    if (y < (TIMELINE_TOP + WAVEFORM_H) || y > laneBottom) return false;
     // Only inside the timeline grid — a right-click on the left string/piano
     // label margin (x < LABEL_W) is not a note edit; without this it would
     // clamp xToTime()<0 to 0 and add a note at the song start.
@@ -882,7 +882,7 @@ export function onContextMenu(e) {
     // Tone-lane right-click — slot picker for the hit marker (and a
     // delete entry). Falls through to the existing menu logic when
     // there's no marker under the cursor.
-    if (y >= 0 && y < TONE_LANE_H && S.arrangements && S.arrangements.length) {
+    if (y >= TIMELINE_TOP && y < TIMELINE_TOP + TONE_LANE_H && S.arrangements && S.arrangements.length) {
         if (onToneLaneContextMenu(e, x)) return;
     }
     // Anchor-lane right-click — edit-fret/width + delete.
@@ -904,9 +904,9 @@ export function onContextMenu(e) {
 
     // Right-click on beat bar or lanes with no note = section menu
     const beatBarY = isKeysMode()
-        ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
-        : WAVEFORM_H + lanes() * LANE_H;
-    if (y >= beatBarY || (y >= WAVEFORM_H && hitNote(x, y) < 0)) {
+        ? (TIMELINE_TOP + WAVEFORM_H) + pianoLaneCount() * PIANO_LANE_H
+        : (TIMELINE_TOP + WAVEFORM_H) + lanes() * LANE_H;
+    if (y >= beatBarY || (y >= (TIMELINE_TOP + WAVEFORM_H) && hitNote(x, y) < 0)) {
         showSectionMenu(e.clientX, e.clientY, xToTime(x));
         return;
     }
@@ -1071,6 +1071,24 @@ export function onKeyDown(e) {
         return;
     }
 
+    // Loop-edge nudge: Alt+←/→ moves the loop START by its mode's natural
+    // step; Alt+Shift+←/→ moves the END. Adding Ctrl takes the coarse step
+    // (free mode: ±50 ms instead of ±10 ms — same idiom the retired strip's
+    // Shift-drag used, before Shift here got reassigned to the edge). Replaces
+    // the retired loop strip's focusable-handle arrow keys (the handles left
+    // with the strip — the ruler is canvas, so the keyboard path claims a
+    // chord instead). Alt keeps it clear of the plain/Ctrl arrow note-ops
+    // (which never carry Alt); direct handling mirrors the drum-velocity
+    // nudge precedent above.
+    if (S.barSel && e.altKey && !e.metaKey
+        && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+        && !e.target.matches('input, select, textarea')) {
+        e.preventDefault();
+        _loopNudgeEdge(e.shiftKey ? 'end' : 'start', e.key === 'ArrowRight' ? 1 : -1, e.ctrlKey);
+        host.draw();
+        return;
+    }
+
     // A pending tap-tempo run owns Enter/Escape until resolved — checked
     // before the profile dispatchers so neither can steal the keys.
     if (_tapTempoHandleKey(e)) return;
@@ -1087,7 +1105,7 @@ export function onKeyDown(e) {
     }
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
-        // Tempo-map mode: delete the selected sync point.
+        // Tempo-map mode: delete the selected barline.
         if (S.tempoMapMode && S.tempoSel >= 0 &&
                 !e.target.matches('input, select, textarea')) {
             e.preventDefault();
