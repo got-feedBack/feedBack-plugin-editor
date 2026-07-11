@@ -1243,6 +1243,17 @@ window.editorSetSnap = (idx) => {
     const el = document.getElementById('editor-snap');
     if (el) el.selectedIndex = S.snapIdx;
 };
+window.editorSetSwing = (pct) => {
+    const n = Number(pct);
+    // Same guard band as the quantizer: outside (50,75] means straight.
+    S.swingPct = Number.isFinite(n) && n > 50 && n <= 75 ? n : 50;
+    try { localStorage.setItem('editorSwingPct', String(S.swingPct)); } catch (_) {}
+    const el = document.getElementById('editor-swing');
+    if (el) el.value = String(S.swingPct);
+    setStatus(S.swingPct === 50
+        ? 'Swing off — straight grid'
+        : `Swing ${S.swingPct}% — off-subdivisions displace toward the next beat (snap only; playback is unchanged)`);
+};
 window.editorSetSnapEnabled = (enabled) => {
     S.snapEnabled = !!enabled;
     const el = document.getElementById('editor-snap-enabled');
@@ -1810,6 +1821,8 @@ function init() {
     // statement in this file; a module must not have import-time side effects.
     initCreate();
     initAudio();
+    // Restore the swing pref (editor pref, never the pack) and seed its select.
+    try { window.editorSetSwing(localStorage.getItem('editorSwingPct')); } catch (_) {}
     initMenuBar();
     initTransportBar();
 

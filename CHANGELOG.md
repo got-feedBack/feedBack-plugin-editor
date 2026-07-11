@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Swing quantization on the snap grid (workspace-shell D2).** A Swing
+  select next to Snap (Straight · 54% · 58% · 62%) displaces the OFF
+  subdivision of each pair toward the next beat — as a **beat-domain phase
+  offset fed through the `beatOf`/`timeOf` converter**, never a seconds
+  nudge, so a swung note keeps its groove ratio through a tempo flex exactly
+  like a straight one. 50% is bit-identical to the straight grid; triplet
+  grids (1/3T, 1/6T, 1/12T…) are already swung by construction and ignore
+  the setting, as do odd grids. Snap placement only: playback, existing
+  notes, and the drawn grid are unchanged, and out-of-band values (a corrupt
+  pref) fall back to straight rather than flinging notes. Editor pref
+  (localStorage), never written to the pack.
+  `_swingQuantizeBeatPure` in `src/snap.js` + `tests/swing_snap.test.mjs` (8).
 - **The menu bar (workspace-shell B4).** Nine menus — File · Edit · Add ·
   Note · Part · View · Transport · **Tempo/Grid** · Help — re-homing the
   existing command registry, organized by musical object (Tempo/Grid is the
