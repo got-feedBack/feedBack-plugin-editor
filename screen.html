@@ -1,4 +1,8 @@
-<div class="flex flex-col h-screen pt-16 bg-dark-900 text-white overflow-hidden">
+<div class="editor-root flex flex-col h-screen pt-16 bg-dark-900 text-white overflow-hidden">
+
+    <!-- Menu bar (workspace-shell B4) — built by src/menu-bar.js; nine menus
+         re-homing the command registry. Always present, above everything. -->
+    <div id="editor-menu-bar" class="editor-menu-bar shrink-0"></div>
 
     <!-- Top bar: back + song info -->
     <div class="flex items-center gap-3 px-4 py-2 bg-dark-800 border-b border-gray-800 shrink-0">
@@ -150,6 +154,10 @@
         </select>
         <button id="editor-shortcuts-btn" onclick="editorToggleShortcutPanel()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs" title="Show shortcut and command controls">Shortcuts…</button>
     </div>
+
+    <!-- Transport control bar + LCD (workspace-shell B2) — built by
+         src/transport-bar.js; always present, directly above the timeline. -->
+    <div id="editor-transport-bar" class="editor-transport-bar shrink-0"></div>
 
     <!-- Canvas area + inspector panel -->
     <div class="flex-1 flex overflow-hidden">
