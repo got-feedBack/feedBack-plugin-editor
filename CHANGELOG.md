@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Authoritative musical-ruler tempo mapping.** Tempo Map's primary action is
+  now **Mark barline**: inside the mapped range it preserves the existing split
+  behavior, while a mark beyond the final beat closes the open measure at the
+  playhead, preserves authored trailing/rubato beats, and synthesizes inherited
+  interior beats only for a terminal-only tail. The operation is one undoable
+  topology edit, so source/object seconds remain fixed while musical positions
+  re-lift. The consolidated ruler shades and labels audio after the final
+  confirmed downbeat as **Unmapped** instead of implying one enormous last bar.
+  The accepted timing/marker/autofill/audition contract is documented in
+  `docs/TEMPO-MAPPING-DESIGN.md`.
+
 - **Handshape-template lighting on the fretboard strip** (the P7 follow-up
   the strip deferred). When the selection sits inside an authored handshape
   span, the covered chord template's shape renders as ghost dots under the

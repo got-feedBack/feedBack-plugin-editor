@@ -82,6 +82,15 @@ export function _rulerBarLabelSkipPure(pxPerBar) {
 
 // Loop-edge grab test in x (the whole ruler height grabs, so the grips are
 // an easy target): 'start' | 'end' | null, nearest edge wins ties.
+export function _rulerMappedEndPure(beats) {
+    if (!Array.isArray(beats)) return null;
+    for (let i = beats.length - 1; i >= 0; i--) {
+        const b = beats[i];
+        if (b && b.measure > 0 && Number.isFinite(b.time)) return b.time;
+    }
+    return null;
+}
+
 export function _rulerLoopEdgeHitPure(x, x0, x1, tol = 5) {
     if (!Number.isFinite(x) || !Number.isFinite(x0) || !Number.isFinite(x1)) return null;
     const dStart = Math.abs(x - x0), dEnd = Math.abs(x - x1);
@@ -156,6 +165,24 @@ export function drawRuler(w) {
 
     const st = S.scrollX - 1;
     const et = S.scrollX + (w - LABEL_W) / S.zoom + 1;
+
+    // The final confirmed downbeat closes the mapped range. Audio after it is
+    // still seekable source time, but it is not one giant final measure.
+    const mappedEnd = _rulerMappedEndPure(S.beats);
+    if (mappedEnd !== null && mappedEnd < et) {
+        const x0 = Math.max(LABEL_W, timeToX(mappedEnd));
+        if (x0 < w) {
+            ctx.fillStyle = 'rgba(148,163,184,0.08)';
+            ctx.fillRect(x0, top, w - x0, RULER_H);
+            if (w - x0 >= 58) {
+                ctx.fillStyle = '#64748b';
+                ctx.font = '8px monospace';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                ctx.fillText('Unmapped', x0 + 5, top + 2);
+            }
+        }
+    }
 
     // Loop region band (the old HTML strip's painting, now on the ruler).
     if (S.barSel) {

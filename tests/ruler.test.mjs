@@ -23,6 +23,7 @@ globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setI
 
 const {
     _minimapTimePure, _minimapXPure, _rulerBarLabelSkipPure, _rulerLoopEdgeHitPure,
+    _rulerMappedEndPure,
     _rulerZonePure, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp,
 } = await import('../src/ruler.js');
 const { MINIMAP_H, RULER_H, TIMELINE_TOP, LABEL_W } = await import('../src/geometry.js');
@@ -87,6 +88,16 @@ t('a degenerate duration maps to the band start / time 0, never NaN', () => {
 });
 
 // ── Ruler furniture ───────────────────────────────────────────────────
+
+t('mapped range ends at the final confirmed downbeat', () => {
+    assert.strictEqual(_rulerMappedEndPure([
+        { time: 1, measure: 1 }, { time: 1.5, measure: -1 },
+        { time: 2, measure: 2 }, { time: 2.5, measure: -1 },
+    ]), 2);
+    assert.strictEqual(_rulerMappedEndPure([{ time: 1, measure: -1 }]), null);
+    assert.strictEqual(_rulerMappedEndPure(null), null);
+});
+
 
 t('bar labels skip in powers of two once bars get narrow', () => {
     assert.strictEqual(_rulerBarLabelSkipPure(100), 1);

@@ -23,7 +23,7 @@ const measures = [
 
 t('asks for a selected sync point before enabling edits', () => {
     const state = _tempoSyncInspectorStatePure(measures, -1);
-    assert.strictEqual(state.label, 'No sync point selected');
+    assert.strictEqual(state.label, 'No barline selected');
     assert.strictEqual(state.bpmDisabled, true);
     assert.strictEqual(state.signatureDisabled, true);
     assert.strictEqual(state.bpmValue, '');
@@ -42,7 +42,7 @@ t('shows editable BPM and signature for a selected non-final measure', () => {
     assert.strictEqual(state.hint, '7/8');
     assert.strictEqual(state.canInsert, true);
     assert.strictEqual(state.canDelete, true);
-    assert.strictEqual(state.deleteTitle, 'Delete selected sync point');
+    assert.strictEqual(state.deleteTitle, 'Delete selected barline');
 });
 
 t('keeps signature editable but disables BPM for the final measure', () => {
