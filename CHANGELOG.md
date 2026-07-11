@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Resolve positions in an anchor's window + the confirm sweep
+  (view-modality P8 / VA.7).** The anchor lane's context menu gains
+  "Resolve positions in this window…": it runs the suggest-position
+  resolver over every unresolved (suggested) note between that anchor and
+  the next, writing the repicks as ONE undoable command — notes stay
+  suggested (the machine picked; the charter confirms), refusals keep
+  their position and are counted in the status line, never guessed, and
+  earlier repicks claim their strings for later ones exactly like the
+  roll writer. Then a **sweep bar** walks the window note-by-note: Enter
+  accepts (each accept its own cheap undo through the existing accept
+  command), ←/→ move, **A** accepts all remaining, Esc closes; the sweep
+  seeks and selects as it walks and follows refs, so an undo mid-sweep
+  can't derail it. **A** confirms only notes the resolver actually placed —
+  refused notes keep their suggested mark and stay counted in the honest
+  "positions unresolved" gap (they were never re-fingered). The anchor lane
+  itself (both views, drag/edit/delete) already shipped — this is the
+  missing bulk-authoring verb on top of it.
+  `src/anchor-resolve.js` + `tests/anchor_resolve.test.mjs` (10).
 - **Fretted playability lint (view-modality P9 / VA.8) — advisory only.**
   A pure lint pass over the active fretted part, recomputed only when an
   edit changes it (never per frame): **stretch** (simultaneous fretted
