@@ -78,10 +78,11 @@ t('setLaneMetrics is the only writer, and importers see the new values', () => {
     const before = geo.WAVEFORM_H;
     geo.setLaneMetrics(1000);
     assert.notStrictEqual(geo.WAVEFORM_H, before, 'the exported binding updated');
-    assert.strictEqual(geo.BEAT_H, 50, '5% of 1000');
     assert.strictEqual(geo.WAVEFORM_H, 120, '12% of 1000');
-    // lanes fill what's left after the beat bar, waveform, anchor + handshape strips
-    const expected = Math.floor((1000 - 120 - 50 - geo.ANCHOR_LANE_H - geo.HS_LANE_H) / lanes());
+    // lanes fill what's left after the timeline header (minimap + ruler),
+    // waveform, anchor + handshape strips (the bottom beat bar retired into
+    // the B3 ruler — no BEAT_H reserve anymore)
+    const expected = Math.floor((1000 - geo.TIMELINE_TOP - 120 - geo.ANCHOR_LANE_H - geo.HS_LANE_H) / lanes());
     assert.strictEqual(geo.LANE_H, expected);
 });
 
@@ -96,13 +97,12 @@ t('geometry reads the NEW metrics after a resize (no stale capture)', () => {
     geo.setLaneMetrics(400);
     const short = laneToY(1);
     assert.notStrictEqual(tall, short, 'laneToY tracks the resized metrics');
-    assert.strictEqual(short, geo.WAVEFORM_H + geo.LANE_H);
+    assert.strictEqual(short, geo.TIMELINE_TOP + geo.WAVEFORM_H + geo.LANE_H);
 });
 
 t('short canvases hit the floors instead of collapsing', () => {
     setArr(guitar());
     geo.setLaneMetrics(10);
-    assert.strictEqual(geo.BEAT_H, 20, 'beat bar floor');
     assert.strictEqual(geo.WAVEFORM_H, 50, 'waveform floor');
     assert.strictEqual(geo.LANE_H, 30, 'lane floor — never a negative height');
 });

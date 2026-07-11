@@ -13,7 +13,7 @@
  * container like lanes.js's `LC`.
  */
 
-import { WAVEFORM_H } from './geometry.js';
+import { TIMELINE_TOP, WAVEFORM_H } from './geometry.js';
 import { setStatus } from './ui.js';
 import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js';
 import { notes } from './notes.js';
@@ -165,9 +165,9 @@ export function midiToString(midi) { return Math.floor(midi / 24); }
 export function midiToFret(midi) { return midi % 24; }
 
 // Piano roll Y: higher MIDI = higher on screen (lower Y)
-export function midiToY(midi) { return WAVEFORM_H + (pianoRange.hi - midi) * PIANO_LANE_H; }
+export function midiToY(midi) { return (TIMELINE_TOP + WAVEFORM_H) + (pianoRange.hi - midi) * PIANO_LANE_H; }
 export function yToMidi(y) {
-    const m = pianoRange.hi - Math.floor((y - WAVEFORM_H) / PIANO_LANE_H);
+    const m = pianoRange.hi - Math.floor((y - (TIMELINE_TOP + WAVEFORM_H)) / PIANO_LANE_H);
     return Math.max(pianoRange.lo, Math.min(pianoRange.hi, m));
 }
 

@@ -20,6 +20,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the cell existed. The "last non-zero count" memory the toggle restores
   is recorded in `editorSetCountIn` itself, so setting the count via the
   toolbar select (not just the LCD cell or toggle) updates it too.
+- **Toggleable toolbars + density presets** (workspace-shell B5). The flat
+  toolbar row's divider-groups are now eight named toolbars (File · Parts ·
+  Edit · Transport · Grid · Tempo · Harmony · Overlays), each individually
+  toggleable from `View ▸ Toolbars`, a right-click on the toolbar row, or
+  the task-based density presets **Compose** (File+Edit+Grid), **Transcribe**
+  (adds Tempo+Overlays) and **Everything** — plus "Reset layout" to return
+  to the active preset's default. Hiding a toolbar is a pure CSS class flip
+  on a layout-inert `display:contents` wrapper (zero canvas cost, zero
+  re-plumbing; the row renders pixel-identical when everything is shown,
+  which is also the first-run default). Layout persists as an editor pref
+  (`editorToolbars`, never the pack) and never auto-reverts; the key/scale
+  controls' existing auto-show survives as a sticky content-action reveal
+  of the Harmony toolbar that never overrides an explicit hide. The
+  Structure toolbar joins when it has buttons (section/phrase ops live in
+  the menu bar under Add ▸ Markers for now).
+
+- **One consolidated ruler + whole-song minimap** (workspace-shell B3).
+  The three time-surfaces — the floating loop-strip overlay, the waveform
+  band's seek role, and the bottom beat bar — consolidate into a timeline
+  header at the canvas top (the charrette layout: transport → ruler →
+  waveform → lanes): a **minimap** (sections, loop, viewport window,
+  playhead; click/drag pans the whole song) over the **authoritative
+  ruler** owning bars + beats + sections + loop + playhead. The ruler's
+  upper half paints/resizes the loop (mode-aware — Bar/Grid/Free per the
+  loop-snap pref, Shift = free, edge grips drag); its lower half scrubs
+  the playhead; measure numbers skip in powers of two instead of
+  colliding, and sub-beat ticks appear as zoom allows. Section names
+  moved from the lane area onto the ruler (the dashed boundary lines
+  stay in the chart). Loop snap mode + Clear loop now live under
+  `Transport ▸ Loop`; `Alt+←/→` nudges the loop start (`Alt+Shift`: the
+  end; add `Ctrl` for the coarse ±50 ms free step), replacing the old
+  strip handles' arrow keys. Loop state is still
+  `S.barSel` end-to-end — same commands, same beat-anchoring, same
+  Loop-in-3D handoff; only the surface moved. Everything below the
+  header shifts down by its fixed 40px (`TIMELINE_TOP`); the waveform
+  band keeps click-to-seek as a convenience.
 
 - **Count-in.** A `Count: off / 1 / 2 / 4 bars` select next to the
   metronome: playback (and, because the recorder rides the same transport
