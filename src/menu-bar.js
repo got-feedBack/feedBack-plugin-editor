@@ -40,6 +40,7 @@ import { host } from './host.js';
 import {
     applyToolbarPreset, getToolbarCtx, resetToolbarLayout, toggleToolbar,
 } from './toolbars.js';
+import { _clearBarSelection, editorLoopSnapMode, editorSetLoopSnapMode } from './loop.js';
 
 /* @pure:menu-model:start */
 // The nine menus (charrette §2.2). Item kinds:
@@ -179,6 +180,14 @@ export const EDITOR_MENUS = Object.freeze([
         { label: 'Loop region', fn: 'editorToggleLoopRegion' },
         { cmd: 'toggleLoopAB' },
         { label: 'Loop in 3D', fn: 'editorLoopIn3D' },
+        { loopClear: true, label: 'Clear loop' },
+        // Loop snap mode moved here from the retired HTML loop strip (B3):
+        // how a ruler loop-drag resolves — whole bars, the grid subdivision,
+        // or free seconds (Shift-drag = temporary Free in any mode).
+        { hdr: 'Loop snap' },
+        { loopSnap: 'bar', label: 'Bar' },
+        { loopSnap: 'grid', label: 'Grid' },
+        { loopSnap: 'free', label: 'Free' },
         { sep: true },
         { cmd: 'toggleMetronome' },
         { cmd: 'toggleGuideClap' },
@@ -249,6 +258,19 @@ export function _menuModelPure(menus, rows, ctx) {
                 });
                 continue;
             }
+            if (it.loopSnap || it.loopClear) {
+                // Loop rows (B3). The snap trio renders like a radio group;
+                // ctx.loopSnapMode is absent in older callers -> unchecked.
+                const on = it.loopSnap && ctx.loopSnapMode === it.loopSnap;
+                items.push({
+                    label: (it.loopClear ? '' : on ? '✓ ' : '  ') + it.label,
+                    key: '',
+                    dispatch: it.loopSnap ? { loopSnap: it.loopSnap } : { loopClear: true },
+                    disabled: false,
+                    planned: false,
+                });
+                continue;
+            }
             if (it.cmd) {
                 const row = byId.get(it.cmd);
                 if (!row) continue;   // registry moved on — never render a dangling id
@@ -303,6 +325,7 @@ function currentModel() {
         {
             tempoMapMode: !!S.tempoMapMode, hasAudio: !!S.audioBuffer, fns: windowFns(),
             toolbars: getToolbarCtx(),
+            loopSnapMode: editorLoopSnapMode(),
         });
 }
 
@@ -312,6 +335,8 @@ function dispatch(d) {
     if (d.tb) { toggleToolbar(d.tb); return; }
     if (d.tbPreset) { applyToolbarPreset(d.tbPreset); return; }
     if (d.tbReset) { resetToolbarLayout(); return; }
+    if (d.loopSnap) { editorSetLoopSnapMode(d.loopSnap); return; }
+    if (d.loopClear) { _clearBarSelection(); return; }
     if (d.fn === '__swapProfile') {
         const next = editorShortcutProfile === 'eof' ? 'feedback' : 'eof';
         if (typeof window.editorSetShortcutProfile === 'function') window.editorSetShortcutProfile(next);
