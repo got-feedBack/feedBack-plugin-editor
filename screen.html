@@ -29,14 +29,22 @@
         <button id="editor-remove-arr-btn" onclick="editorRemoveArrangement()" class="px-2 py-1 bg-dark-600 hover:bg-red-900 rounded text-xs text-gray-500 hover:text-red-300 transition hidden" title="Remove current arrangement">&times;</button>
     </div>
 
-    <!-- Toolbar -->
-    <div class="flex items-center gap-2 px-4 py-1.5 bg-dark-800 border-b border-gray-800 shrink-0 flex-wrap">
+    <!-- Toolbar. Each divider-group is wrapped in a `.editor-tb` span
+         (display:contents — layout-inert) named by data-tb, so View ▸ Toolbars,
+         the right-click checklist and the density presets can show/hide whole
+         clusters with a CSS class flip (src/toolbars.js, workspace-shell B5).
+         One toolbar id may span several wrappers (grid = zoom + snap). -->
+    <div id="editor-toolbar-row" class="flex items-center gap-2 px-4 py-1.5 bg-dark-800 border-b border-gray-800 shrink-0 flex-wrap">
         <!-- File operations -->
+        <div class="editor-tb" data-tb="file">
         <button id="editor-load-btn" onclick="editorShowLoadModal()" class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium">Load</button>
         <button id="editor-create-btn" onclick="editorShowCreateModal()" class="px-3 py-1 bg-green-800 hover:bg-green-700 rounded text-xs font-medium" title="Start a new song">New…</button>
         <button id="editor-save-btn" onclick="editorSave()" class="px-3 py-1 bg-accent hover:bg-accent-light rounded text-xs font-medium" disabled>Save</button>
         <button id="editor-replace-audio-btn" onclick="editorShowReplaceAudioModal()" class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden" title="Replace the audio track">Replace Audio</button>
         <button id="editor-build-btn" onclick="editorBuild()" class="px-3 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs font-medium hidden" title="Assemble the finished .feedpak package">Build feedpak</button>
+        </div>
+        <!-- Parts -->
+        <div class="editor-tb" data-tb="parts">
         <button id="editor-add-drums-btn" onclick="editorShowAddDrumsModal()" class="px-3 py-1 bg-red-900 hover:bg-red-800 rounded text-xs font-medium hidden">+ Drums</button>
         <button id="editor-add-keys-btn" onclick="editorShowAddKeysModal()" class="px-3 py-1 bg-indigo-900 hover:bg-indigo-800 rounded text-xs font-medium hidden">+ Keys</button>
         <button id="editor-import-guitar-btn" onclick="editorShowImportGuitarModal()" class="px-3 py-1 bg-blue-900 hover:bg-blue-800 rounded text-xs font-medium hidden" title="Import a guitar or bass track from a Guitar Pro file — add it or replace an existing arrangement">+ Guitar/Bass</button>
@@ -46,8 +54,9 @@
         <button id="editor-stems-mixer-btn" onclick="editorToggleStemMixer()" class="px-3 py-1 bg-teal-800 hover:bg-teal-700 rounded text-xs font-medium hidden" title="Per-instrument stem mixer (volume / mute / solo)">🎚 Stems</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
-
+        </div>
         <!-- Undo/Redo -->
+        <div class="editor-tb" data-tb="edit">
         <button id="editor-undo" onclick="editorUndo()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs" disabled title="Undo (Ctrl+Z)">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4"/></svg>
         </button>
@@ -56,8 +65,9 @@
         </button>
 
         <div class="h-4 w-px bg-gray-700"></div>
-
+        </div>
         <!-- Playback -->
+        <div class="editor-tb" data-tb="transport">
         <button id="editor-play-btn" onclick="editorTogglePlay()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs" disabled title="Play/Pause (Space)">
             <svg id="editor-play-icon" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
         </button>
@@ -80,20 +90,25 @@
         <button id="editor-mixer-btn" onclick="editorToggleMixer()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Audio mixer: recording / guide / click levels and the edit blip (Shift+C)" aria-pressed="false">Mix</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
-
-        <!-- Zoom -->
+        </div>
+        <!-- Zoom (grid toolbar, first chunk — the snap chunk follows below) -->
+        <div class="editor-tb" data-tb="grid">
         <span class="text-xs text-gray-500">Zoom:</span>
         <button onclick="editorZoom(-1)" class="px-1.5 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs">-</button>
         <span id="editor-zoom-display" class="text-xs text-gray-400 w-8 text-center">100</span>
         <button onclick="editorZoom(1)" class="px-1.5 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs">+</button>
+        </div>
+        <!-- Overlays -->
+        <div class="editor-tb" data-tb="overlays">
         <button id="editor-onset-btn" onclick="editorToggleOnsetStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Onset strip: amber blocks mark detected attacks in the recording (Shift+W). Display only — never places notes." aria-pressed="false">Onsets</button>
         <button id="editor-tab-preview-btn" onclick="editorShowTabPreview()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Preview the current part as engraved tab (read-only — renders the pack as last saved; needs the Tab View plugin)">Tab…</button>
         <button id="editor-drum-pads-btn" onclick="editorToggleDrumPadStrip()" class="hidden px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Drum pads: kit legend + input strip — selected hits light up, click a pad to add a hit at the cursor, Listen flashes pads from a MIDI kit (GM map)" aria-pressed="true">Pads</button>
         <button id="editor-fretboard-btn" onclick="editorToggleFretboardStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" title="Fretboard strip: light every playable position for the selected notes — click one to assign it, right-click to cycle the finger mark (fretted parts)" aria-pressed="false">Fret</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
-
-        <!-- BPM -->
+        </div>
+        <!-- BPM + offset -->
+        <div class="editor-tb" data-tb="tempo">
         <span class="text-xs text-gray-500">BPM:</span>
         <input type="number" id="editor-bpm" min="30" max="400" step="0.1"
             class="w-14 bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none text-center"
@@ -112,8 +127,9 @@
         <button onclick="editorNudgeOffset(0.01)" class="px-1 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs" title="+10ms">&gt;</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
-
-        <!-- Snap -->
+        </div>
+        <!-- Snap (grid toolbar, second chunk) -->
+        <div class="editor-tb" data-tb="grid">
         <span class="text-xs text-gray-500">Snap:</span>
         <select id="editor-snap" onchange="editorSetSnap(this.selectedIndex)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none">
             <option>1/1</option>
@@ -140,9 +156,14 @@
             <option value="58">Swing 58%</option>
             <option value="62">Swing 62%</option>
         </select>
+        </div>
 
         <!-- Key / scale (piano-roll in-key highlight). Hidden unless a keys
-             arrangement is active; populated + gated by _refreshKeyControls(). -->
+             arrangement is active; populated + gated by _refreshKeyControls().
+             The harmony toolbar wrapper ANDs with that inner logic — and a
+             pitched part activating REVEALS the toolbar (sticky), so today's
+             auto-show behavior survives every preset. -->
+        <div class="editor-tb" data-tb="harmony">
         <div id="editor-key-group" class="hidden items-center gap-1">
             <div class="h-4 w-px bg-gray-700"></div>
             <span class="text-xs text-gray-500">Key:</span>
@@ -151,10 +172,12 @@
             <button id="editor-key-highlight-btn" onclick="editorToggleKeyHighlight()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Dim out-of-key notes — fretted lanes resolve pitch from tuning + capo; the piano roll also shades out-of-key rows" aria-pressed="false">In-key</button>
             <button id="editor-key-detect-btn" onclick="editorDetectKey()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Guess the key from this part's notes (Krumhansl profiles) and set it — a suggestion, editable in the picker">Detect</button>
         </div>
+        </div>
 
         <div class="h-4 w-px bg-gray-700"></div>
 
-        <!-- Shortcuts -->
+        <!-- Shortcuts (always visible — the completeness net's own controls
+             never hide) -->
         <span class="text-xs text-gray-500">Keys:</span>
         <select id="editor-shortcut-profile" onchange="editorSetShortcutProfile(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Keyboard shortcut profile">
             <option value="feedback">FeedBack</option>

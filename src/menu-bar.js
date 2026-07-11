@@ -37,6 +37,9 @@ import { _editorRunEofCommand } from './input.js';
 import { _editorShortcutRowsPure, editorShortcutProfile } from './shortcuts.js';
 import { S } from './state.js';
 import { host } from './host.js';
+import {
+    applyToolbarPreset, getToolbarCtx, resetToolbarLayout, toggleToolbar,
+} from './toolbars.js';
 
 /* @pure:menu-model:start */
 // The nine menus (charrette §2.2). Item kinds:
@@ -140,6 +143,25 @@ export const EDITOR_MENUS = Object.freeze([
         { hdr: 'Panels' },
         { cmd: 'toggleMixer' },
         { label: 'Shortcut panel', fn: 'editorToggleShortcutPanel' },
+        { sep: true },
+        // Toggleable toolbars + density presets (B5). Checkmarks resolve
+        // from ctx.toolbars at open time, same as accelerators do.
+        { hdr: 'Toolbars' },
+        { tb: 'file', label: 'File' },
+        { tb: 'parts', label: 'Parts' },
+        { tb: 'edit', label: 'Edit' },
+        { tb: 'transport', label: 'Transport' },
+        { tb: 'grid', label: 'Grid' },
+        { tb: 'tempo', label: 'Tempo' },
+        { tb: 'harmony', label: 'Harmony' },
+        { tb: 'overlays', label: 'Overlays' },
+        { sep: true },
+        { hdr: 'Density preset' },
+        { tbPreset: 'compose', label: 'Compose' },
+        { tbPreset: 'transcribe', label: 'Transcribe' },
+        { tbPreset: 'everything', label: 'Everything' },
+        { sep: true },
+        { tbReset: true, label: 'Reset layout' },
     ] },
     { title: 'Transport', items: [
         { label: 'Play / Pause', fn: 'editorTogglePlay', key: 'Space' },
@@ -210,6 +232,23 @@ export function _menuModelPure(menus, rows, ctx) {
         for (const it of menu.items) {
             if (it.sep) { items.push({ sep: true }); continue; }
             if (it.hdr) { items.push({ hdr: it.hdr }); continue; }
+            if (it.tb || it.tbPreset || it.tbReset) {
+                // Toolbar checklist rows (B5). `✓ ` marks a visible toolbar /
+                // the active preset; the two-space pad keeps labels aligned.
+                // A ctx without `toolbars` (older callers) renders unchecked.
+                const tbs = ctx.toolbars || { visible: {}, preset: '' };
+                const on = it.tb ? !!tbs.visible[it.tb]
+                    : it.tbPreset ? tbs.preset === it.tbPreset : false;
+                items.push({
+                    label: (it.tbReset ? '' : on ? '✓ ' : '  ') + it.label,
+                    key: '',
+                    dispatch: it.tb ? { tb: it.tb }
+                        : it.tbPreset ? { tbPreset: it.tbPreset } : { tbReset: true },
+                    disabled: false,
+                    planned: false,
+                });
+                continue;
+            }
             if (it.cmd) {
                 const row = byId.get(it.cmd);
                 if (!row) continue;   // registry moved on — never render a dangling id
@@ -261,12 +300,18 @@ function currentModel() {
     return _menuModelPure(
         EDITOR_MENUS,
         _editorShortcutRowsPure(editorShortcutProfile),
-        { tempoMapMode: !!S.tempoMapMode, hasAudio: !!S.audioBuffer, fns: windowFns() });
+        {
+            tempoMapMode: !!S.tempoMapMode, hasAudio: !!S.audioBuffer, fns: windowFns(),
+            toolbars: getToolbarCtx(),
+        });
 }
 
 function dispatch(d) {
     if (!d) return;
     if (d.cmd) { _editorRunEofCommand(d.cmd); return; }
+    if (d.tb) { toggleToolbar(d.tb); return; }
+    if (d.tbPreset) { applyToolbarPreset(d.tbPreset); return; }
+    if (d.tbReset) { resetToolbarLayout(); return; }
     if (d.fn === '__swapProfile') {
         const next = editorShortcutProfile === 'eof' ? 'feedback' : 'eof';
         if (typeof window.editorSetShortcutProfile === 'function') window.editorSetShortcutProfile(next);
