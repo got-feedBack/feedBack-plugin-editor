@@ -19,7 +19,7 @@ function t(name, fn) {
 t('uses compact guidance on narrow canvases', () => {
     const text = _tempoMapHudTextPure(12, 640);
     assert.ok(text.includes('12 measures'));
-    assert.ok(text.includes('right-click sync point'));
+    assert.ok(text.includes('right-click barline'));
     assert.ok(text.includes('BPM / signature'));
     assert.ok(!text.includes('right-click grid'));
 });
@@ -29,7 +29,7 @@ t('uses full guidance when there is room', () => {
     assert.ok(text.includes('24 measures'));
     assert.ok(text.includes('drag poles to retime'));
     assert.ok(text.includes('BPM / signature/delete'));
-    assert.ok(text.includes('right-click grid: insert'));
+    assert.ok(text.includes('right-click grid: mark barline'));
 });
 
 t('normalizes invalid measure counts to zero', () => {

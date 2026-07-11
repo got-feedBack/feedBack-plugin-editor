@@ -196,7 +196,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleTempoMap' },
         { cmd: 'setTimeSignature' },
         { sep: true },
-        { hdr: 'Sync points (Tempo Map)' },
+        { hdr: 'Barlines (Tempo Map)' },
         { cmd: 'tempoInsertSync', needs: 'tempoMap' },
         { cmd: 'tempoDeleteSync', needs: 'tempoMap' },
         { cmd: 'tempoToggleSyncLock', needs: 'tempoMap' },

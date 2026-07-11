@@ -601,7 +601,7 @@ function _editorUnsupportedEofCommand(label) {
 
 function _editorPromptTempoBpmAtSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     _tempoPromptMeasureBpm(S.tempoSel);
@@ -616,7 +616,7 @@ function _editorInsertTempoSyncAtCursor() {
 
 function _editorDeleteTempoSyncSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     _tempoDeleteSyncPoint(S.tempoSel);
@@ -625,7 +625,7 @@ function _editorDeleteTempoSyncSelection() {
 
 function _editorAdjustTempoMeasureBeats(delta) {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     const d = S.tempoSel;
@@ -637,7 +637,7 @@ function _editorAdjustTempoMeasureBeats(delta) {
 
 function _editorPromptTempoBeatCountAtSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     const d = S.tempoSel;
@@ -659,7 +659,7 @@ function _editorPromptTempoBeatCountAtSelection() {
 
 function _editorPromptTempoBeatUnitAtSelection() {
     if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map sync point first.');
+        setStatus('Select a Tempo Map barline first.');
         return true;
     }
     const d = S.tempoSel;
@@ -1105,7 +1105,7 @@ export function onKeyDown(e) {
     }
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
-        // Tempo-map mode: delete the selected sync point.
+        // Tempo-map mode: delete the selected barline.
         if (S.tempoMapMode && S.tempoSel >= 0 &&
                 !e.target.matches('input, select, textarea')) {
             e.preventDefault();
