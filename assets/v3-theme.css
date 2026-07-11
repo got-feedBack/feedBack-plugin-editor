@@ -107,8 +107,9 @@
    under `html.fb-immersive`, which only the v3 shell ever sets, so the v2 /
    legacy layout (fixed navbar, block flow) is untouched. Specificity
    (1,2,0) beats both utilities and sm-theme overrides, same as the palette
-   rules above. */
-html.fb-immersive #plugin-editor > .editor-root {
+   rules above. Descendant (not `>`) combinator so full-bleed still applies
+   if the host ever wraps the screen root under #plugin-editor. */
+html.fb-immersive #plugin-editor .editor-root {
     padding-top: 0;
     height: 100%;
 }

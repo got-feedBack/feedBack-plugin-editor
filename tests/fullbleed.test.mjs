@@ -60,8 +60,8 @@ t('the screen root keeps the v2/legacy layout classes', () => {
 t('v3-theme.css bridges fb-immersive to the editor root', () => {
     const css = read('assets/v3-theme.css');
     const m = css.match(
-        /html\.fb-immersive\s+#plugin-editor\s*>\s*\.editor-root\s*\{([^}]*)\}/);
-    assert.ok(m, 'expected a html.fb-immersive #plugin-editor > .editor-root rule');
+        /html\.fb-immersive\s+#plugin-editor\s+\.editor-root\s*\{([^}]*)\}/);
+    assert.ok(m, 'expected a html.fb-immersive #plugin-editor .editor-root rule');
     assert.match(m[1], /padding-top:\s*0/, 'must zero the navbar allowance');
     assert.match(m[1], /height:\s*100%/, 'must size to the pinned slot, not 100vh');
 });
