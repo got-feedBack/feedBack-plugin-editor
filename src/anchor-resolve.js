@@ -120,6 +120,17 @@ export function _sweepStepPure(len, cur, action) {
     const next = cur + 1;
     return next < len ? next : null;
 }
+
+// Which refs "Accept all" confirms: still-suggested AND actually placed by the
+// resolver. A REFUSED note (in `refusedSet`) was never re-fingered, so a bulk
+// accept must NOT clear its mark — it stays suggested and keeps counting in the
+// honest "positions unresolved: N" gap. Single-note accept (a deliberate look
+// at one note) is unaffected; this only gates the bulk verb.
+export function _acceptAllRefsPure(refs, from, refusedSet, isSug) {
+    const sug = typeof isSug === 'function' ? isSug : () => false;
+    return (refs || []).slice(from)
+        .filter((r) => sug(r) && !(refusedSet && refusedSet.has(r)));
+}
 /* @pure:anchor-resolve:end */
 
 // One undoable command for the bulk repick. Notes KEEP their suggested
@@ -195,7 +206,9 @@ function sweepAccept() {
 
 function sweepAcceptAll() {
     if (!sweep) return;
-    const remaining = sweep.refs.slice(sweep.cur).filter((r) => _isSuggested(r));
+    // Only confirm notes the resolver actually placed — refused notes keep
+    // their suggested mark and stay in the honest gap (they were never re-fingered).
+    const remaining = _acceptAllRefsPure(sweep.refs, sweep.cur, sweep.refused, _isSuggested);
     if (remaining.length) S.history.exec(new AcceptPositionsCmd(remaining));
     sweepEnd(`Accepted ${remaining.length} position${remaining.length === 1 ? '' : 's'}`);
 }
@@ -228,8 +241,10 @@ export function editorResolveAnchorWindow(anchor) {
     if (r.moves.length) S.history.exec(new ResolveWindowCmd(r.moves));
     const refusedNote = r.refused.length ? ` · ${r.refused.length} refused (left as-is)` : '';
     setStatus(`Resolved ${r.moves.length} of ${r.targets.length} in the window${refusedNote} — sweep to confirm`);
-    // The sweep walks by REF so undo/index shuffles can't derail it.
-    sweep = { refs: r.targets.map((i) => nn[i]).filter(Boolean), cur: 0 };
+    // The sweep walks by REF so undo/index shuffles can't derail it. Refused
+    // refs are walked (the charter should see them) but never bulk-accepted.
+    const refused = new Set(r.refused.map((x) => nn[x.index]).filter(Boolean));
+    sweep = { refs: r.targets.map((i) => nn[i]).filter(Boolean), refused, cur: 0 };
     sweepFocus();
 }
 

@@ -21,7 +21,7 @@ globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setI
 globalThis.window = globalThis.window || globalThis;
 
 const {
-    ResolveWindowCmd, _anchorWindowPure, _resolveAnchorsPure,
+    ResolveWindowCmd, _acceptAllRefsPure, _anchorWindowPure, _resolveAnchorsPure,
     _resolveWindowPure, _sweepStepPure,
 } = await import('../src/anchor-resolve.js');
 const { AcceptPositionsCmd } = await import('../src/commands.js');
@@ -113,6 +113,22 @@ t('resolve: window boundaries are honored (end-exclusive)', () => {
     const anchors = [{ time: 0, fret: 2, width: 4 }, { time: 8, fret: 5, width: 4 }];
     const r = _resolveWindowPure(nn, { start: 0, end: 8 }, anchors, CTX, () => true);
     assert.deepStrictEqual(r.targets, [0], 'the note at the boundary belongs to the next window');
+});
+
+t('accept-all skips refused notes: they stay suggested, stay in the honest gap', () => {
+    // Three swept refs; the middle one was refused (never re-fingered).
+    const placed = { id: 'placed' }, refused = { id: 'refused' }, other = { id: 'other' };
+    const refs = [placed, refused, other];
+    const refusedSet = new Set([refused]);
+    const sug = new Set([placed, refused, other]);
+    const accepted = _acceptAllRefsPure(refs, 0, refusedSet, (n) => sug.has(n));
+    assert.deepStrictEqual(accepted, [placed, other], 'refused note is never bulk-accepted');
+    assert.ok(!accepted.includes(refused), 'refused ref excluded → its mark survives → still counted');
+    // Cursor is honored: from index 1, `placed` (before the cursor) is left alone.
+    assert.deepStrictEqual(_acceptAllRefsPure(refs, 1, refusedSet, (n) => sug.has(n)), [other]);
+    // An already-accepted (no-longer-suggested) note drops out too.
+    assert.deepStrictEqual(
+        _acceptAllRefsPure(refs, 0, refusedSet, (n) => n === other), [other]);
 });
 
 t('sweep cursor: advance, back-step clamp, done past the end', () => {

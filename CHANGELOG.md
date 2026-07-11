@@ -21,9 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accepts (each accept its own cheap undo through the existing accept
   command), ←/→ move, **A** accepts all remaining, Esc closes; the sweep
   seeks and selects as it walks and follows refs, so an undo mid-sweep
-  can't derail it. The anchor lane itself (both views, drag/edit/delete)
-  already shipped — this is the missing bulk-authoring verb on top of it.
-  `src/anchor-resolve.js` + `tests/anchor_resolve.test.mjs` (9).
+  can't derail it. **A** confirms only notes the resolver actually placed —
+  refused notes keep their suggested mark and stay counted in the honest
+  "positions unresolved" gap (they were never re-fingered). The anchor lane
+  itself (both views, drag/edit/delete) already shipped — this is the
+  missing bulk-authoring verb on top of it.
+  `src/anchor-resolve.js` + `tests/anchor_resolve.test.mjs` (10).
 
 ### Fixed
 
