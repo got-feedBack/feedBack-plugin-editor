@@ -380,6 +380,41 @@ function commitField(input) {
     _transportBarTick(true);
 }
 
+// Show/hide the Customize popover. Module-scope so both the (rebuilt) customize
+// button and the persistent-container contextmenu listener share it.
+function menuToggle(show) {
+    const menu = document.getElementById('editor-tp-menu');
+    if (!menu) return;
+    if (show) buildMenu();
+    menu.classList.toggle('hidden', !show);
+}
+
+// The three CONTAINER-delegated listeners live on the persistent
+// #editor-transport-bar element, so they're wired ONCE (initTransportBar).
+// Re-wiring them per buildBar() would stack a fresh copy on every rebuild —
+// and the `change` handler itself calls buildBar(), so k Customize toggles
+// would fan out into k listeners each firing k rebuilds.
+function wireBarContainer(bar) {
+    bar.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        menuToggle(true);
+    });
+    bar.addEventListener('change', (e) => {
+        const t = e.target;
+        if (!(t instanceof HTMLElement) || !t.dataset.kind) return;
+        if (t.dataset.kind === 'group') prefs.groups[t.dataset.key] = t.checked;
+        if (t.dataset.kind === 'cell') prefs.cells[t.dataset.key] = t.checked;
+        savePrefs(); buildBar();
+        menuToggle(true);   // keep the menu open through a rebuild
+    });
+    bar.addEventListener('click', (e) => {
+        if (e.target instanceof HTMLElement && e.target.id === 'editor-tp-menu-reset') {
+            prefs = _transportPrefsPure(null);
+            savePrefs(); buildBar();
+        }
+    });
+}
+
 function wireBar(bar) {
     const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
     on('editor-tp-start', () => seekTo(0));
@@ -445,32 +480,10 @@ function wireBar(bar) {
         });
     }
 
-    // Customize ▾ + right-click-anywhere-on-the-bar (Logic idiom).
-    const menuToggle = (show) => {
-        const menu = document.getElementById('editor-tp-menu');
-        if (!menu) return;
-        if (show) buildMenu();
-        menu.classList.toggle('hidden', !show);
-    };
+    // Customize ▾ button — rebuilt by each buildBar(), so it's re-wired here.
+    // The right-click / change / reset-click CONTAINER listeners live on the
+    // persistent bar element and are wired once (wireBarContainer, from init).
     on('editor-tp-customize', () => menuToggle(document.getElementById('editor-tp-menu').classList.contains('hidden')));
-    bar.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        menuToggle(true);
-    });
-    bar.addEventListener('change', (e) => {
-        const t = e.target;
-        if (!(t instanceof HTMLElement) || !t.dataset.kind) return;
-        if (t.dataset.kind === 'group') prefs.groups[t.dataset.key] = t.checked;
-        if (t.dataset.kind === 'cell') prefs.cells[t.dataset.key] = t.checked;
-        savePrefs(); buildBar();
-        menuToggle(true);   // keep the menu open through a rebuild
-    });
-    bar.addEventListener('click', (e) => {
-        if (e.target instanceof HTMLElement && e.target.id === 'editor-tp-menu-reset') {
-            prefs = _transportPrefsPure(null);
-            savePrefs(); buildBar();
-        }
-    });
 }
 
 // ── The tick ─────────────────────────────────────────────────────────
@@ -548,6 +561,10 @@ export function _transportBarTick(force) {
 // ── Boot ─────────────────────────────────────────────────────────────
 export function initTransportBar() {
     loadPrefs();
+    // Container-delegated listeners on the persistent bar element: wired once,
+    // BEFORE the first buildBar(), so a rebuild never re-adds them.
+    const bar = $bar();
+    if (bar) wireBarContainer(bar);
     buildBar();
     // The one document-level listener (menu click-away) rides the teardown
     // registry so a re-injected screen can't stack copies.
