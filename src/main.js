@@ -113,6 +113,7 @@ import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from '
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
 import { initMenuBar } from './menu-bar.js';
+import { initToolbars } from './toolbars.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
 import {
     MIN_MEASURE, TempoGridCmd, TempoMapCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
@@ -1846,6 +1847,7 @@ function init() {
     try { window.editorSetSwing(localStorage.getItem('editorSwingPct')); } catch (_) {}
     initMenuBar();
     initTransportBar();
+    initToolbars();
 
     // Observe screen visibility for resize + the entry landing. Held in
     // _editorScreenObs so the teardown can disconnect it on re-injection.

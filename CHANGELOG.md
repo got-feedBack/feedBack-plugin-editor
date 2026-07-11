@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Toggleable toolbars + density presets** (workspace-shell B5). The flat
+  toolbar row's divider-groups are now eight named toolbars (File · Parts ·
+  Edit · Transport · Grid · Tempo · Harmony · Overlays), each individually
+  toggleable from `View ▸ Toolbars`, a right-click on the toolbar row, or
+  the task-based density presets **Compose** (File+Edit+Grid), **Transcribe**
+  (adds Tempo+Overlays) and **Everything** — plus "Reset layout" to return
+  to the active preset's default. Hiding a toolbar is a pure CSS class flip
+  on a layout-inert `display:contents` wrapper (zero canvas cost, zero
+  re-plumbing; the row renders pixel-identical when everything is shown,
+  which is also the first-run default). Layout persists as an editor pref
+  (`editorToolbars`, never the pack) and never auto-reverts; the key/scale
+  controls' existing auto-show survives as a sticky content-action reveal
+  of the Harmony toolbar that never overrides an explicit hide. The
+  Structure toolbar joins when it has buttons (section/phrase ops live in
+  the menu bar under Add ▸ Markers for now).
+
 - **One consolidated ruler + whole-song minimap** (workspace-shell B3).
   The three time-surfaces — the floating loop-strip overlay, the waveform
   band's seek role, and the bottom beat bar — consolidate into a timeline
