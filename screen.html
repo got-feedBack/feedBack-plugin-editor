@@ -1,4 +1,8 @@
-<div class="flex flex-col h-screen pt-16 bg-dark-900 text-white overflow-hidden">
+<div class="editor-root flex flex-col h-screen pt-16 bg-dark-900 text-white overflow-hidden">
+
+    <!-- Menu bar (workspace-shell B4) — built by src/menu-bar.js; nine menus
+         re-homing the command registry. Always present, above everything. -->
+    <div id="editor-menu-bar" class="editor-menu-bar shrink-0"></div>
 
     <!-- Top bar: back + song info -->
     <div class="flex items-center gap-3 px-4 py-2 bg-dark-800 border-b border-gray-800 shrink-0">
@@ -79,6 +83,7 @@
         <button id="editor-onset-btn" onclick="editorToggleOnsetStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Onset strip: amber blocks mark detected attacks in the recording (Shift+W). Display only — never places notes." aria-pressed="false">Onsets</button>
         <button id="editor-tab-preview-btn" onclick="editorShowTabPreview()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Preview the current part as engraved tab (read-only — renders the pack as last saved; needs the Tab View plugin)">Tab…</button>
         <button id="editor-drum-pads-btn" onclick="editorToggleDrumPadStrip()" class="hidden px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Drum pads: kit legend + input strip — selected hits light up, click a pad to add a hit at the cursor, Listen flashes pads from a MIDI kit (GM map)" aria-pressed="true">Pads</button>
+        <button id="editor-fretboard-btn" onclick="editorToggleFretboardStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" title="Fretboard strip: light every playable position for the selected notes — click one to assign it, right-click to cycle the finger mark (fretted parts)" aria-pressed="false">Fret</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
 
@@ -123,6 +128,12 @@
             <input id="editor-snap-enabled" type="checkbox" checked onchange="editorSetSnapEnabled(this.checked)" class="accent-accent"> On
         </label>
         <button id="editor-snapmode-btn" onclick="editorToggleSnapMode()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Snap target — Grid: tempo-map subdivisions. Onset: nearest detected audio attack (falls back to grid when no transient is near). Turn on Onsets to see the attacks." aria-pressed="false">Grid</button>
+        <select id="editor-swing" onchange="editorSetSwing(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Swing: displace the off subdivision of each pair toward the next beat (snap placement only — beat-domain, so swung notes ride tempo flexes; playback and existing notes are unchanged)">
+            <option value="50" selected>Straight</option>
+            <option value="54">Swing 54%</option>
+            <option value="58">Swing 58%</option>
+            <option value="62">Swing 62%</option>
+        </select>
 
         <!-- Key / scale (piano-roll in-key highlight). Hidden unless a keys
              arrangement is active; populated + gated by _refreshKeyControls(). -->
@@ -146,6 +157,10 @@
         <button id="editor-shortcuts-btn" onclick="editorToggleShortcutPanel()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs" title="Show shortcut and command controls">Shortcuts…</button>
     </div>
 
+    <!-- Transport control bar + LCD (workspace-shell B2) — built by
+         src/transport-bar.js; always present, directly above the timeline. -->
+    <div id="editor-transport-bar" class="editor-transport-bar shrink-0"></div>
+
     <!-- Canvas area + inspector panel -->
     <div class="flex-1 flex overflow-hidden">
         <div id="editor-canvas-wrap" class="flex-1 relative overflow-hidden bg-dark-900">
@@ -161,6 +176,11 @@
                     <button id="editor-drum-pads-listen" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Flash pads from incoming MIDI notes (General MIDI percussion map) — verify your e-kit mapping before recording" aria-pressed="false">Listen</button>
                     <button id="editor-drum-pads-hide" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Hide the drum pads">Hide</button>
                 </div>
+            <!-- Fretboard companion strip (P7/VA.6) — bottom overlay, built by
+                 src/fretboard-strip.js; hidden unless toggled on a fretted part. -->
+            <div id="editor-fretboard-strip" class="hidden absolute bottom-2 left-[52px] right-3 z-20 h-28 select-none rounded-md border border-gray-700/80 bg-dark-800/90 backdrop-blur-sm overflow-hidden">
+                <button id="editor-fretboard-collapse" class="absolute right-1 top-1 z-10 px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Hide the fretboard strip">Hide</button>
+                <canvas id="editor-fretboard-canvas" class="w-full h-full block"></canvas>
             </div>
             <div id="editor-loop-strip" class="absolute top-2 left-[52px] right-3 z-20 h-8 select-none">
                 <div id="editor-loop-strip-track" class="relative h-full rounded-md border border-gray-700/80 bg-dark-800/85 backdrop-blur-sm">

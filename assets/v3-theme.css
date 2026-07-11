@@ -146,3 +146,177 @@
 #plugin-editor #editor-drum-view-kit[aria-pressed="true"],
 #plugin-editor #editor-drum-view-pads[aria-pressed="true"],
 #plugin-editor #editor-drum-pads-listen[aria-pressed="true"] { background: #0ea5e9; color: #f8fafc; }
+/* ── Menu bar (workspace-shell B4) ────────────────────────────────── */
+/* Nine flat menu titles; ONE dropdown element repositioned under the open
+   title (content renders at open time — accelerators follow the active
+   shortcut profile). Scoped #plugin-editor, active in v2 and v3 alike. */
+#plugin-editor .editor-menu-bar {
+    position: relative;
+    display: flex; align-items: center; gap: 2px;
+    padding: 2px 8px;
+    background: #0b1220;
+    border-bottom: 1px solid #263349;
+    font-size: 12px;
+}
+#plugin-editor .editor-menu-title {
+    padding: 3px 9px; border: none; border-radius: 4px;
+    background: transparent; color: #cbd5e1; cursor: pointer; font-size: 12px;
+}
+#plugin-editor .editor-menu-title:hover { background: #1e293b; color: #f8fafc; }
+#plugin-editor .editor-menu-title.is-open { background: #0ea5e9; color: #f8fafc; }
+#plugin-editor .editor-menu-drop {
+    position: absolute; top: 100%; z-index: 70;
+    min-width: 260px; max-height: 70vh; overflow-y: auto;
+    display: flex; flex-direction: column;
+    background: #1e293b; border: 1px solid #334155; border-radius: 0 0 8px 8px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+    padding: 4px;
+}
+#plugin-editor .editor-menu-drop.hidden { display: none; }
+#plugin-editor .editor-menu-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 18px;
+    padding: 3px 10px; border: none; border-radius: 4px;
+    background: transparent; color: #e2e8f0; cursor: pointer;
+    font-size: 12px; text-align: left; width: 100%;
+}
+#plugin-editor .editor-menu-item:hover:not([aria-disabled]),
+#plugin-editor .editor-menu-item:focus:not([aria-disabled]) {
+    background: #0ea5e9; color: #f8fafc; outline: none;
+}
+#plugin-editor .editor-menu-item[aria-disabled] { color: #475569; cursor: default; }
+#plugin-editor .editor-menu-key {
+    font-size: 10px; color: #64748b;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: nowrap;
+}
+#plugin-editor .editor-menu-item:hover:not([aria-disabled]) .editor-menu-key,
+#plugin-editor .editor-menu-item:focus:not([aria-disabled]) .editor-menu-key { color: #e0f2fe; }
+#plugin-editor .editor-menu-soon {
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: #64748b;
+    border: 1px solid #334155; border-radius: 3px; padding: 0 4px; margin-left: 6px;
+}
+#plugin-editor .editor-menu-hdr {
+    font-size: 9px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: .1em; color: #64748b; padding: 5px 10px 2px;
+}
+#plugin-editor .editor-menu-sep { height: 1px; background: #334155; margin: 3px 6px; }
+/* ── Transport control bar + LCD (workspace-shell B2) ─────────────── */
+/* The bar itself: one always-present row directly above the timeline.
+   Skin GRAMMAR ported from Virtuoso's .virtuoso-lcd-* (recessed panel,
+   labeled cells, tabular-num values, dashed-underline editable affordance);
+   wiring is the editor's own (src/transport-bar.js). Scoped #plugin-editor,
+   palette-neutral (fb dark surfaces), active in v2 and v3 alike. */
+#plugin-editor .editor-transport-bar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px;
+    background: #131c2e;
+    border-bottom: 1px solid #263349;
+    flex-wrap: wrap;
+}
+#plugin-editor .editor-transport-group { display: flex; align-items: center; gap: 4px; }
+#plugin-editor .editor-transport-sep { width: 1px; height: 16px; background: #334155; }
+#plugin-editor .editor-transport-btn {
+    padding: 2px 8px; border-radius: 4px; font-size: 12px; line-height: 1.4;
+    background: #24324a; color: #cbd5e1; border: none; cursor: pointer;
+}
+#plugin-editor .editor-transport-btn:hover { background: #334a6b; color: #f8fafc; }
+#plugin-editor .editor-transport-btn[aria-pressed="true"] { background: #0ea5e9; color: #f8fafc; }
+#plugin-editor .editor-transport-btn:disabled { opacity: .45; cursor: not-allowed; }
+#plugin-editor .editor-transport-rec[aria-pressed="true"],
+#plugin-editor .editor-transport-rec:hover { background: #9f1239; }
+#plugin-editor .editor-transport-rec { color: #fb7185; }
+#plugin-editor .editor-transport-snap {
+    background: #24324a; color: #cbd5e1; border: none; border-radius: 4px;
+    font-size: 11px; padding: 2px 4px; outline: none;
+}
+#plugin-editor .editor-transport-customize { margin-left: auto; }
+
+/* The LCD: ONE recessed dark panel; cells are divider-separated readouts
+   inside it (Virtuoso's "screen" feel, fb-neutral glow). */
+#plugin-editor .editor-lcd {
+    display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0;
+    background: #0b1220;
+    border: 1px solid #263349; border-top-color: rgba(0,0,0,0.55);
+    border-radius: 8px;
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.6), inset 0 0 18px rgba(14,165,233,0.05), inset 0 1px 0 rgba(255,255,255,0.03);
+    overflow: hidden;
+}
+#plugin-editor .editor-lcd-cell {
+    display: flex; flex-direction: column; justify-content: center; gap: 1px;
+    padding: 3px 10px; min-width: 44px;
+    border: none; border-left: 1px solid rgba(255,255,255,0.05);
+}
+#plugin-editor .editor-lcd-cell:first-child { border-left: none; }
+#plugin-editor .editor-lcd-lbl {
+    font-size: 8px; font-weight: 800; letter-spacing: .1em;
+    text-transform: uppercase; color: #64748b;
+}
+#plugin-editor .editor-lcd-val {
+    font-size: 12.5px; font-weight: 700; color: #e2f2fd;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums; white-space: nowrap; line-height: 1.15;
+}
+/* Editable cells: read like readouts; the dashed underline on hover/focus is
+   the "type here" affordance (Virtuoso grammar). Enter applies. */
+#plugin-editor .editor-lcd-input {
+    background: transparent; border: none; border-bottom: 1px dashed transparent;
+    color: inherit; font: inherit; padding: 0; text-align: right;
+    appearance: textfield; -moz-appearance: textfield; outline: none;
+}
+#plugin-editor .editor-lcd-input::-webkit-outer-spin-button,
+#plugin-editor .editor-lcd-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+#plugin-editor .editor-lcd-cell:hover .editor-lcd-input,
+#plugin-editor .editor-lcd-input:focus { border-bottom-color: #0ea5e9; }
+#plugin-editor .editor-lcd-select {
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    background: transparent; border: none; border-bottom: 1px dashed transparent;
+    color: inherit; font: inherit; padding: 0; cursor: pointer; line-height: 1.15; outline: none;
+}
+#plugin-editor .editor-lcd-cell:hover .editor-lcd-select,
+#plugin-editor .editor-lcd-select:focus { border-bottom-color: #0ea5e9; }
+#plugin-editor .editor-lcd-select option { background: #0b1220; color: #e2f2fd; }
+/* Primary readout emphasis + the ▸ toggle between Position and Time. */
+#plugin-editor .editor-lcd-input.is-primary { color: #7dd3fc; }
+#plugin-editor .editor-lcd-primary {
+    background: transparent; border: none; color: #475569; cursor: pointer;
+    font-size: 11px; padding: 0 2px; align-self: center;
+}
+#plugin-editor .editor-lcd-primary:hover { color: #7dd3fc; }
+#plugin-editor .editor-lcd-badge {
+    display: inline-block; padding: 0 5px; border-radius: 3px;
+    font-size: 9px; font-weight: 800; letter-spacing: .08em;
+    background: rgba(14,165,233,0.15); color: #38bdf8;
+    border: 1px solid rgba(14,165,233,0.35); vertical-align: 1px;
+}
+/* Customize menu (▾ / right-click) — a small in-bar popover. */
+#plugin-editor .editor-transport-menu {
+    position: absolute; right: 10px; top: 100%; z-index: 60;
+    display: flex; flex-direction: column; gap: 2px;
+    background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+    padding: 8px 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    font-size: 12px; color: #cbd5e1;
+}
+#plugin-editor .editor-transport-bar { position: relative; }
+#plugin-editor .editor-transport-menu.hidden { display: none; }
+#plugin-editor .editor-transport-menu-head {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .08em; color: #64748b; margin: 4px 0 2px;
+}
+#plugin-editor .editor-transport-menu-row { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+/* ── Immersive (full-screen) layout ───────────────────────────────── */
+/* The manifest declares `"fullscreen": true`, so on v3 the shell hides its
+   topbar, collapses the sidebar to a 4.5rem icon rail, and pins this screen
+   to `position:absolute; inset:0` (static/v3/v3.css "Immersive"). With the
+   host chrome gone the root's fixed-navbar allowance (`pt-16`) becomes a
+   4rem dead band, and Tailwind's `h-screen` (100vh) is exactly the pinned
+   slot's height — so drop the padding and size to the slot instead. Scoped
+   under `html.fb-immersive`, which only the v3 shell ever sets, so the v2 /
+   legacy layout (fixed navbar, block flow) is untouched. Specificity
+   (1,2,0) beats both utilities and sm-theme overrides, same as the palette
+   rules above. Descendant (not `>`) combinator so full-bleed still applies
+   if the host ever wraps the screen root under #plugin-editor. */
+html.fb-immersive #plugin-editor .editor-root {
+    padding-top: 0;
+    height: 100%;
+}
