@@ -107,6 +107,7 @@ import {
     editorSetViewMode
 } from './key-view.js';
 import { setHostHooks } from './host.js';
+import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
 import { initMenuBar } from './menu-bar.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
 import {
@@ -561,6 +562,7 @@ window.editorToggleGuideClap = _editorToggleGuideClap;
 window.editorToggleLoopAB = _editorToggleLoopAB;
 window.editorToggleMetronome = _editorToggleMetronome;
 window.editorToggleMixer = _editorToggleMixer;
+window.editorToggleFretboardStrip = editorToggleFretboardStrip;
 window.editorToggleOnsetStrip = _editorToggleOnsetStrip;
 window.editorToggleSnapMode = _editorToggleSnapMode;
 window.editorSetLoopSnapMode = editorSetLoopSnapMode;
@@ -955,6 +957,7 @@ function updateStatus() {
     // Selection drives the Loop-in-3D fallback region, so keep the button's
     // enabled state in sync whenever the status (selection count) refreshes.
     _updateLoopIn3DBtn();
+    _fretboardStripRefresh();
     _transportBarTick();
     setStatus('Ready');
 }
@@ -1821,6 +1824,7 @@ function init() {
     // statement in this file; a module must not have import-time side effects.
     initCreate();
     initAudio();
+    initFretboardStrip();
     // Restore the swing pref (editor pref, never the pack) and seed its select.
     try { window.editorSetSwing(localStorage.getItem('editorSwingPct')); } catch (_) {}
     initMenuBar();

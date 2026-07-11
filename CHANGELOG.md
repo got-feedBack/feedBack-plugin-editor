@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Fretboard companion strip (view-modality P7 / VA.6 ★).** A docked,
+  toggleable mini-fretboard at the bottom of the timeline for the active
+  fretted part — tuning, string count and capo drawn from the arrangement,
+  the capo as a visual nut-bar. Selecting notes lights **every playable
+  same-pitch position** (the suggest-position resolver's enumeration):
+  bright inside the active anchor window, dim outside, open-string
+  candidates drawn square at the effective nut, each with a stretch-cost
+  digit (fret travel vs the previous note's hand position); the note's own
+  position renders filled, carrying its finger mark. **Click a candidate to
+  assign it** — the same pitch-preserving command path as position cycling,
+  so it passes the roll's edit lock and confirms (clears) a suggested mark,
+  with undo restoring both. **Right-click cycles the fret-hand finger**
+  teaching mark (1-4 · T · none). The render/hit-test idiom is ported from
+  Virtuoso's Live fretboard strip; the editor owns all candidate and
+  annotation logic. A canvas sidecar — repaints only on selection/edit
+  changes, never per frame; hidden on keys parts, drum mode, the parts
+  overview and Tempo Map mode. Toggle: the `Fret` toolbar button
+  (editor pref, never the pack). Deferred: chord-selection handshape-
+  template lighting (the anchor-window box ships now).
+  `src/fretboard-strip.js` + `tests/fretboard_strip.test.mjs` (11).
 - **Swing quantization on the snap grid (workspace-shell D2).** A Swing
   select next to Snap (Straight · 54% · 58% · 62%) displaces the OFF
   subdivision of each pair toward the next beat — as a **beat-domain phase
