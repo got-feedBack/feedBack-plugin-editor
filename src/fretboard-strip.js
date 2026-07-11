@@ -155,6 +155,11 @@ export function _stripFretWindowPure(annotations, capo, minSpan = 12) {
     return { lo: 0, hi: Math.min(24, Math.max(hi, minSpan)) };
 }
 
+export function _stripDisplayWindowPure(annotations, shape, capo) {
+    const dots = shape && Array.isArray(shape.dots) ? shape.dots : [];
+    return _stripFretWindowPure((annotations || []).concat(dots), capo);
+}
+
 // Strip geometry (the Virtuoso §13 parametrization): map physical fret /
 // string index to canvas x/y, capped per-fret spacing, low string at the
 // bottom. Pure so the hit-test can share it with the renderer.
@@ -267,7 +272,7 @@ function draw() {
     // can't clip off the right edge.
     const selT = ann.length ? Math.min(...selectedNotes().map((n) => n.time)) : null;
     const shape = selT === null ? null : _stripHandshapeShapePure(actx.arr, selT, actx.laneCount);
-    const { lo, hi } = _stripFretWindowPure(shape ? ann.concat(shape.dots) : ann, actx.capo);
+    const { lo, hi } = _stripDisplayWindowPure(ann, shape, actx.capo);
     const g = _stripGeometryPure(W, H, actx.laneCount, lo, hi);
 
     // Fret lines + nut.
@@ -451,7 +456,9 @@ function hitAt(e) {
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
     const ann = currentAnnotations(actx);
     if (!ann.length) return null;
-    const { lo, hi } = _stripFretWindowPure(ann, actx.capo);
+    const selT = Math.min(...selectedNotes().map((n) => n.time));
+    const shape = _stripHandshapeShapePure(actx.arr, selT, actx.laneCount);
+    const { lo, hi } = _stripDisplayWindowPure(ann, shape, actx.capo);
     const g = _stripGeometryPure(rect.width, rect.height, actx.laneCount, lo, hi);
     return { hit: _stripHitTestPure(x, y, g, ann, actx.capo), actx };
 }
