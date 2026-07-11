@@ -31,7 +31,7 @@ globalThis.window = globalThis;
 globalThis.requestAnimationFrame = () => 0;
 globalThis.cancelAnimationFrame = () => {};
 
-const { startPlayback } = await import('../src/audio.js');
+const { startPlayback, editorSetCountIn } = await import('../src/audio.js');
 const { S } = await import('../src/state.js');
 const { host } = await import('../src/host.js');
 const { _transportChartTimePure } = await import('../src/transport.js');
@@ -125,6 +125,14 @@ t('recorder clamp: pre-roll input clamps to playStartTime, post-start passes thr
     assert.strictEqual(clamp(wall, start, 101.9), start, 'still clamped near the end of the count');
     // After the pre-roll (now=103): a genuine +1 s into the take, unclamped.
     assert.ok(Math.abs(clamp(wall, start, 103.0) - 4.0) < 1e-9, 'post-start note keeps its real time');
+});
+
+t('editorSetCountIn records the last non-zero count for every write path', () => {
+    editorSetCountIn(4);
+    assert.strictEqual(store.get('editorCountInLast'), '4', 'non-zero set is remembered');
+    editorSetCountIn(0);                                    // e.g. the toolbar select → Off
+    assert.strictEqual(store.get('editorCountIn'), '0', 'count itself is now off');
+    assert.strictEqual(store.get('editorCountInLast'), '4', 'memory survives Off so the toggle can re-arm 4');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

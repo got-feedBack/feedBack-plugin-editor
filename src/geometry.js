@@ -17,6 +17,17 @@ import { laneToStr, lanes, strToLane } from './lanes.js';
 
 export const LABEL_W = 52;
 
+// ─── The consolidated timeline header (workspace-shell B3) ──────────
+// Two fixed-height bands across the canvas top, ABOVE the waveform:
+// the whole-song overview minimap, then the authoritative ruler (bars +
+// beats + sections + loop + playhead + scrub). Everything below them —
+// waveform, lanes, sub-lanes — shifts down by TIMELINE_TOP. Fixed (not
+// resize-derived): a ruler that changes height with the window reads as
+// jitter, and 40px total is the Logic-idiom sliver either way.
+export const MINIMAP_H = 14;
+export const RULER_H = 26;
+export const TIMELINE_TOP = MINIMAP_H + RULER_H;
+
 // Note-body geometry, shared by the painters and by hit-testing.
 export const MIN_NOTE_W = 18;
 export const NOTE_PAD = 3;
@@ -33,20 +44,20 @@ export const TONE_LANE_H = 16;
 
 // Lane metrics, re-derived from the canvas height on resize. See the header:
 // importers read these as live bindings; only setLaneMetrics() may write them.
+// (The old bottom beat bar's BEAT_H is gone — the B3 ruler at the top of the
+// canvas owns bars/beats/loop now, and its height is the fixed RULER_H.)
 export let WAVEFORM_H = 70;
 export let LANE_H = 44;
-export let BEAT_H = 24;
 
-// Size the lanes to fill `canvasHeightPx`. The beat bar and waveform take a
-// fixed fraction (with floors so a short canvas stays legible); the anchor and
-// handshape strips are reserved; the note lanes divide what's left, never
-// dropping below 30px.
+// Size the lanes to fill `canvasHeightPx`. The timeline header (minimap +
+// ruler) is fixed; the waveform takes a fixed fraction (with a floor so a
+// short canvas stays legible); the anchor and handshape strips are reserved;
+// the note lanes divide what's left, never dropping below 30px.
 export function setLaneMetrics(canvasHeightPx) {
     const h = canvasHeightPx;
-    const minBeat = 20, minWave = 50;
-    BEAT_H = Math.max(minBeat, Math.floor(h * 0.05));
+    const minWave = 50;
     WAVEFORM_H = Math.max(minWave, Math.floor(h * 0.12));
-    LANE_H = Math.max(30, Math.floor((h - WAVEFORM_H - BEAT_H - ANCHOR_LANE_H - HS_LANE_H) / lanes()));
+    LANE_H = Math.max(30, Math.floor((h - TIMELINE_TOP - WAVEFORM_H - ANCHOR_LANE_H - HS_LANE_H) / lanes()));
 }
 
 // ── time ⇄ x ────────────────────────────────────────────────────────
@@ -83,7 +94,8 @@ export function _editorClampScrollXPure(scrollX, durationSeconds, viewportDurati
 }
 
 // ── string ⇄ lane ⇄ y ───────────────────────────────────────────────
-export function laneToY(l)  { return WAVEFORM_H + l * LANE_H; }
-export function yToLane(y)  { return Math.floor((y - WAVEFORM_H) / LANE_H); }
+// The lane band starts below the timeline header + waveform.
+export function laneToY(l)  { return TIMELINE_TOP + WAVEFORM_H + l * LANE_H; }
+export function yToLane(y)  { return Math.floor((y - TIMELINE_TOP - WAVEFORM_H) / LANE_H); }
 export function strToY(s)   { return laneToY(strToLane(s)); }
 export function yToStr(y)   { const l = Math.max(0, Math.min(lanes() - 1, yToLane(y))); return laneToStr(l); }

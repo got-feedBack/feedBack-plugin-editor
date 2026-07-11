@@ -52,10 +52,12 @@ const ctx = {
     beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
 };
 
+// TIMELINE_TOP = 0: the band's y-assertions below were written for the
+// pre-B3 layout; a zero header keeps them exact.
 const drawWaveform = new Function(
-    'ctx', 'S', 'WAVEFORM_H', 'LABEL_W', 'timeToX', 'xToTime',
+    'ctx', 'S', 'WAVEFORM_H', 'LABEL_W', 'TIMELINE_TOP', 'timeToX', 'xToTime',
     '"use strict";' + extractFn(src, 'drawWaveform') + '\nreturn drawWaveform;'
-)(ctx, S, WAVEFORM_H, LABEL_W, timeToX, xToTime);
+)(ctx, S, WAVEFORM_H, LABEL_W, 0, timeToX, xToTime);
 
 drawWaveform(800);
 

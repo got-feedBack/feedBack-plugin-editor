@@ -4,7 +4,7 @@
 
 import { _editBlipAt } from './audio.js';
 import { AddNoteCmd } from './commands.js';
-import { isKeysMode, midiToNote, noteToMidi } from './keys.js';
+import { editorKeyNoteNames, isKeysMode, midiToNote, noteToMidi } from './keys.js';
 import { S } from './state.js';
 import { host } from './host.js';
 
@@ -23,7 +23,7 @@ export function showAddNote(cx, cy, time, string, fret) {
 
     if (isKeys) {
         const midi = noteToMidi(string, fret);
-        document.getElementById('editor-add-pitch-label').textContent = midiToNote(midi);
+        document.getElementById('editor-add-pitch-label').textContent = midiToNote(midi, editorKeyNoteNames());
         const sus = document.getElementById('editor-add-sustain');
         sus.focus();
         sus.select();

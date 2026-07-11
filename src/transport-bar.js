@@ -18,11 +18,12 @@
  * NO master-mute here (charrette §2.6): mute/solo are per-track concerns and
  * live in the mixers, not on the transport.
  *
- * Not in this slice: the Count-in LCD cell and the "Count" mode toggle from
- * the charrette sketch — the editor has no count-in feature yet, and a cell
- * must write through to a REAL control, so both arrive with that feature.
- * Meter is a readout for the same reason (meter edits live in Tempo Map mode,
- * which needs a measure selection this bar doesn't have).
+ * The Count-in LCD cell and the "Count" mode toggle (deferred from the B2
+ * slice until count-in existed) write through to the real control surface:
+ * the cell mirrors the toolbar's `Count:` select via editorSetCountIn, and
+ * the toggle flips off ⇄ the last non-zero bar count (editor pref).
+ * Meter stays a readout (meter edits live in Tempo Map mode, which needs a
+ * measure selection this bar doesn't have).
  *
  * Wiring rules this module obeys:
  *  - Every button DELEGATES to the existing command surface (window.editor* /
@@ -45,7 +46,10 @@ import { beatOf, timeOf } from './beats.js';
 import { S } from './state.js';
 import { host } from './host.js';
 import { setStatus } from './ui.js';
-import { _editorToggleFollow, editorFollowEnabled, stopPlayback } from './audio.js';
+import {
+    _editorToggleFollow, editorCountInBars, editorFollowEnabled, editorSetCountIn,
+    stopPlayback,
+} from './audio.js';
 import { PIANO_NOTE_NAMES, SCALE_LABELS } from './theory.js';
 
 // MIDI-standard pulses per quarter for the ticks field. Display resolution
@@ -184,10 +188,28 @@ export function _lcdKeyActionPure(key) {
     return null;
 }
 
+// The Count toggle's flip: on → off, off → the last non-zero bar count (a
+// remembered 1/2/4), defaulting to 1 when there is no valid memory. Pure so
+// the arm/disarm round-trip pins in a test.
+export function _countToggleTargetPure(current, last) {
+    const cur = current === 1 || current === 2 || current === 4 ? current : 0;
+    if (cur > 0) return 0;
+    return last === 1 || last === 2 || last === 4 ? last : 1;
+}
+
+export function _countRememberedPure(next, current) {
+    const n = Number(next);
+    const cur = Number(current);
+    const remembered = n === 0 ? cur : n;
+    return remembered === 1 || remembered === 2 || remembered === 4 ? remembered : null;
+}
+
 // Customization prefs: merge a stored blob over the defaults, coercing every
 // flag to a real boolean so a hand-edited/corrupt pref can't leak truthy
-// garbage into the DOM builders. Unknown keys are dropped.
-export const TRANSPORT_LCD_CELLS = ['position', 'time', 'tempo', 'meter', 'key', 'sel', 'mode'];
+// garbage into the DOM builders. Unknown keys are dropped. A pref blob saved
+// before a cell existed (e.g. `countin`) leaves that cell at its default —
+// visible — rather than dropping it.
+export const TRANSPORT_LCD_CELLS = ['position', 'time', 'tempo', 'meter', 'key', 'countin', 'sel', 'mode'];
 export function _transportPrefsPure(raw) {
     const p = {
         primary: 'position',
@@ -277,6 +299,14 @@ function buildLcd(mode) {
             + ` <select id="editor-lcd-key-scale" class="editor-lcd-select" aria-label="Key — scale">${scales}</select>`,
             'Song key — writes through to the Key controls'));
     }
+    if (c.countin) {
+        const bars = editorCountInBars();
+        const copts = [0, 1, 2, 4].map((n) =>
+            `<option value="${n}"${n === bars ? ' selected' : ''}>${n === 0 ? 'Off' : `${n} bar${n === 1 ? '' : 's'}`}</option>`).join('');
+        parts.push(lcdCell('countin', 'Count',
+            `<select id="editor-lcd-countin" class="editor-lcd-select" aria-label="Count-in bars">${copts}</select>`,
+            'Count-in: bars of metronome clicks before playback (and recording) starts — writes through to the toolbar Count control'));
+    }
     if (c.sel) parts.push(lcdCell('sel', 'Sel', `<span id="editor-lcd-sel"></span>`, 'Selected notes'));
     if (c.mode) parts.push(lcdCell('mode', 'Mode',
         `<span id="editor-lcd-mode" class="editor-lcd-badge"></span>`, mode.title));
@@ -302,6 +332,7 @@ function buildBar() {
         + tbtn('editor-tp-click', 'Click', 'Metronome: click every beat, accented on downbeats', ' aria-pressed="false"')
         + tbtn('editor-tp-clap', 'Clap', 'Guide claps: tick each charted note during playback (C)', ' aria-pressed="false"')
         + tbtn('editor-tp-ab', 'A/B', 'Loop A/B compare — alternates recording and guide per pass', ' aria-pressed="false"')
+        + tbtn('editor-tp-count', 'Count', 'Count-in: arm/disarm the pre-roll clicks (arming restores the last bar count)', ' aria-pressed="false"')
         + `<select id="editor-tp-snap" class="editor-transport-snap" title="Snap grid"></select>`
         + `</div>` : '';
     bar.innerHTML = util
@@ -326,10 +357,10 @@ function buildMenu() {
     if (!menu) return;
     const row = (kind, key, label, checked) =>
         `<label class="editor-transport-menu-row"><input type="checkbox" data-kind="${kind}" data-key="${key}"${checked ? ' checked' : ''}> ${esc(label)}</label>`;
-    const cellLabels = { position: 'Position', time: 'Time', tempo: 'Tempo', meter: 'Meter', key: 'Key', sel: 'Selection', mode: 'Mode badge' };
+    const cellLabels = { position: 'Position', time: 'Time', tempo: 'Tempo', meter: 'Meter', key: 'Key', countin: 'Count-in', sel: 'Selection', mode: 'Mode badge' };
     menu.innerHTML = `<div class="editor-transport-menu-head">Customize Control Bar</div>`
         + row('group', 'util', 'Parts / Mix / Follow group', prefs.groups.util)
-        + row('group', 'modes', 'Click / Clap / A/B / Snap group', prefs.groups.modes)
+        + row('group', 'modes', 'Click / Clap / A/B / Count / Snap group', prefs.groups.modes)
         + `<div class="editor-transport-menu-head">LCD cells</div>`
         + TRANSPORT_LCD_CELLS.map((c) => row('cell', c, cellLabels[c], prefs.cells[c])).join('')
         + `<button id="editor-tp-menu-reset" class="editor-transport-btn" style="margin-top:4px">Reset layout</button>`;
@@ -429,6 +460,14 @@ function wireBar(bar) {
     on('editor-tp-click', () => { if (typeof window.editorToggleMetronome === 'function') window.editorToggleMetronome(); _transportBarTick(true); });
     on('editor-tp-clap', () => { if (typeof window.editorToggleGuideClap === 'function') window.editorToggleGuideClap(); _transportBarTick(true); });
     on('editor-tp-ab', () => { if (typeof window.editorToggleLoopAB === 'function') window.editorToggleLoopAB(); _transportBarTick(true); });
+    on('editor-tp-count', () => {
+        const cur = editorCountInBars();
+        let last = null;
+        try { last = parseInt(localStorage.getItem('editorCountInLast') || '', 10); } catch (_) {}
+        if (cur > 0) { try { localStorage.setItem('editorCountInLast', String(cur)); } catch (_) {} }
+        editorSetCountIn(_countToggleTargetPure(cur, last));
+        _transportBarTick(true);
+    });
     on('editor-lcd-primary', () => {
         prefs.primary = prefs.primary === 'position' ? 'time' : 'position';
         savePrefs(); buildBar();
@@ -471,6 +510,14 @@ function wireBar(bar) {
             if (!(t instanceof HTMLElement)) return;
             if (t.id === 'editor-lcd-key-tonic' && typeof window.editorSetKeyTonic === 'function') window.editorSetKeyTonic(t.value);
             if (t.id === 'editor-lcd-key-scale' && typeof window.editorSetKeyScale === 'function') window.editorSetKeyScale(t.value);
+            if (t.id === 'editor-lcd-countin') {
+                const remembered = _countRememberedPure(t.value, editorCountInBars());
+                if (remembered !== null) {
+                    try { localStorage.setItem('editorCountInLast', String(remembered)); } catch (_) {}
+                }
+                editorSetCountIn(t.value);
+                _transportBarTick(true);
+            }
         });
         lcd.addEventListener('focusout', (e) => {
             const t = e.target;
@@ -521,6 +568,11 @@ export function _transportBarTick(force) {
     const modeEl = document.getElementById('editor-lcd-mode');
     if (modeEl) { _set(modeEl, mode.short); if (modeEl.title !== mode.title) modeEl.title = mode.title; }
 
+    // Count-in cell follows the pref (toolbar edits show up here).
+    const bars = editorCountInBars();
+    const ciSel = document.getElementById('editor-lcd-countin');
+    if (ciSel && document.activeElement !== ciSel && ciSel.value !== String(bars)) ciSel.value = String(bars);
+
     // Key selects follow S.editorKey (Detect / toolbar edits show up here).
     const tonicSel = document.getElementById('editor-lcd-key-tonic');
     const scaleSel = document.getElementById('editor-lcd-key-scale');
@@ -535,6 +587,7 @@ export function _transportBarTick(force) {
     };
     press('editor-tp-follow', editorFollowEnabled());
     press('editor-tp-parts', !!S.partsViewMode);
+    press('editor-tp-count', bars > 0);
     const mirror = (id, srcId) => {
         const el = document.getElementById(id), src = document.getElementById(srcId);
         if (!el || !src) return;

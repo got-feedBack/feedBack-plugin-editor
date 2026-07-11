@@ -47,12 +47,13 @@ import {
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn,
 } from './audio.js';
 import {
-    _barSpanForTimes, _clearBarSelection, _editorApplyScrollBounds,
-    _editorClampScrollX, _loopHandleKeydown, _loopReliftBeats,
-    _loopReprojectFromBeats, _loopStripOnMouseDown, _renderLoopStrip, _selectedLoopRegion, _setBarSel,
+    _barSpanForTimes, _editorApplyScrollBounds,
+    _editorClampScrollX, _loopReliftBeats,
+    _loopReprojectFromBeats, _renderLoopStrip, _selectedLoopRegion, _setBarSel,
     _setLoopRegionEnabled, editorSetLoopSnapMode,
     editorToggleLoopRegion, snapTime
 } from './loop.js';
+import { drawMinimap, drawRuler } from './ruler.js';
 import {
     editorAddEmptyKeys,
     editorDoAddKeys, editorDoImportGuitar, editorHideAddKeysModal,
@@ -112,6 +113,7 @@ import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from '
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
 import { initMenuBar } from './menu-bar.js';
+import { initToolbars } from './toolbars.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
 import {
     MIN_MEASURE, TempoGridCmd, TempoMapCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
@@ -139,7 +141,6 @@ import {
     } from './shortcuts.js';
 import {
     drawBarSel,
-    drawBeatBar,
     drawCursor,
     drawGrid,
     drawLabels,
@@ -158,7 +159,7 @@ import {
     LABEL_W, setLaneMetrics } from './geometry.js';
 import {
     KEYS_PATTERN, _rollLockNotice,
-    _rollMidiForNote, _rollPitchCtx, _rollReadOnly, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
+    _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
 import {
     _restoreSuggestedMarks,
     _saveSuggestedMarks, _suggestedCount, chords, notes
@@ -214,11 +215,6 @@ function _cancelPendingDraw() {
 
 function drawNow() {
     if (!canvas) return;
-    // Keep the loop strip (DOM, independent of the canvas render) in sync for
-    // EVERY mode — drum-edit and tempo-map both return early below, so rendering
-    // it here rather than at the tail stops a clear/drag from leaving a stale
-    // selection while one of those modes is active.
-    _renderLoopStrip();
     updateBPMDisplay();
     updateTempoSigDisplay();
     const w = canvas.width / DPR;
@@ -267,12 +263,13 @@ function drawNow() {
     LC.labels = laneLabels();
     try {
         drawWaveform(w);
+        drawMinimap(w);
+        drawRuler(w);
         drawToneLane(w);
         drawLanes(w);
         drawGrid(w);
         drawSections(w);
         drawBarSel(w);
-        drawBeatBar(w);
         drawNotes(w);
         drawSelectionRect(w);
         drawGhostNotes();
@@ -376,7 +373,7 @@ function _resizeForLaneChange(arrIdx) {
 function _rollConfirmPosition(res, pitch, time, occ, cx, cy) {
     const occupied = occ instanceof Set ? occ : new Set(occ || []);
     const free = (res.candidates || []).filter(c => !occupied.has(c.string));
-    const noteName = (typeof midiToNote === 'function') ? midiToNote(pitch) : String(pitch);
+    const noteName = (typeof midiToNote === 'function') ? midiToNote(pitch, editorKeyNoteNames()) : String(pitch);
     const reason = _ROLL_REFUSE_REASONS[res.reason] || res.reason || '';
     if (!free.length) {
         setStatus(`Can't place ${noteName} here — ${reason}.`);
@@ -436,6 +433,7 @@ function _rollConfirmPosition(res, pitch, time, occ, cx, cy) {
 setHostHooks({
     draw: (...args) => draw(...args),
     drawWaveform,
+    drawTimelineHeader: (w) => { drawMinimap(w); drawRuler(w); },
     updateStatus,
     updateArrangementSelector,
     hideContextMenu,
@@ -745,7 +743,12 @@ function updateChordDisplay() {
             if (midis.length) {
                 const pcs = _pcSetFromMidisPure(midis);
                 const bassPc = ((Math.round(Math.min(...midis)) % 12) + 12) % 12;
-                const chord = _identifyChordPure(pcs, bassPc, PIANO_NOTE_NAMES);
+                // Spell the chord root the way the song key does (Dbm, not
+                // C#m in a flat key). ponytail: root-letter respelling via the
+                // shared key→names table — the readout is only root+suffix, so
+                // there are no non-root chord tones to spell; full functional
+                // chord spelling is out of scope.
+                const chord = _identifyChordPure(pcs, bassPc, editorKeyNoteNames());
                 if (chord) {
                     text = chord.name;
                     title = `${midis.length} note${midis.length === 1 ? '' : 's'} sounding → ${chord.name}`;
@@ -1831,10 +1834,6 @@ function init() {
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('contextmenu', onContextMenu);
     _globalListeners.add(document, 'keydown', onKeyDown);
-    document.getElementById('editor-loop-strip-track')?.addEventListener('mousedown', _loopStripOnMouseDown);
-    document.getElementById('editor-loop-strip-start')?.addEventListener('keydown', (e) => _loopHandleKeydown('start', e));
-    document.getElementById('editor-loop-strip-end')?.addEventListener('keydown', (e) => _loopHandleKeydown('end', e));
-    document.getElementById('editor-loop-strip-clear')?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _clearBarSelection(); });
 
     // Prevent middle-click paste
     canvas.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
@@ -1853,6 +1852,7 @@ function init() {
     try { window.editorSetSwing(localStorage.getItem('editorSwingPct')); } catch (_) {}
     initMenuBar();
     initTransportBar();
+    initToolbars();
 
     // Observe screen visibility for resize + the entry landing. Held in
     // _editorScreenObs so the teardown can disconnect it on re-injection.

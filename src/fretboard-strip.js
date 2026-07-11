@@ -43,7 +43,7 @@ import { _enumerateFrettedPositionsPure, _activeAnchorAtPure } from './position.
 import {
     MoveToStringCmd, SetTeachingMarkCmd, _prevNoteBefore, _rollAnchorList,
 } from './commands.js';
-import { PIANO_NOTE_NAMES } from './theory.js';
+import { _noteNamesForKeyPure } from './theory.js';
 
 /* @pure:fretboard-strip:start */
 
@@ -302,8 +302,10 @@ function draw() {
         ctx2.fillStyle = '#f59e0b'; ctx2.font = '700 7px sans-serif'; ctx2.textAlign = 'center'; ctx2.textBaseline = 'top';
         ctx2.fillText('CAPO', x, g.rowY(0) + 4);
     }
-    // Strings + sounding-open labels (tuning + capo aware).
+    // Strings + sounding-open labels (tuning + capo aware). Spell them the
+    // way the song key does, same as the roll — Eb, not D#, in a flat key.
     ctx2.font = 'bold 10px sans-serif'; ctx2.textBaseline = 'middle';
+    const openNames = _noteNamesForKeyPure(S.editorKey);
     for (let s = 0; s < actx.laneCount; s++) {
         const y = g.rowY(s);
         const col = STRIP_STRING_COLORS[s % STRIP_STRING_COLORS.length];
@@ -312,7 +314,7 @@ function draw() {
         ctx2.beginPath(); ctx2.moveTo(g.xLine(lo), y); ctx2.lineTo(g.xLine(hi), y); ctx2.stroke();
         ctx2.globalAlpha = 1; ctx2.fillStyle = col; ctx2.textAlign = 'right';
         const openPitch = (actx.openMidi[s] || 0) + (actx.tuning[s] || 0) + actx.capo;
-        ctx2.fillText(PIANO_NOTE_NAMES[((openPitch % 12) + 12) % 12], g.xLine(lo) - 6, y);
+        ctx2.fillText(openNames[((openPitch % 12) + 12) % 12], g.xLine(lo) - 6, y);
     }
     // Fret numbers.
     ctx2.fillStyle = '#4a4a5a'; ctx2.font = '9px sans-serif'; ctx2.textAlign = 'center'; ctx2.textBaseline = 'top';

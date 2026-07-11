@@ -1,9 +1,11 @@
 /* Slopsmith Arrangement Editor — the painters.
  *
- * Everything that puts pixels on the chart canvas: lane and grid backgrounds, the
- * beat bar, the section-coverage strip, the notes (fretted and piano-roll), the
- * cursor and the marquee — plus the song-key highlight state the note painters
- * consult, and `canvasH`, which depends on the roll's lane count.
+ * Everything that puts pixels on the chart canvas: lane and grid backgrounds,
+ * the section-coverage strip, the notes (fretted and piano-roll), the cursor
+ * and the marquee — plus the song-key highlight state the note painters
+ * consult, and `canvasH`, which depends on the roll's lane count. The
+ * timeline header (minimap + ruler, which absorbed the old beat bar) paints
+ * in src/ruler.js.
  *
  * Reads `ctx` (src/canvas.js), the geometry, the lane and keys models, and `S`.
  * It does NOT know the per-frame orchestrator: `drawNow()` stays in main.js and
@@ -14,11 +16,12 @@
 
 import { ctx } from './canvas.js';
 import {
-    BEAT_H,
     LABEL_W,
     LANE_H,
+    MINIMAP_H,
     MIN_NOTE_W,
     NOTE_PAD,
+    TIMELINE_TOP,
     WAVEFORM_H,
     laneToY,
     strToY,
@@ -30,6 +33,7 @@ import {
     _rollMidiForNote,
     _rollPitchCtx,
     isBlackKey,
+    editorKeyNoteNames,
     isKeysMode,
     midiToNote,
     midiToY,
@@ -158,9 +162,8 @@ function drawPianoLanes(w) {
 export function drawGrid(w) {
     const st = S.scrollX - 1;
     const et = S.scrollX + (w - LABEL_W) / S.zoom + 1;
-    const laneBottom = isKeysMode()
-        ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
-        : WAVEFORM_H + lanes() * LANE_H;
+    const laneTop = TIMELINE_TOP + WAVEFORM_H;
+    const laneBottom = _beatBarTopY();
     for (const b of S.beats) {
         if (b.time < st || b.time > et) continue;
         const x = timeToX(b.time);
@@ -169,7 +172,7 @@ export function drawGrid(w) {
         ctx.strokeStyle = meas ? '#2a2a50' : '#16162c';
         ctx.lineWidth = meas ? 1.5 : 0.5;
         ctx.beginPath();
-        ctx.moveTo(x, WAVEFORM_H);
+        ctx.moveTo(x, laneTop);
         ctx.lineTo(x, laneBottom);
         ctx.stroke();
     }
@@ -263,51 +266,47 @@ function _sectionCoverage() {
 export function drawSections(w) {
     const st = S.scrollX - 1;
     const et = S.scrollX + (w - LABEL_W) / S.zoom + 1;
-    const laneBottom = isKeysMode()
-        ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
-        : WAVEFORM_H + lanes() * LANE_H;
+    const laneTop = TIMELINE_TOP + WAVEFORM_H;
+    const laneBottom = _beatBarTopY();
     // Completeness strip: a thin band at the top of the lane area tinting
     // each section by whether the active arrangement has notes in it — an
     // at-a-glance "where is this chart still empty", drawn under the section
-    // labels/lines below. Neutral, no percentage, no red.
+    // lines below. Neutral, no percentage, no red.
     const cov = _sectionCoverage();
     for (const c of cov) {
         const x0 = Math.max(LABEL_W, timeToX(c.start));
         const x1 = Math.min(w, timeToX(c.end));
         if (x1 <= x0) continue;
         ctx.fillStyle = c.hasContent ? 'rgba(120,170,255,0.20)' : 'rgba(255,255,255,0.035)';
-        ctx.fillRect(x0, WAVEFORM_H, x1 - x0, 3);
+        ctx.fillRect(x0, laneTop, x1 - x0, 3);
     }
-    ctx.font = '9px monospace';
-    ctx.textBaseline = 'top';
+    // Section NAMES live on the ruler now (drawRuler, workspace-shell B3) —
+    // the dashed boundary lines stay here as in-chart guides.
     for (const s of S.sections) {
         if (s.start_time < st || s.start_time > et) continue;
         const x = timeToX(s.start_time);
         if (x < LABEL_W || x > w) continue;
-        // Dashed vertical line
         ctx.strokeStyle = '#e8c04060';
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
-        ctx.moveTo(x, WAVEFORM_H);
+        ctx.moveTo(x, laneTop);
         ctx.lineTo(x, laneBottom);
         ctx.stroke();
         ctx.setLineDash([]);
-        // Label at top of lanes
-        ctx.fillStyle = '#e8c040';
-        ctx.textAlign = 'left';
-        ctx.fillText(s.name, x + 3, WAVEFORM_H + 2);
     }
 }
 
-// Y coordinate of the beat bar's top edge. Branches on keys mode
-// because keys lanes use a different per-lane height. `canvasH`,
-// `_anchorLaneTopY`, `drawBeatBar` all call through here so they
-// can't drift as new strips are added.
+// Y coordinate of the note-lane band's BOTTOM edge (the old beat bar's top —
+// the bar itself retired into the B3 ruler at the canvas top, but the name
+// stays because every sub-lane and hit-test anchors here). Branches on keys
+// mode because keys lanes use a different per-lane height. `canvasH`,
+// `_anchorLaneTopY`, the grid and section painters all call through here so
+// they can't drift as new strips are added.
 export function _beatBarTopY() {
-    return isKeysMode()
+    return TIMELINE_TOP + (isKeysMode()
         ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
-        : WAVEFORM_H + lanes() * LANE_H;
+        : WAVEFORM_H + lanes() * LANE_H);
 }
 
 // Highlight the bar range selected for "Loop in 3D" — a translucent blue
@@ -320,55 +319,39 @@ export function drawBarSel(w) {
     if (x2 < LABEL_W || x1 > w) return;
     const cx1 = Math.max(LABEL_W, x1);
     const cx2 = Math.min(w, x2);
+    const top = MINIMAP_H;   // chart-space band; the minimap paints its own
     const bot = canvasH();
     ctx.save();
     ctx.fillStyle = 'rgba(80,160,255,0.10)';
-    ctx.fillRect(cx1, 0, Math.max(0, cx2 - cx1), bot);
+    ctx.fillRect(cx1, top, Math.max(0, cx2 - cx1), bot - top);
     ctx.strokeStyle = 'rgba(80,160,255,0.7)';
     ctx.lineWidth = 1.5;
-    if (x1 >= LABEL_W && x1 <= w) { ctx.beginPath(); ctx.moveTo(x1, 0); ctx.lineTo(x1, bot); ctx.stroke(); }
-    if (x2 >= LABEL_W && x2 <= w) { ctx.beginPath(); ctx.moveTo(x2, 0); ctx.lineTo(x2, bot); ctx.stroke(); }
+    if (x1 >= LABEL_W && x1 <= w) { ctx.beginPath(); ctx.moveTo(x1, top); ctx.lineTo(x1, bot); ctx.stroke(); }
+    if (x2 >= LABEL_W && x2 <= w) { ctx.beginPath(); ctx.moveTo(x2, top); ctx.lineTo(x2, bot); ctx.stroke(); }
     ctx.restore();
 }
 
-export function drawBeatBar(w) {
-    const y = _beatBarTopY();
-    ctx.fillStyle = '#08081a';
-    ctx.fillRect(0, y, w, BEAT_H);
-    ctx.fillStyle = '#08081a';
-    ctx.fillRect(0, y, LABEL_W, BEAT_H);
-
-    // Left gutter label — identifies the strip and hints that it's
-    // drag-to-select for "Loop in 3D".
-    ctx.fillStyle = S.barSel ? '#6aa0ff' : '#667';
+export function drawLabels(w) {
+    // Timeline-header gutter (minimap + ruler) — the left column over the
+    // whole-song and ruler bands, labelled so the two strips read distinctly.
+    ctx.fillStyle = '#0a0a1a';
+    ctx.fillRect(0, 0, LABEL_W, TIMELINE_TOP);
+    ctx.fillStyle = '#556';
     ctx.font = '8px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('⇆ bars', LABEL_W / 2, y + BEAT_H / 2);
+    ctx.fillText('song', LABEL_W / 2, MINIMAP_H / 2);
+    ctx.fillStyle = S.barSel ? '#6aa0ff' : '#667';
+    ctx.fillText('⇆ bars', LABEL_W / 2, MINIMAP_H + (TIMELINE_TOP - MINIMAP_H) / 2);
 
-    ctx.fillStyle = '#555';
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const st = S.scrollX - 1;
-    const et = S.scrollX + (w - LABEL_W) / S.zoom + 1;
-    for (const b of S.beats) {
-        if (b.measure <= 0 || b.time < st || b.time > et) continue;
-        const x = timeToX(b.time);
-        if (x < LABEL_W || x > w) continue;
-        ctx.fillText(String(b.measure), x, y + BEAT_H / 2);
-    }
-}
-
-export function drawLabels(w) {
     // Waveform label
     ctx.fillStyle = '#0a0a1a';
-    ctx.fillRect(0, 0, LABEL_W, WAVEFORM_H);
+    ctx.fillRect(0, TIMELINE_TOP, LABEL_W, WAVEFORM_H);
     ctx.fillStyle = '#555';
     ctx.font = '9px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Audio', LABEL_W / 2, WAVEFORM_H / 2);
+    ctx.fillText('Audio', LABEL_W / 2, TIMELINE_TOP + WAVEFORM_H / 2);
 
     if (isKeysMode()) return drawPianoLabels(w);
 
@@ -437,7 +420,7 @@ function drawPianoLabels() {
     ctx.strokeStyle = '#2a2a55';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(LABEL_W - 0.5, WAVEFORM_H);
+    ctx.moveTo(LABEL_W - 0.5, TIMELINE_TOP + WAVEFORM_H);
     ctx.lineTo(LABEL_W - 0.5, midiToY(pianoRange.lo) + PIANO_LANE_H);
     ctx.stroke();
 }
@@ -665,7 +648,7 @@ function _drawPianoNote(n, selected, hl, midi, fretted, linted) {
         ctx.font = `bold ${Math.min(9, h - 1)}px monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const label = fretted ? (n.string + '·' + n.fret) : midiToNote(midi);
+        const label = fretted ? (n.string + '·' + n.fret) : midiToNote(midi, editorKeyNoteNames());
         ctx.fillText(label, x + Math.min(sw, 24) / 2, y + h / 2);
     }
 }
@@ -676,7 +659,10 @@ export function drawCursor(w, h) {
     ctx.strokeStyle = '#ff4444';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(x, 0);
+    // Starts below the minimap: everything from the ruler down shares the
+    // chart's time⇄x space; the minimap is whole-song scale and paints its
+    // own playhead tick.
+    ctx.moveTo(x, MINIMAP_H);
     // Extend the playhead through every time-axis-aligned strip
     // (waveform, tone lane, lanes, beat bar, anchor lane). `canvasH()`
     // stops at the beat-bar bottom, which would clip the cursor above
@@ -704,5 +690,5 @@ export function drawSelectionRect() {
 }
 
 function canvasH()   {
-    return _beatBarTopY() + BEAT_H;
+    return _beatBarTopY();
 }

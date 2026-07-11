@@ -7,7 +7,7 @@ import { startPlayback, stopPlayback } from './audio.js';
 import { DPR, canvas, ctx } from './canvas.js';
 import { hideContextMenu } from './context-menu.js';
 import { DRUM_PIECE_META, _refreshDrumEditButton } from './drum.js';
-import { WAVEFORM_H, timeToX, xToTime } from './geometry.js';
+import { TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
 import { KEYS_PATTERN } from './keys.js';
 import { _stringCountFor } from './lanes.js';
 import { _downbeatTimes } from './loop.js';
@@ -147,14 +147,15 @@ function _partsDrawSilhouette(part, y0, laneH, w) {
 }
 
 export function _partsViewDraw(w, h) {
+    host.drawTimelineHeader(w);
     host.drawWaveform(w);
     const parts = _partsListPure(S.arrangements, S.drumTab);
-    const { laneH } = _partsLaneLayoutPure(h - WAVEFORM_H, parts.length);
+    const { laneH } = _partsLaneLayoutPure(h - (TIMELINE_TOP + WAVEFORM_H), parts.length);
     if (!laneH) return;
     const downbeats = _downbeatTimes();
     for (let p = 0; p < parts.length; p++) {
         const part = parts[p];
-        const y0 = WAVEFORM_H + p * laneH;
+        const y0 = (TIMELINE_TOP + WAVEFORM_H) + p * laneH;
         const armed = part.kind === 'arr' && part.idx === S.currentArr;
         ctx.fillStyle = armed ? '#141432' : (p % 2 === 0 ? '#0c0c1c' : '#0f0f24');
         ctx.fillRect(0, y0, w, laneH);
@@ -198,13 +199,13 @@ export function _partsViewDraw(w, h) {
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.moveTo(cx, 0);
-        ctx.lineTo(cx, WAVEFORM_H + parts.length * laneH);
+        ctx.lineTo(cx, (TIMELINE_TOP + WAVEFORM_H) + parts.length * laneH);
         ctx.stroke();
     }
 }
 
 export function _partsViewOnMouseDown(e, x, y) {
-    if (y < WAVEFORM_H) {
+    if (y < (TIMELINE_TOP + WAVEFORM_H)) {
         // Waveform-area click seeks, mirroring the other modes (and the
         // same mid-recording guard).
         if (_recState === 'recording') return;
@@ -214,8 +215,8 @@ export function _partsViewOnMouseDown(e, x, y) {
         return;
     }
     const parts = _partsListPure(S.arrangements, S.drumTab);
-    const { laneH } = _partsLaneLayoutPure((canvas.height / DPR) - WAVEFORM_H, parts.length);
-    const i = _partsLaneAtYPure(y, WAVEFORM_H, laneH, parts.length);
+    const { laneH } = _partsLaneLayoutPure((canvas.height / DPR) - (TIMELINE_TOP + WAVEFORM_H), parts.length);
+    const i = _partsLaneAtYPure(y, (TIMELINE_TOP + WAVEFORM_H), laneH, parts.length);
     if (i < 0) return;
     const part = parts[i];
     if (part.kind === 'arr' && part.idx !== S.currentArr) {
@@ -232,8 +233,8 @@ export function _partsViewOnMouseDown(e, x, y) {
 export function _partsViewOnDblClick(e) {
     const { y } = getMousePos(e);
     const parts = _partsListPure(S.arrangements, S.drumTab);
-    const { laneH } = _partsLaneLayoutPure((canvas.height / DPR) - WAVEFORM_H, parts.length);
-    const i = _partsLaneAtYPure(y, WAVEFORM_H, laneH, parts.length);
+    const { laneH } = _partsLaneLayoutPure((canvas.height / DPR) - (TIMELINE_TOP + WAVEFORM_H), parts.length);
+    const i = _partsLaneAtYPure(y, (TIMELINE_TOP + WAVEFORM_H), laneH, parts.length);
     if (i < 0) return;
     const part = parts[i];
     S.partsViewMode = false;
