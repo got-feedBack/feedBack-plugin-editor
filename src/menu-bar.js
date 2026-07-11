@@ -37,6 +37,7 @@ import { _editorRunEofCommand } from './input.js';
 import { _editorShortcutRowsPure, editorShortcutProfile } from './shortcuts.js';
 import { S } from './state.js';
 import { host } from './host.js';
+import { _clearBarSelection, editorLoopSnapMode, editorSetLoopSnapMode } from './loop.js';
 
 /* @pure:menu-model:start */
 // The nine menus (charrette §2.2). Item kinds:
@@ -157,6 +158,14 @@ export const EDITOR_MENUS = Object.freeze([
         { label: 'Loop region', fn: 'editorToggleLoopRegion' },
         { cmd: 'toggleLoopAB' },
         { label: 'Loop in 3D', fn: 'editorLoopIn3D' },
+        { loopClear: true, label: 'Clear loop' },
+        // Loop snap mode moved here from the retired HTML loop strip (B3):
+        // how a ruler loop-drag resolves — whole bars, the grid subdivision,
+        // or free seconds (Shift-drag = temporary Free in any mode).
+        { hdr: 'Loop snap' },
+        { loopSnap: 'bar', label: 'Bar' },
+        { loopSnap: 'grid', label: 'Grid' },
+        { loopSnap: 'free', label: 'Free' },
         { sep: true },
         { cmd: 'toggleMetronome' },
         { cmd: 'toggleGuideClap' },
@@ -210,6 +219,19 @@ export function _menuModelPure(menus, rows, ctx) {
         for (const it of menu.items) {
             if (it.sep) { items.push({ sep: true }); continue; }
             if (it.hdr) { items.push({ hdr: it.hdr }); continue; }
+            if (it.loopSnap || it.loopClear) {
+                // Loop rows (B3). The snap trio renders like a radio group;
+                // ctx.loopSnapMode is absent in older callers -> unchecked.
+                const on = it.loopSnap && ctx.loopSnapMode === it.loopSnap;
+                items.push({
+                    label: (it.loopClear ? '' : on ? '✓ ' : '  ') + it.label,
+                    key: '',
+                    dispatch: it.loopSnap ? { loopSnap: it.loopSnap } : { loopClear: true },
+                    disabled: false,
+                    planned: false,
+                });
+                continue;
+            }
             if (it.cmd) {
                 const row = byId.get(it.cmd);
                 if (!row) continue;   // registry moved on — never render a dangling id
@@ -261,12 +283,17 @@ function currentModel() {
     return _menuModelPure(
         EDITOR_MENUS,
         _editorShortcutRowsPure(editorShortcutProfile),
-        { tempoMapMode: !!S.tempoMapMode, hasAudio: !!S.audioBuffer, fns: windowFns() });
+        {
+            tempoMapMode: !!S.tempoMapMode, hasAudio: !!S.audioBuffer, fns: windowFns(),
+            loopSnapMode: editorLoopSnapMode(),
+        });
 }
 
 function dispatch(d) {
     if (!d) return;
     if (d.cmd) { _editorRunEofCommand(d.cmd); return; }
+    if (d.loopSnap) { editorSetLoopSnapMode(d.loopSnap); return; }
+    if (d.loopClear) { _clearBarSelection(); return; }
     if (d.fn === '__swapProfile') {
         const next = editorShortcutProfile === 'eof' ? 'feedback' : 'eof';
         if (typeof window.editorSetShortcutProfile === 'function') window.editorSetShortcutProfile(next);

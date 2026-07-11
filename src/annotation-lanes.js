@@ -29,7 +29,7 @@ import {
 } from './chords.js';
 import { _beatBarTopY } from './draw.js';
 import {
-    ANCHOR_LANE_H, BEAT_H, HS_LANE_H, LABEL_W, TONE_LANE_H, timeToX, xToTime,
+    ANCHOR_LANE_H, HS_LANE_H, LABEL_W, TIMELINE_TOP, TONE_LANE_H, timeToX, xToTime,
 } from './geometry.js';
 import { host } from './host.js';
 import { lanes } from './lanes.js';
@@ -190,12 +190,12 @@ export function drawToneLane(w) {
     // Lane background — a darker strip overlaid on the waveform's top
     // edge so markers stand out against the waveform noise below.
     ctx.fillStyle = 'rgba(8,8,20,0.85)';
-    ctx.fillRect(0, 0, w, TONE_LANE_H);
+    ctx.fillRect(0, TIMELINE_TOP, w, TONE_LANE_H);
     ctx.strokeStyle = '#1f2937';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(0, TONE_LANE_H - 0.5);
-    ctx.lineTo(w, TONE_LANE_H - 0.5);
+    ctx.moveTo(0, TIMELINE_TOP + TONE_LANE_H - 0.5);
+    ctx.lineTo(w, TIMELINE_TOP + TONE_LANE_H - 0.5);
     ctx.stroke();
 
     // Base-tone label. Hide entirely when there's no authored tone
@@ -215,7 +215,7 @@ export function drawToneLane(w) {
         ctx.font = 'bold 9px monospace';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillText('base: ' + effectiveBase, LABEL_W + 4, TONE_LANE_H / 2);
+        ctx.fillText('base: ' + effectiveBase, LABEL_W + 4, TIMELINE_TOP + TONE_LANE_H / 2);
     }
 
     // Markers — small filled triangles at each change time, colored
@@ -228,7 +228,7 @@ export function drawToneLane(w) {
     // over.
     ctx.save();
     ctx.beginPath();
-    ctx.rect(LABEL_W, 0, Math.max(0, w - LABEL_W), TONE_LANE_H);
+    ctx.rect(LABEL_W, TIMELINE_TOP, Math.max(0, w - LABEL_W), TONE_LANE_H);
     ctx.clip();
     for (let i = 0; i < changes.length; i++) {
         const c = changes[i];
@@ -242,9 +242,9 @@ export function drawToneLane(w) {
             : '#94a3b8';
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.moveTo(x, 2);
-        ctx.lineTo(x + 5, TONE_LANE_H - 2);
-        ctx.lineTo(x - 5, TONE_LANE_H - 2);
+        ctx.moveTo(x, TIMELINE_TOP + 2);
+        ctx.lineTo(x + 5, TIMELINE_TOP + TONE_LANE_H - 2);
+        ctx.lineTo(x - 5, TIMELINE_TOP + TONE_LANE_H - 2);
         ctx.closePath();
         ctx.fill();
         if (sel) {
@@ -257,7 +257,7 @@ export function drawToneLane(w) {
         ctx.font = '9px monospace';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillText(c.name, x + 7, TONE_LANE_H / 2);
+        ctx.fillText(c.name, x + 7, TIMELINE_TOP + TONE_LANE_H / 2);
     }
     ctx.restore();
 }
@@ -781,10 +781,10 @@ export function _anchorsAreDirty(arr) {
 }
 
 export function _anchorLaneTopY() {
-    // Anchor lane sits right below the beat bar — reuse the shared
-    // `_beatBarTopY()` so it stays in sync with keys vs guitar mode
-    // (and with whatever else uses the beat-bar Y).
-    return _beatBarTopY() + BEAT_H;
+    // Anchor lane sits right below the note lanes — reuse the shared
+    // `_beatBarTopY()` so it stays in sync with keys vs guitar mode.
+    // (The old bottom beat bar between them retired into the B3 ruler.)
+    return _beatBarTopY();
 }
 
 // ─── Lane drawing ───────────────────────────────────────────────────

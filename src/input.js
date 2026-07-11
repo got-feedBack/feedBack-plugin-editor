@@ -10,12 +10,12 @@ import { canvas } from './canvas.js';
 import { AddNoteCmd, ChangeFretCmd, ChangeFretGroupCmd, DeleteNotesCmd, MoveNoteCmd, ResizeSustainGroupCmd, SetPitchedSlideTargetsCmd, SetTeachingMarkCmd, ToggleTechniqueCmd, _execCyclePosition, _execMoveString, _execMoveStringSameFret, _rollAddByPitch, _withStableSelection } from './commands.js';
 import { hideContextMenu, promptBend, promptFret, promptSlide, promptSlideUnpitch, showContextMenu } from './context-menu.js';
 import { _drumEditorDeleteSelection, _drumEditorNudgeVelocity, _drumEditorSetVelocity, _drumEditorToggleArticulation, _editorToggleDrumDensity } from './drum.js';
-import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, TONE_LANE_H, WAVEFORM_H, xToTime, yToStr } from './geometry.js';
+import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, TIMELINE_TOP, TONE_LANE_H, WAVEFORM_H, xToTime, yToStr } from './geometry.js';
 import { hitNote } from './hit-test.js';
 import { _renderInspector, _selectedChordContext } from './inspector.js';
 import { PIANO_LANE_H, _rollLockNotice, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, pianoLaneCount, yToMidi } from './keys.js';
 import { lanes } from './lanes.js';
-import { _editorClampScrollX, snapTime } from './loop.js';
+import { _editorClampScrollX, _loopNudgeEdge, snapTime } from './loop.js';
 import { _recState } from './midi-record.js';
 import { getMousePos } from './mouse.js';
 import { _resizeSustainsForDeltaPure, notes } from './notes.js';
@@ -831,9 +831,9 @@ function _editorRightClickNoteEdit(e, x, y) {
     // stays locked — this write path only adds/repitches, never deletes.
     const keysMode = isKeysMode();
     const laneBottom = keysMode
-        ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
-        : WAVEFORM_H + lanes() * LANE_H;
-    if (y < WAVEFORM_H || y > laneBottom) return false;
+        ? (TIMELINE_TOP + WAVEFORM_H) + pianoLaneCount() * PIANO_LANE_H
+        : (TIMELINE_TOP + WAVEFORM_H) + lanes() * LANE_H;
+    if (y < (TIMELINE_TOP + WAVEFORM_H) || y > laneBottom) return false;
     // Only inside the timeline grid — a right-click on the left string/piano
     // label margin (x < LABEL_W) is not a note edit; without this it would
     // clamp xToTime()<0 to 0 and add a note at the song start.
@@ -904,9 +904,9 @@ export function onContextMenu(e) {
 
     // Right-click on beat bar or lanes with no note = section menu
     const beatBarY = isKeysMode()
-        ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
-        : WAVEFORM_H + lanes() * LANE_H;
-    if (y >= beatBarY || (y >= WAVEFORM_H && hitNote(x, y) < 0)) {
+        ? (TIMELINE_TOP + WAVEFORM_H) + pianoLaneCount() * PIANO_LANE_H
+        : (TIMELINE_TOP + WAVEFORM_H) + lanes() * LANE_H;
+    if (y >= beatBarY || (y >= (TIMELINE_TOP + WAVEFORM_H) && hitNote(x, y) < 0)) {
         showSectionMenu(e.clientX, e.clientY, xToTime(x));
         return;
     }
@@ -1067,6 +1067,21 @@ export function onKeyDown(e) {
         && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
         _drumEditorNudgeVelocity(e.key === 'ArrowUp' ? 10 : -10);
+        host.draw();
+        return;
+    }
+
+    // Loop-edge nudge: Alt+←/→ moves the loop START by its mode's natural
+    // step; Alt+Shift+←/→ moves the END. Replaces the retired loop strip's
+    // focusable-handle arrow keys (the handles left with the strip — the
+    // ruler is canvas, so the keyboard path claims a chord instead). Alt
+    // keeps it clear of the plain/Ctrl arrow note-ops; direct handling here
+    // mirrors the drum-velocity nudge precedent above.
+    if (S.barSel && e.altKey && !e.ctrlKey && !e.metaKey
+        && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+        && !e.target.matches('input, select, textarea')) {
+        e.preventDefault();
+        _loopNudgeEdge(e.shiftKey ? 'end' : 'start', e.key === 'ArrowRight' ? 1 : -1, false);
         host.draw();
         return;
     }

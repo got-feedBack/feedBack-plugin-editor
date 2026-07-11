@@ -23,7 +23,7 @@
 import { beatOf, timeOf } from './beats.js';
 import { DPR, canvas, ctx } from './canvas.js';
 import { _drumLaneIdxForPiece, _drumPieceCount } from './drum.js';
-import { LABEL_W, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
+import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
 import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S } from './state.js';
@@ -42,7 +42,7 @@ const TEMPO_POLE_HALF = 6;     // sync-point pole grab half-width (px)
 // current arrangement's notes (spread by string) and the drum_tab
 // hits (spread by piece), plotted at their absolute times.
 function _tempoDrawReferenceNotes(w, gridBottom, visStart, visEnd) {
-    const bandTop = WAVEFORM_H + 46;
+    const bandTop = (TIMELINE_TOP + WAVEFORM_H) + 46;
     const bandBot = gridBottom - 8;
     if (bandBot <= bandTop) return;
     const bandMid = (bandTop + bandBot) / 2;
@@ -136,7 +136,7 @@ export function _tempoMapDraw(w, h) {
 
     // Grid region background.
     ctx.fillStyle = '#0c0c1c';
-    ctx.fillRect(LABEL_W, WAVEFORM_H, w - LABEL_W, gridBottom - WAVEFORM_H);
+    ctx.fillRect(LABEL_W, (TIMELINE_TOP + WAVEFORM_H), w - LABEL_W, gridBottom - (TIMELINE_TOP + WAVEFORM_H));
 
     if (!S.beats || S.beats.length < 2) {
         ctx.fillStyle = '#64748b';
@@ -144,7 +144,7 @@ export function _tempoMapDraw(w, h) {
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         ctx.fillText('No beat grid on this song — nothing to tempo-map.',
-            LABEL_W + 12, WAVEFORM_H + 30);
+            LABEL_W + 12, (TIMELINE_TOP + WAVEFORM_H) + 30);
         return;
     }
 
@@ -157,7 +157,7 @@ export function _tempoMapDraw(w, h) {
         ctx.strokeStyle = meas ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.04)';
         ctx.lineWidth = meas ? 1 : 0.5;
         ctx.beginPath();
-        ctx.moveTo(x, WAVEFORM_H);
+        ctx.moveTo(x, (TIMELINE_TOP + WAVEFORM_H));
         ctx.lineTo(x, gridBottom);
         ctx.stroke();
     }
@@ -184,13 +184,13 @@ export function _tempoMapDraw(w, h) {
                 ctx.textBaseline = 'top';
                 ctx.fillStyle = '#cbd5e1';
                 ctx.font = 'bold 10px monospace';
-                ctx.fillText(`M${m.measure - _pickupShift}`, xMid, WAVEFORM_H + 4);
+                ctx.fillText(`M${m.measure - _pickupShift}`, xMid, (TIMELINE_TOP + WAVEFORM_H) + 4);
                 ctx.fillStyle = m.isLast ? '#64748b' : '#fbbf24';
                 ctx.font = '10px monospace';
-                ctx.fillText(`${m.bpm.toFixed(2)} BPM`, xMid, WAVEFORM_H + 17);
+                ctx.fillText(`${m.bpm.toFixed(2)} BPM`, xMid, (TIMELINE_TOP + WAVEFORM_H) + 17);
                 ctx.fillStyle = '#64748b';
                 ctx.font = '9px monospace';
-                ctx.fillText(`${m.beats}/${_tempoMeasureDenominator(m.i)}`, xMid, WAVEFORM_H + 30);
+                ctx.fillText(`${m.beats}/${_tempoMeasureDenominator(m.i)}`, xMid, (TIMELINE_TOP + WAVEFORM_H) + 30);
             }
         }
 
@@ -206,23 +206,23 @@ export function _tempoMapDraw(w, h) {
                 ctx.strokeStyle = 'rgba(251,191,36,0.25)';
                 ctx.lineWidth = 7;
                 ctx.beginPath();
-                ctx.moveTo(x, WAVEFORM_H);
+                ctx.moveTo(x, (TIMELINE_TOP + WAVEFORM_H));
                 ctx.lineTo(x, gridBottom);
                 ctx.stroke();
             }
             ctx.strokeStyle = locked ? '#34d399' : sel ? '#fbbf24' : hov ? '#93c5fd' : '#64748b';
             ctx.lineWidth = sel ? 3 : 2;
             ctx.beginPath();
-            ctx.moveTo(x, WAVEFORM_H);
+            ctx.moveTo(x, (TIMELINE_TOP + WAVEFORM_H));
             ctx.lineTo(x, gridBottom);
             ctx.stroke();
             ctx.fillStyle = locked ? '#34d399' : sel ? '#fbbf24' : hov ? '#93c5fd' : '#94a3b8';
-            ctx.fillRect(x - TEMPO_POLE_HALF, WAVEFORM_H, TEMPO_POLE_HALF * 2, 13);
+            ctx.fillRect(x - TEMPO_POLE_HALF, (TIMELINE_TOP + WAVEFORM_H), TEMPO_POLE_HALF * 2, 13);
             ctx.fillStyle = '#0c0c1c';
             ctx.font = 'bold 9px monospace';
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            ctx.fillText('↔', x, WAVEFORM_H + 2);
+            ctx.fillText('↔', x, (TIMELINE_TOP + WAVEFORM_H) + 2);
         }
     }
 
@@ -232,7 +232,7 @@ export function _tempoMapDraw(w, h) {
         ctx.strokeStyle = 'rgba(255,255,255,0.5)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(cx, WAVEFORM_H);
+        ctx.moveTo(cx, (TIMELINE_TOP + WAVEFORM_H));
         ctx.lineTo(cx, gridBottom);
         ctx.stroke();
     }
@@ -557,7 +557,7 @@ export function _refreshTempoMapButton() {
 export function _tempoSyncAtX(x, y) {
     if (!canvas) return -1;
     const gridBottom = canvas.height / DPR - TEMPO_HUD_H;
-    if (y < WAVEFORM_H || y > gridBottom) return -1;
+    if (y < (TIMELINE_TOP + WAVEFORM_H) || y > gridBottom) return -1;
     let best = -1, bestDist = TEMPO_POLE_HALF + 2;
     const beats = S.beats || [];
     for (let i = 0; i < beats.length; i++) {
@@ -574,7 +574,7 @@ export function _tempoSyncAtX(x, y) {
 function _tempoSubBeatAtX(x, y) {
     if (!canvas) return -1;
     const gridBottom = canvas.height / DPR - TEMPO_HUD_H;
-    if (y < WAVEFORM_H || y > gridBottom) return -1;
+    if (y < (TIMELINE_TOP + WAVEFORM_H) || y > gridBottom) return -1;
     let best = -1, bestDist = 5;
     const beats = S.beats || [];
     for (let i = 0; i < beats.length; i++) {
@@ -632,7 +632,7 @@ export function _tempoMapOnMouseDown(e, x, y) {
     if (!canvas) return;
 
     // Waveform-area click sets the playback cursor.
-    if (y < WAVEFORM_H) {
+    if (y < (TIMELINE_TOP + WAVEFORM_H)) {
         // Block the seek while a MIDI take is recording — restarting the
         // source node would prematurely finalize the take (mirrors the
         // guard on the normal-mode waveform click).
