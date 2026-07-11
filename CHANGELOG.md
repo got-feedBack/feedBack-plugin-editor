@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Count-in on the transport bar** — the LCD cell + mode toggle the
+  transport slice deferred until count-in existed. A `Count` LCD cell
+  (Off / 1 / 2 / 4 bars, charrette position between Key and Sel) writes
+  through to the same `editorSetCountIn` control as the toolbar select
+  and mirrors it on every tick; a `Count` toggle in the modes group
+  arms/disarms the pre-roll — disarming remembers the bar count and
+  re-arming restores it (1 bar when there's no memory). The cell is
+  default-visible, including under a Customize pref blob saved before
+  the cell existed.
+
 - **Count-in.** A `Count: off / 1 / 2 / 4 bars` select next to the
   metronome: playback (and, because the recorder rides the same transport
   clock, MIDI recording) starts after N bars of metronome clicks **in the
