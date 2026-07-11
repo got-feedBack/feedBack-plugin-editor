@@ -35,6 +35,7 @@ import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S } from './state.js';
 import { _editorPromptText, setStatus } from './ui.js';
+import { editorResolveAnchorWindow } from './anchor-resolve.js';
 
 // ─── Tone-lane slot data (PR3c) ────────────────────────────────────
 export const _TONE_SLOT_DEFAULTS = ['Clean', 'Drive', 'Lead', 'Crunch', 'Effect'];
@@ -1226,6 +1227,17 @@ export function onAnchorLaneContextMenu(e, x, y) {
     const sep = document.createElement('div');
     sep.className = 'border-t border-gray-700 my-1';
     menu.appendChild(sep);
+
+    // Resolve-in-window (P8/VA.7): run the suggest-position resolver over
+    // every unresolved note in this anchor's window, then sweep to confirm.
+    const resolveBtn = document.createElement('button');
+    resolveBtn.className = 'w-full text-left px-3 py-1 text-xs hover:bg-dark-500 text-sky-300';
+    resolveBtn.textContent = 'Resolve positions in this window…';
+    resolveBtn.onclick = () => {
+        host.hideContextMenu();
+        editorResolveAnchorWindow(hit);
+    };
+    menu.appendChild(resolveBtn);
 
     const delBtn = document.createElement('button');
     delBtn.className = 'w-full text-left px-3 py-1 text-xs hover:bg-dark-500 text-rose-300';

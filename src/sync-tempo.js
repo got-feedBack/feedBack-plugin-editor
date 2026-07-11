@@ -5,12 +5,74 @@
 
 import { beatOf, timeOf } from './beats.js';
 import { notes } from './notes.js';
+import { _ensureOnsets } from './audio.js';
 import { S } from './state.js';
 import { _respaceWithLocksPure } from './tempo.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
 
 let syncState = { tabBPM: 0, audioBPM: 0 };
+
+/* @pure:detect-onsets:start */
+// Tempo + downbeat phase from the ONSET STRIP (D3): the strip (audio.js,
+// [{t, s}] with 0..1 strengths) already marks the attacks, so tempo can be
+// read from inter-onset intervals instead of re-crunching the raw buffer —
+// and unlike the autocorrelation below, this also proposes WHERE beat 1
+// sits (the phase), which is what a transcriber actually needs.
+//
+//   bpm         the winning inter-onset-interval vote, folded into 60–220.
+//   phase       first-beat time in [0, period): onset times folded mod the
+//               beat period, strongest bin wins.
+//   confidence  the winner's share of the vote mass (0..1) — a shuffle or
+//               rubato take votes diffusely and reads as low confidence.
+// Null when there are too few onsets to say anything.
+export function _detectTempoFromOnsetsPure(onsets) {
+    const events = (Array.isArray(onsets) ? onsets : [])
+        .filter((o) => o && Number.isFinite(o.t))
+        .sort((a, b) => a.t - b.t);
+    if (events.length < 8) return null;
+    // Vote: CONSECUTIVE inter-onset intervals only, strength-weighted and
+    // octave-folded into 60–220. Consecutive-only matters: multi-lag pairs
+    // (1.0 s, 1.5 s, 2.0 s spans of a 0.5 s pulse) stack votes on the
+    // subharmonics and a clean 120 BPM take reads as 60.
+    const bins = new Float64Array(221);
+    let total = 0;
+    for (let i = 1; i < events.length; i++) {
+        const d = events[i].t - events[i - 1].t;
+        if (d < 0.15 || d > 2) continue;          // rolls/flams and dead air
+        let bpm = 60 / d;
+        while (bpm < 60) bpm *= 2;
+        while (bpm > 220) bpm /= 2;
+        if (bpm < 60 || bpm > 220) continue;
+        const w = (events[i].s || 0.5) * (events[i - 1].s || 0.5);
+        bins[Math.round(bpm)] += w;
+        total += w;
+    }
+    if (!(total > 0)) return null;
+    let peak = 60;
+    for (let b = 61; b <= 220; b++) if (bins[b] > bins[peak]) peak = b;
+    // Refine to sub-BPM with the peak's neighbours, then measure confidence
+    // as the ±2 BPM window's share of all votes.
+    let mass = 0, weighted = 0;
+    for (let b = Math.max(60, peak - 2); b <= Math.min(220, peak + 2); b++) {
+        mass += bins[b]; weighted += bins[b] * b;
+    }
+    const bpm = Math.round((weighted / mass) * 10) / 10;
+    const confidence = Math.round((mass / total) * 100) / 100;
+    // Phase: fold onsets mod the beat period (16 bins, strength-weighted).
+    const period = 60 / bpm;
+    const PB = 16;
+    const pbins = new Float64Array(PB);
+    for (const o of events) {
+        const frac = ((o.t % period) + period) % period;
+        pbins[Math.min(PB - 1, Math.floor((frac / period) * PB))] += (o.s || 0.5);
+    }
+    let pPeak = 0;
+    for (let b = 1; b < PB; b++) if (pbins[b] > pbins[pPeak]) pPeak = b;
+    const phase = Math.round(((pPeak + 0.5) / PB) * period * 1000) / 1000;
+    return { bpm, phase, confidence };
+}
+/* @pure:detect-onsets:end */
 
 function detectAudioBPM() {
     if (!S.audioBuffer) return 0;
@@ -139,7 +201,24 @@ export function editorSyncTempo() {
 
     setStatus('Detecting audio BPM...');
     syncState.tabBPM = getTabBPM();
-    syncState.audioBPM = detectAudioBPM();
+    // Prefer the onset strip (D3): it is already computed for display/snap,
+    // votes with strengths, and proposes the downbeat PHASE. The raw-buffer
+    // autocorrelation stays as the fallback for songs with no strip yet.
+    const onsetGuess = _detectTempoFromOnsetsPure(
+        typeof _ensureOnsets === 'function' ? _ensureOnsets() : null);
+    let hint = '';
+    if (onsetGuess && onsetGuess.confidence >= 0.15) {
+        syncState.audioBPM = onsetGuess.bpm;
+        hint = `From onsets — confidence ${Math.round(onsetGuess.confidence * 100)}%`
+            + ` · first beat ≈ ${onsetGuess.phase.toFixed(3)}s (+k·beats)`;
+    } else {
+        syncState.audioBPM = detectAudioBPM();
+        hint = onsetGuess
+            ? 'Onset vote too diffuse — using waveform autocorrelation'
+            : 'No onset strip — using waveform autocorrelation';
+    }
+    const hintEl = document.getElementById('sync-detect-hint');
+    if (hintEl) hintEl.textContent = hint;
 
     document.getElementById('sync-tab-bpm').textContent = syncState.tabBPM.toFixed(1);
     document.getElementById('sync-audio-bpm').textContent = syncState.audioBPM.toFixed(1);

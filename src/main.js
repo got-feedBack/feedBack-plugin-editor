@@ -107,6 +107,12 @@ import {
     editorSetViewMode
 } from './key-view.js';
 import { setHostHooks } from './host.js';
+import { initAnchorResolve } from './anchor-resolve.js';
+import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from './playability-lint.js';
+import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
+import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
+import { initMenuBar } from './menu-bar.js';
+import { _transportBarTick, initTransportBar } from './transport-bar.js';
 import {
     MIN_MEASURE, TempoGridCmd, TempoMapCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
     _tempoFlattenToBpmPure,
@@ -469,6 +475,7 @@ setHostHooks({
     selectedLoopRegion: _selectedLoopRegion,
     setLoopRegionEnabled: _setLoopRegionEnabled,
     editorSeekToTime: _editorSeekToTime,
+    refreshDrumPadStrip: _drumPadStripRefresh,
     editorSnapStepSeconds: _editorSnapStepSeconds,
     effectiveAudioOffset: () => _effectiveAudioOffset(),
     applyEditorPendingView: (...a) => _applyEditorPendingView(...a),
@@ -560,6 +567,9 @@ window.editorToggleLoopAB = _editorToggleLoopAB;
 window.editorToggleMetronome = _editorToggleMetronome;
 window.editorToggleMixer = _editorToggleMixer;
 window.editorSetCountIn = editorSetCountIn;
+window.editorToggleLintPopover = editorToggleLintPopover;
+window.editorToggleDrumPadStrip = editorToggleDrumPadStrip;
+window.editorToggleFretboardStrip = editorToggleFretboardStrip;
 window.editorToggleOnsetStrip = _editorToggleOnsetStrip;
 window.editorToggleSnapMode = _editorToggleSnapMode;
 window.editorSetLoopSnapMode = editorSetLoopSnapMode;
@@ -657,6 +667,9 @@ window.__editorScreenTeardown = () => {
     try { if (_v3LayoutObs) { _v3LayoutObs.disconnect(); _v3LayoutObs = null; } } catch (_) {}
     // Stop the pre-canvas boot poller if it's still spinning.
     try { if (_bootPollInterval) { clearInterval(_bootPollInterval); _bootPollInterval = null; } } catch (_) {}
+    // Release the drum strip's MIDI monitor tap + device session (no-op if it
+    // was never armed) so a re-injection can't leak the session or stack taps.
+    try { teardownDrumPadStrip(); } catch (_) {}
     // Cancel #98's pending coalesced repaint if that PR is present (no-op when
     // it isn't) — mirrors the codebase's typeof-guarded optional-hook pattern.
     if (typeof _cancelPendingDraw === 'function') { try { _cancelPendingDraw(); } catch (_) {} }
@@ -765,6 +778,7 @@ function updateTimeDisplay() {
     el.textContent = fmt(S.cursorTime) + ' / ' + fmt(S.duration);
     updateMeasureDisplay();
     updateChordDisplay();
+    _transportBarTick();
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -953,6 +967,10 @@ function updateStatus() {
     // Selection drives the Loop-in-3D fallback region, so keep the button's
     // enabled state in sync whenever the status (selection count) refreshes.
     _updateLoopIn3DBtn();
+    _lintChipRefresh();
+    _drumPadStripRefresh();
+    _fretboardStripRefresh();
+    _transportBarTick();
     setStatus('Ready');
 }
 
@@ -1006,7 +1024,16 @@ function _editorMeasureSignatureReadoutPure(beats, time, selectedIdx) {
     }
     const den = _tempoNormalizeDenominatorPure(downbeat.den);
     const measure = downbeat.measure;
-    return { label: `M${measure} ${numerator}/${den}`, measure, numerator, denominator: den };
+    // Pickup display shift (D3): with a partial first bar the first FULL bar
+    // reads as bar 1 and the pickup as bar 0. Inlined (not imported) so this
+    // pure stays sliceable and dependency-free — the same 5-line rule lives
+    // in tempo.js as _pickupBarShiftPure; keep the two in lockstep.
+    const dbs = [];
+    for (let i = 0; i < beats.length && dbs.length < 3; i++) {
+        if (beats[i] && beats[i].measure > 0) dbs.push(i);
+    }
+    const shift = dbs.length === 3 && (dbs[1] - dbs[0]) < (dbs[2] - dbs[1]) ? 1 : 0;
+    return { label: `M${measure - shift} ${numerator}/${den}`, measure, numerator, denominator: den };
 }
 /* @pure:measure-readout:end */
 
@@ -1239,6 +1266,17 @@ window.editorSetSnap = (idx) => {
     S.snapIdx = Math.max(0, Math.min(SNAP_VALUES.length - 1, Number.isFinite(n) ? n : S.snapIdx));
     const el = document.getElementById('editor-snap');
     if (el) el.selectedIndex = S.snapIdx;
+};
+window.editorSetSwing = (pct) => {
+    const n = Number(pct);
+    // Same guard band as the quantizer: outside (50,75] means straight.
+    S.swingPct = Number.isFinite(n) && n > 50 && n <= 75 ? n : 50;
+    try { localStorage.setItem('editorSwingPct', String(S.swingPct)); } catch (_) {}
+    const el = document.getElementById('editor-swing');
+    if (el) el.value = String(S.swingPct);
+    setStatus(S.swingPct === 50
+        ? 'Swing off — straight grid'
+        : `Swing ${S.swingPct}% — off-subdivisions displace toward the next beat (snap only; playback is unchanged)`);
 };
 window.editorSetSnapEnabled = (enabled) => {
     S.snapEnabled = !!enabled;
@@ -1807,6 +1845,14 @@ function init() {
     // statement in this file; a module must not have import-time side effects.
     initCreate();
     initAudio();
+    initAnchorResolve();
+    initPlayabilityLint();
+    initDrumPadStrip();
+    initFretboardStrip();
+    // Restore the swing pref (editor pref, never the pack) and seed its select.
+    try { window.editorSetSwing(localStorage.getItem('editorSwingPct')); } catch (_) {}
+    initMenuBar();
+    initTransportBar();
 
     // Observe screen visibility for resize + the entry landing. Held in
     // _editorScreenObs so the teardown can disconnect it on re-injection.

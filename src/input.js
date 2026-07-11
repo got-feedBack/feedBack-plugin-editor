@@ -23,7 +23,7 @@ import { _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofC
 import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure } from './snap.js';
 import { S } from './state.js';
 import { _editorShowTabPreview, _tabPreviewKeyPolicyPure } from './tab-preview.js';
-import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSyncPoint, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure } from './tempo.js';
+import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSyncPoint, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup } from './tempo.js';
 import { _editorPromptText, setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -685,7 +685,9 @@ function _editorPromptTempoBeatUnitAtSelection() {
     }
     return true;
 }
-function _editorRunEofCommand(cmd) {
+// Exported for src/menu-bar.js: menu items dispatch through this exact switch
+// (a re-presentation of the command registry, never a second implementation).
+export function _editorRunEofCommand(cmd) {
     if (typeof cmd === 'string' && cmd.startsWith('setFretDigit:')) {
         return _editorSetSelectedFret(parseInt(cmd.slice('setFretDigit:'.length), 10));
     }
@@ -725,6 +727,7 @@ function _editorRunEofCommand(cmd) {
     case 'nextGrid': _editorJumpGrid(+1); return true;
     case 'prevAnchor': _editorJumpAnchor(-1); return true;
     case 'nextAnchor': _editorJumpAnchor(+1); return true;
+    case 'tempoSetPickup': _tempoPromptPickup(); return true;
     case 'toggleSnap': return _editorToggleSnapEnabled();
     case 'shortenSustain': return _editorAdjustSelectedSustain(-_editorSnapStepSeconds());
     case 'lengthenSustain': return _editorAdjustSelectedSustain(+_editorSnapStepSeconds());

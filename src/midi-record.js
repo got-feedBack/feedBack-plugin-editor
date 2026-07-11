@@ -243,7 +243,52 @@ function _recMidiConnect(id) {
     return _recMidiInput ? 'ok' : 'fail';
 }
 
+// ── Live MIDI monitor taps ───────────────────────────────────────────
+// Consumers (the drum-pad strip) receive every raw packet this module
+// routes, independent of the recording state — the tap sits BEFORE the
+// recording gate in _recMidiOnData. Taps ride the SAME refcounted session
+// the record modal manages; _midiMonitorEnsure() arms the remembered (or
+// first) device without the modal on the domain backend. On the legacy
+// private Web-MIDI backend a tap only sees data while the record modal has
+// a device connected — best-effort by design, never a second device path.
+const _midiTaps = new Set();
+export function _midiMonitorTap(fn) { _midiTaps.add(fn); }
+export function _midiMonitorUntap(fn) { _midiTaps.delete(fn); }
+export async function _midiMonitorEnsure() {
+    if (_recMidiBackend() !== 'domain') return false;
+    const ok = await _recMidiInit();          // discover = the permission boundary
+    if (!ok) return false;
+    // The SAVED record device only: the monitor never auto-picks a device
+    // (that would silently overwrite the user's record-device preference —
+    // picking a device stays the Record MIDI modal's job).
+    let id = null;
+    try { id = localStorage.getItem('editor.recordMidiDeviceId'); } catch (_) {}
+    if (!id) return false;
+    const opened = await _recMidiEnsureOpen(id);
+    if (opened && _recMidiHandle) {
+        // Idempotent re-arm, same as _recMidiConnect: the recording gate
+        // makes the shared listener a no-op for the record path until Start.
+        try { _recMidiHandle.removeListener(_recMidiOnData); } catch (_) { /* idempotent */ }
+        _recMidiHandle.addListener(_recMidiOnData);
+    }
+    return opened;
+}
+
+// The monitor's release counterpart: drop the shared session ref UNLESS a
+// take is being recorded (never yank the device out from under the record
+// path). Refcounted at the domain, so other consumers are unaffected.
+export function _midiMonitorRelease() {
+    if (_recState === 'recording') return;
+    _recMidiDisconnectDomain();
+}
+
 function _recMidiOnData(data) {
+    // typeof-guarded: the midi_domain suite slices this function out of the
+    // module source, and its env predates the monitor taps.
+    if (typeof _midiTaps !== 'undefined' && _midiTaps.size) {
+        for (const fn of _midiTaps) { try { fn(data); } catch (_) { /* tap errors never break recording */ } }
+    }
+
     if (_recState !== 'recording') return;
     const [status, data1, velocity] = data;
     const ch = status & 0x0F;
