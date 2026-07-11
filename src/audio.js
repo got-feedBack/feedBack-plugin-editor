@@ -334,18 +334,15 @@ export function startPlayback() {
         S.cursorTime = region.startTime;
     }
     // Count-in (D3-adjacent; the charrette's Count): N bars of clicks in the
-    // meter/tempo at the cursor BEFORE anything sounds. Scheduled directly at
-    // ctx times; the shifted transport anchor does the rest. Loop wraps and
-    // mid-play seeks route through _restartPlaybackAt and stay immediate.
+    // meter/tempo at the cursor BEFORE anything sounds. The shifted transport
+    // anchor does the rest. Loop wraps and mid-play seeks route through
+    // _restartPlaybackAt and stay immediate.
     let preRoll = 0;
+    let countClicks = null;
     const countBars = editorCountInBars();
     if (countBars > 0) {
         const plan = _countInPlanPure(S.beats, S.cursorTime, countBars);
-        if (plan) {
-            preRoll = plan.duration;
-            const base = S.audioCtx.currentTime;
-            for (const c of plan.clicks) _metroClickVoiceAt(base + c.at, c.accent);
-        }
+        if (plan) { preRoll = plan.duration; countClicks = plan.clicks; }
     }
     if (composing) {
         // No reference recording ⇒ no A/B pass to arm; just anchor the clock so
@@ -362,6 +359,15 @@ export function startPlayback() {
         _abPhase = 'recording';
         _abApplyRefGain();
         _startAudioSourceAtCursor(preRoll);
+    }
+    // Schedule the count-in clicks AFTER the anchor: both branches run
+    // _guideResetSchedule() → _guideCancelVoices(), which stops every voice in
+    // _guideVoices. Scheduling before that (the obvious spot) would cancel the
+    // clicks before they sound — a silent count-in. Nothing between here and
+    // playback start cancels voices, so these survive to fire during the pre-roll.
+    if (countClicks) {
+        const base = S.audioCtx.currentTime;
+        for (const c of countClicks) _metroClickVoiceAt(base + c.at, c.accent);
     }
     S.playing = true;
     updatePlayIcon();

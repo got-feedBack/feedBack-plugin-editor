@@ -22,7 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never fails. Editor pref, never the pack. This is the feature the B2
   transport bar's Count-in LCD cell and the charrette's Count toggle were
   deferred behind — both can now follow.
-  `_countInPlanPure` in `src/transport.js` + `tests/count_in.test.mjs` (5).
+  The clicks are scheduled AFTER the transport anchor's voice-reset, so the
+  reset can't cancel them before they sound; the record clock clamps at the
+  start position during the pre-roll so a note fumbled over the count never
+  lands at a pre-region time. `_countInPlanPure` in `src/transport.js` +
+  `tests/count_in.test.mjs` (5) + `tests/count_in_wiring.test.mjs` (3, the
+  survive-the-reset wiring).
 
 ### Fixed
 
