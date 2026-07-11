@@ -839,7 +839,13 @@ export function editorCountInBars() {
 export function editorSetCountIn(v) {
     const n = parseInt(v, 10);
     const bars = n === 1 || n === 2 || n === 4 ? n : 0;
-    try { localStorage.setItem('editorCountIn', String(bars)); } catch (_) {}
+    try {
+        localStorage.setItem('editorCountIn', String(bars));
+        // Remember the last non-zero count so the Count toggle can re-arm it —
+        // recorded here so ALL write paths (toolbar select, LCD cell, toggle)
+        // share one memory, not just the ones that set it themselves.
+        if (bars > 0) localStorage.setItem('editorCountInLast', String(bars));
+    } catch (_) {}
     const el = document.getElementById('editor-countin');
     if (el) el.value = String(bars);
     setStatus(bars

@@ -6,18 +6,19 @@
 
 import { _anchorLaneTopY, _handshapeLaneTopY, onAnchorLaneMouseDown, onAnchorLaneMouseMove, onAnchorLaneMouseUp, onHandshapeLaneMouseDown, onHandshapeLaneMouseMove, onHandshapeLaneMouseUp, onToneLaneMouseDown, onToneLaneMouseMove, onToneLaneMouseUp } from './annotation-lanes.js';
 import { _auditionPitch, _editBlipAt, _mixDragChangedPitchPure, startPlayback, stopPlayback } from './audio.js';
-import { canvas } from './canvas.js';
+import { DPR, canvas } from './canvas.js';
 import { MoveNoteCmd, ResizeSustainGroupCmd, _rollAddByPitch, _rollDragPitchMove } from './commands.js';
 import { hideContextMenu } from './context-menu.js';
 import { _beatBarTopY } from './draw.js';
 import { _drumEditorOnDragEnd, _drumEditorOnDragMove, _drumEditorOnMouseDown, _drumEditorOnSelectEnd, _drumEditorOnVelocityDragEnd, _drumEditorOnVelocityDragMove } from './drum.js';
-import { ANCHOR_LANE_H, BEAT_H, HS_LANE_H, LABEL_W, LANE_H, TONE_LANE_H, WAVEFORM_H, strToY, timeToX, xToTime, yToStr } from './geometry.js';
+import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, MINIMAP_H, TIMELINE_TOP, TONE_LANE_H, WAVEFORM_H, strToY, timeToX, xToTime, yToStr } from './geometry.js';
 import { hitNote, hitNoteEdge } from './hit-test.js';
 import { PIANO_LANE_H, _inKeyboardGutterPure, _rollMidiForNote, _rollPitchCtx, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, midiToY, noteToMidi, pianoLaneCount, yToMidi } from './keys.js';
 import { LC, laneToStr, lanes, strToLane } from './lanes.js';
-import { _barSpanForTimes, _editorClampScrollX, _groupTimeDeltaPure, _loopStripOnMouseMove, _loopStripOnMouseUp, _setBarSel, snapTime } from './loop.js';
+import { _downbeatTimes, _editorClampScrollX, _groupTimeDeltaPure, _loopLiveMode, _loopRegionForDragPure, _setBarSel, snapTime } from './loop.js';
 import { _recState } from './midi-record.js';
 import { _resizeSustainsForDeltaPure, _resizeTargetIndicesPure, notes } from './notes.js';
+import { _rulerZonePure, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp } from './ruler.js';
 import { S } from './state.js';
 import { _tempoBeatOnDragMove, _tempoMapOnDragEnd, _tempoMapOnDragMove, _tempoMapOnMouseDown, _tempoSyncAtX } from './tempo.js';
 import { setStatus } from './ui.js';
@@ -42,6 +43,14 @@ export function onMouseDown(e) {
 
     // Right button = context menu (handled in onContextMenu)
     if (e.button === 2) return;
+
+    // Timeline header — the B3 minimap + ruler own everything above the
+    // waveform in EVERY mode (the old loop strip was mode-independent DOM;
+    // the ruler keeps that): minimap pans, ruler upper half paints loops /
+    // drags edges, lower half scrubs.
+    if (y < TIMELINE_TOP) {
+        if (rulerOnMouseDown(e, x, y, canvas ? canvas.width / DPR : 0)) return;
+    }
 
     // Drum-edit mode hijacks the left click so the lane-grid editor can
     // add/remove/select hits without going through the guitar-arrangement
@@ -69,17 +78,18 @@ export function onMouseDown(e) {
     // right-click still opens the context menu. Ignored in String view (the
     // gutter shows string labels there, not keys).
     if (e.button === 0 && isKeysMode()) {
-        const laneBottom = WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H;
-        if (_inKeyboardGutterPure(x, y, LABEL_W, WAVEFORM_H, laneBottom)) {
+        const laneTop = TIMELINE_TOP + WAVEFORM_H;
+        const laneBottom = laneTop + pianoLaneCount() * PIANO_LANE_H;
+        if (_inKeyboardGutterPure(x, y, LABEL_W, laneTop, laneBottom)) {
             _auditionPitch(yToMidi(y));
             return;
         }
     }
 
-    // Tone lane sits in the top TONE_LANE_H px (an overlay on the
-    // waveform's top edge). Hijack the click before the waveform-seek
-    // handler so add/move/select-marker interactions work.
-    if (y >= 0 && y < TONE_LANE_H && S.arrangements && S.arrangements.length) {
+    // Tone lane overlays the waveform's top edge (below the timeline
+    // header). Hijack the click before the waveform-seek handler so
+    // add/move/select-marker interactions work.
+    if (y >= TIMELINE_TOP && y < TIMELINE_TOP + TONE_LANE_H && S.arrangements && S.arrangements.length) {
         if (onToneLaneMouseDown(e, x)) return;
     }
     // Anchor lane sits below the beat bar.
@@ -94,19 +104,6 @@ export function onMouseDown(e) {
         const hsTop = _handshapeLaneTopY();
         if (y >= hsTop && y < hsTop + HS_LANE_H) {
             if (onHandshapeLaneMouseDown(e, x, y)) return;
-        }
-    }
-    // Beat bar (bottom measure strip) → drag-select a bar range for the
-    // "Loop in 3D" handoff. Left button only; right-click still opens the
-    // section menu via onContextMenu.
-    if (e.button === 0 && S.beats.length) {
-        const bbTop = _beatBarTopY();
-        if (y >= bbTop && y < bbTop + BEAT_H) {
-            const t = xToTime(x);
-            S.drag = { type: 'barsel', startTime: t };
-            _setBarSel(_barSpanForTimes(t, t));
-            host.draw();
-            return;
         }
     }
     // Click outside the tone lane → clear the tone selection so the
@@ -129,7 +126,7 @@ export function onMouseDown(e) {
     }
 
     // Left button
-    if (y < WAVEFORM_H) {
+    if (y < TIMELINE_TOP + WAVEFORM_H) {
         // Block waveform seek while recording: restarting the AudioBufferSourceNode
         // would fire onended and prematurely finalize the take.
         if (_recState === 'recording') return;
@@ -252,11 +249,16 @@ export function onMouseMove(e) {
 
 function _onMouseMoveBody(e, x, y, L) {
 
-    if (_loopStripOnMouseMove(e)) return;
+    if (rulerOnMouseMove(e, x, canvas ? canvas.width / DPR : 0)) return;
 
-    // Bar-range drag on the beat bar — re-snap the span to the cursor.
+    // Loop-create drag on the ruler — re-resolve the span to the cursor,
+    // mode-aware (bar/grid/free per the loop snap pref; Shift = Free, live).
     if (S.drag && S.drag.type === 'barsel') {
-        _setBarSel(_barSpanForTimes(S.drag.startTime, xToTime(x)));
+        const mode = _loopLiveMode(e.shiftKey);
+        const t1 = xToTime(x);
+        _setBarSel(_loopRegionForDragPure(
+            mode, S.drag.startTime, t1, _downbeatTimes(),
+            S.duration || Math.max(S.drag.startTime, t1), snapTime));
         host.draw();
         return;
     }
@@ -291,12 +293,12 @@ function _onMouseMoveBody(e, x, y, L) {
             if (canvas) canvas.style.cursor = hit >= 0 ? 'ew-resize' : '';
             return;
         }
-        // Beat bar (bottom measure strip) → text-ish cursor to signal it's
-        // drag-to-select-bars for "Loop in 3D".
-        const bbTop = _beatBarTopY();
-        if (canvas && S.beats.length && y >= bbTop && y < bbTop + BEAT_H) {
-            canvas.style.cursor = 'col-resize';
-        } else if (canvas && y >= WAVEFORM_H && y < bbTop) {
+        // Timeline header → signal the zone: loop half selects (col-resize),
+        // minimap and scrub half seek/pan (pointer).
+        if (canvas && y < TIMELINE_TOP) {
+            const zone = _rulerZonePure(y, MINIMAP_H, TIMELINE_TOP);
+            canvas.style.cursor = zone === 'loop' ? 'col-resize' : 'pointer';
+        } else if (canvas && y >= TIMELINE_TOP + WAVEFORM_H && y < _beatBarTopY()) {
             // The note area runs from the waveform strip down to the beat bar in
             // BOTH views — `_beatBarTopY()` already accounts for the roll's
             // pianoLaneCount * PIANO_LANE_H. The old `WAVEFORM_H + L * LANE_H`
@@ -430,7 +432,7 @@ function _onMouseMoveBody(e, x, y, L) {
 
 export function onMouseUp(e) {
     if (!S.drag) return;
-    if (_loopStripOnMouseUp()) return;
+    if (rulerOnMouseUp()) return;
     const { y } = getMousePos(e);
 
     // Bar-range select finalise — refresh the Loop-in-3D button state.
@@ -564,16 +566,17 @@ export function onDblClick(e) {
     if (_recState === 'recording') return;  // block note addition during active take
     const { x, y } = getMousePos(e);
     const keysMode = isKeysMode();
-    const laneBottom = keysMode
-        ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
-        : WAVEFORM_H + lanes() * LANE_H;
-    if (y < WAVEFORM_H || y > laneBottom) return;
+    const laneTop = TIMELINE_TOP + WAVEFORM_H;
+    const laneBottom = laneTop + (keysMode
+        ? pianoLaneCount() * PIANO_LANE_H
+        : lanes() * LANE_H);
+    if (y < laneTop || y > laneBottom) return;
 
     // The keyboard gutter (keys/piano view) is audition-only — see onMouseDown.
     // A double-click there must NOT open the Add Note dialog; the gutter never
     // adds or selects a note. String view has no key gutter, so this is scoped
     // to keys mode where laneBottom already equals the gutter's lower edge.
-    if (keysMode && _inKeyboardGutterPure(x, y, LABEL_W, WAVEFORM_H, laneBottom)) return;
+    if (keysMode && _inKeyboardGutterPure(x, y, LABEL_W, laneTop, laneBottom)) return;
 
     const idx = hitNote(x, y);
     if (idx >= 0) return; // double-click on existing note = no-op

@@ -5,13 +5,13 @@
 
 import { _ensureOnsets, _onsetStripEnabled } from './audio.js';
 import { ctx } from './canvas.js';
-import { LABEL_W, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
+import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
 import { _bookmarks, editorWaveformVisible } from './input.js';
 import { S } from './state.js';
 
 export function drawWaveform(w) {
     ctx.fillStyle = '#08081a';
-    ctx.fillRect(0, 0, w, WAVEFORM_H);
+    ctx.fillRect(0, TIMELINE_TOP, w, WAVEFORM_H);
     // The onset strip and bookmark flags are independent of the waveform
     // toggle: waveform off + onsets on = the pure "blocky" detection view;
     // both on = an overlay; bookmarks always show over the band.
@@ -29,7 +29,7 @@ export function drawWaveform(w) {
     if (!pk || !pk.bins || dur <= 0) { drawOnsets(); return; }
 
     const N = pk.bins;
-    const mid = WAVEFORM_H / 2;
+    const mid = TIMELINE_TOP + WAVEFORM_H / 2;
     const amp = WAVEFORM_H / 2 - 4;
     // Visible pixel span of the audio (clamped to the waveform lane).
     const xLo = Math.max(LABEL_W, Math.floor(timeToX(0)));
@@ -111,7 +111,7 @@ function _drawOnsetStrip(w) {
         // visible but understated.
         ctx.fillStyle = `rgba(255,190,80,${(0.30 + 0.45 * o.s).toFixed(3)})`;
         const h = Math.round((WAVEFORM_H - 6) * (0.55 + 0.45 * o.s));
-        ctx.fillRect(px - 1, WAVEFORM_H - 3 - h, 3, h);
+        ctx.fillRect(px - 1, TIMELINE_TOP + WAVEFORM_H - 3 - h, 3, h);
     }
 }
 
@@ -135,10 +135,10 @@ function _drawBookmarks(w) {
             drew = true;
         }
         ctx.fillStyle = 'rgba(120,220,160,0.9)';
-        ctx.fillRect(px, 2, 1, WAVEFORM_H - 4);
-        ctx.fillRect(px, 2, 11, 11);
+        ctx.fillRect(px, TIMELINE_TOP + 2, 1, WAVEFORM_H - 4);
+        ctx.fillRect(px, TIMELINE_TOP + 2, 11, 11);
         ctx.fillStyle = '#0b1512';
-        ctx.fillText(String(n), px + 6, 8);
+        ctx.fillText(String(n), px + 6, TIMELINE_TOP + 8);
     }
     if (drew) ctx.restore();
 }

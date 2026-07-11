@@ -12,6 +12,7 @@ import { S } from './state.js';
 import { PIANO_NOTE_NAMES, SCALE_INTERVALS, SCALE_LABELS, _detectKeyPure, _noteNamesForKeyPure } from './theory.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
+import { revealToolbar } from './toolbars.js';
 
 export const editorSetKeyTonic = (v) => {
     const tonic = parseInt(v, 10);
@@ -175,6 +176,9 @@ export function _refreshKeyControls() {
     const sig = `${visible}|${on}|${tonic}|${scale}`;
     if (sig === _keyControlsState) return;
     _keyControlsState = sig;
+    // Today's auto-show, kept under B5: a pitched part activating reveals the
+    // Harmony toolbar (sticky; a no-op if the user explicitly hid it).
+    if (visible) revealToolbar('harmony');
     group.classList.toggle('hidden', !visible);
     group.classList.toggle('flex', visible);
     const tonicSel = document.getElementById('editor-key-tonic');
