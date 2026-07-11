@@ -18,7 +18,7 @@ import { setStatus } from './ui.js';
 import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
-import { PIANO_NOTE_NAMES } from './theory.js';
+import { PIANO_NOTE_NAMES, _noteNamesForKeyPure } from './theory.js';
 
 // ── Piano roll constants ────────────────────────────────────────────
 export const PIANO_OCTAVE_COLORS = [
@@ -141,7 +141,14 @@ export function _rollMidiForNote(n, rctx) {
 
 export function pianoLaneCount() { return pianoRange.hi - pianoRange.lo + 1; }
 
-export function midiToNote(midi) { return PIANO_NOTE_NAMES[midi % 12] + (Math.floor(midi / 12) - 1); }
+// Note name for a MIDI pitch. `names` picks the enharmonic table (defaults
+// to sharps — the historical spelling); display call sites pass
+// editorKeyNoteNames() so flat keys read Bb, not A#.
+export function midiToNote(midi, names) { return (names || PIANO_NOTE_NAMES)[midi % 12] + (Math.floor(midi / 12) - 1); }
+// The enharmonic table for the ACTIVE song key (S.editorKey; the sharp table
+// when no key is set). Runtime — reads S — so the pure spelling preference
+// stays in theory.js and display callers stay one-liners.
+export function editorKeyNoteNames() { return _noteNamesForKeyPure(S.editorKey); }
 export function isBlackKey(midi) { const pc = midi % 12; return pc===1||pc===3||pc===6||pc===8||pc===10; }
 // Equal-tempered frequency (Hz) of a MIDI note: A4 (69) = 440. Used by the
 // keyboard-gutter audition (click a key → hear its pitch). Returns 0 for a

@@ -159,7 +159,7 @@ import {
     LABEL_W, setLaneMetrics } from './geometry.js';
 import {
     KEYS_PATTERN, _rollLockNotice,
-    _rollMidiForNote, _rollPitchCtx, _rollReadOnly, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
+    _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
 import {
     _restoreSuggestedMarks,
     _saveSuggestedMarks, _suggestedCount, chords, notes
@@ -373,7 +373,7 @@ function _resizeForLaneChange(arrIdx) {
 function _rollConfirmPosition(res, pitch, time, occ, cx, cy) {
     const occupied = occ instanceof Set ? occ : new Set(occ || []);
     const free = (res.candidates || []).filter(c => !occupied.has(c.string));
-    const noteName = (typeof midiToNote === 'function') ? midiToNote(pitch) : String(pitch);
+    const noteName = (typeof midiToNote === 'function') ? midiToNote(pitch, editorKeyNoteNames()) : String(pitch);
     const reason = _ROLL_REFUSE_REASONS[res.reason] || res.reason || '';
     if (!free.length) {
         setStatus(`Can't place ${noteName} here — ${reason}.`);
@@ -743,7 +743,12 @@ function updateChordDisplay() {
             if (midis.length) {
                 const pcs = _pcSetFromMidisPure(midis);
                 const bassPc = ((Math.round(Math.min(...midis)) % 12) + 12) % 12;
-                const chord = _identifyChordPure(pcs, bassPc, PIANO_NOTE_NAMES);
+                // Spell the chord root the way the song key does (Dbm, not
+                // C#m in a flat key). ponytail: root-letter respelling via the
+                // shared key→names table — the readout is only root+suffix, so
+                // there are no non-root chord tones to spell; full functional
+                // chord spelling is out of scope.
+                const chord = _identifyChordPure(pcs, bassPc, editorKeyNoteNames());
                 if (chord) {
                     text = chord.name;
                     title = `${midis.length} note${midis.length === 1 ? '' : 's'} sounding → ${chord.name}`;

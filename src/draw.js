@@ -33,6 +33,7 @@ import {
     _rollMidiForNote,
     _rollPitchCtx,
     isBlackKey,
+    editorKeyNoteNames,
     isKeysMode,
     midiToNote,
     midiToY,
@@ -647,7 +648,7 @@ function _drawPianoNote(n, selected, hl, midi, fretted, linted) {
         ctx.font = `bold ${Math.min(9, h - 1)}px monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const label = fretted ? (n.string + '·' + n.fret) : midiToNote(midi);
+        const label = fretted ? (n.string + '·' + n.fret) : midiToNote(midi, editorKeyNoteNames());
         ctx.fillText(label, x + Math.min(sw, 24) / 2, y + h / 2);
     }
 }

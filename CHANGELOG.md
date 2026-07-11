@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Enharmonic note spelling follows the song key** (4.16a follow-up). With
+  a flat key set (F, Bb, Eb, Ab, Db majors and their relative modes — the
+  relative major's signature decides), the piano-roll note labels, the
+  add-note pitch readout, the roll placement messages, the fretboard
+  strip's open-string labels, and the chord-readout root spell flats
+  (Bb4, never A#4); sharp keys and no-key keep today's sharp names.
+  "Detect" now announces the found key in its own spelling (Eb minor,
+  never D# minor). The key picker's tonic list stays sharp-named (stable
+  ids), and F#/Gb spells sharp to match it. Pure preference table in
+  `theory.js`; `midiToNote` gains an optional names argument and defaults
+  to the historical sharp table.
 - **Count-in on the transport bar** — the LCD cell + mode toggle the
   transport slice deferred until count-in existed. A `Count` LCD cell
   (Off / 1 / 2 / 4 bars, charrette position between Key and Sel) writes
