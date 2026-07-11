@@ -20,7 +20,7 @@ globalThis.window = globalThis.window || globalThis;
 
 const {
     FINGER_LABELS, _stripAnnotationsPure, _stripFingerCyclePure,
-    _stripFretWindowPure, _stripGeometryPure, _stripHitTestPure,
+    _stripDisplayWindowPure, _stripFretWindowPure, _stripGeometryPure, _stripHitTestPure,
 } = await import('../src/fretboard-strip.js');
 const { MoveToStringCmd, SetTeachingMarkCmd } = await import('../src/commands.js');
 const { EditHistory } = await import('../src/history.js');
@@ -90,6 +90,14 @@ t('fret window: nut always shown, expands to candidates, capped at 24', () => {
     assert.deepStrictEqual(_stripFretWindowPure([], 0), { lo: 0, hi: 12 });
     assert.strictEqual(_stripFretWindowPure([{ fret: 14 }], 2).hi, 17);
     assert.strictEqual(_stripFretWindowPure([{ fret: 24 }], 5).hi, 24);
+});
+
+t('display and hit-test window widens for active handshape dots', () => {
+    const ann = [{ fret: 5 }];
+    const shape = { dots: [{ string: 0, fret: 17 }] };
+    assert.deepStrictEqual(_stripDisplayWindowPure(ann, shape, 0), { lo: 0, hi: 18 });
+    assert.deepStrictEqual(_stripDisplayWindowPure(ann, null, 0),
+        _stripFretWindowPure(ann, 0));
 });
 
 t('geometry: low string at the bottom, spacing capped, shared with hit-test', () => {
