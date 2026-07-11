@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arms/disarms the pre-roll — disarming remembers the bar count and
   re-arming restores it (1 bar when there's no memory). The cell is
   default-visible, including under a Customize pref blob saved before
-  the cell existed.
+  the cell existed. The "last non-zero count" memory the toggle restores
+  is recorded in `editorSetCountIn` itself, so setting the count via the
+  toolbar select (not just the LCD cell or toggle) updates it too.
 
 - **Count-in.** A `Count: off / 1 / 2 / 4 bars` select next to the
   metronome: playback (and, because the recorder rides the same transport
