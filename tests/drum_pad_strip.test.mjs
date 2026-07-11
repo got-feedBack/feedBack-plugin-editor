@@ -19,7 +19,7 @@ globalThis.window = globalThis.window || globalThis;
 
 const {
     GM_DRUM_MAP, KIT_GRAPHIC, PAD_GRID_ROWS, _drumViewPure,
-    _padLitPiecesPure, _padModelPure, _padNoteOnPure,
+    _padLitPiecesPure, _padModelPure, _padNoteOnPure, teardownDrumPadStrip,
 } = await import('../src/drum-pad-strip.js');
 const { AddDrumHitCmd, DRUM_COMPACT_LANES, DRUM_PIECE_ORDER } = await import('../src/drum.js');
 const { EditHistory } = await import('../src/history.js');
@@ -120,6 +120,12 @@ t('pad-click add: AddDrumHitCmd round-trip, same hit shape as the grid', () => {
     assert.strictEqual(S.drumTab.hits.indexOf(hit), -1);
     S.history.doRedo();
     assert.strictEqual(S.drumTab.hits.length, 2);
+});
+
+t('teardown: idempotent + safe when the monitor was never armed', () => {
+    // Never armed → must not release a session (that would yank the Record
+    // modal's device) and must not throw; calling twice stays a no-op.
+    assert.doesNotThrow(() => { teardownDrumPadStrip(); teardownDrumPadStrip(); });
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

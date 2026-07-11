@@ -27,7 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without the MIDI-input domain it listens whenever the Record modal has a
   device connected. Shown in drum edit mode; the `Pads` toggle persists as
   an editor pref, never in the pack. Per-kit custom maps are a follow-up.
-  `src/drum-pad-strip.js` + `tests/drum_pad_strip.test.mjs` (5).
+  Screen teardown drops the monitor tap + our device-session ref (only when
+  we armed it — never yanks the Record modal's session) and cancels pending
+  pad flashes, so a re-injection can't leak a MIDI session or stack handlers.
+  `src/drum-pad-strip.js` + `tests/drum_pad_strip.test.mjs` (6).
 
 ### Fixed
 

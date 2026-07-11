@@ -107,7 +107,7 @@ import {
     editorSetViewMode
 } from './key-view.js';
 import { setHostHooks } from './host.js';
-import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip } from './drum-pad-strip.js';
+import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
 import {
     MIN_MEASURE, TempoGridCmd, TempoMapCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
     _tempoFlattenToBpmPure,
@@ -659,6 +659,9 @@ window.__editorScreenTeardown = () => {
     try { if (_v3LayoutObs) { _v3LayoutObs.disconnect(); _v3LayoutObs = null; } } catch (_) {}
     // Stop the pre-canvas boot poller if it's still spinning.
     try { if (_bootPollInterval) { clearInterval(_bootPollInterval); _bootPollInterval = null; } } catch (_) {}
+    // Release the drum strip's MIDI monitor tap + device session (no-op if it
+    // was never armed) so a re-injection can't leak the session or stack taps.
+    try { teardownDrumPadStrip(); } catch (_) {}
     // Cancel #98's pending coalesced repaint if that PR is present (no-op when
     // it isn't) — mirrors the codebase's typeof-guarded optional-hook pattern.
     if (typeof _cancelPendingDraw === 'function') { try { _cancelPendingDraw(); } catch (_) {} }

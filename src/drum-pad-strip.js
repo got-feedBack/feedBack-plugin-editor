@@ -361,3 +361,14 @@ export function initDrumPadStrip() {
     });
     _drumPadStripRefresh();
 }
+
+// Screen teardown: drop the MIDI monitor tap + our device-session ref and
+// cancel pending flashes, so a re-injection can't leak a domain session or
+// stack handlers. Release ONLY when we armed it — never yank a session the
+// Record modal opened. Idempotent + safe when nothing was armed.
+export function teardownDrumPadStrip() {
+    _midiMonitorUntap(onMidiData);        // Set.delete of an absent fn = no-op
+    if (monitorArmed) { _midiMonitorRelease(); monitorArmed = false; }
+    for (const timer of flashTimers.values()) clearTimeout(timer);
+    flashTimers.clear();
+}
