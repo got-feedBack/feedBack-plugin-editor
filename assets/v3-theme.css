@@ -97,6 +97,61 @@
 #plugin-editor .text-amber-400 { color: #fbbf24; }
 #plugin-editor .text-indigo-300 { color: #a5b4fc; }
 
+/* ── Menu bar (workspace-shell B4) ────────────────────────────────── */
+/* Nine flat menu titles; ONE dropdown element repositioned under the open
+   title (content renders at open time — accelerators follow the active
+   shortcut profile). Scoped #plugin-editor, active in v2 and v3 alike. */
+#plugin-editor .editor-menu-bar {
+    position: relative;
+    display: flex; align-items: center; gap: 2px;
+    padding: 2px 8px;
+    background: #0b1220;
+    border-bottom: 1px solid #263349;
+    font-size: 12px;
+}
+#plugin-editor .editor-menu-title {
+    padding: 3px 9px; border: none; border-radius: 4px;
+    background: transparent; color: #cbd5e1; cursor: pointer; font-size: 12px;
+}
+#plugin-editor .editor-menu-title:hover { background: #1e293b; color: #f8fafc; }
+#plugin-editor .editor-menu-title.is-open { background: #0ea5e9; color: #f8fafc; }
+#plugin-editor .editor-menu-drop {
+    position: absolute; top: 100%; z-index: 70;
+    min-width: 260px; max-height: 70vh; overflow-y: auto;
+    display: flex; flex-direction: column;
+    background: #1e293b; border: 1px solid #334155; border-radius: 0 0 8px 8px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+    padding: 4px;
+}
+#plugin-editor .editor-menu-drop.hidden { display: none; }
+#plugin-editor .editor-menu-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 18px;
+    padding: 3px 10px; border: none; border-radius: 4px;
+    background: transparent; color: #e2e8f0; cursor: pointer;
+    font-size: 12px; text-align: left; width: 100%;
+}
+#plugin-editor .editor-menu-item:hover:not([aria-disabled]),
+#plugin-editor .editor-menu-item:focus:not([aria-disabled]) {
+    background: #0ea5e9; color: #f8fafc; outline: none;
+}
+#plugin-editor .editor-menu-item[aria-disabled] { color: #475569; cursor: default; }
+#plugin-editor .editor-menu-key {
+    font-size: 10px; color: #64748b;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: nowrap;
+}
+#plugin-editor .editor-menu-item:hover:not([aria-disabled]) .editor-menu-key,
+#plugin-editor .editor-menu-item:focus:not([aria-disabled]) .editor-menu-key { color: #e0f2fe; }
+#plugin-editor .editor-menu-soon {
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: #64748b;
+    border: 1px solid #334155; border-radius: 3px; padding: 0 4px; margin-left: 6px;
+}
+#plugin-editor .editor-menu-hdr {
+    font-size: 9px; font-weight: 800; text-transform: uppercase;
+    letter-spacing: .1em; color: #64748b; padding: 5px 10px 2px;
+}
+#plugin-editor .editor-menu-sep { height: 1px; background: #334155; margin: 3px 6px; }
 /* ── Transport control bar + LCD (workspace-shell B2) ─────────────── */
 /* The bar itself: one always-present row directly above the timeline.
    Skin GRAMMAR ported from Virtuoso's .virtuoso-lcd-* (recessed panel,
