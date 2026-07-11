@@ -54,6 +54,7 @@ let onsets = [];
 const snapTime = new Function(
     'S', '_editorEffectiveSnapValuePure', 'SNAP_VALUES', '_editorSnapSubdivisionsPure',
     'timeOf', 'beatOf', '_ensureOnsets', '_nearestOnsetTimePure', 'ONSET_SNAP_TOL',
+    '_swingQuantizeBeatPure',
     '"use strict";' + extractFn('snapTime') + '\nreturn snapTime;'
 )(
     S,
@@ -64,7 +65,11 @@ const snapTime = new Function(
     (beats, t) => t * 2,
     () => onsets,
     _nearestOnsetTimePure,
-    0.07
+    0.07,
+    // Straight-path stand-in for the swing quantizer (D2): this S carries no
+    // swingPct, so the real one reduces to plain rounding — swing behavior
+    // has its own real-import suite (swing_snap.test.mjs).
+    (beta, subs) => Math.round(beta * subs) / subs
 );
 
 let pass = 0, fail = 0;
