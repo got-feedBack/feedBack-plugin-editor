@@ -119,13 +119,14 @@ t('a loop-half drag creates a bar-snapped region and up finalises (round-trip)',
     assert.strictEqual(rulerOnMouseDown(evt(), xAt(4.5), loopY, 800), true);
     assert.ok(S.drag && S.drag.type === 'barsel', 'the long-standing barsel drag carries it');
     assert.ok(S.barSel, 'region exists from the first press');
-    // Drag right into bar 3 — the region snaps to whole bars 2–3.
-    S.barSel = null;
-    const region = { startTime: 4.5, endTime: 9.2 };
-    // (the move path lives in mouse.js; here the down-press seed is the contract)
+    assert.deepStrictEqual(
+        { startTime: S.barSel.startTime, endTime: S.barSel.endTime, mode: S.barSel.mode },
+        { startTime: 4, endTime: 8, mode: 'bar' },
+        'the press seeds the whole bar containing 4.5');
+    // The move path lives in mouse.js; ruler mouse-up deliberately leaves it
+    // there to finalize the shared barsel drag.
     assert.strictEqual(rulerOnMouseUp(), false, 'barsel up belongs to mouse.js, not the ruler');
     S.drag = null;
-    assert.ok(region.endTime > region.startTime);
 });
 
 t('down on a loop edge starts a loopedge drag; move resizes through the pure adjuster', () => {
@@ -150,6 +151,15 @@ t('the scrub half seeks on press and tracks on move', () => {
     assert.ok(Math.abs(S.cursorTime - 9) < 1e-9);
     assert.strictEqual(rulerOnMouseUp(), true);
     assert.strictEqual(S.drag, null);
+});
+
+t('scrubbing while playing resumes playback on release', () => {
+    seedGrid();
+    S.playing = true;
+    assert.strictEqual(rulerOnMouseDown(evt(), xAt(6), scrubY, 800), true);
+    assert.strictEqual(S.drag.resume, true, 'pre-stop playing state is retained');
+    assert.strictEqual(rulerOnMouseUp(), true);
+    assert.strictEqual(S.drag, null, 'release consumes the resume path and clears the drag');
 });
 
 t('scrub never goes negative', () => {

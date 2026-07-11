@@ -882,7 +882,7 @@ export function onContextMenu(e) {
     // Tone-lane right-click — slot picker for the hit marker (and a
     // delete entry). Falls through to the existing menu logic when
     // there's no marker under the cursor.
-    if (y >= 0 && y < TONE_LANE_H && S.arrangements && S.arrangements.length) {
+    if (y >= TIMELINE_TOP && y < TIMELINE_TOP + TONE_LANE_H && S.arrangements && S.arrangements.length) {
         if (onToneLaneContextMenu(e, x)) return;
     }
     // Anchor-lane right-click — edit-fret/width + delete.

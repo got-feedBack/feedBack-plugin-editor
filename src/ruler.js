@@ -306,8 +306,9 @@ export function rulerOnMouseDown(e, x, y, w) {
         return true;
     }
     // Scrub: seek immediately and keep tracking while the button is down.
-    if (S.playing) stopPlayback();
-    S.drag = { type: 'scrub', resume: S.playing };
+    const resume = S.playing;
+    if (resume) stopPlayback();
+    S.drag = { type: 'scrub', resume };
     scrubTo(x);
     return true;
 }

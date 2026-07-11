@@ -147,6 +147,7 @@ function _partsDrawSilhouette(part, y0, laneH, w) {
 }
 
 export function _partsViewDraw(w, h) {
+    host.drawTimelineHeader(w);
     host.drawWaveform(w);
     const parts = _partsListPure(S.arrangements, S.drumTab);
     const { laneH } = _partsLaneLayoutPure(h - (TIMELINE_TOP + WAVEFORM_H), parts.length);

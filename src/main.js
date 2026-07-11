@@ -432,6 +432,7 @@ function _rollConfirmPosition(res, pitch, time, occ, cx, cy) {
 setHostHooks({
     draw: (...args) => draw(...args),
     drawWaveform,
+    drawTimelineHeader: (w) => { drawMinimap(w); drawRuler(w); },
     updateStatus,
     updateArrangementSelector,
     hideContextMenu,
