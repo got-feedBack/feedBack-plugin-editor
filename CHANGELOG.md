@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Foolproof editor job transitions + Save As.** Opening another feedpak
+  or starting New now offers Save / Don't Save / Cancel when the current
+  job is dirty; a failed save blocks the transition. Active MIDI takes are
+  finalized first, then playback, scheduled voices, pending audio/load
+  requests, drags and the outgoing backend session are stopped before the
+  replacement job is installed. File -> Save As opens the native system
+  picker where available (download fallback) and mirrors later saves to
+  that chosen external copy for the rest of the session.
+
+### Fixed
+
+- Loading a new feedpak while the old recording was playing no longer
+  leaves the old AudioBufferSource sounding under the new song. Audio-less
+  packs also clear the previous decoded buffer, and overlapping load/audio
+  requests cannot install stale results out of order.
+
+### Added
+
 - **Count-in.** A `Count: off / 1 / 2 / 4 bars` select next to the
   metronome: playback (and, because the recorder rides the same transport
   clock, MIDI recording) starts after N bars of metronome clicks **in the

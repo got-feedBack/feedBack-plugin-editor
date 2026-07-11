@@ -43,7 +43,7 @@ import {
 import {
     _editBlipAt, _editorToggleGuideClap,
     _editorToggleLoopAB, _editorToggleMetronome, _editorToggleMixer,
-    _editorToggleOnsetStrip, _editorToggleSnapMode, editorSetEditBlip, editorSetMixLevel, initAudio, loadAudio,
+    _editorToggleOnsetStrip, _editorToggleSnapMode, cancelAudioLoad, editorSetEditBlip, editorSetMixLevel, initAudio, loadAudio,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn,
 } from './audio.js';
 import {
@@ -67,7 +67,7 @@ import {
 } from './arrangement.js';
 import {
     _activeArrangementExceedsArchiveLimit, _editorLoadsInFlight, _resetOffsetUI,
-    editorHideSaveFormatModal, editorSaveAsSloppakConfirm, filterSongs, loadCDLC,
+    editorHideSaveFormatModal, editorSaveAs, editorSaveAsSloppakConfirm, filterSongs, loadCDLC,
     saveCDLC, showLoadModal
 } from './file-ops.js';
 import {
@@ -107,6 +107,7 @@ import {
     editorSetViewMode
 } from './key-view.js';
 import { setHostHooks } from './host.js';
+import { guardSessionTransition } from './session-lifecycle.js';
 import { initAnchorResolve } from './anchor-resolve.js';
 import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from './playability-lint.js';
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
@@ -451,6 +452,11 @@ setHostHooks({
     hideAddNote,
     startPlayback,
     stopPlayback,
+    cancelAudioLoad,
+    saveSession: () => saveCDLC(),
+    finalizeRecording: () => {
+        if (_recState === 'recording') editorStopRecordMidi();
+    },
     updateBPMDisplay,
     updateTempoSigDisplay,
     renderLoopStrip: _renderLoopStrip,
@@ -517,6 +523,7 @@ window.editorDoAddDrums = editorDoAddDrums;
 // Save-format modal (file-ops.js owns the logic; HTML calls these by name).
 window.editorHideSaveFormatModal = editorHideSaveFormatModal;
 window.editorSaveAsSloppakConfirm = editorSaveAsSloppakConfirm;
+window.editorSaveAs = editorSaveAs;
 
 // Replace-audio modal (replace-audio.js owns the logic; HTML calls these by name).
 window.editorShowReplaceAudioModal = editorShowReplaceAudioModal;
@@ -598,9 +605,13 @@ window.editorRefineSync = editorRefineSync;
 window.editorSetAudioMode = editorSetAudioMode;
 window.editorSetCreateMode = editorSetCreateMode;
 window.editorSetGP8AudioMode = editorSetGP8AudioMode;
-window.editorShowCreateModal = editorShowCreateModal;
+window.editorShowCreateModal = async () => {
+    if (await guardSessionTransition('starting a new edit job')) editorShowCreateModal();
+};
 window.editorShowCreateSloppakModal = editorShowCreateSloppakModal;
-window.editorShowNewFormatPicker = editorShowNewFormatPicker;
+window.editorShowNewFormatPicker = async () => {
+    if (await guardSessionTransition('starting a new edit job')) editorShowNewFormatPicker();
+};
 window.editorStagedRemove = editorStagedRemove;
 window.editorYtUrlInput = editorYtUrlInput;
 

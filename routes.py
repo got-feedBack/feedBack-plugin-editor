@@ -3041,6 +3041,44 @@ def setup(app, context):
     global _sessions
     _sessions = sessions
 
+    def _dispose_editor_session(session_id: str) -> bool:
+        session = sessions.pop(session_id, None)
+        if not session:
+            return False
+        # Native sloppak sessions point at the shared extraction cache; never
+        # remove that tree. Archive/create sessions own temporary sandboxes.
+        if session.get("format") != "sloppak":
+            shutil.rmtree(session.get("dir", ""), ignore_errors=True)
+        return True
+
+    @app.post("/api/plugins/editor/session/close")
+    async def close_editor_session(data: dict):
+        session_id = str(data.get("session_id") or "")
+        return {"closed": _dispose_editor_session(session_id)}
+
+    @app.get("/api/plugins/editor/session/export")
+    async def export_editor_session(session_id: str):
+        session = sessions.get(session_id)
+        if not session:
+            return JSONResponse({"error": "No active session"}, 404)
+        filename = str(session.get("filename") or "")
+        dlc_dir = get_dlc_dir()
+        if not filename or not dlc_dir:
+            return JSONResponse({"error": "Session has no saved feedpak"}, 409)
+        root = dlc_dir.resolve()
+        candidate = (root / filename).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return JSONResponse({"error": "forbidden"}, 403)
+        if not candidate.is_file():
+            return JSONResponse({"error": "Saved feedpak is not a packed file"}, 409)
+        return FileResponse(
+            candidate,
+            media_type="application/zip",
+            filename=candidate.name,
+        )
+
     # Cache compat probes for the slopsmith core converter signatures —
     # each function is stable for the process lifetime, so the
     # inspect.signature call only needs to run once per converter.

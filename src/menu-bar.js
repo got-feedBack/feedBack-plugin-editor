@@ -52,6 +52,7 @@ export const EDITOR_MENUS = Object.freeze([
         { label: 'New…', fn: 'editorShowCreateModal' },
         { label: 'Open feedpak…', fn: 'editorShowLoadModal' },
         { cmd: 'save' },
+        { label: 'Save As…', fn: 'editorSaveAs' },
         { sep: true },
         { hdr: 'Import' },
         { cmd: 'importGp' },

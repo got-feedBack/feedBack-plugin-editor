@@ -13,7 +13,10 @@ import { _seedExtendedStringsFromTuning, _stringCountFor } from './lanes.js';
 import { _updateLoopRegionControls } from './loop.js';
 import { _recState } from './midi-record.js';
 import { _restoreSuggestedMarks, _saveSuggestedMarks, _suggestedStorageKeyPure } from './notes.js';
-import { S } from './state.js';
+import { S, markSessionDirty, markSessionSaved } from './state.js';
+import {
+    disposeBackendSession, guardSessionTransition, stopSessionProcesses,
+} from './session-lifecycle.js';
 import { _liftAllBeats, _restoreBeatLocks, _stripBeatsFromSaveBody } from './tempo.js';
 import { _editorEscHtml, setStatus } from './ui.js';
 import { host } from './host.js';
@@ -29,8 +32,64 @@ import { host } from './host.js';
 // fails fast while a slower one is still fetching), and the first to settle
 // would otherwise clear a flag the second still needs held.
 export let _editorLoadsInFlight = 0;
+let externalSaveHandle = null;
+let packLoadController = null;
+let packLoadGeneration = 0;
 
-export async function loadCDLC(filename) {
+async function _exportBlob() {
+    const resp = await fetch('/api/plugins/editor/session/export?session_id='
+        + encodeURIComponent(S.sessionId || ''));
+    if (!resp.ok) {
+        let detail = '';
+        try { detail = (await resp.json()).error || ''; } catch (_) {}
+        throw new Error(detail || 'Could not export the saved feedpak');
+    }
+    return resp.blob();
+}
+
+async function _writeExternalCopy(handle) {
+    const blob = await _exportBlob();
+    if (handle) {
+        const writable = await handle.createWritable();
+        try {
+            await writable.write(blob);
+            await writable.close();
+        } catch (e) {
+            try { await writable.abort(); } catch (_) {}
+            throw e;
+        }
+        return;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (S.filename || 'song.feedpak').split(/[\\/]/).pop();
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function _mirrorExternalCopy() {
+    if (!externalSaveHandle) return true;
+    try {
+        await _writeExternalCopy(externalSaveHandle);
+        return true;
+    } catch (e) {
+        markSessionDirty();
+        setStatus('Save As copy failed: ' + e.message);
+        return false;
+    }
+}
+
+export async function loadCDLC(filename, options = {}) {
+    if (!options.skipGuard && !(await guardSessionTransition('opening another feedpak'))) return false;
+    const oldSessionId = S.sessionId;
+    stopSessionProcesses();
+    packLoadGeneration++;
+    const generation = packLoadGeneration;
+    if (packLoadController) {
+        try { packLoadController.abort(); } catch (_) {}
+    }
+    packLoadController = typeof AbortController === 'function' ? new AbortController() : null;
     _editorLoadsInFlight++;
     // A load can also start while the landing is already up (editorLoadFile is
     // callable from outside the editor, e.g. the library's Edit button).
@@ -41,9 +100,21 @@ export async function loadCDLC(filename) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ filename }),
+            ...(packLoadController ? { signal: packLoadController.signal } : {}),
         });
         const data = await resp.json();
-        if (data.error) { setStatus('Error: ' + data.error); return; }
+        if (generation !== packLoadGeneration) return false;
+        if (data.error) { setStatus('Error: ' + data.error); return false; }
+
+        if (oldSessionId && oldSessionId !== data.session_id) {
+            await disposeBackendSession(oldSessionId);
+        }
+        externalSaveHandle = null;
+        // The outgoing decoded buffer is not part of the new job. In
+        // particular, an audio-less feedpak must not inherit AUDIO mode or
+        // accidentally make the old recording playable again.
+        S.audioBuffer = null;
+        S.waveformPeaks = null;
 
         S.title = data.title || '';
         S.artist = data.artist || '';
@@ -121,6 +192,7 @@ export async function loadCDLC(filename) {
         S.barSel = null;
         S.returnToHighway = false;
         S.history = new EditHistory();
+        markSessionSaved();
 
         // Reset offset UI so _effectiveAudioOffset() doesn't carry over a
         // delta from a previous session's sync nudge into this one.
@@ -166,9 +238,12 @@ export async function loadCDLC(filename) {
         // Loop-in-3D button's enabled state.
         host.applyEditorPendingView(filename);
         host.updateLoopIn3DBtn();
+        return true;
     } catch (e) {
-        setStatus('Load failed: ' + e.message);
+        if (!e || e.name !== 'AbortError') setStatus('Load failed: ' + e.message);
+        return false;
     } finally {
+        if (generation === packLoadGeneration) packLoadController = null;
         _editorLoadsInFlight--;
     }
 }
@@ -527,14 +602,14 @@ function _buildSaveBody(forceFullSnapshot) {
     return _stripBeatsFromSaveBody(body);
 }
 
-export async function saveCDLC() {
-    if (!S.sessionId) return;
+export async function saveCDLC(options = {}) {
+    if (!S.sessionId) return false;
     // archive can't carry >6-string guitar / >4-string bass. If the user
     // pushed past those limits while editing, ask them whether to spill
     // into a new .sloppak or accept the truncation before we touch disk.
     if (S.format === 'archive' && _activeArrangementExceedsArchiveLimit()) {
         document.getElementById('editor-save-format-modal').classList.remove('hidden');
-        return;
+        return false;
     }
     setStatus('Saving...');
     const body = _buildSaveBody(false);
@@ -545,10 +620,14 @@ export async function saveCDLC() {
             body: JSON.stringify(body),
         });
         const data = await resp.json();
-        if (data.error) { setStatus('Save error: ' + data.error); return; }
+        if (data.error) { setStatus('Save error: ' + data.error); return false; }
+        if (!options.skipExternal && !(await _mirrorExternalCopy())) return false;
+        markSessionSaved();
         setStatus('Saved successfully');
+        return true;
     } catch (e) {
         setStatus('Save failed: ' + e.message);
+        return false;
     } finally {
         flattenChords();
         _restoreSuggestedMarks();   // reattach marks onto the reflattened objects
@@ -568,7 +647,7 @@ export const editorHideSaveFormatModal = () => {
 // regular Save uses the native sloppak path.
 export const editorSaveAsSloppakConfirm = async () => {
     document.getElementById('editor-save-format-modal').classList.add('hidden');
-    if (!S.sessionId) return;
+    if (!S.sessionId) return false;
     setStatus('Saving as Sloppak...');
     const oldFilename = S.filename;
     const body = _buildSaveBody(true);   // persists suggested marks under oldFilename
@@ -579,7 +658,7 @@ export const editorSaveAsSloppakConfirm = async () => {
             body: JSON.stringify(body),
         });
         const data = await resp.json();
-        if (data.error) { setStatus('Save error: ' + data.error); return; }
+        if (data.error) { setStatus('Save error: ' + data.error); return false; }
         // Flip session into sloppak mode so subsequent edits route to
         // _save_sloppak. The original archive stays on disk untouched.
         if (data.filename) {
@@ -617,8 +696,11 @@ export const editorSaveAsSloppakConfirm = async () => {
         const displayName = data.filename || (data.path ? data.path.split('/').pop() : '');
         host.kickLibraryRescan();   // new file → surface it in the library automatically
         setStatus('Saved as Sloppak: ' + displayName);
+        markSessionSaved();
+        return true;
     } catch (e) {
         setStatus('Save failed: ' + e.message);
+        return false;
     } finally {
         flattenChords();
         _restoreSuggestedMarks();   // reattach marks onto the reflattened objects
@@ -626,3 +708,40 @@ export const editorSaveAsSloppakConfirm = async () => {
         host.draw();
     }
 };
+
+export async function editorSaveAs() {
+    if (!S.sessionId) return false;
+    let handle = null;
+    if (typeof window.showSaveFilePicker === 'function') {
+        try {
+            handle = await window.showSaveFilePicker({
+                suggestedName: (S.filename || 'song.feedpak').split(/[\\/]/).pop()
+                    .replace(/\.(archive|sloppak)$/i, '.feedpak'),
+                types: [{
+                    description: 'feedBack song package',
+                    accept: { 'application/zip': ['.feedpak', '.sloppak'] },
+                }],
+            });
+        } catch (e) {
+            if (e && e.name === 'AbortError') return false;
+            setStatus('Save As picker failed: ' + e.message);
+            return false;
+        }
+    }
+
+    const saved = S.format === 'archive'
+        ? await editorSaveAsSloppakConfirm()
+        : await saveCDLC({ skipExternal: true });
+    if (!saved) return false;
+    try {
+        await _writeExternalCopy(handle);
+        externalSaveHandle = handle;
+        markSessionSaved();
+        setStatus(handle ? 'Saved to the selected file' : 'Saved — download started');
+        return true;
+    } catch (e) {
+        markSessionDirty();
+        setStatus('Save As failed: ' + e.message);
+        return false;
+    }
+}

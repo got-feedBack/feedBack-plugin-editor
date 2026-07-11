@@ -28,7 +28,7 @@ import { EditHistory } from './history.js';
 import { host } from './host.js';
 import { KEYS_PATTERN, isKeysMode, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
-import { S } from './state.js';
+import { S, markSessionDirty } from './state.js';
 import { _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
 import { _editorEscHtml, _installModalKeyboard, setStatus } from './ui.js';
 
@@ -426,7 +426,7 @@ export function editorShowCreateSloppakModal() {
             // Open the freshly-written sloppak via the existing load
             // path so the editor state initialises identically to a
             // normal sloppak load.
-            await host.loadCDLC(data.filename);
+            await host.loadCDLC(data.filename, { skipGuard: true });
         } catch (e) {
             status.textContent = 'Failed: ' + e.message;
             status.className = 'text-xs mb-2 min-h-[1em] text-red-400';
@@ -2119,7 +2119,7 @@ async function _editorDoBlankCreate() {
         }
         editorHideCreateModal();
         host.kickLibraryRescan();
-        await host.loadCDLC(data.filename);
+        await host.loadCDLC(data.filename, { skipGuard: true });
     } catch (e) {
         if (status) status.textContent = 'Failed: ' + e.message;
         if (btn) btn.disabled = false;
@@ -2140,6 +2140,7 @@ export async function editorApplyCreateResult(data) {
     S.artist = data.artist || '';
     S.filename = '';
     S.sessionId = data.session_id;
+    markSessionDirty();
     S.format = 'sloppak';
     S.arrangements = data.arrangements || [];
     // Create-mode import — the source builds tuning to the actual string count,

@@ -21,7 +21,7 @@ import { flattenChords } from './chords.js';
 import { LABEL_W, timeToX } from './geometry.js';
 import { host } from './host.js';
 import { PIANO_LANE_H, _uniqueKeysName, isKeysMode, midiToY, noteToMidi, updatePianoRange } from './keys.js';
-import { S } from './state.js';
+import { S, markSessionDirty } from './state.js';
 import { _transportChartTimePure } from './transport.js';
 import { setStatus } from './ui.js';
 
@@ -580,6 +580,7 @@ export function editorStopRecordMidi() {
     _recNotes.sort((a, b) => a.time - b.time);
     const arr = S.arrangements[_recArrIdx];
     if (arr) arr.notes = _recNotes;
+    if (typeof markSessionDirty === 'function') markSessionDirty();
 
     // Flush the final note count to the modal before hiding it.
     _recCountLastMs = 0;

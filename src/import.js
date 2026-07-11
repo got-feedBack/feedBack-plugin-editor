@@ -6,7 +6,7 @@
 // window.*). Everything main.js still calls into — `_maybeOfferMidiTempoMap`,
 // `_showDrumImportUnmappedModal` — is exported for it to import.
 
-import { S } from './state.js';
+import { S, markSessionDirty } from './state.js';
 import { _editorEscHtml, setStatus } from './ui.js';
 import { ReplaceArrangementChartCmd } from './commands.js';
 import { TempoGridCmd } from './tempo.js';
@@ -345,6 +345,7 @@ async function _editorAppendKeysArrangement(arrangement, statusEl, opts = {}) {
         if (typeof opts.isStale === 'function' && opts.isStale()) return false;
 
         S.arrangements.push(arrangement);
+        markSessionDirty();
         S.currentArr = S.arrangements.length - 1;
         const sel = document.getElementById('editor-arrangement');
         if (sel) sel.value = S.currentArr;
@@ -395,6 +396,7 @@ export async function editorAddEmptyKeys() {
         }
 
         S.arrangements.push(arrangement);
+        markSessionDirty();
         S.currentArr = S.arrangements.length - 1;
         const sel = document.getElementById('editor-arrangement');
         if (sel) sel.value = S.currentArr;
