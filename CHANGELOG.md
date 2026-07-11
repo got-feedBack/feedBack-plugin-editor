@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Count-in on the transport bar** — the LCD cell + mode toggle the
+  transport slice deferred until count-in existed. A `Count` LCD cell
+  (Off / 1 / 2 / 4 bars, charrette position between Key and Sel) writes
+  through to the same `editorSetCountIn` control as the toolbar select
+  and mirrors it on every tick; a `Count` toggle in the modes group
+  arms/disarms the pre-roll — disarming remembers the bar count and
+  re-arming restores it (1 bar when there's no memory). The cell is
+  default-visible, including under a Customize pref blob saved before
+  the cell existed. The "last non-zero count" memory the toggle restores
+  is recorded in `editorSetCountIn` itself, so setting the count via the
+  toolbar select (not just the LCD cell or toggle) updates it too.
 - **Toggleable toolbars + density presets** (workspace-shell B5). The flat
   toolbar row's divider-groups are now eight named toolbars (File · Parts ·
   Edit · Transport · Grid · Tempo · Harmony · Overlays), each individually
