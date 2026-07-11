@@ -27,7 +27,7 @@ import {
     EDITOR_SCROLL_TAIL_SECONDS, LABEL_W, _editorClampScrollXPure, _editorViewportDurationPure,
 } from './geometry.js';
 import { host } from './host.js';
-import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure } from './snap.js';
+import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure, _swingQuantizeBeatPure } from './snap.js';
 import { S } from './state.js';
 import { _normalizeLoopRegionPure } from './transport.js';
 import { setStatus } from './ui.js';
@@ -533,7 +533,9 @@ export function snapTime(t) {
     // surrounding-gap subdivide (round(β·subs) keeps the whole-beat part fixed
     // and quantises the fraction), incl. the pre-first / past-last extrapolation.
     const subs = _editorSnapSubdivisionsPure(sv);
-    return timeOf(S.beats, Math.round(beatOf(S.beats, t) * subs) / subs);
+    // Swing rides the same converter as a beat-domain phase offset (D2):
+    // at 50% (straight) this is bit-identical to plain rounding.
+    return timeOf(S.beats, _swingQuantizeBeatPure(beatOf(S.beats, t), subs, S.swingPct));
 }
 
 /* @pure:group-time-delta:start */

@@ -29,6 +29,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (editor pref, never the pack). Deferred: chord-selection handshape-
   template lighting (the anchor-window box ships now).
   `src/fretboard-strip.js` + `tests/fretboard_strip.test.mjs` (11).
+- **Swing quantization on the snap grid (workspace-shell D2).** A Swing
+  select next to Snap (Straight · 54% · 58% · 62%) displaces the OFF
+  subdivision of each pair toward the next beat — as a **beat-domain phase
+  offset fed through the `beatOf`/`timeOf` converter**, never a seconds
+  nudge, so a swung note keeps its groove ratio through a tempo flex exactly
+  like a straight one. 50% is bit-identical to the straight grid; triplet
+  grids (1/3T, 1/6T, 1/12T…) are already swung by construction and ignore
+  the setting, as do odd grids. Snap placement only: playback, existing
+  notes, and the drawn grid are unchanged, and out-of-band values (a corrupt
+  pref) fall back to straight rather than flinging notes. Editor pref
+  (localStorage), never written to the pack.
+  `_swingQuantizeBeatPure` in `src/snap.js` + `tests/swing_snap.test.mjs` (8).
+- **The menu bar (workspace-shell B4).** Nine menus — File · Edit · Add ·
+  Note · Part · View · Transport · **Tempo/Grid** · Help — re-homing the
+  existing command registry, organized by musical object (Tempo/Grid is the
+  time-model pillar's own top-level home). A re-presentation, not a re-plumb:
+  registry items dispatch through the same switch the keyboard uses, and the
+  pre-registry file/panel actions call their existing entry points. Menu
+  accelerators **follow the active shortcut profile** (FeedBack ⇄ EOF Legacy —
+  dropdowns render at open time, so a swap relabels everything); planned
+  commands render greyed with a "soon" tag and never dispatch; sync-point
+  items grey outside Tempo Map mode; Sync-to-audio hides without a recording.
+  Click-open with arrow-key navigation and Enter/Escape (no Alt-mnemonics —
+  browsers own those). The document-level click-away listener rides the
+  teardown registry, so a re-injected screen can't stack copies.
+  `src/menu-bar.js` + `tests/menu_model.test.mjs` (10).
+- **Transport control bar + dual-domain LCD (workspace-shell B2).** One
+  always-present bar directly above the timeline: go-to-start · rewind-a-bar ·
+  stop · play/pause · forward-a-bar · record, plus an LCD that shows
+  **Position (bars:beats:ticks) and Time (m:ss.mmm) together** — both computed
+  through the `beatOf`/`timeOf` tempo-map converter, with a `▸` toggle for
+  which is primary — and Tempo · Meter · Key · Sel · a mode badge. The LCD
+  skin ports Virtuoso's recessed-panel grammar (`.editor-lcd-*`); the commit
+  wiring is the editor's own: Position/Time edits seek, the Key selects write
+  through to the Key controls, and the **Tempo cell is an input only in free
+  (no-audio) mode** — with a recording the grid is fitted to the audio, so
+  Tempo becomes a derived readout wearing the AUDIO badge and BPM editing
+  stays with the Tempo Map/Sync tools. Left/right utility groups (Parts ·
+  Mix · Follow / Click · Clap · A/B · Snap) mirror the existing toolbar
+  commands; `▾` or right-click opens Customize Control Bar (show/hide groups
+  and cells, persisted as an editor pref, never in the pack). Typing in an
+  LCD cell never reaches the canvas shortcut layer; Enter applies, Escape
+  reverts. LCD refreshes ride the transport tick, skip-if-unchanged — zero
+  per-frame draw cost. No master-mute (mute/solo stay per-track, §2.6); no
+  Count-in cell yet (the editor has no count-in feature to write through to).
+  `src/transport-bar.js` + `tests/transport_lcd.test.mjs` (12).
+- **Full-bleed on the v3 shell (workspace-shell B1).** The manifest now declares
+  `"fullscreen": true`, so navigating to the editor hides the v3 topbar,
+  collapses the sidebar to the icon rail, and pins the screen to the whole
+  content area — a DAW-style surface needs the viewport, not a scrolling page
+  under the navbar (the "cut off at the bottom" report). The screen root gains
+  an `editor-root` hook and one `html.fb-immersive`-scoped rule in
+  `assets/v3-theme.css` drops the now-meaningless `pt-16` navbar allowance and
+  sizes the root to the pinned slot. The v2/legacy layout keeps `pt-16` /
+  `h-screen` and is untouched (the class only ever appears on the v3 shell).
+  Zero core changes — the host capability landed with the v3 shell and Virtuoso
+  already exercises it. `tests/fullbleed.test.mjs` pins all three legs of the
+  manifest/HTML/CSS contract.
 
 ### Fixed
 

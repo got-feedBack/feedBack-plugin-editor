@@ -685,7 +685,9 @@ function _editorPromptTempoBeatUnitAtSelection() {
     }
     return true;
 }
-function _editorRunEofCommand(cmd) {
+// Exported for src/menu-bar.js: menu items dispatch through this exact switch
+// (a re-presentation of the command registry, never a second implementation).
+export function _editorRunEofCommand(cmd) {
     if (typeof cmd === 'string' && cmd.startsWith('setFretDigit:')) {
         return _editorSetSelectedFret(parseInt(cmd.slice('setFretDigit:'.length), 10));
     }
