@@ -155,6 +155,11 @@ export function applyToolbars() {
         const id = el.dataset.tb;
         if (id in visible) el.classList.toggle('editor-tb-off', !visible[id]);
     });
+    // The row is flex-wrap + shrink-0 above the flex-1 canvas wrap, so a
+    // show/hide that changes the wrapped-line count reflows the canvas
+    // height. Re-fit the backing store + lane metrics (rAF-deferred so the
+    // reflow has landed before clientHeight is read).
+    host.scheduleCanvasResize?.();
 }
 
 export function toggleToolbar(id) {
