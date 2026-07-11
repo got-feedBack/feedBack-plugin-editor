@@ -107,6 +107,7 @@ import {
     editorSetViewMode
 } from './key-view.js';
 import { setHostHooks } from './host.js';
+import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
 import { initMenuBar } from './menu-bar.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
@@ -472,6 +473,7 @@ setHostHooks({
     selectedLoopRegion: _selectedLoopRegion,
     setLoopRegionEnabled: _setLoopRegionEnabled,
     editorSeekToTime: _editorSeekToTime,
+    refreshDrumPadStrip: _drumPadStripRefresh,
     editorSnapStepSeconds: _editorSnapStepSeconds,
     effectiveAudioOffset: () => _effectiveAudioOffset(),
     applyEditorPendingView: (...a) => _applyEditorPendingView(...a),
@@ -562,6 +564,7 @@ window.editorToggleGuideClap = _editorToggleGuideClap;
 window.editorToggleLoopAB = _editorToggleLoopAB;
 window.editorToggleMetronome = _editorToggleMetronome;
 window.editorToggleMixer = _editorToggleMixer;
+window.editorToggleDrumPadStrip = editorToggleDrumPadStrip;
 window.editorToggleFretboardStrip = editorToggleFretboardStrip;
 window.editorToggleOnsetStrip = _editorToggleOnsetStrip;
 window.editorToggleSnapMode = _editorToggleSnapMode;
@@ -660,6 +663,9 @@ window.__editorScreenTeardown = () => {
     try { if (_v3LayoutObs) { _v3LayoutObs.disconnect(); _v3LayoutObs = null; } } catch (_) {}
     // Stop the pre-canvas boot poller if it's still spinning.
     try { if (_bootPollInterval) { clearInterval(_bootPollInterval); _bootPollInterval = null; } } catch (_) {}
+    // Release the drum strip's MIDI monitor tap + device session (no-op if it
+    // was never armed) so a re-injection can't leak the session or stack taps.
+    try { teardownDrumPadStrip(); } catch (_) {}
     // Cancel #98's pending coalesced repaint if that PR is present (no-op when
     // it isn't) — mirrors the codebase's typeof-guarded optional-hook pattern.
     if (typeof _cancelPendingDraw === 'function') { try { _cancelPendingDraw(); } catch (_) {} }
@@ -957,6 +963,7 @@ function updateStatus() {
     // Selection drives the Loop-in-3D fallback region, so keep the button's
     // enabled state in sync whenever the status (selection count) refreshes.
     _updateLoopIn3DBtn();
+    _drumPadStripRefresh();
     _fretboardStripRefresh();
     _transportBarTick();
     setStatus('Ready');
@@ -1824,6 +1831,7 @@ function init() {
     // statement in this file; a module must not have import-time side effects.
     initCreate();
     initAudio();
+    initDrumPadStrip();
     initFretboardStrip();
     // Restore the swing pref (editor pref, never the pack) and seed its select.
     try { window.editorSetSwing(localStorage.getItem('editorSwingPct')); } catch (_) {}

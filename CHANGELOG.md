@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Drum companion strip: a VSTi-style kit view + a sampler pad view.**
+  The drum editor's counterpart to the fretboard strip, in the SAME
+  companion slot, with two switchable views (Kit ⇄ Pads, persisted pref):
+  a **drawn kit graphic** with VSTi-style hit zones (snare head vs rim,
+  ride bow vs bell, the open/closed hat pair with its pedal, cowbell on
+  the kick mount) and a **sampler-style pad grid** (three banks of six).
+  Both are a **visual cue** (selected hits light
+  their pads), an **input surface** (click a pad to add that piece at the
+  snapped cursor, through the normal undo-able add command), and a **MIDI
+  mapping tool**: arm *Listen* and note-ons from an e-kit flash their pads
+  live, mapped through **General MIDI percussion to start** (the import
+  default; unmapped GM notes — claps, tambourine — flash nothing rather
+  than the wrong pad). Each pad's tooltip documents its GM note numbers.
+  The monitor rides the record path's refcounted device session via a new
+  tap API in `src/midi-record.js` (never a second device path); on hosts
+  without the MIDI-input domain it listens whenever the Record modal has a
+  device connected. Shown in drum edit mode; the `Pads` toggle persists as
+  an editor pref, never in the pack. Per-kit custom maps are a follow-up.
+  Screen teardown drops the monitor tap + our device-session ref (only when
+  we armed it — never yanks the Record modal's session) and cancels pending
+  pad flashes, so a re-injection can't leak a MIDI session or stack handlers.
+  `src/drum-pad-strip.js` + `tests/drum_pad_strip.test.mjs` (6).
 - **Fretboard companion strip (view-modality P7 / VA.6 ★).** A docked,
   toggleable mini-fretboard at the bottom of the timeline for the active
   fretted part — tuning, string count and capo drawn from the arrangement,

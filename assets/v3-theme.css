@@ -97,6 +97,55 @@
 #plugin-editor .text-amber-400 { color: #fbbf24; }
 #plugin-editor .text-indigo-300 { color: #a5b4fc; }
 
+/* ── Drum-pad companion strip ─────────────────────────────────────── */
+/* Kit legend / cursor input / GM MIDI monitor (src/drum-pad-strip.js).
+   Pads are buttons: lit = selection contains that piece; flash = a MIDI
+   note-on (or a pad click) just landed on it. */
+#plugin-editor .editor-drumpad-row {
+    display: flex; justify-content: center; gap: 4px;
+}
+#plugin-editor .editor-drumpad {
+    min-width: 52px; min-height: 26px; padding: 4px 8px;
+    border: 1px solid #334155; border-radius: 7px;
+    background: #16223a; color: #94a3b8; cursor: pointer;
+    font-size: 11px; font-weight: 700; letter-spacing: .02em; line-height: 1.1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+#plugin-editor .editor-drumpad.is-wide { min-width: 112px; }
+#plugin-editor .editor-drumpad:hover { background: #24324a; color: #e2e8f0; }
+#plugin-editor .editor-drumpad.is-lit {
+    background: #0ea5e9; border-color: #38bdf8; color: #f8fafc;
+}
+#plugin-editor .editor-drumpad.is-flash {
+    background: #f59e0b; border-color: #fcd34d; color: #0b0b10;
+    transition: none;
+}
+#plugin-editor .editor-drumpad-sep {
+    display: inline-block; width: 1px; height: 18px; background: #334155; margin: 0 3px;
+}
+
+/* Kit view (drum VSTi idiom): SVG pieces with lit/flash state classes. */
+#plugin-editor .editor-kit-svg { height: 100%; width: 100%; display: block; }
+#plugin-editor .editor-kit-piece {
+    fill: #16223a; stroke: #475569; stroke-width: 1.5; cursor: pointer;
+}
+#plugin-editor .editor-kit-piece.is-cym { fill: #1c2438; stroke: #64748b; }
+#plugin-editor .editor-kit-piece.is-kick { stroke-width: 2.5; }
+#plugin-editor .editor-kit-piece.is-rim { fill: #0e1728; }
+#plugin-editor .editor-kit-piece:hover { stroke: #7dd3fc; }
+#plugin-editor .editor-kit-piece.is-lit { fill: #0ea5e9; stroke: #38bdf8; }
+#plugin-editor .editor-kit-piece.is-flash { fill: #f59e0b; stroke: #fcd34d; }
+#plugin-editor .editor-kit-hw {
+    stroke: #2b3648; stroke-width: 2; pointer-events: none;
+}
+#plugin-editor .editor-kit-lbl {
+    fill: #64748b; font: 700 8px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    pointer-events: none; user-select: none;
+}
+#plugin-editor .editor-drumpad[aria-pressed="true"],
+#plugin-editor #editor-drum-view-kit[aria-pressed="true"],
+#plugin-editor #editor-drum-view-pads[aria-pressed="true"],
+#plugin-editor #editor-drum-pads-listen[aria-pressed="true"] { background: #0ea5e9; color: #f8fafc; }
 /* ── Menu bar (workspace-shell B4) ────────────────────────────────── */
 /* Nine flat menu titles; ONE dropdown element repositioned under the open
    title (content renders at open time — accelerators follow the active

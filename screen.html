@@ -82,6 +82,7 @@
         <button onclick="editorZoom(1)" class="px-1.5 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs">+</button>
         <button id="editor-onset-btn" onclick="editorToggleOnsetStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Onset strip: amber blocks mark detected attacks in the recording (Shift+W). Display only — never places notes." aria-pressed="false">Onsets</button>
         <button id="editor-tab-preview-btn" onclick="editorShowTabPreview()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Preview the current part as engraved tab (read-only — renders the pack as last saved; needs the Tab View plugin)">Tab…</button>
+        <button id="editor-drum-pads-btn" onclick="editorToggleDrumPadStrip()" class="hidden px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Drum pads: kit legend + input strip — selected hits light up, click a pad to add a hit at the cursor, Listen flashes pads from a MIDI kit (GM map)" aria-pressed="true">Pads</button>
         <button id="editor-fretboard-btn" onclick="editorToggleFretboardStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" title="Fretboard strip: light every playable position for the selected notes — click one to assign it, right-click to cycle the finger mark (fretted parts)" aria-pressed="false">Fret</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
@@ -163,6 +164,18 @@
     <!-- Canvas area + inspector panel -->
     <div class="flex-1 flex overflow-hidden">
         <div id="editor-canvas-wrap" class="flex-1 relative overflow-hidden bg-dark-900">
+            <!-- Drum-pad companion strip — kit legend / cursor input / GM MIDI
+                 monitor; built by src/drum-pad-strip.js, drum edit mode only. -->
+            <div id="editor-drum-pad-strip" class="hidden absolute bottom-2 left-[52px] right-3 z-20 h-44 select-none rounded-md border border-gray-700/80 bg-dark-800/90 backdrop-blur-sm px-2 py-1.5 flex items-center gap-2">
+                <div id="editor-drum-pads" class="flex flex-col items-center gap-1 mx-auto"></div>
+                <div class="ml-auto flex flex-col items-end gap-1 shrink-0">
+                    <div class="flex items-center gap-1">
+                        <button id="editor-drum-view-kit" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600 aria-pressed:bg-accent" title="Kit view — a drawn kit with VSTi-style hit zones" aria-pressed="true">Kit</button>
+                        <button id="editor-drum-view-pads" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Pad view — sampler-style pad grid" aria-pressed="false">Pads</button>
+                    </div>
+                    <button id="editor-drum-pads-listen" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Flash pads from incoming MIDI notes (General MIDI percussion map) — verify your e-kit mapping before recording" aria-pressed="false">Listen</button>
+                    <button id="editor-drum-pads-hide" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Hide the drum pads">Hide</button>
+                </div>
             <!-- Fretboard companion strip (P7/VA.6) — bottom overlay, built by
                  src/fretboard-strip.js; hidden unless toggled on a fretted part. -->
             <div id="editor-fretboard-strip" class="hidden absolute bottom-2 left-[52px] right-3 z-20 h-28 select-none rounded-md border border-gray-700/80 bg-dark-800/90 backdrop-blur-sm overflow-hidden">
