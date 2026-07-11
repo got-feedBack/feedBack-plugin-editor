@@ -29,7 +29,7 @@ import { notes } from './notes.js';
 import { S } from './state.js';
 import {
     _composeSongDurationPure, _loopPlaybackRestartTimePure, _normalizeLoopRegionPure,
-    _transportChartTimePure,
+    _countInPlanPure, _transportChartTimePure,
 } from './transport.js';
 import { setStatus } from './ui.js';
 
@@ -257,7 +257,7 @@ export function _editorToggleSnapMode() {
 // window.editorToggleSnapMode re-attached in main.js
 
 
-export function _startAudioSourceAtCursor() {
+export function _startAudioSourceAtCursor(preRoll = 0) {
     S.audioSource = S.audioCtx.createBufferSource();
     S.audioSource.buffer = S.audioBuffer;
     // Reference recording stays on a transparent path to destination — its
@@ -268,8 +268,8 @@ export function _startAudioSourceAtCursor() {
     if (refGain) S.audioSource.connect(refGain);
     else S.audioSource.connect(S.audioCtx.destination);
     _mixApplyFirstPlayFade();
-    S.audioSource.start(0, S.cursorTime);
-    _anchorTransportAtCursor();
+    S.audioSource.start(preRoll > 0 ? S.audioCtx.currentTime + preRoll : 0, S.cursorTime);
+    _anchorTransportAtCursor(preRoll);
 }
 
 // Anchor the transport clock at the current cursor: pin wall-time to the
@@ -280,8 +280,12 @@ export function _startAudioSourceAtCursor() {
 // already-queued voices and restart the window at the new cursor — otherwise
 // claps scheduled before a loop wrap / seek fire at their old positions
 // ("ghost claps").
-export function _anchorTransportAtCursor() {
-    S.playStartWall = S.audioCtx.currentTime;
+export function _anchorTransportAtCursor(preRoll = 0) {
+    // A positive preRoll pins the wall anchor IN THE FUTURE: the whole
+    // chart→ctx time mapping (source, guide scheduler, record clock) shifts
+    // with it, so a count-in needs no other plumbing. During the pre-roll
+    // playbackTick clamps the cursor at the start position.
+    S.playStartWall = S.audioCtx.currentTime + preRoll;
     S.playStartTime = S.cursorTime;
     _guideResetSchedule();
 }
@@ -329,11 +333,22 @@ export function startPlayback() {
     if (S.loopEnabled && region && (S.cursorTime < region.startTime || S.cursorTime >= region.endTime)) {
         S.cursorTime = region.startTime;
     }
+    // Count-in (D3-adjacent; the charrette's Count): N bars of clicks in the
+    // meter/tempo at the cursor BEFORE anything sounds. The shifted transport
+    // anchor does the rest. Loop wraps and mid-play seeks route through
+    // _restartPlaybackAt and stay immediate.
+    let preRoll = 0;
+    let countClicks = null;
+    const countBars = editorCountInBars();
+    if (countBars > 0) {
+        const plan = _countInPlanPure(S.beats, S.cursorTime, countBars);
+        if (plan) { preRoll = plan.duration; countClicks = plan.clicks; }
+    }
     if (composing) {
         // No reference recording ⇒ no A/B pass to arm; just anchor the clock so
         // playbackTick advances the cursor and the guide/click scheduler (the
         // only sound here) fires off the grid.
-        _anchorTransportAtCursor();
+        _anchorTransportAtCursor(preRoll);
     } else {
         // Every (re)start — including seeks, which route through here — begins
         // an A/B cycle on the RECORDING pass, so the user always hears the real
@@ -343,7 +358,16 @@ export function startPlayback() {
         // is the last automation written to the ref gain, not clobbered by this.
         _abPhase = 'recording';
         _abApplyRefGain();
-        _startAudioSourceAtCursor();
+        _startAudioSourceAtCursor(preRoll);
+    }
+    // Schedule the count-in clicks AFTER the anchor: both branches run
+    // _guideResetSchedule() → _guideCancelVoices(), which stops every voice in
+    // _guideVoices. Scheduling before that (the obvious spot) would cancel the
+    // clicks before they sound — a silent count-in. Nothing between here and
+    // playback start cancels voices, so these survive to fire during the pre-roll.
+    if (countClicks) {
+        const base = S.audioCtx.currentTime;
+        for (const c of countClicks) _metroClickVoiceAt(base + c.at, c.accent);
     }
     S.playing = true;
     updatePlayIcon();
@@ -367,7 +391,10 @@ export function stopPlayback() {
 
 export function playbackTick() {
     if (!S.playing) return;
-    S.cursorTime = _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime);
+    // Clamped at the start position while a count-in pre-roll runs (the
+    // anchor sits in the future, so the raw chart time would read negative).
+    S.cursorTime = Math.max(S.playStartTime,
+        _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime));
     const loopRestart = _recState === 'recording'
         ? null
         : _loopPlaybackRestartTimePure(S.cursorTime, S.barSel, S.loopEnabled, S.duration);
@@ -801,6 +828,25 @@ function _guideClapVoiceAt(when) {
     _guideVoices.push({ osc, gain: g, until: when + 0.06 });
 }
 
+// Count-in pref (D-T-count-in): 0 = off, else bars of pre-roll clicks
+// before the transport starts. Editor pref, never the pack.
+export function editorCountInBars() {
+    let raw = null;
+    try { raw = localStorage.getItem('editorCountIn'); } catch (_) {}
+    const n = parseInt(raw || '0', 10);
+    return n === 1 || n === 2 || n === 4 ? n : 0;
+}
+export function editorSetCountIn(v) {
+    const n = parseInt(v, 10);
+    const bars = n === 1 || n === 2 || n === 4 ? n : 0;
+    try { localStorage.setItem('editorCountIn', String(bars)); } catch (_) {}
+    const el = document.getElementById('editor-countin');
+    if (el) el.value = String(bars);
+    setStatus(bars
+        ? `Count-in: ${bars} bar${bars === 1 ? '' : 's'} of clicks before playback (and recording) starts`
+        : 'Count-in off');
+}
+
 // Metronome click: a band-limited soft pip. The accent (downbeat) is
 // differentiated mainly by PITCH (~1000 vs ~800 Hz) with only a small level
 // delta — the hearing-safe way to accent, rather than a louder transient.
@@ -1105,6 +1151,9 @@ export function initAudio() {
     try {
         if (localStorage.getItem('editorSnapMode') === 'onset') S.snapMode = 'onset';
     } catch (_) {}
+    // Seed the count-in select from the persisted pref.
+    const ciEl = document.getElementById('editor-countin');
+    if (ciEl) ciEl.value = String(editorCountInBars());
     _refreshSnapModeBtn();
     _refreshGuideBtn();
     _refreshMetronomeBtn();

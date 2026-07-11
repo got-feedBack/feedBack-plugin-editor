@@ -7,6 +7,185 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Count-in.** A `Count: off / 1 / 2 / 4 bars` select next to the
+  metronome: playback (and, because the recorder rides the same transport
+  clock, MIDI recording) starts after N bars of metronome clicks **in the
+  meter and tempo at the cursor** — a 3/4 section counts three 100-BPM
+  beats, not four 120-BPM ones. Implementation is one anchor shift: the
+  transport's wall anchor pins into the future by the pre-roll, so the
+  audio source, guide/click scheduler, and record clock all follow with no
+  extra plumbing; the cursor holds at the start position during the
+  pre-roll. Loop wraps and mid-play seeks stay immediate. With no tempo
+  map yet, the count falls back to a 4/4 bar at 120 so a play gesture
+  never fails. Editor pref, never the pack. This is the feature the B2
+  transport bar's Count-in LCD cell and the charrette's Count toggle were
+  deferred behind — both can now follow.
+  The clicks are scheduled AFTER the transport anchor's voice-reset, so the
+  reset can't cancel them before they sound; the record clock clamps at the
+  start position during the pre-roll so a note fumbled over the count never
+  lands at a pre-region time. `_countInPlanPure` in `src/transport.js` +
+  `tests/count_in.test.mjs` (5) + `tests/count_in_wiring.test.mjs` (3, the
+  survive-the-reset wiring).
+- **Pickup bars + onset-based tempo detection (workspace-shell D3).** Two
+  halves of the "bar 1 beat 1 doesn't align with the first audible note"
+  problem:
+  - **Set pickup (anacrusis):** right-click the first measure's sync point
+    in Tempo Map mode (also a registry command) → the grid RE-BARS so the
+    first N beats form a partial pickup bar and every bar boundary shifts
+    earlier accordingly — each bar keeps its own length, so varying meters
+    survive. Numbering-only: **no beat time moves** (the offset-vs-flex
+    distinction holds by construction), one undoable grid command. With a
+    partial first bar, measure displays shift so the pickup reads as
+    **bar 0** and the first full bar as bar 1 (derived from the grid — no
+    stored flag, nothing on the wire). Notes before beat 0 were already
+    representable (the converter extrapolates); now pinned by test.
+  - **Detect tempo from the onset strip:** the Sync dialog now reads tempo
+    from the already-computed onset strip when one exists — consecutive
+    inter-onset intervals, strength-weighted, octave-folded into 60–220 —
+    and unlike the waveform autocorrelation it also proposes the **downbeat
+    phase** and a **confidence** score, shown in the dialog. Diffuse votes
+    (rubato, swing feel) fall back to the existing autocorrelation and say
+    so, rather than pretending.
+  `tests/pickup_detect.test.mjs` (7).
+- **Resolve positions in an anchor's window + the confirm sweep
+  (view-modality P8 / VA.7).** The anchor lane's context menu gains
+  "Resolve positions in this window…": it runs the suggest-position
+  resolver over every unresolved (suggested) note between that anchor and
+  the next, writing the repicks as ONE undoable command — notes stay
+  suggested (the machine picked; the charter confirms), refusals keep
+  their position and are counted in the status line, never guessed, and
+  earlier repicks claim their strings for later ones exactly like the
+  roll writer. Then a **sweep bar** walks the window note-by-note: Enter
+  accepts (each accept its own cheap undo through the existing accept
+  command), ←/→ move, **A** accepts all remaining, Esc closes; the sweep
+  seeks and selects as it walks and follows refs, so an undo mid-sweep
+  can't derail it. **A** confirms only notes the resolver actually placed —
+  refused notes keep their suggested mark and stay counted in the honest
+  "positions unresolved" gap (they were never re-fingered). The anchor lane
+  itself (both views, drag/edit/delete) already shipped — this is the
+  missing bulk-authoring verb on top of it.
+  `src/anchor-resolve.js` + `tests/anchor_resolve.test.mjs` (10).
+- **Fretted playability lint (view-modality P9 / VA.8) — advisory only.**
+  A pure lint pass over the active fretted part, recomputed only when an
+  edit changes it (never per frame): **stretch** (simultaneous fretted
+  notes spanning more than the active anchor window, +1 fret tolerance;
+  open strings never count), **string overlap** (two notes on one string
+  overlapping in time, sustain-aware), **open-string bend** (needs a
+  bender — worth a look) with an out-of-range-fret **data-bug catcher**,
+  and **legato jump** (an HO/PO arrival or pitched-slide reach spanning
+  more than the anchor window). Flagged notes wear an amber underline in
+  both String view and the roll; a count chip appears by the note-count
+  readout; its popover lists every issue and clicking one seeks and
+  selects the notes. Never blocks, never auto-fixes (the drum limb-lint
+  posture): guitar has real outliers, so the lint names the physical
+  question and the author decides. Thresholds are named constants,
+  tuning invited. Note: the planned "open-string pitch vs tuning" check
+  has no independent pitch field to cross-check (pitch is always derived
+  from string+fret), so it ships as the open-bend + bad-fret pair.
+  `src/playability-lint.js` + `tests/playability_lint.test.mjs` (9).
+- **Drum companion strip: a VSTi-style kit view + a sampler pad view.**
+  The drum editor's counterpart to the fretboard strip, in the SAME
+  companion slot, with two switchable views (Kit ⇄ Pads, persisted pref):
+  a **drawn kit graphic** with VSTi-style hit zones (snare head vs rim,
+  ride bow vs bell, the open/closed hat pair with its pedal, cowbell on
+  the kick mount) and a **sampler-style pad grid** (three banks of six).
+  Both are a **visual cue** (selected hits light
+  their pads), an **input surface** (click a pad to add that piece at the
+  snapped cursor, through the normal undo-able add command), and a **MIDI
+  mapping tool**: arm *Listen* and note-ons from an e-kit flash their pads
+  live, mapped through **General MIDI percussion to start** (the import
+  default; unmapped GM notes — claps, tambourine — flash nothing rather
+  than the wrong pad). Each pad's tooltip documents its GM note numbers.
+  The monitor rides the record path's refcounted device session via a new
+  tap API in `src/midi-record.js` (never a second device path); on hosts
+  without the MIDI-input domain it listens whenever the Record modal has a
+  device connected. Shown in drum edit mode; the `Pads` toggle persists as
+  an editor pref, never in the pack. Per-kit custom maps are a follow-up.
+  Screen teardown drops the monitor tap + our device-session ref (only when
+  we armed it — never yanks the Record modal's session) and cancels pending
+  pad flashes, so a re-injection can't leak a MIDI session or stack handlers.
+  `src/drum-pad-strip.js` + `tests/drum_pad_strip.test.mjs` (6).
+- **Fretboard companion strip (view-modality P7 / VA.6 ★).** A docked,
+  toggleable mini-fretboard at the bottom of the timeline for the active
+  fretted part — tuning, string count and capo drawn from the arrangement,
+  the capo as a visual nut-bar. Selecting notes lights **every playable
+  same-pitch position** (the suggest-position resolver's enumeration):
+  bright inside the active anchor window, dim outside, open-string
+  candidates drawn square at the effective nut, each with a stretch-cost
+  digit (fret travel vs the previous note's hand position); the note's own
+  position renders filled, carrying its finger mark. **Click a candidate to
+  assign it** — the same pitch-preserving command path as position cycling,
+  so it passes the roll's edit lock and confirms (clears) a suggested mark,
+  with undo restoring both. **Right-click cycles the fret-hand finger**
+  teaching mark (1-4 · T · none). The render/hit-test idiom is ported from
+  Virtuoso's Live fretboard strip; the editor owns all candidate and
+  annotation logic. A canvas sidecar — repaints only on selection/edit
+  changes, never per frame; hidden on keys parts, drum mode, the parts
+  overview and Tempo Map mode. Toggle: the `Fret` toolbar button
+  (editor pref, never the pack). Deferred: chord-selection handshape-
+  template lighting (the anchor-window box ships now).
+  `src/fretboard-strip.js` + `tests/fretboard_strip.test.mjs` (11).
+- **Swing quantization on the snap grid (workspace-shell D2).** A Swing
+  select next to Snap (Straight · 54% · 58% · 62%) displaces the OFF
+  subdivision of each pair toward the next beat — as a **beat-domain phase
+  offset fed through the `beatOf`/`timeOf` converter**, never a seconds
+  nudge, so a swung note keeps its groove ratio through a tempo flex exactly
+  like a straight one. 50% is bit-identical to the straight grid; triplet
+  grids (1/3T, 1/6T, 1/12T…) are already swung by construction and ignore
+  the setting, as do odd grids. Snap placement only: playback, existing
+  notes, and the drawn grid are unchanged, and out-of-band values (a corrupt
+  pref) fall back to straight rather than flinging notes. Editor pref
+  (localStorage), never written to the pack.
+  `_swingQuantizeBeatPure` in `src/snap.js` + `tests/swing_snap.test.mjs` (8).
+- **The menu bar (workspace-shell B4).** Nine menus — File · Edit · Add ·
+  Note · Part · View · Transport · **Tempo/Grid** · Help — re-homing the
+  existing command registry, organized by musical object (Tempo/Grid is the
+  time-model pillar's own top-level home). A re-presentation, not a re-plumb:
+  registry items dispatch through the same switch the keyboard uses, and the
+  pre-registry file/panel actions call their existing entry points. Menu
+  accelerators **follow the active shortcut profile** (FeedBack ⇄ EOF Legacy —
+  dropdowns render at open time, so a swap relabels everything); planned
+  commands render greyed with a "soon" tag and never dispatch; sync-point
+  items grey outside Tempo Map mode; Sync-to-audio hides without a recording.
+  Click-open with arrow-key navigation and Enter/Escape (no Alt-mnemonics —
+  browsers own those). The document-level click-away listener rides the
+  teardown registry, so a re-injected screen can't stack copies.
+  `src/menu-bar.js` + `tests/menu_model.test.mjs` (10).
+- **Transport control bar + dual-domain LCD (workspace-shell B2).** One
+  always-present bar directly above the timeline: go-to-start · rewind-a-bar ·
+  stop · play/pause · forward-a-bar · record, plus an LCD that shows
+  **Position (bars:beats:ticks) and Time (m:ss.mmm) together** — both computed
+  through the `beatOf`/`timeOf` tempo-map converter, with a `▸` toggle for
+  which is primary — and Tempo · Meter · Key · Sel · a mode badge. The LCD
+  skin ports Virtuoso's recessed-panel grammar (`.editor-lcd-*`); the commit
+  wiring is the editor's own: Position/Time edits seek, the Key selects write
+  through to the Key controls, and the **Tempo cell is an input only in free
+  (no-audio) mode** — with a recording the grid is fitted to the audio, so
+  Tempo becomes a derived readout wearing the AUDIO badge and BPM editing
+  stays with the Tempo Map/Sync tools. Left/right utility groups (Parts ·
+  Mix · Follow / Click · Clap · A/B · Snap) mirror the existing toolbar
+  commands; `▾` or right-click opens Customize Control Bar (show/hide groups
+  and cells, persisted as an editor pref, never in the pack). Typing in an
+  LCD cell never reaches the canvas shortcut layer; Enter applies, Escape
+  reverts. LCD refreshes ride the transport tick, skip-if-unchanged — zero
+  per-frame draw cost. No master-mute (mute/solo stay per-track, §2.6); no
+  Count-in cell yet (the editor has no count-in feature to write through to).
+  `src/transport-bar.js` + `tests/transport_lcd.test.mjs` (12).
+- **Full-bleed on the v3 shell (workspace-shell B1).** The manifest now declares
+  `"fullscreen": true`, so navigating to the editor hides the v3 topbar,
+  collapses the sidebar to the icon rail, and pins the screen to the whole
+  content area — a DAW-style surface needs the viewport, not a scrolling page
+  under the navbar (the "cut off at the bottom" report). The screen root gains
+  an `editor-root` hook and one `html.fb-immersive`-scoped rule in
+  `assets/v3-theme.css` drops the now-meaningless `pt-16` navbar allowance and
+  sizes the root to the pinned slot. The v2/legacy layout keeps `pt-16` /
+  `h-screen` and is untouched (the class only ever appears on the v3 shell).
+  Zero core changes — the host capability landed with the v3 shell and Virtuoso
+  already exercises it. `tests/fullbleed.test.mjs` pins all three legs of the
+  manifest/HTML/CSS contract.
+
 ### Fixed
 
 - **The screen teardown left the guide/metronome timer running.** The audio

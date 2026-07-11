@@ -1,4 +1,8 @@
-<div class="flex flex-col h-screen pt-16 bg-dark-900 text-white overflow-hidden">
+<div class="editor-root flex flex-col h-screen pt-16 bg-dark-900 text-white overflow-hidden">
+
+    <!-- Menu bar (workspace-shell B4) — built by src/menu-bar.js; nine menus
+         re-homing the command registry. Always present, above everything. -->
+    <div id="editor-menu-bar" class="editor-menu-bar shrink-0"></div>
 
     <!-- Top bar: back + song info -->
     <div class="flex items-center gap-3 px-4 py-2 bg-dark-800 border-b border-gray-800 shrink-0">
@@ -67,6 +71,12 @@
         <button id="editor-loop-ab-btn" onclick="editorToggleLoopAB()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" disabled title="Set a loop region first — A/B alternates recording and guide per pass" aria-pressed="false">A/B</button>
         <button id="editor-guide-btn" onclick="editorToggleGuideClap()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Guide claps: tick each charted note during playback (C)" aria-pressed="false">Claps</button>
         <button id="editor-metronome-btn" onclick="editorToggleMetronome()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Metronome: click every beat, accented on downbeats" aria-pressed="false">Click</button>
+        <select id="editor-countin" onchange="editorSetCountIn(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Count-in: bars of metronome clicks before playback (and recording) starts — in the meter and tempo at the cursor">
+            <option value="0" selected>Count: off</option>
+            <option value="1">Count: 1 bar</option>
+            <option value="2">Count: 2 bars</option>
+            <option value="4">Count: 4 bars</option>
+        </select>
         <button id="editor-mixer-btn" onclick="editorToggleMixer()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Audio mixer: recording / guide / click levels and the edit blip (Shift+C)" aria-pressed="false">Mix</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
@@ -78,6 +88,8 @@
         <button onclick="editorZoom(1)" class="px-1.5 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs">+</button>
         <button id="editor-onset-btn" onclick="editorToggleOnsetStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Onset strip: amber blocks mark detected attacks in the recording (Shift+W). Display only — never places notes." aria-pressed="false">Onsets</button>
         <button id="editor-tab-preview-btn" onclick="editorShowTabPreview()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Preview the current part as engraved tab (read-only — renders the pack as last saved; needs the Tab View plugin)">Tab…</button>
+        <button id="editor-drum-pads-btn" onclick="editorToggleDrumPadStrip()" class="hidden px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Drum pads: kit legend + input strip — selected hits light up, click a pad to add a hit at the cursor, Listen flashes pads from a MIDI kit (GM map)" aria-pressed="true">Pads</button>
+        <button id="editor-fretboard-btn" onclick="editorToggleFretboardStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" title="Fretboard strip: light every playable position for the selected notes — click one to assign it, right-click to cycle the finger mark (fretted parts)" aria-pressed="false">Fret</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
 
@@ -122,6 +134,12 @@
             <input id="editor-snap-enabled" type="checkbox" checked onchange="editorSetSnapEnabled(this.checked)" class="accent-accent"> On
         </label>
         <button id="editor-snapmode-btn" onclick="editorToggleSnapMode()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Snap target — Grid: tempo-map subdivisions. Onset: nearest detected audio attack (falls back to grid when no transient is near). Turn on Onsets to see the attacks." aria-pressed="false">Grid</button>
+        <select id="editor-swing" onchange="editorSetSwing(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Swing: displace the off subdivision of each pair toward the next beat (snap placement only — beat-domain, so swung notes ride tempo flexes; playback and existing notes are unchanged)">
+            <option value="50" selected>Straight</option>
+            <option value="54">Swing 54%</option>
+            <option value="58">Swing 58%</option>
+            <option value="62">Swing 62%</option>
+        </select>
 
         <!-- Key / scale (piano-roll in-key highlight). Hidden unless a keys
              arrangement is active; populated + gated by _refreshKeyControls(). -->
@@ -145,9 +163,43 @@
         <button id="editor-shortcuts-btn" onclick="editorToggleShortcutPanel()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs" title="Show shortcut and command controls">Shortcuts…</button>
     </div>
 
+    <!-- Transport control bar + LCD (workspace-shell B2) — built by
+         src/transport-bar.js; always present, directly above the timeline. -->
+    <div id="editor-transport-bar" class="editor-transport-bar shrink-0"></div>
+
     <!-- Canvas area + inspector panel -->
     <div class="flex-1 flex overflow-hidden">
         <div id="editor-canvas-wrap" class="flex-1 relative overflow-hidden bg-dark-900">
+            <!-- Position sweep bar (P8) - shown by anchor "Resolve positions in
+                 this window"; Enter accepts, arrows move, A accepts all, Esc done. -->
+            <div id="editor-sweep-bar" class="hidden absolute top-12 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-md border border-sky-500/50 bg-dark-800/95 backdrop-blur-sm px-3 py-1.5 text-xs">
+                <span class="text-sky-300 font-medium">Sweep</span>
+                <span id="editor-sweep-count" class="font-mono text-gray-300"></span>
+                <button id="editor-sweep-prev" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Previous (Left arrow)">&#8592;</button>
+                <button id="editor-sweep-accept" class="px-2 py-0.5 rounded bg-sky-700 text-white hover:bg-sky-600" title="Accept this position (Enter)">Accept</button>
+                <button id="editor-sweep-skip" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Skip (Right arrow)">&#8594;</button>
+                <button id="editor-sweep-all" class="px-2 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Accept all remaining (A)">Accept all</button>
+                <button id="editor-sweep-done" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Close (Esc)">&#10005;</button>
+            <!-- Playability-lint popover (P9) — anchored bottom-right of the timeline. -->
+            <div id="editor-lint-pop" role="dialog" aria-label="Playability notes" class="hidden absolute right-3 bottom-2 z-30 editor-lint-pop"></div>
+            <!-- Drum-pad companion strip — kit legend / cursor input / GM MIDI
+                 monitor; built by src/drum-pad-strip.js, drum edit mode only. -->
+            <div id="editor-drum-pad-strip" class="hidden absolute bottom-2 left-[52px] right-3 z-20 h-44 select-none rounded-md border border-gray-700/80 bg-dark-800/90 backdrop-blur-sm px-2 py-1.5 flex items-center gap-2">
+                <div id="editor-drum-pads" class="flex flex-col items-center gap-1 mx-auto"></div>
+                <div class="ml-auto flex flex-col items-end gap-1 shrink-0">
+                    <div class="flex items-center gap-1">
+                        <button id="editor-drum-view-kit" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600 aria-pressed:bg-accent" title="Kit view — a drawn kit with VSTi-style hit zones" aria-pressed="true">Kit</button>
+                        <button id="editor-drum-view-pads" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Pad view — sampler-style pad grid" aria-pressed="false">Pads</button>
+                    </div>
+                    <button id="editor-drum-pads-listen" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Flash pads from incoming MIDI notes (General MIDI percussion map) — verify your e-kit mapping before recording" aria-pressed="false">Listen</button>
+                    <button id="editor-drum-pads-hide" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Hide the drum pads">Hide</button>
+                </div>
+            <!-- Fretboard companion strip (P7/VA.6) — bottom overlay, built by
+                 src/fretboard-strip.js; hidden unless toggled on a fretted part. -->
+            <div id="editor-fretboard-strip" class="hidden absolute bottom-2 left-[52px] right-3 z-20 h-28 select-none rounded-md border border-gray-700/80 bg-dark-800/90 backdrop-blur-sm overflow-hidden">
+                <button id="editor-fretboard-collapse" class="absolute right-1 top-1 z-10 px-1.5 py-0.5 rounded bg-dark-700/90 text-[10px] text-gray-300 hover:text-white hover:bg-dark-600" title="Hide the fretboard strip">Hide</button>
+                <canvas id="editor-fretboard-canvas" class="w-full h-full block"></canvas>
+            </div>
             <div id="editor-loop-strip" class="absolute top-2 left-[52px] right-3 z-20 h-8 select-none">
                 <div id="editor-loop-strip-track" class="relative h-full rounded-md border border-gray-700/80 bg-dark-800/85 backdrop-blur-sm">
                     <div id="editor-loop-strip-empty" class="absolute inset-0 flex items-center px-3 text-[10px] uppercase tracking-wide text-gray-500">Loop region</div>
@@ -245,6 +297,7 @@
     <div class="flex items-center gap-4 px-4 py-1 bg-dark-800 border-t border-gray-800 shrink-0">
         <span id="editor-status" class="text-xs text-gray-500">Ready</span>
         <div class="flex-1"></div>
+        <button id="editor-lint-chip" onclick="editorToggleLintPopover()" aria-controls="editor-lint-pop" aria-expanded="false" class="hidden px-1.5 rounded text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-400/30 hover:bg-amber-500/25" title="Playability notes for this part — advisory only, never blocking. Click to review; each row seeks and selects."></button>
         <span id="editor-note-count" class="text-xs text-gray-600"></span>
         <span class="text-xs text-gray-600">Scroll: zoom | Middle-drag: pan | Dbl-click: add note | Del: delete | Select notes or drag the ⇆ bars strip → ▶ Loop in 3D</span>
     </div>
@@ -570,6 +623,9 @@
     <div class="space-y-2 text-xs">
         <div class="flex justify-between"><span class="text-gray-500">Tab BPM:</span><span id="sync-tab-bpm" class="text-gray-300">—</span></div>
         <div class="flex justify-between"><span class="text-gray-500">Audio BPM:</span><span id="sync-audio-bpm" class="text-gray-300">—</span></div>
+        <!-- D3: names the detector that produced the Audio BPM (onset vote +
+             confidence + suggested first-beat phase, or the waveform fallback). -->
+        <div id="sync-detect-hint" class="text-[10px] text-gray-500"></div>
         <div class="flex justify-between"><span class="text-gray-500">Scale factor:</span><span id="sync-factor" class="text-white font-mono">—</span></div>
         <div>
             <label class="text-gray-500">Manual audio BPM override:</label>
