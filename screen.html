@@ -617,6 +617,9 @@
     <div class="space-y-2 text-xs">
         <div class="flex justify-between"><span class="text-gray-500">Tab BPM:</span><span id="sync-tab-bpm" class="text-gray-300">—</span></div>
         <div class="flex justify-between"><span class="text-gray-500">Audio BPM:</span><span id="sync-audio-bpm" class="text-gray-300">—</span></div>
+        <!-- D3: names the detector that produced the Audio BPM (onset vote +
+             confidence + suggested first-beat phase, or the waveform fallback). -->
+        <div id="sync-detect-hint" class="text-[10px] text-gray-500"></div>
         <div class="flex justify-between"><span class="text-gray-500">Scale factor:</span><span id="sync-factor" class="text-white font-mono">—</span></div>
         <div>
             <label class="text-gray-500">Manual audio BPM override:</label>

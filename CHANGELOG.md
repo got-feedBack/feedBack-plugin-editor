@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pickup bars + onset-based tempo detection (workspace-shell D3).** Two
+  halves of the "bar 1 beat 1 doesn't align with the first audible note"
+  problem:
+  - **Set pickup (anacrusis):** right-click the first measure's sync point
+    in Tempo Map mode (also a registry command) → the grid RE-BARS so the
+    first N beats form a partial pickup bar and every bar boundary shifts
+    earlier accordingly — each bar keeps its own length, so varying meters
+    survive. Numbering-only: **no beat time moves** (the offset-vs-flex
+    distinction holds by construction), one undoable grid command. With a
+    partial first bar, measure displays shift so the pickup reads as
+    **bar 0** and the first full bar as bar 1 (derived from the grid — no
+    stored flag, nothing on the wire). Notes before beat 0 were already
+    representable (the converter extrapolates); now pinned by test.
+  - **Detect tempo from the onset strip:** the Sync dialog now reads tempo
+    from the already-computed onset strip when one exists — consecutive
+    inter-onset intervals, strength-weighted, octave-folded into 60–220 —
+    and unlike the waveform autocorrelation it also proposes the **downbeat
+    phase** and a **confidence** score, shown in the dialog. Diffuse votes
+    (rubato, swing feel) fall back to the existing autocorrelation and say
+    so, rather than pretending.
+  `tests/pickup_detect.test.mjs` (7).
 - **Resolve positions in an anchor's window + the confirm sweep
   (view-modality P8 / VA.7).** The anchor lane's context menu gains
   "Resolve positions in this window…": it runs the suggest-position
