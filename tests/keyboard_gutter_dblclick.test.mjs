@@ -48,7 +48,9 @@ function makeDblClick(keysMode) {
         _recState: 'idle',
         getMousePos: (e) => ({ x: e.x, y: e.y }),
         isKeysMode: () => keysMode,
-        WAVEFORM_H, PIANO_LANE_H, LANE_H: 44, LABEL_W,
+        // TIMELINE_TOP = 0 keeps the fixture's y-space identical to the
+        // pre-B3 layout the coordinates below were written in.
+        WAVEFORM_H, PIANO_LANE_H, LANE_H: 44, LABEL_W, TIMELINE_TOP: 0,
         pianoLaneCount: () => pianoRange.hi - pianoRange.lo + 1,
         lanes: () => 6,
         _inKeyboardGutterPure,

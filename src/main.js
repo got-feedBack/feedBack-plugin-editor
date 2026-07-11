@@ -47,12 +47,13 @@ import {
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn,
 } from './audio.js';
 import {
-    _barSpanForTimes, _clearBarSelection, _editorApplyScrollBounds,
-    _editorClampScrollX, _loopHandleKeydown, _loopReliftBeats,
-    _loopReprojectFromBeats, _loopStripOnMouseDown, _renderLoopStrip, _selectedLoopRegion, _setBarSel,
+    _barSpanForTimes, _editorApplyScrollBounds,
+    _editorClampScrollX, _loopReliftBeats,
+    _loopReprojectFromBeats, _renderLoopStrip, _selectedLoopRegion, _setBarSel,
     _setLoopRegionEnabled, editorSetLoopSnapMode,
     editorToggleLoopRegion, snapTime
 } from './loop.js';
+import { drawMinimap, drawRuler } from './ruler.js';
 import {
     editorAddEmptyKeys,
     editorDoAddKeys, editorDoImportGuitar, editorHideAddKeysModal,
@@ -139,7 +140,6 @@ import {
     } from './shortcuts.js';
 import {
     drawBarSel,
-    drawBeatBar,
     drawCursor,
     drawGrid,
     drawLabels,
@@ -214,11 +214,6 @@ function _cancelPendingDraw() {
 
 function drawNow() {
     if (!canvas) return;
-    // Keep the loop strip (DOM, independent of the canvas render) in sync for
-    // EVERY mode — drum-edit and tempo-map both return early below, so rendering
-    // it here rather than at the tail stops a clear/drag from leaving a stale
-    // selection while one of those modes is active.
-    _renderLoopStrip();
     updateBPMDisplay();
     updateTempoSigDisplay();
     const w = canvas.width / DPR;
@@ -267,12 +262,13 @@ function drawNow() {
     LC.labels = laneLabels();
     try {
         drawWaveform(w);
+        drawMinimap(w);
+        drawRuler(w);
         drawToneLane(w);
         drawLanes(w);
         drawGrid(w);
         drawSections(w);
         drawBarSel(w);
-        drawBeatBar(w);
         drawNotes(w);
         drawSelectionRect(w);
         drawGhostNotes();
@@ -436,6 +432,7 @@ function _rollConfirmPosition(res, pitch, time, occ, cx, cy) {
 setHostHooks({
     draw: (...args) => draw(...args),
     drawWaveform,
+    drawTimelineHeader: (w) => { drawMinimap(w); drawRuler(w); },
     updateStatus,
     updateArrangementSelector,
     hideContextMenu,
@@ -1831,10 +1828,6 @@ function init() {
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('contextmenu', onContextMenu);
     _globalListeners.add(document, 'keydown', onKeyDown);
-    document.getElementById('editor-loop-strip-track')?.addEventListener('mousedown', _loopStripOnMouseDown);
-    document.getElementById('editor-loop-strip-start')?.addEventListener('keydown', (e) => _loopHandleKeydown('start', e));
-    document.getElementById('editor-loop-strip-end')?.addEventListener('keydown', (e) => _loopHandleKeydown('end', e));
-    document.getElementById('editor-loop-strip-clear')?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _clearBarSelection(); });
 
     // Prevent middle-click paste
     canvas.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
