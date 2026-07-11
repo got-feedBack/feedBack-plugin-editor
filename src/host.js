@@ -104,6 +104,12 @@ export const host = {
     /** The 🥁 button's visibility depends on which mode is active. */
     refreshDrumEditButton: () => {},
     /**
+     * Show/hide + relight the drum-pad strip on a mode flip. Lives in
+     * src/drum-pad-strip.js; src/drum.js flips the mode but already imports
+     * the strip's command surface the other way — it crosses here.
+     */
+    refreshDrumPadStrip: () => {},
+    /**
      * The 🎵 Tempo Map button. Lives in src/tempo.js, and src/drum.js needs it
      * when leaving drum mode — but tempo.js already imports drum.js, so a direct
      * import would close a cycle. It crosses here instead.
