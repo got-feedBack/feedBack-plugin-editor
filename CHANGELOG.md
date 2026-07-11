@@ -23,6 +23,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   browsers own those). The document-level click-away listener rides the
   teardown registry, so a re-injected screen can't stack copies.
   `src/menu-bar.js` + `tests/menu_model.test.mjs` (10).
+- **Transport control bar + dual-domain LCD (workspace-shell B2).** One
+  always-present bar directly above the timeline: go-to-start · rewind-a-bar ·
+  stop · play/pause · forward-a-bar · record, plus an LCD that shows
+  **Position (bars:beats:ticks) and Time (m:ss.mmm) together** — both computed
+  through the `beatOf`/`timeOf` tempo-map converter, with a `▸` toggle for
+  which is primary — and Tempo · Meter · Key · Sel · a mode badge. The LCD
+  skin ports Virtuoso's recessed-panel grammar (`.editor-lcd-*`); the commit
+  wiring is the editor's own: Position/Time edits seek, the Key selects write
+  through to the Key controls, and the **Tempo cell is an input only in free
+  (no-audio) mode** — with a recording the grid is fitted to the audio, so
+  Tempo becomes a derived readout wearing the AUDIO badge and BPM editing
+  stays with the Tempo Map/Sync tools. Left/right utility groups (Parts ·
+  Mix · Follow / Click · Clap · A/B · Snap) mirror the existing toolbar
+  commands; `▾` or right-click opens Customize Control Bar (show/hide groups
+  and cells, persisted as an editor pref, never in the pack). Typing in an
+  LCD cell never reaches the canvas shortcut layer; Enter applies, Escape
+  reverts. LCD refreshes ride the transport tick, skip-if-unchanged — zero
+  per-frame draw cost. No master-mute (mute/solo stay per-track, §2.6); no
+  Count-in cell yet (the editor has no count-in feature to write through to).
+  `src/transport-bar.js` + `tests/transport_lcd.test.mjs` (12).
+- **Full-bleed on the v3 shell (workspace-shell B1).** The manifest now declares
+  `"fullscreen": true`, so navigating to the editor hides the v3 topbar,
+  collapses the sidebar to the icon rail, and pins the screen to the whole
+  content area — a DAW-style surface needs the viewport, not a scrolling page
+  under the navbar (the "cut off at the bottom" report). The screen root gains
+  an `editor-root` hook and one `html.fb-immersive`-scoped rule in
+  `assets/v3-theme.css` drops the now-meaningless `pt-16` navbar allowance and
+  sizes the root to the pinned slot. The v2/legacy layout keeps `pt-16` /
+  `h-screen` and is untouched (the class only ever appears on the v3 shell).
+  Zero core changes — the host capability landed with the v3 shell and Virtuoso
+  already exercises it. `tests/fullbleed.test.mjs` pins all three legs of the
+  manifest/HTML/CSS contract.
 
 ### Fixed
 

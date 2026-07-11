@@ -108,6 +108,7 @@ import {
 } from './key-view.js';
 import { setHostHooks } from './host.js';
 import { initMenuBar } from './menu-bar.js';
+import { _transportBarTick, initTransportBar } from './transport-bar.js';
 import {
     MIN_MEASURE, TempoGridCmd, TempoMapCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
     _tempoFlattenToBpmPure,
@@ -765,6 +766,7 @@ function updateTimeDisplay() {
     el.textContent = fmt(S.cursorTime) + ' / ' + fmt(S.duration);
     updateMeasureDisplay();
     updateChordDisplay();
+    _transportBarTick();
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -953,6 +955,7 @@ function updateStatus() {
     // Selection drives the Loop-in-3D fallback region, so keep the button's
     // enabled state in sync whenever the status (selection count) refreshes.
     _updateLoopIn3DBtn();
+    _transportBarTick();
     setStatus('Ready');
 }
 
@@ -1808,6 +1811,7 @@ function init() {
     initCreate();
     initAudio();
     initMenuBar();
+    initTransportBar();
 
     // Observe screen visibility for resize + the entry landing. Held in
     // _editorScreenObs so the teardown can disconnect it on re-injection.
