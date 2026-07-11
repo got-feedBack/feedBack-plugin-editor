@@ -9,7 +9,7 @@ import { _loadEditorKeyIfNeeded, _persistEditorKey, editorKeyHighlightEnabled } 
 import { KEYS_PATTERN, _partViewKeyPure, _rollMidiForNote, _rollPitchCtx, _viewPrefs, _viewPrefsSave, updatePianoRange, viewFor } from './keys.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
-import { PIANO_NOTE_NAMES, SCALE_INTERVALS, SCALE_LABELS, _detectKeyPure } from './theory.js';
+import { PIANO_NOTE_NAMES, SCALE_INTERVALS, SCALE_LABELS, _detectKeyPure, _noteNamesForKeyPure } from './theory.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -70,7 +70,9 @@ export const editorDetectKey = () => {
     _refreshKeyControls();
     host.draw();
     const label = (typeof SCALE_LABELS !== 'undefined' && SCALE_LABELS[res.scale]) || res.scale;
-    setStatus(`Detected key: ${PIANO_NOTE_NAMES[res.tonic]} ${label} — adjust in the picker if it's off`);
+    // Spell the detected tonic the way ITS key signature would (Eb minor,
+    // never D# minor) — the picker below still lists sharp-named tonics.
+    setStatus(`Detected key: ${_noteNamesForKeyPure(res)[res.tonic]} ${label} — adjust in the picker if it's off`);
 };
 
 // ── Per-part view switcher (String · Piano roll) ─────────────────────
