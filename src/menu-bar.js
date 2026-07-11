@@ -139,7 +139,6 @@ export const EDITOR_MENUS = Object.freeze([
         { sep: true },
         { hdr: 'Panels' },
         { cmd: 'toggleMixer' },
-        { label: 'Stem mixer', fn: 'editorToggleStemMixer' },
         { label: 'Shortcut panel', fn: 'editorToggleShortcutPanel' },
     ] },
     { title: 'Transport', items: [
