@@ -53,6 +53,8 @@ export const TOOLBAR_PRESETS = Object.freeze({
 });
 
 const _ids = () => TOOLBAR_GROUPS.map((g) => g.id);
+const _hasPreset = (name) => typeof name === 'string'
+    && Object.prototype.hasOwnProperty.call(TOOLBAR_PRESETS, name);
 
 // Parse + validate the persisted pref blob. Anything malformed — bad JSON,
 // unknown preset, unknown toolbar ids, non-boolean overrides — degrades to
@@ -64,7 +66,7 @@ export function _toolbarStateLoadPure(raw) {
     let obj = null;
     try { obj = JSON.parse(raw); } catch (_) { return state; }
     if (!obj || typeof obj !== 'object') return state;
-    if (typeof obj.preset === 'string' && TOOLBAR_PRESETS[obj.preset]) state.preset = obj.preset;
+    if (_hasPreset(obj.preset)) state.preset = obj.preset;
     const known = new Set(_ids());
     if (obj.overrides && typeof obj.overrides === 'object') {
         for (const [k, v] of Object.entries(obj.overrides)) {
@@ -82,7 +84,9 @@ export function _toolbarStateLoadPure(raw) {
 // Effective visibility: an explicit user toggle wins; otherwise the preset's
 // set, widened by any sticky content-action reveals.
 export function _toolbarVisiblePure(state) {
-    const preset = TOOLBAR_PRESETS[state.preset] || TOOLBAR_PRESETS.everything;
+    const preset = _hasPreset(state.preset)
+        ? TOOLBAR_PRESETS[state.preset]
+        : TOOLBAR_PRESETS.everything;
     const out = {};
     for (const id of _ids()) {
         out[id] = (typeof state.overrides[id] === 'boolean')
@@ -107,7 +111,7 @@ export function _toolbarTogglePure(state, id) {
 // Picking a preset is a layout statement: it clears manual overrides and
 // sticky reveals so the named surface is exactly what you get.
 export function _toolbarPresetPure(state, name) {
-    if (!TOOLBAR_PRESETS[name]) return state;
+    if (!_hasPreset(name)) return state;
     return { preset: name, overrides: {}, revealed: {} };
 }
 

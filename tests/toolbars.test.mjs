@@ -69,6 +69,7 @@ t('every toolbar id is covered by Everything (a new group can never be orphaned)
 t('garbage pref blobs degrade to the default, never throw', () => {
     for (const raw of [null, undefined, '', 'not json', '42', '"str"', '[]',
         '{"preset":"beginner"}', '{"preset":123}',
+        '{"preset":"toString"}', '{"preset":"constructor"}', '{"preset":"__proto__"}',
         '{"overrides":{"bogus":true,"file":"yes"}}',
         '{"revealed":{"harmony":false,"nope":true}}']) {
         const s = _toolbarStateLoadPure(raw);
@@ -79,6 +80,13 @@ t('garbage pref blobs degrade to the default, never throw', () => {
     // The two bad-key cases above must strip ONLY the bad keys.
     const s = _toolbarStateLoadPure('{"preset":"compose","overrides":{"bogus":true,"file":false},"revealed":{"harmony":true,"nope":true}}');
     assert.deepStrictEqual(s, { preset: 'compose', overrides: { file: false }, revealed: { harmony: true } });
+    for (const inherited of ['toString', 'constructor', '__proto__']) {
+        const malformed = { preset: inherited, overrides: {}, revealed: {} };
+        assert.deepStrictEqual(_toolbarVisiblePure(malformed),
+            _toolbarVisiblePure(DEF()), inherited + ' falls back without throwing');
+        assert.strictEqual(_toolbarPresetPure(malformed, inherited), malformed,
+            inherited + ' is not selectable');
+    }
 });
 
 t('a valid blob round-trips through load exactly', () => {
