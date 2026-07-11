@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moved from the lane area onto the ruler (the dashed boundary lines
   stay in the chart). Loop snap mode + Clear loop now live under
   `Transport ▸ Loop`; `Alt+←/→` nudges the loop start (`Alt+Shift`: the
-  end), replacing the old strip handles' arrow keys. Loop state is still
+  end; add `Ctrl` for the coarse ±50 ms free step), replacing the old
+  strip handles' arrow keys. Loop state is still
   `S.barSel` end-to-end — same commands, same beat-anchoring, same
   Loop-in-3D handoff; only the surface moved. Everything below the
   header shifts down by its fixed 40px (`TIMELINE_TOP`); the waveform

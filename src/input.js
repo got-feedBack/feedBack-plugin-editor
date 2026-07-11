@@ -1072,16 +1072,19 @@ export function onKeyDown(e) {
     }
 
     // Loop-edge nudge: Alt+←/→ moves the loop START by its mode's natural
-    // step; Alt+Shift+←/→ moves the END. Replaces the retired loop strip's
-    // focusable-handle arrow keys (the handles left with the strip — the
-    // ruler is canvas, so the keyboard path claims a chord instead). Alt
-    // keeps it clear of the plain/Ctrl arrow note-ops; direct handling here
-    // mirrors the drum-velocity nudge precedent above.
-    if (S.barSel && e.altKey && !e.ctrlKey && !e.metaKey
+    // step; Alt+Shift+←/→ moves the END. Adding Ctrl takes the coarse step
+    // (free mode: ±50 ms instead of ±10 ms — same idiom the retired strip's
+    // Shift-drag used, before Shift here got reassigned to the edge). Replaces
+    // the retired loop strip's focusable-handle arrow keys (the handles left
+    // with the strip — the ruler is canvas, so the keyboard path claims a
+    // chord instead). Alt keeps it clear of the plain/Ctrl arrow note-ops
+    // (which never carry Alt); direct handling mirrors the drum-velocity
+    // nudge precedent above.
+    if (S.barSel && e.altKey && !e.metaKey
         && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
         && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
-        _loopNudgeEdge(e.shiftKey ? 'end' : 'start', e.key === 'ArrowRight' ? 1 : -1, false);
+        _loopNudgeEdge(e.shiftKey ? 'end' : 'start', e.key === 'ArrowRight' ? 1 : -1, e.ctrlKey);
         host.draw();
         return;
     }

@@ -38,7 +38,7 @@ import {
 } from './geometry.js';
 import { host } from './host.js';
 import {
-    _clearBarSelection, _downbeatTimes, _editorClampScrollX, _editorViewportDuration,
+    _downbeatTimes, _editorClampScrollX, _editorViewportDuration,
     _fmtLoopTime, _loopEdgeAdjustPure, _loopLiveMode, _loopRegionForDragPure,
     _regionMeasureLabel, _setBarSel, snapTime,
 } from './loop.js';
@@ -340,7 +340,3 @@ export function rulerOnMouseUp() {
     host.draw();
     return true;
 }
-
-// Menu entry point (Transport ▸ Clear loop) — re-exported for main.js's
-// window wiring so the menu's fn-name dispatch can reach it.
-export { _clearBarSelection as editorClearLoop };

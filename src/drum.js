@@ -295,6 +295,7 @@ export function _drumEditorDraw(w, h) {
     const visibleStart = S.scrollX - 0.5;
     const visibleEnd = S.scrollX + (w - LABEL_W) / S.zoom + 0.5;
 
+    host.drawTimelineHeader(w);
     host.drawWaveform(w);
 
     // ── Lane grid ─────────────────────────────────────────────────────

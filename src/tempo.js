@@ -132,6 +132,7 @@ export function _tempoMapDraw(w, h) {
     const visibleEnd = S.scrollX + (w - LABEL_W) / S.zoom + 0.5;
     const gridBottom = h - TEMPO_HUD_H;
 
+    host.drawTimelineHeader(w);
     host.drawWaveform(w);
 
     // Grid region background.
