@@ -19,7 +19,7 @@ globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setI
 globalThis.window = globalThis.window || globalThis;
 
 const {
-    TRANSPORT_LCD_CELLS, _countToggleTargetPure, _transportPrefsPure,
+    TRANSPORT_LCD_CELLS, _countRememberedPure, _countToggleTargetPure, _transportPrefsPure,
 } = await import('../src/transport-bar.js');
 
 let pass = 0, fail = 0;
@@ -82,6 +82,14 @@ t('arm/disarm round-trips: toggling twice restores the starting count', () => {
         // The handler remembers `start` when disarming — modeled as `last` here.
         assert.strictEqual(_countToggleTargetPure(off, start), start);
     }
+});
+
+t('LCD 4 -> Off remembers 4 so Count restores it', () => {
+    const remembered = _countRememberedPure('0', 4);
+    assert.strictEqual(remembered, 4);
+    assert.strictEqual(_countToggleTargetPure(0, remembered), 4);
+    assert.strictEqual(_countRememberedPure('2', 4), 2, 'nonzero LCD picks update memory too');
+    assert.strictEqual(_countRememberedPure('bad', 4), null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

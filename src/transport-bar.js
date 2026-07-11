@@ -197,6 +197,13 @@ export function _countToggleTargetPure(current, last) {
     return last === 1 || last === 2 || last === 4 ? last : 1;
 }
 
+export function _countRememberedPure(next, current) {
+    const n = Number(next);
+    const cur = Number(current);
+    const remembered = n === 0 ? cur : n;
+    return remembered === 1 || remembered === 2 || remembered === 4 ? remembered : null;
+}
+
 // Customization prefs: merge a stored blob over the defaults, coercing every
 // flag to a real boolean so a hand-edited/corrupt pref can't leak truthy
 // garbage into the DOM builders. Unknown keys are dropped. A pref blob saved
@@ -503,7 +510,14 @@ function wireBar(bar) {
             if (!(t instanceof HTMLElement)) return;
             if (t.id === 'editor-lcd-key-tonic' && typeof window.editorSetKeyTonic === 'function') window.editorSetKeyTonic(t.value);
             if (t.id === 'editor-lcd-key-scale' && typeof window.editorSetKeyScale === 'function') window.editorSetKeyScale(t.value);
-            if (t.id === 'editor-lcd-countin') { editorSetCountIn(t.value); _transportBarTick(true); }
+            if (t.id === 'editor-lcd-countin') {
+                const remembered = _countRememberedPure(t.value, editorCountInBars());
+                if (remembered !== null) {
+                    try { localStorage.setItem('editorCountInLast', String(remembered)); } catch (_) {}
+                }
+                editorSetCountIn(t.value);
+                _transportBarTick(true);
+            }
         });
         lcd.addEventListener('focusout', (e) => {
             const t = e.target;
