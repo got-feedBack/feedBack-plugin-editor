@@ -48,6 +48,7 @@ import {
     strToLane,
 } from './lanes.js';
 import { _isSuggested, notes } from './notes.js';
+import { _lintFlaggedSet } from './playability-lint.js';
 import {
     SCALE_INTERVALS,
     _SCALE_DEGREE_LABELS,
@@ -471,19 +472,22 @@ export function drawNotes(w) {
     // Fretted-in-roll draws at SOUNDING pitch — one hoisted context, and
     // the same mapping hit-testing/marquee use (they must never disagree).
     const rctx = keysMode ? _rollPitchCtx() : null;
+    // Playability lint (P9): a memoized Set keyed on the edit generation —
+    // hoisted so the per-note check is a Set.has, never a lint pass.
+    const lintFlags = _lintFlaggedSet();
     for (let i = 0; i < nn.length; i++) {
         const n = nn[i];
         if (n.time + (n.sustain || 0) < st || n.time > et) continue;
         if (keysMode) {
             const midi = _rollMidiForNote(n, rctx);
-            if (midi !== null) _drawPianoNote(n, S.sel.has(i), hl, midi, !!rctx);
+            if (midi !== null) _drawPianoNote(n, S.sel.has(i), hl, midi, !!rctx, lintFlags.has(i));
         } else {
-            _drawNote(n, S.sel.has(i), ghl);
+            _drawNote(n, S.sel.has(i), ghl, lintFlags.has(i));
         }
     }
 }
 
-function _drawNote(n, selected, ghl) {
+function _drawNote(n, selected, ghl, linted) {
     const x = timeToX(n.time);
     const y = strToY(n.string) + NOTE_PAD;
     const sw = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
@@ -525,6 +529,16 @@ function _drawNote(n, selected, ghl) {
     ctx.roundRect(x, y, sw, h, 3);
     ctx.stroke();
     if (suggested) ctx.setLineDash([]);
+
+    // Playability-lint underline (P9): advisory amber, under the note.
+    if (linted) {
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x + 1, y + h + 1.5);
+        ctx.lineTo(x + Math.max(sw, MIN_NOTE_W) - 1, y + h + 1.5);
+        ctx.stroke();
+    }
 
     // Fret number
     ctx.fillStyle = outOfKey ? 'rgba(255,255,255,0.6)' : '#fff';
@@ -583,7 +597,7 @@ function _drawNote(n, selected, ghl) {
     }
 }
 
-function _drawPianoNote(n, selected, hl, midi, fretted) {
+function _drawPianoNote(n, selected, hl, midi, fretted, linted) {
     // `midi` is resolved by the caller through _rollMidiForNote — keys
     // packing or fretted sounding pitch — so this renderer never guesses.
     if (midi === undefined) midi = noteToMidi(n.string, n.fret);
@@ -631,6 +645,16 @@ function _drawPianoNote(n, selected, hl, midi, fretted) {
     ctx.roundRect(x, y, sw, h, 2);
     ctx.stroke();
     if (suggested) ctx.setLineDash([]);
+
+    // Playability-lint underline (P9) — same advisory treatment as String view.
+    if (linted) {
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(x + 1, y + h + 1);
+        ctx.lineTo(x + Math.max(sw, MIN_NOTE_W) - 1, y + h + 1);
+        ctx.stroke();
+    }
 
     // Note name — or, for fretted-in-roll, the s·f position chip (the
     // note name is redundant with the Y axis there; string·fret is the

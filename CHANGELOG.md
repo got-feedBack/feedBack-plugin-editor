@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Fretted playability lint (view-modality P9 / VA.8) — advisory only.**
+  A pure lint pass over the active fretted part, recomputed only when an
+  edit changes it (never per frame): **stretch** (simultaneous fretted
+  notes spanning more than the active anchor window, +1 fret tolerance;
+  open strings never count), **string overlap** (two notes on one string
+  overlapping in time, sustain-aware), **open-string bend** (needs a
+  bender — worth a look) with an out-of-range-fret **data-bug catcher**,
+  and **legato jump** (an HO/PO arrival or pitched-slide reach spanning
+  more than the anchor window). Flagged notes wear an amber underline in
+  both String view and the roll; a count chip appears by the note-count
+  readout; its popover lists every issue and clicking one seeks and
+  selects the notes. Never blocks, never auto-fixes (the drum limb-lint
+  posture): guitar has real outliers, so the lint names the physical
+  question and the author decides. Thresholds are named constants,
+  tuning invited. Note: the planned "open-string pitch vs tuning" check
+  has no independent pitch field to cross-check (pitch is always derived
+  from string+fret), so it ships as the open-bend + bad-fret pair.
+  `src/playability-lint.js` + `tests/playability_lint.test.mjs` (9).
 - **Drum companion strip: a VSTi-style kit view + a sampler pad view.**
   The drum editor's counterpart to the fretboard strip, in the SAME
   companion slot, with two switchable views (Kit ⇄ Pads, persisted pref):

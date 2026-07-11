@@ -107,6 +107,7 @@ import {
     editorSetViewMode
 } from './key-view.js';
 import { setHostHooks } from './host.js';
+import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from './playability-lint.js';
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
 import { initMenuBar } from './menu-bar.js';
@@ -564,6 +565,7 @@ window.editorToggleGuideClap = _editorToggleGuideClap;
 window.editorToggleLoopAB = _editorToggleLoopAB;
 window.editorToggleMetronome = _editorToggleMetronome;
 window.editorToggleMixer = _editorToggleMixer;
+window.editorToggleLintPopover = editorToggleLintPopover;
 window.editorToggleDrumPadStrip = editorToggleDrumPadStrip;
 window.editorToggleFretboardStrip = editorToggleFretboardStrip;
 window.editorToggleOnsetStrip = _editorToggleOnsetStrip;
@@ -963,6 +965,7 @@ function updateStatus() {
     // Selection drives the Loop-in-3D fallback region, so keep the button's
     // enabled state in sync whenever the status (selection count) refreshes.
     _updateLoopIn3DBtn();
+    _lintChipRefresh();
     _drumPadStripRefresh();
     _fretboardStripRefresh();
     _transportBarTick();
@@ -1831,6 +1834,7 @@ function init() {
     // statement in this file; a module must not have import-time side effects.
     initCreate();
     initAudio();
+    initPlayabilityLint();
     initDrumPadStrip();
     initFretboardStrip();
     // Restore the swing pref (editor pref, never the pack) and seed its select.
