@@ -12,6 +12,7 @@
     "screen": "screen.html",
     "script": "screen.js",
     "scriptType": "module",
+    "fullscreen": true,
     "minHost": "0.3.0-alpha.1",
     "styles": "assets/v3-theme.css",
     "routes": "routes.py"
