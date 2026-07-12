@@ -206,6 +206,24 @@
             </div>
             <!-- Playability-lint popover (P9) — anchored bottom-right of the timeline. -->
             <div id="editor-lint-pop" role="dialog" aria-label="Playability notes" class="hidden absolute right-3 bottom-2 z-30 editor-lint-pop"></div>
+            <!-- Entry tour card (workspace-shell C3) — a non-modal, task-based
+                 first-run coach; never blocks the canvas. Skippable + resumable
+                 from Help ▸ Editor tour. -->
+            <div id="editor-tour" class="hidden absolute bottom-3 left-1/2 -translate-x-1/2 z-40 w-[26rem] max-w-[calc(100%-1.5rem)] rounded-lg bg-dark-800/95 border border-sky-700/50 shadow-xl backdrop-blur px-4 py-3 text-xs text-gray-200">
+                <div class="flex items-center justify-between mb-1.5">
+                    <div class="flex items-center gap-2">
+                        <span id="editor-tour-title" class="text-sky-300 font-semibold">Compose</span>
+                        <span id="editor-tour-count" class="text-[10px] text-gray-500">1/4</span>
+                    </div>
+                    <button onclick="editorTourSkip()" class="text-gray-500 hover:text-white text-sm leading-none" aria-label="Skip — resume from Help" title="Skip — resume any time from Help ▸ Editor tour">&times;</button>
+                </div>
+                <div id="editor-tour-text" class="leading-snug text-gray-200"></div>
+                <div class="flex items-center justify-end gap-2 mt-2.5">
+                    <button id="editor-tour-escape" onclick="editorTourEscape()" class="hidden mr-auto px-2 py-1 rounded text-[11px] text-gray-400 hover:text-gray-200 hover:bg-dark-600" title="Skip aligning for now and switch to the Compose tour">I'll align later</button>
+                    <button onclick="editorTourSkip()" class="px-2 py-1 rounded text-[11px] text-gray-400 hover:text-gray-200 hover:bg-dark-600">Skip</button>
+                    <button id="editor-tour-next" onclick="editorTourNext()" class="px-3 py-1 rounded text-[11px] font-medium bg-sky-600 hover:bg-sky-500 text-white">Next ›</button>
+                </div>
+            </div>
             <!-- Drum-pad companion strip — kit legend / cursor input / GM MIDI
                  monitor; built by src/drum-pad-strip.js, drum edit mode only. -->
             <div id="editor-drum-pad-strip" class="hidden absolute bottom-2 left-[52px] right-3 z-20 h-44 select-none rounded-md border border-gray-700/80 bg-dark-800/90 backdrop-blur-sm px-2 py-1.5 flex items-center gap-2">

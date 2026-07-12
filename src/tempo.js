@@ -33,6 +33,7 @@ import {
     _suggestStopReason,
 } from './tempo-suggest.js';
 import { _editorPromptText, setStatus } from './ui.js';
+import { _tourNoteAction } from './tour.js';
 
 // ════════════════════════════════════════════════════════════════════
 // Tempo Map editor — EOF-style sync-point editing of the song-wide
@@ -609,6 +610,7 @@ export function _editorToggleTempoMapMode() {
         // Ctrl+Alt+Z can undo the whole session at once. Entering the mode is not
         // itself a history event, so the stamp lands on the last edit before it.
         if (S.history) S.history.checkpoint('Tempo Map session');
+        _tourNoteAction('tempoMap');   // C3 Transcribe tour: step 2 task
     }
     _refreshTempoMapButton();
     host.refreshDrumEditButton();
@@ -1776,6 +1778,7 @@ export function _editorTapTempoAtSelection() {
         _tapTempo = { d: S.tempoSel, measure: m.measure, taps: [], bpm: null };
     }
     _tapTempo.taps.push(now);
+    _tourNoteAction('tapTempo');   // C3 Transcribe tour: step 3 task
     _tapTempo.bpm = _tapTempoBpmPure(_tapTempo.taps);
     if (_tapTempo.bpm !== null) {
         setStatus(`Tap tempo: ${_tapTempo.bpm.toFixed(1)} BPM over ${_tapTempo.taps.length} taps — Enter applies to measure ${_tapTempo.measure}, Esc cancels`);

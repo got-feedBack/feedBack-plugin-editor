@@ -32,6 +32,7 @@ import { S, markSessionDirty } from './state.js';
 import { disposeBackendSession, stopSessionProcesses } from './session-lifecycle.js';
 import { _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
 import { seedSurfacePreset, surfacePersistFor } from './toolbars.js';
+import { _editorMaybeStartTour } from './tour.js';
 import { _editorEscHtml, _installModalKeyboard, setStatus } from './ui.js';
 
 
@@ -435,6 +436,7 @@ export function editorShowCreateSloppakModal() {
             // (intent, not audio-presence — an attached recording to
             // compose over still starts light; charrette §3.1).
             seedSurfacePreset('compose');
+            _editorMaybeStartTour('compose');   // C3: first-run entry tour
         } catch (e) {
             status.textContent = 'Failed: ' + e.message;
             status.className = 'text-xs mb-2 min-h-[1em] text-red-400';
@@ -2131,6 +2133,7 @@ async function _editorDoBlankCreate() {
         // C1 lane seed: created from scratch → the Compose surface (intent,
         // not audio-presence; charrette §3.1).
         seedSurfacePreset('compose');
+        _editorMaybeStartTour('compose');   // C3: first-run entry tour
     } catch (e) {
         if (status) status.textContent = 'Failed: ' + e.message;
         if (btn) btn.disabled = false;
@@ -2194,6 +2197,7 @@ export async function editorApplyCreateResult(data) {
     // (charrette §3.1). No filename yet, so this is in-memory only —
     // editorBuild persists the session's surface under the built file.
     seedSurfacePreset('transcribe');
+    _editorMaybeStartTour('transcribe');   // C3: first-run entry tour (reframe + onsets)
 
     // An import may carry a drum track (returned as a `drum_tab`) and/or piano
     // "Keys" arrangements. Sessions are always sloppak now; load the imported

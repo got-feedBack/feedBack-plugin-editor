@@ -26,6 +26,7 @@ import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure
 import { S } from './state.js';
 import { _editorShowTabPreview, _tabPreviewKeyPolicyPure } from './tab-preview.js';
 import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSyncPoint, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup } from './tempo.js';
+import { _tourNoteAction } from './tour.js';
 import { _editorPromptText, setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -898,6 +899,7 @@ function _editorRightClickNoteEdit(e, x, y) {
     }
     const cmd = new AddNoteCmd(note);
     S.history.exec(cmd);
+    _tourNoteAction('placeNote');   // C3 Compose tour: step 1 task
     _editBlipAt();
     S.sel.clear();
     if (cmd.idx >= 0) S.sel.add(cmd.idx);

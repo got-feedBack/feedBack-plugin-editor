@@ -18,6 +18,7 @@ import {
     disposeBackendSession, guardSessionTransition, stopSessionProcesses,
 } from './session-lifecycle.js';
 import { _liftAllBeats, _restoreBeatLocks, _stripBeatsFromSaveBody } from './tempo.js';
+import { _tourResetForLoad } from './tour.js';
 import { surfaceMigrateFilename, surfaceOnSongLoaded } from './toolbars.js';
 import { _editorEscHtml, setStatus } from './ui.js';
 import { host } from './host.js';
@@ -205,6 +206,9 @@ export async function loadCDLC(filename, options = {}) {
         // Reset offset UI so _effectiveAudioOffset() doesn't carry over a
         // delta from a previous session's sync nudge into this one.
         _resetOffsetUI();
+        // Close any active entry tour — its task hints are tied to the song you
+        // entered on (the resume point is kept for Help ▸ Editor tour).
+        _tourResetForLoad();
 
         // Flatten chord notes into main notes array for unified editing
         flattenChords();

@@ -117,6 +117,7 @@ import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teard
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
 import { initMenuBar } from './menu-bar.js';
 import { initToolbars } from './toolbars.js';
+import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
 import {
     MIN_MEASURE, TempoGridCmd, TempoMapCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
@@ -544,6 +545,11 @@ window.editorShowTabPreview = _editorShowTabPreview;
 window.editorRefreshTabPreview = editorRefreshTabPreview;
 
 // Input layer (input.js owns the keyboard/command/shortcut-panel logic).
+// Entry tours (workspace-shell C3): Help ▸ Editor tour + the card's buttons.
+window.editorStartTour = editorStartTour;
+window.editorTourSkip = editorTourSkip;
+window.editorTourEscape = editorTourEscape;
+window.editorTourNext = () => _tourAdvance();
 window.editorToggleShortcutPanel = editorToggleShortcutPanel;
 window.editorRunShortcutCommand = editorRunShortcutCommand;
 window.editorHideTabPreview = editorHideTabPreview;
@@ -1311,6 +1317,7 @@ window.editorTogglePlay = () => {
         return;
     }
     if (S.playing) stopPlayback(); else startPlayback();
+    _tourNoteAction('play');   // C3 Compose tour: step 3 task
 };
 window.editorZoom = (dir) => {
     const factor = dir > 0 ? 1.3 : 0.77;
@@ -1321,9 +1328,11 @@ window.editorZoom = (dir) => {
 };
 window.editorSetSnap = (idx) => {
     const n = parseInt(idx, 10);
+    const prev = S.snapIdx;
     S.snapIdx = Math.max(0, Math.min(SNAP_VALUES.length - 1, Number.isFinite(n) ? n : S.snapIdx));
     const el = document.getElementById('editor-snap');
     if (el) el.selectedIndex = S.snapIdx;
+    if (S.snapIdx !== prev) _tourNoteAction('snapChange');   // C3 Compose tour: step 2 task
 };
 window.editorSetSwing = (pct) => {
     const n = Number(pct);
