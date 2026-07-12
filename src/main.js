@@ -548,6 +548,17 @@ window.editorToggleShortcutPanel = editorToggleShortcutPanel;
 window.editorRunShortcutCommand = editorRunShortcutCommand;
 window.editorHideTabPreview = editorHideTabPreview;
 
+// User Guide modal (Help ▸ User Guide) — a read-only reference lens; toggles the
+// overlay's hidden class like the other editor modals. Content is static HTML in
+// screen.html (canonical copy: docs/USER-GUIDE.md). Wired to window so the Help
+// menu's fn-item can reach it and the model's fns gate sees it.
+window.editorToggleUserGuide = (force) => {
+    const modal = document.getElementById('editor-user-guide-modal');
+    if (!modal) return;
+    const show = force === undefined ? modal.classList.contains('hidden') : !!force;
+    modal.classList.toggle('hidden', !show);
+};
+
 window.editorHideRecordMidiModal = editorHideRecordMidiModal;
 window.editorRecordMidiDeviceChanged = editorRecordMidiDeviceChanged;
 window.editorChordSetCaged = editorChordSetCaged;
@@ -701,6 +712,7 @@ _globalListeners.add(document, 'keydown', (e) => {
         hideAddNote();
         hideContextMenu();
         window.editorHideLoadModal();
+        window.editorToggleUserGuide(false);
     }
 });
 

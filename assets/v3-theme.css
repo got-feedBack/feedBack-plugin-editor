@@ -377,3 +377,36 @@ html.fb-immersive #plugin-editor .editor-root {
 #plugin-editor .editor-mix-ms[data-mix-act="solo"][aria-pressed="true"] {
     background: #0369a1; border-color: #0ea5e9; color: #e0f2fe;
 }
+
+/* ── User Guide (Help ▸ User Guide) ────────────────────────────────── */
+/* The plugin ships no Tailwind typography plugin and the base reset strips
+   list/heading styling, so the read-only guide modal styles its own prose. */
+#plugin-editor .editor-guide-body h3 {
+    font-size: 0.9rem; font-weight: 600; color: #f3f4f6;
+    margin: 1.15rem 0 0.4rem;
+}
+#plugin-editor .editor-guide-body h3:first-child { margin-top: 0; }
+#plugin-editor .editor-guide-body p { margin: 0.4rem 0; }
+#plugin-editor .editor-guide-body ul,
+#plugin-editor .editor-guide-body ol {
+    margin: 0.4rem 0; padding-left: 1.25rem;
+}
+#plugin-editor .editor-guide-body ul { list-style: disc; }
+#plugin-editor .editor-guide-body ol { list-style: decimal; }
+#plugin-editor .editor-guide-body li { margin: 0.25rem 0; }
+#plugin-editor .editor-guide-body strong { color: #e5e7eb; font-weight: 600; }
+#plugin-editor .editor-guide-body code {
+    background: #111827; border: 1px solid #374151; border-radius: 4px;
+    padding: 0.05rem 0.3rem; font-size: 0.85em; color: #d1d5db;
+}
+#plugin-editor .editor-guide-body kbd {
+    display: inline-block; background: #1f2937; border: 1px solid #4b5563;
+    border-bottom-width: 2px; border-radius: 4px; padding: 0.05rem 0.35rem;
+    font-size: 0.8em; font-family: inherit; color: #e5e7eb;
+    line-height: 1.4; white-space: nowrap;
+}
+#plugin-editor .editor-guide-body .tip {
+    border-left: 3px solid #0ea5e9; background: #0ea5e91a;
+    padding: 0.5rem 0.75rem; border-radius: 0 6px 6px 0; margin: 0.6rem 0;
+    color: #cbd5e1;
+}

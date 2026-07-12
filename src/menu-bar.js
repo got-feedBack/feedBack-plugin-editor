@@ -232,6 +232,8 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleGridDisplay' },
     ] },
     { title: 'Help', items: [
+        { label: 'User Guide', fn: 'editorToggleUserGuide' },
+        { sep: true },
         { cmd: 'openCommandPalette' },
         { cmd: 'showShortcutHelp' },
         { cmd: 'midiTones' },
