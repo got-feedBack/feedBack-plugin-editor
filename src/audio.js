@@ -36,6 +36,8 @@ import { setStatus } from './ui.js';
 // The rAF handle for the playback loop. Module-scope so playbackTick and
 // teardownAudio share it; main.js reaches the cancel through teardownAudio().
 let rafId = null;
+let audioLoadController = null;
+let audioLoadGeneration = 0;
 
 // Lazily create the shared AudioContext. Compose mode never decodes a
 // recording (loadAudio is the only other creation site), yet the transport
@@ -52,20 +54,37 @@ function _ensureAudioCtx() {
 }
 
 export async function loadAudio(url) {
-    if (!url) return;
+    if (!url) return false;
+    cancelAudioLoad();
+    const generation = audioLoadGeneration;
+    audioLoadController = typeof AbortController === 'function' ? new AbortController() : null;
     try {
         _ensureAudioCtx();
-        const resp = await fetch(url);
+        const resp = await fetch(url, audioLoadController ? { signal: audioLoadController.signal } : undefined);
         const buf = await resp.arrayBuffer();
-        S.audioBuffer = await S.audioCtx.decodeAudioData(buf);
+        const decoded = await S.audioCtx.decodeAudioData(buf);
+        if (generation !== audioLoadGeneration) return false;
+        S.audioBuffer = decoded;
         S.duration = S.audioBuffer.duration;
         // A new recording is loaded — re-arm the hearing-safety fade so it
         // applies to this recording too, not just the session's first one.
         _mixResetFirstPlay();
         host.editorApplyScrollBounds();
         computeWaveform();
+        return true;
     } catch (e) {
-        console.error('Audio load error:', e);
+        if (e && e.name !== 'AbortError') console.error('Audio load error:', e);
+        return false;
+    } finally {
+        if (generation === audioLoadGeneration) audioLoadController = null;
+    }
+}
+
+export function cancelAudioLoad() {
+    audioLoadGeneration++;
+    if (audioLoadController) {
+        try { audioLoadController.abort(); } catch (_) {}
+        audioLoadController = null;
     }
 }
 
@@ -1157,6 +1176,7 @@ export function initAudio() {
 // S.playing and syncing drops it — _guideTimerSync stops the timer when nothing
 // wants it — and _guideCancelVoices silences any queued oscillators (Codex).
 export function teardownAudio() {
+    cancelAudioLoad();
     try { if (S.audioSource) { S.audioSource.stop(); S.audioSource = null; } } catch (_) { /* already stopped */ }
     try { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } } catch (_) { /* no frame queued */ }
     S.playing = false;

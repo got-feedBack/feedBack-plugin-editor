@@ -93,6 +93,12 @@ export const host = {
     hideAddNote: () => {},
     startPlayback: () => {},
     stopPlayback: () => {},
+    /** Save the current editor job; resolves true only after durable success. */
+    saveSession: async () => false,
+    /** Finalize an active MIDI take before a destructive transition. */
+    finalizeRecording: () => {},
+    /** Abort an audio decode/fetch that belongs to the outgoing job. */
+    cancelAudioLoad: () => {},
     /** Toolbar readouts for the current BPM and time signature. */
     updateBPMDisplay: () => {},
     updateTempoSigDisplay: () => {},

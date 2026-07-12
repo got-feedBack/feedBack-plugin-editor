@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The editor timeline rendered blank — chart and waveform invisible after
+  any load or import.** Two closing `</div>`s were lost at the canvas-wrap
+  overlay seam when the sweep bar and the drum-pad strip landed, so the main
+  `#editor-canvas` ended up nested inside the *hidden* drum-pad strip: the
+  canvas laid out at 0×0 (its whole subtree is `display:none`) while the
+  status bar happily reported the load and every JS suite stayed green.
+  Restored the two closers, and added `tests/screen_markup.test.mjs` — a
+  dependency-free tag-stack walk that fails the suite if screen.html ever
+  unbalances again or the canvas stops being a direct child of the wrap
+  (this seam collides on every chrome PR; now it's guarded).
+
 ### Added
 
 - **Mixer panel** (workspace-shell B6). The floating audio-mixer popover
@@ -28,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and resets with the loaded song. Audio consults the state through an
   inert-default `host.partClapState` hook, so nothing changes until the
   panel says so.
+- **Foolproof editor job transitions + Save As.** Opening another feedpak
+  or starting New now offers Save / Don't Save / Cancel when the current
+  job is dirty; a failed save blocks the transition. Active MIDI takes are
+  finalized first, then playback, scheduled voices, pending audio/load
+  requests, drags and the outgoing backend session are stopped before the
+  replacement job is installed. File -> Save As opens the native system
+  picker where available (download fallback) and mirrors later saves to
+  that chosen external copy for the rest of the session.
 - **Authoritative musical-ruler tempo mapping.** Tempo Map's primary action is
   now **Mark barline**: inside the mapped range it preserves the existing split
   behavior, while a mark beyond the final beat closes the open measure at the
@@ -286,6 +307,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Loading a new feedpak while the old recording was playing no longer
+  leaves the old AudioBufferSource sounding under the new song. Audio-less
+  packs also clear the previous decoded buffer, and overlapping load/audio
+  requests cannot install stale results out of order. The same teardown now
+  also runs when a Guitar Pro / EOF **import** replaces the job (it took a
+  different code path than Open feedpak), so an audio-less import can no
+  longer inherit the previous recording, and the outgoing backend session is
+  disposed instead of leaked.
+- The session-transition confirm prompt's Escape listener now rides the
+  screen teardown registry, and dismissing it resolves the pending prompt —
+  a re-injected editor screen can no longer strand an in-flight transition.
+- Choosing the "New" format picker on a dirty job no longer double-prompts to
+  save (the picker already guarded the transition; the format buttons stopped
+  re-guarding).
 - **The screen teardown left the guide/metronome timer running.** The audio
   extraction (below) surfaced it: the old inline teardown cancelled the audio
   source and the rAF frame but not the `setInterval` that schedules guide claps,
