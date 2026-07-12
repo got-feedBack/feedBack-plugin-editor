@@ -10,7 +10,7 @@ import { DPR, canvas, ctx, setCanvas } from './canvas.js';
 import {
 } from './position.js';
 
-import { _installModalKeyboard, setStatus } from './ui.js';
+import { _editorPromptChoice, _installModalKeyboard, setStatus } from './ui.js';
 import { EditHistory } from './history.js';
 import {
     _ROLL_REFUSE_REASONS,
@@ -1357,32 +1357,57 @@ window.editorSetSnapEnabled = (enabled) => {
     if (el) el.checked = S.snapEnabled;
     setStatus(S.snapEnabled ? 'Snap enabled' : 'Snap disabled');
 };
-window.editorSetBPM = (val) => {
+window.editorSetBPM = async (val) => {
     const newBPM = parseFloat(val);
     if (!newBPM || newBPM <= 0 || S.beats.length < 2) return;
     if (!S.tempoMapMode && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01)) {
         // The song has a variable tempo map (multiple per-measure tempos). The
         // per-measure editor can only fix ONE measure at a time, so offer to
         // FLATTEN the whole map to this constant BPM — the escape hatch from a
-        // bad import's tempos (tester report: "can't remove all the BPM sync
-        // points without deleting measures"). Confirm because it discards the
-        // tempo variation; notes keep their times, and undo restores the map.
-        const ok = (typeof window !== 'undefined' && typeof window.confirm === 'function')
-            ? window.confirm(
-                `This song has a variable tempo map (multiple tempo events).\n\n` +
-                `Flatten the WHOLE map to a constant ${newBPM} BPM?\n\n` +
-                `Only the beat grid is rebuilt — notes keep their times. Undo restores the tempo map.`)
-            : true;
-        if (!ok) { updateBPMDisplay(); draw(); return; }
+        // bad import's tempos. The two directions are genuinely different edits,
+        // so NAME them (charrette UX P2) instead of a bare confirm.
+        const sessionBefore = S.sessionId;
+        const choice = await _editorPromptChoice({
+            title: `Set the whole song to ${newBPM} BPM`,
+            message: 'This song has a variable tempo map. Choose how to flatten it to one tempo:',
+            choices: [
+                { key: 'conform', label: 'Conform notes to the new tempo',
+                    hint: 'Notes keep their bar:beat positions and move with the grid — the usual choice.' },
+                { key: 'grid', label: 'Rebuild the grid only',
+                    hint: 'Notes keep their exact seconds; use when notes are already aligned to the recording.' },
+            ],
+        });
+        if (!choice) { updateBPMDisplay(); draw(); return; }
+        // The dialog awaits across real time: the overlay traps pointer +
+        // keyboard, but an already-in-flight async import can land meanwhile,
+        // swapping the session/grid — the choice would then flatten the NEW
+        // song unprompted. Re-validate the precondition before applying.
+        if (S.sessionId !== sessionBefore || !_tempoHasMultipleMeasureBpmsPure(S.beats, 0.01)) {
+            updateBPMDisplay(); draw(); return;
+        }
         // Exact spacing (no rounding) so the flattened map reads as PERFECTLY
         // constant — _r3's ±0.5ms would drift per-measure BPM past the 0.01
-        // variable-tempo detector and the grid would still look variable.
+        // variable-tempo detector and the grid would still look variable. The
+        // flattened grid is anchored at bar 1 (beats[0].time), i.e. PR-1's pivot.
         const flat = _tempoFlattenToBpmPure(S.beats, newBPM);
         if (!flat) { updateBPMDisplay(); return; }
-        S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), flat, 'flatten'));
+        const oldBeats = S.beats.map(b => ({ ...b }));
+        if (choice === 'conform') {
+            // Conform: beats are truth, seconds reproject onto the flat grid
+            // (TempoMapCmd direction) so every part — all arrangements, chords,
+            // drums, anchors, handshapes — rides to the new constant tempo. Do
+            // NOT hand-scale note seconds (an invariant violation on locked/
+            // warped grids; the command's lift→reproject is the safe path).
+            S.history.exec(new TempoMapCmd(oldBeats, flat, 'flatten-conform'));
+            setStatus(`Whole song conformed to a constant ${newBPM.toFixed(2)} BPM — notes moved with the grid. Undo restores the map.`);
+        } else {
+            // Rebuild grid only: seconds hold, beats re-lift (TempoGridCmd) —
+            // today's flatten, for when the notes already sit on the recording.
+            S.history.exec(new TempoGridCmd(oldBeats, flat, 'flatten'));
+            setStatus(`Beat grid rebuilt to a constant ${newBPM.toFixed(2)} BPM — notes kept their times. Undo restores the map.`);
+        }
         updateBPMDisplay();
         draw();
-        setStatus(`Tempo map flattened to a constant ${newBPM.toFixed(2)} BPM`);
         return;
     }
     if (S.tempoMapMode) {

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Flattening a variable tempo map now names both directions** instead of a
+  bare confirm. Typing a BPM for a song with multiple tempos opens a small in-app
+  dialog: **Conform notes to the new tempo** (notes keep their bar:beat positions
+  and move with the grid — the usual choice) or **Rebuild the grid only** (notes
+  keep their exact seconds; for when they already sit on the recording). "Conform"
+  is the previously-missing path — it flattens in the `TempoMapCmd` direction, so
+  every part rides to the new constant tempo (no hand-scaled seconds); "Rebuild"
+  is the existing `TempoGridCmd` flatten. Both anchor at bar 1 and are undoable
+  ("Undo restores the map").
 - **The first Save of a session now opens the file explorer** (the same native
   picker as Save As), so you choose where the `.feedpak` lands instead of it
   going somewhere implicit. Once you've picked a location, later saves (Ctrl+S /
