@@ -886,6 +886,7 @@ export function _tempoMapOnMouseDown(e, x, y) {
     const beatHit = _tempoSubBeatAtX(x, y);
     if (beatHit >= 0) {
         _tapTempo = null;
+        if (S.tempoSelMulti) S.tempoSelMulti.clear();
         S.drag = {
             type: 'tempo-beat',
             beatIdx: beatHit,

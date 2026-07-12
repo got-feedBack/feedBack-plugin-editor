@@ -22,13 +22,19 @@ const LS_CUE = (id) => `editorCue:${id}`;
 
 const _memStore = new Map();
 function _lsGet(k) {
-    try { return localStorage.getItem(k); }
+    try {
+        const v = localStorage.getItem(k);
+        return v || (_memStore.has(k) ? _memStore.get(k) : null);
+    }
     catch (_) { return _memStore.has(k) ? _memStore.get(k) : null; }
 }
 function _lsSet(k, v) {
-    try { localStorage.setItem(k, v); }
-    catch (_) { _memStore.set(k, String(v)); }
+    const s = String(v);
+    _memStore.set(k, s);
+    try { localStorage.setItem(k, s); }
+    catch (_) { /* private mode */ }
 }
+export function _resetSignpostMemoryForTests() { _memStore.clear(); }
 
 export function _signpostSeen(id) { return _lsGet(LS_SIGNPOST(id)) === 'seen'; }
 export function _cueSeen(id) { return _lsGet(LS_CUE(id)) === 'seen'; }

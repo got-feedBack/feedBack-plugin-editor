@@ -33,7 +33,7 @@ globalThis.document = { getElementById: (id) => _els[id] || null };
 const { S } = await import('../src/state.js');
 const {
     SIGNPOSTS, _eligibleSignpostPure, _signpostNote, _signpostSeen, _cueSeen,
-    _fireCueOnce, _maybeFireFirstCovered, _resetSignpostCounters, editorDismissSignpost,
+    _fireCueOnce, _maybeFireFirstCovered, _resetSignpostCounters, _resetSignpostMemoryForTests, editorDismissSignpost,
 } = await import('../src/signposts.js');
 const { _sectionCoveragePure } = await import('../src/draw.js');
 
@@ -45,6 +45,7 @@ function t(name, fn) {
 const shown = (id) => !_els[id]._c.has('hidden');
 function reset() {
     _store.clear();
+    _resetSignpostMemoryForTests();
     _resetSignpostCounters();
     localStorage.getItem = (k) => (_store.has(k) ? _store.get(k) : null);
     localStorage.setItem = (k, v) => _store.set(k, String(v));
