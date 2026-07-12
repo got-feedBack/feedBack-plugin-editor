@@ -50,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **User Guide** — a task-oriented, end-user guide to charting in the editor
+  (start a project, the workspace, play/navigate, edit notes & techniques,
+  parts, tempo mapping, drums, structure, save/build, shortcut essentials).
+  It lives in the repo as `docs/USER-GUIDE.md` and opens in-app from
+  **Help ▸ User Guide** as a read-only modal (Esc or click-outside to close;
+  keys shown for the default FeedBack profile). Both are illustrated with
+  captioned screenshots (workspace, New… dialog, timeline, Tempo Map mode,
+  drum import) under `assets/guide/`. The in-app copy mirrors the doc; a
+  `menu_model` test pins the menu item and its dispatch.
 - **Undo to last checkpoint** (`Ctrl+Alt+Z`, Edit ▸ Undo to last checkpoint).
   Checkpoints are coarse rewind points stamped automatically at milestones —
   entering Tempo Map, accepting a suggested fit, locking/unlocking a barline —
