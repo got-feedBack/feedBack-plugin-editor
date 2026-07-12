@@ -20,7 +20,7 @@ import { _recState } from './midi-record.js';
 import { _resizeSustainsForDeltaPure, _resizeTargetIndicesPure, notes } from './notes.js';
 import { _rulerZonePure, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp } from './ruler.js';
 import { S } from './state.js';
-import { _tempoBeatOnDragMove, _tempoMapOnDragEnd, _tempoMapOnDragMove, _tempoMapOnMouseDown, _tempoSyncAtX } from './tempo.js';
+import { _tempoBeatOnDragMove, _tempoMapOnDragEnd, _tempoMapOnDragMove, _tempoMapOnMouseDown, _tempoMarqueeOnEnd, _tempoSyncAtX } from './tempo.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -360,6 +360,17 @@ function _onMouseMoveBody(e, x, y, L) {
         return;
     }
 
+    // Tempo-map barline marquee (PR 5a): rubber-band box-select of downbeats.
+    // Same deferred 3px `moved` idiom as the drum-editor marquee above.
+    if (S.drag.type === 'tempo-marquee') {
+        S.drag.curX = x;
+        S.drag.curY = y;
+        const ddx = x - S.drag.startX, ddy = y - S.drag.startY;
+        if (ddx * ddx + ddy * ddy > 9) S.drag.moved = true;
+        host.draw();
+        return;
+    }
+
     if (S.drag.type === 'select') {
         S.drag.curX = x;
         S.drag.curY = y;
@@ -463,6 +474,11 @@ export function onMouseUp(e) {
 
     if (S.drag.type === 'tempo-sync' || S.drag.type === 'tempo-beat') {
         _tempoMapOnDragEnd();
+        return;
+    }
+
+    if (S.drag.type === 'tempo-marquee') {
+        _tempoMarqueeOnEnd();
         return;
     }
 
