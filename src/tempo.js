@@ -41,9 +41,78 @@ import { _editorPromptText, setStatus } from './ui.js';
 // ════════════════════════════════════════════════════════════════════
 
 const TEMPO_HUD_H = 26;        // bottom strip height in tempo-map mode
-const TEMPO_POLE_HALF = 6;     // sync-point pole grab half-width (px)
+const TEMPO_POLE_HALF = 6;     // barline pole grab half-width (px)
 const SUGGEST_HANDLE_TOP = 16; // ghost handle band offset (below pole handles)
 const SUGGEST_HANDLE_H = 11;   // ghost handle band height
+
+// HUD legend (charrette UX P6): the pole vocabulary spelled out at the right end
+// of the tempo HUD strip, using the EXACT colours _tempoMapDraw paints the poles
+// with. Module const — no per-frame allocation.
+const TEMPO_LEGEND = [
+    { label: 'mapped',    kind: 'fill',  color: '#94a3b8' },
+    { label: 'selected',  kind: 'fill',  color: '#fbbf24' },
+    { label: 'locked',    kind: 'fill',  color: '#34d399' },
+    { label: 'suggested', kind: 'ghost', color: 'rgba(251,191,36,0.85)' },
+    { label: 'unmapped',  kind: 'hatch', color: '#64748b' },
+];
+
+// Diagonal 45° hatch inside a rect — the shared "no tempo fitted here" texture
+// for the Unmapped tail wash and the legend's `unmapped` swatch. Clips so the
+// lines don't bleed past the rect; the save/restore is the only per-call cost.
+function _tempoHatchRect(x, y, ww, hh, stroke, gap = 6, alpha = 0.5) {
+    if (ww <= 0 || hh <= 0) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, ww, hh);
+    ctx.clip();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let d = -hh; d < ww; d += gap) {
+        ctx.moveTo(x + d, y + hh);
+        ctx.lineTo(x + d + hh, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+}
+
+// Paint the pole-colour legend right-aligned in the HUD strip — but only when it
+// clears the guidance text to its left (guidanceEndX), so the two never collide
+// on a narrow canvas (the legend simply drops out, the guidance stays).
+function _tempoDrawLegend(w, gridBottom, guidanceEndX) {
+    const midY = gridBottom + TEMPO_HUD_H / 2;
+    const SW = 11, GAP = 4, ITEM_GAP = 13, PAD = 10;
+    ctx.font = '10px sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    let total = 0;
+    for (const it of TEMPO_LEGEND) total += SW + GAP + ctx.measureText(it.label).width + ITEM_GAP;
+    total -= ITEM_GAP;
+    let x = w - PAD - total;
+    if (x < guidanceEndX + 18) return;   // not enough room beside the guidance — skip
+    const sy = midY - SW / 2;
+    for (const it of TEMPO_LEGEND) {
+        if (it.kind === 'fill') {
+            ctx.fillStyle = it.color;
+            ctx.fillRect(x, sy, SW, SW);
+        } else if (it.kind === 'ghost') {
+            ctx.setLineDash([3, 2]);
+            ctx.strokeStyle = it.color;
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(x + 0.5, sy + 0.5, SW - 1, SW - 1);
+            ctx.setLineDash([]);
+        } else {
+            ctx.strokeStyle = '#334155';
+            ctx.strokeRect(x + 0.5, sy + 0.5, SW - 1, SW - 1);
+            _tempoHatchRect(x, sy, SW, SW, it.color, 3, 0.85);
+        }
+        x += SW + GAP;
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(it.label, x, midY);
+        x += ctx.measureText(it.label).width + ITEM_GAP;
+    }
+}
 
 // Dimmed, non-interactive reference layer for tempo-map mode: the
 // current arrangement's notes (spread by string) and the drum_tab
@@ -170,6 +239,35 @@ export function _tempoMapDraw(w, h) {
         ctx.stroke();
     }
 
+    // Unmapped tail (design doc: the last CONFIRMED downbeat ends the mapped
+    // range; the recording past it carries no fitted tempo). Hatched wash +
+    // label, drawn under the notes/poles so they stay legible. Runs from the last
+    // downbeat to the end of the grid (or the audio, whichever is later).
+    let _lastDbTime = null;
+    for (let i = S.beats.length - 1; i >= 0; i--) {
+        if (S.beats[i].measure > 0) { _lastDbTime = S.beats[i].time; break; }
+    }
+    if (_lastDbTime !== null) {
+        const tailEndT = Math.max(S.beats[S.beats.length - 1].time, Number(S.duration) || 0);
+        if (tailEndT > _lastDbTime + 1e-6) {
+            const x0 = Math.max(LABEL_W, timeToX(_lastDbTime));
+            const x1 = Math.min(w, timeToX(tailEndT));
+            const top = (TIMELINE_TOP + WAVEFORM_H);
+            if (x1 > x0 + 2) {
+                ctx.fillStyle = 'rgba(100,116,139,0.06)';
+                ctx.fillRect(x0, top, x1 - x0, gridBottom - top);
+                _tempoHatchRect(x0, top, x1 - x0, gridBottom - top, '#64748b', 8, 0.10);
+                if (x1 - x0 > 66) {
+                    ctx.fillStyle = '#64748b';
+                    ctx.font = 'bold 10px monospace';
+                    ctx.textAlign = 'left';
+                    ctx.textBaseline = 'top';
+                    ctx.fillText('Unmapped', x0 + 6, top + 6);
+                }
+            }
+        }
+    }
+
     // Dimmed reference layer — the current arrangement's notes + drum
     // hits, fixed at their absolute times so the user can drag the grid
     // to line up with them (and the waveform).
@@ -280,9 +378,12 @@ export function _tempoMapDraw(w, h) {
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(_suggestActive()
+    const hudStr = _suggestActive()
         ? _suggestHudTextPure(_suggestProposals().length, _suggestAvgConf(), _suggestStopReason())
-        : _tempoMapHudTextPure(measures.length, w), LABEL_W + 6, hudY);
+        : _tempoMapHudTextPure(measures.length, w);
+    ctx.fillText(hudStr, LABEL_W + 6, hudY);
+    // Pole-colour legend at the right end — only when it clears the guidance text.
+    _tempoDrawLegend(w, gridBottom, LABEL_W + 6 + ctx.measureText(hudStr).width);
 }
 
 /* @pure:tempo-map-guidance:start */
@@ -328,8 +429,8 @@ export function _tempoSyncInspectorStatePure(measures, selectedIndex) {
             signatureDisabled: true,
             canInsert: rows.length > 0,
             canDelete: false,
-            deleteTitle: 'Select an interior sync point to delete it',
-            hint: 'Select a sync point on the Tempo Map grid.',
+            deleteTitle: 'Select an interior barline to delete it',
+            hint: 'Select a barline on the Tempo Map grid.',
         };
     }
     const numerator = Math.max(1, Math.min(16, Number(selected.beats) || 4));
@@ -353,7 +454,7 @@ export function _tempoSyncInspectorStatePure(measures, selectedIndex) {
         canDelete,
         deleteTitle: canDelete
             ? 'Delete selected barline'
-            : 'First and final sync points cannot be deleted',
+            : 'First and final barlines cannot be deleted',
         hint: hasBpm
             ? `${numerator}/${denominator}`
             : `${numerator}/${denominator} - final measure BPM needs a closing downbeat.`,
@@ -758,9 +859,9 @@ export function _tempoMapOnContextMenu(e) {
     const menu = document.getElementById('editor-context-menu');
     if (!menu) return;
     const onPole = _tempoSyncAtX(x, y);
-    const mkBtn = (action, label, cls) =>
+    const mkBtn = (action, label, cls, title) =>
         `<button class="w-full text-left px-3 py-1 text-xs hover:bg-dark-500 ${cls || ''}" `
-        + `data-action="${action}">${label}</button>`;
+        + `data-action="${action}"${title ? ` title="${title}"` : ''}>${label}</button>`;
     let html = '';
     if (onPole >= 0) {
         const cur = _tempoMeasureBeatCount(onPole);
@@ -775,7 +876,8 @@ export function _tempoMapOnContextMenu(e) {
         if (_firstPole && onPole === _firstPole.i && cur > 1) html += mkBtn('pickup', 'Set pickup (partial first bar)…');
         html += '<div class="border-t border-gray-700 my-1"></div>';
         html += mkBtn('togglelock',
-            (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock sync point' : 'Lock sync point');
+            (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
+            '', LOCK_TOOLTIP);
         html += mkBtn('delete', 'Delete barline', 'text-red-400');
     } else {
         html += mkBtn('insert', 'Mark barline here');
@@ -917,7 +1019,7 @@ export function _tempoDeleteSyncPoint(beatIdx) {
     const dbIdx = [];
     for (let i = 0; i < beats.length; i++) if (beats[i].measure > 0) dbIdx.push(i);
     if (dbIdx[0] === beatIdx || dbIdx[dbIdx.length - 1] === beatIdx) {
-        setStatus("Can't delete the first or last sync point.");
+        setStatus("Can't delete the first or last barline.");
         return;
     }
     const oldBeats = beats.map(b => ({ ...b }));
@@ -1499,6 +1601,20 @@ export function _restoreBeatLocks() {
     _applyBeatLocksPure(S.beats, _beatLockParsePure(raw), 0.02);
 }
 
+// Lock copy (charrette P6): the old wording ("global tempo re-fits will hold
+// this beat") read as if locking were needed to KEEP a manual edit. It isn't —
+// edits always persist; a lock only defends a barline's time from the AUTOMATIC
+// re-fits. One source of truth for the right-click tooltip and the S-key status.
+export const LOCK_TOOLTIP =
+    "Lock: hold this barline's time through automatic re-fits (Fit tempo, Suggest, "
+    + 'Modulate). Your manual edits are always kept — locking is not needed to save them.';
+export function _lockStatusTextPure(locked) {
+    return locked
+        ? 'Barline locked — its time is held through automatic re-fits (Fit tempo, '
+          + 'Suggest, Modulate). Your manual edits are always kept.'
+        : 'Barline unlocked.';
+}
+
 // Toggle the lock on the selected barline: a locked anchor's time is held by
 // later global tempo re-fits (see _respaceWithLocksPure). Editor-pref, persisted.
 export function _editorToggleSyncLock() {
@@ -1514,9 +1630,7 @@ export function _editorToggleSyncLock() {
     // A lock toggle is not a history command, so record the moment as a
     // checkpoint on the current top-of-undo — Ctrl+Alt+Z can rewind to it.
     if (S.history) S.history.checkpoint(b.locked ? 'Lock barline' : 'Unlock barline');
-    setStatus(b.locked
-        ? 'Sync point locked — global tempo re-fits will hold this beat.'
-        : 'Sync point unlocked.');
+    setStatus(_lockStatusTextPure(b.locked));
     return true;
 }
 
@@ -1699,7 +1813,7 @@ export function _tapTempoHandleKey(e) {
         _tapTempo = null;
         const decision = _tapTempoApplyDecisionPure(t, S.tempoSel, performance.now(), TAP_TEMPO_STALE_MS);
         if (decision === 'stale-selection') {
-            setStatus('Tap tempo cancelled — sync-point selection changed.');
+            setStatus('Tap tempo cancelled — barline selection changed.');
         } else if (decision === 'too-few') {
             setStatus('Tap tempo cancelled — not enough taps.');
         } else if (decision === 'expired') {
