@@ -174,6 +174,17 @@ t('regenerate-from re-keys to the current generation with the remembered onsets'
     assert.ok(_suggestProposals().every(p => p.i > 4), 'only the unconfirmed future');
 });
 
+t('range-bound suggest opts persist only for regeneration, not a fresh compute', () => {
+    Object.assign(S, { tempoMapMode: true, beats: grid(6, 60), zoom: 100, scrollX: 0 });
+    const onsets = onsetsAt(60, 6);
+    assert.strictEqual(_suggestCompute(0, onsets, { toIdx: 12 }), 3, 'bounded at idx 12');
+    assert.deepStrictEqual(_suggestProposals().map(p => p.i), [4, 8, 12]);
+    assert.strictEqual(_suggestRegenerateFrom(4), 2, 'regeneration keeps the bound');
+    assert.deepStrictEqual(_suggestProposals().map(p => p.i), [8, 12]);
+    assert.strictEqual(_suggestCompute(0, onsets), 5, 'fresh explicit onsets clear the bound');
+    assert.deepStrictEqual(_suggestProposals().map(p => p.i), [4, 8, 12, 16, 20]);
+});
+
 t('dismiss clears; leaving tempo-map mode reads as inactive', () => {
     _suggestRegenerateFrom(0);
     assert.strictEqual(_suggestActive(), true);

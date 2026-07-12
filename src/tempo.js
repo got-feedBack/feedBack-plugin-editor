@@ -931,6 +931,14 @@ export function _tempoMapOnContextMenu(e) {
         html += mkBtn('togglelock',
             (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
             '', LOCK_TOOLTIP);
+        const nSelected = S.tempoSelMulti ? S.tempoSelMulti.size : 0;
+        if (nSelected > 1) {
+            html += '<div class="border-t border-gray-700 my-1"></div>';
+            html += mkBtn('half-range', 'Half-time the range', '', 'Merge pairs of bars — audio positions hold; notes keep their times');
+            html += mkBtn('double-range', 'Double-time the range', '', 'Split each bar at its midpoint — audio positions hold');
+            html += mkBtn('flatten-range', 'Flatten range to a steady tempo', '', 'Even out the beats between the ends — notes follow');
+            html += '<div class="border-t border-gray-700 my-1"></div>';
+        }
         // With a multi-selection, offer bulk delete only for deletable interior barlines.
         const nMulti = _tempoDeletableBarlineIndicesPure(S.beats, S.tempoSelMulti).length;
         html += (nMulti > 1)
@@ -945,7 +953,10 @@ export function _tempoMapOnContextMenu(e) {
             host.hideContextMenu();
             const a = btn.dataset.action;
             if (a === 'pickup') { _tempoPromptPickup(); return; }
-            if (a === 'delete-multi') _tempoDeleteSelection();
+            if (a === 'half-range') _tempoHalveRange();
+            else if (a === 'double-range') _tempoDoubleRange();
+            else if (a === 'flatten-range') _tempoFlattenRange();
+            else if (a === 'delete-multi') _tempoDeleteSelection();
             else if (a === 'delete') _tempoDeleteSyncPoint(onPole);
             else if (a === 'togglelock') { S.tempoSel = onPole; _editorToggleSyncLock(); }
             else if (a === 'insert') _tempoInsertSyncPoint(xToTime(x));
@@ -1196,6 +1207,109 @@ export function _tempoDeleteSelection() {
     if (S.tempoSelMulti) S.tempoSelMulti.clear();
     host.draw();
     setStatus(res.count > 1 ? `Deleted ${res.count} barlines.` : 'Barline deleted.');
+}
+
+// ── Range operations ─────────────────────────────────────────────────
+
+/* @pure:tempo-range-ops:start */
+export function _tempoSelRangePure(beats, indices) {
+    if (!Array.isArray(beats) || !indices) return null;
+    const dbs = [...indices].filter(i => beats[i] && beats[i].measure > 0).sort((a, b) => a - b);
+    if (dbs.length < 2) return null;
+    return { lo: dbs[0], hi: dbs[dbs.length - 1] };
+}
+
+function _downbeatsInRange(beats, lo, hi) {
+    const out = [];
+    for (let i = lo; i <= hi; i++) if (beats[i] && beats[i].measure > 0) out.push(i);
+    return out;
+}
+
+export function _tempoHalveRangePure(beats, lo, hi) {
+    if (!Array.isArray(beats)) return null;
+    const dbs = _downbeatsInRange(beats, lo, hi);
+    if (dbs.length < 3) return null;
+    const out = beats.map(b => ({ ...b }));
+    let merged = 0;
+    for (let j = 1; j < dbs.length - 1; j += 2) { out[dbs[j]].measure = -1; merged++; }
+    if (!merged) return null;
+    _tempoRenumberMeasures(out);
+    return { beats: out, merged, remainder: (dbs.length - 1) % 2 === 1 };
+}
+
+export function _tempoDoubleRangePure(beats, lo, hi) {
+    if (!Array.isArray(beats)) return null;
+    const dbs = _downbeatsInRange(beats, lo, hi);
+    if (dbs.length < 2) return null;
+    const out = beats.map(b => ({ ...b }));
+    let split = 0, skipped = 0;
+    for (let j = 0; j + 1 < dbs.length; j++) {
+        const a = dbs[j], b = dbs[j + 1];
+        const mid = (beats[a].time + beats[b].time) / 2;
+        let best = -1, bestD = Infinity;
+        for (let i = a + 1; i < b; i++) {
+            const d = Math.abs(beats[i].time - mid);
+            if (d < bestD) { bestD = d; best = i; }
+        }
+        if (best < 0) { skipped++; continue; }
+        out[best].measure = 1;
+        split++;
+    }
+    if (!split) return null;
+    _tempoRenumberMeasures(out);
+    return { beats: out, split, skipped };
+}
+
+export function _tempoFlattenRangePure(beats, lo, hi) {
+    if (!Array.isArray(beats) || hi - lo < 2) return null;
+    const t0 = beats[lo].time, t1 = beats[hi].time;
+    if (!(t1 > t0)) return null;
+    const step = (t1 - t0) / (hi - lo);
+    const subOld = beats.slice(lo, hi + 1).map(b => ({ ...b }));
+    const subNew = subOld.map((b, k) => ({ ...b, time: t0 + k * step }));
+    const subFixed = _respaceWithLocksPure(subOld, subNew);
+    const out = beats.map(b => ({ ...b }));
+    for (let k = 0; k < subFixed.length; k++) out[lo + k].time = subFixed[k].time;
+    return out;
+}
+/* @pure:tempo-range-ops:end */
+
+function _tempoRangeFromSelection() {
+    return _tempoSelRangePure(S.beats, S.tempoSelMulti);
+}
+
+export function _tempoHalveRange() {
+    const range = _tempoRangeFromSelection();
+    if (!range) { setStatus('Select a range of barlines (2+) to halve.'); return; }
+    const res = _tempoHalveRangePure(S.beats, range.lo, range.hi);
+    if (!res) { setStatus('Need at least two bars in the range to halve.'); return; }
+    S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'halve-range'));
+    S.tempoSel = -1; if (S.tempoSelMulti) S.tempoSelMulti.clear();
+    host.draw();
+    setStatus(`Half-time: merged ${res.merged} barline${res.merged === 1 ? '' : 's'} — audio positions hold`
+        + `${res.remainder ? ' (odd bar left as-is)' : ''}.`);
+}
+
+export function _tempoDoubleRange() {
+    const range = _tempoRangeFromSelection();
+    if (!range) { setStatus('Select a range of barlines (2+) to double.'); return; }
+    const res = _tempoDoubleRangePure(S.beats, range.lo, range.hi);
+    if (!res) { setStatus('Nothing to split — the range has no bars with an interior beat.'); return; }
+    S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'double-range'));
+    S.tempoSel = -1; if (S.tempoSelMulti) S.tempoSelMulti.clear();
+    host.draw();
+    setStatus(`Double-time: split ${res.split} bar${res.split === 1 ? '' : 's'} — audio positions hold`
+        + `${res.skipped ? ` (${res.skipped} one-beat bar${res.skipped === 1 ? '' : 's'} skipped)` : ''}.`);
+}
+
+export function _tempoFlattenRange() {
+    const range = _tempoRangeFromSelection();
+    if (!range) { setStatus('Select a range of barlines (2+) to flatten.'); return; }
+    const res = _tempoFlattenRangePure(S.beats, range.lo, range.hi);
+    if (!res) { setStatus('Need beats between the range ends to flatten.'); return; }
+    S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })), res, 'flatten-range'));
+    host.draw();
+    setStatus('Flattened the range to a steady tempo — notes follow.');
 }
 
 // ── Time signature ──────────────────────────────────────────────────

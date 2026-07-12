@@ -168,8 +168,10 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
     const stretchHist = [];
     let misses = 0;
     let stopReason = 'end', stopDetail = 'end';
+    const toIdx = Number.isInteger(o.toIdx) ? o.toIdx : null;
     for (let k = 1; k < downs.length; k++) {
         const d = downs[k];
+        if (toIdx != null && d > toIdx) { stopReason = 'end'; stopDetail = 'bound'; break; }
         const gridInt = beats[d].time - prevOld;
         const beatsInBar = d - prevDownIdx;   // beats in the PREVIOUS measure's span
         if (!(gridInt > 0) || beatsInBar < 1) { stopReason = 'lost'; break; }
@@ -339,11 +341,12 @@ export function _suggestDismiss() {
 
 // Compute (or forward-regenerate) proposals from `anchorIdx`, using — and
 // remembering — the caller-provided onset list. Returns the proposal count.
-export function _suggestCompute(anchorIdx, onsets) {
+export function _suggestCompute(anchorIdx, onsets, opts) {
     const list = onsets || (_sug && _sug.onsets) || null;
     if (!list || !list.length) { _sug = null; return 0; }
-    const { proposals, stopReason, stopDetail } = _suggestFitPure(S.beats, list, anchorIdx);
-    _sug = { anchorIdx, proposals, stopReason, stopDetail, onsets: list, gen: editGen };
+    const useOpts = opts || (onsets ? undefined : (_sug && _sug.opts)) || undefined;
+    const { proposals, stopReason, stopDetail } = _suggestFitPure(S.beats, list, anchorIdx, useOpts);
+    _sug = { anchorIdx, proposals, stopReason, stopDetail, onsets: list, opts: useOpts, gen: editGen };
     return proposals.length;
 }
 
@@ -351,7 +354,7 @@ export function _suggestCompute(anchorIdx, onsets) {
 // newly authoritative downbeat with the remembered onsets.
 export function _suggestRegenerateFrom(anchorIdx) {
     if (!_sug) return 0;
-    return _suggestCompute(anchorIdx, _sug.onsets);
+    return _suggestCompute(anchorIdx, null);
 }
 
 // Ghost-handle hit test: x within `half` px of a proposal's ghost pole.
