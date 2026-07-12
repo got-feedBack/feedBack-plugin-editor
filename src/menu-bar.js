@@ -78,7 +78,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'resnapSelection' },
     ] },
     { title: 'Add', items: [
-        { hdr: 'Part' },
+        { hdr: 'Track' },
         { label: 'Drums…', fn: 'editorShowAddDrumsModal' },
         { label: 'Record MIDI…', fn: 'editorShowRecordMidiModal' },
         { sep: true },
@@ -126,7 +126,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleSlap' },
         { cmd: 'cyclePickDirection' },
     ] },
-    { title: 'Part', items: [
+    { title: 'Track', items: [
         { cmd: 'renamePart' },
         { cmd: 'movePartEarlier' },
         { cmd: 'movePartLater' },
@@ -153,7 +153,7 @@ export const EDITOR_MENUS = Object.freeze([
         // from ctx.toolbars at open time, same as accelerators do.
         { hdr: 'Toolbars' },
         { tb: 'file', label: 'File' },
-        { tb: 'parts', label: 'Parts' },
+        { tb: 'parts', label: 'Tracks' },
         { tb: 'edit', label: 'Edit' },
         { tb: 'transport', label: 'Transport' },
         { tb: 'grid', label: 'Grid' },

@@ -43,6 +43,7 @@ import {
     _regionMeasureLabel, _setBarSel, snapTime,
 } from './loop.js';
 import { S } from './state.js';
+import { _tempoMarkers } from './tempo.js';
 
 /* @pure:ruler:start */
 // Which interactive zone a canvas y lands in. The loop lane is the ruler's
@@ -268,6 +269,29 @@ export function drawRuler(w) {
         ctx.fillStyle = '#e8c040';
         ctx.fillRect(x, top, 1.5, RULER_H * 0.5);
         ctx.fillText(s.name, x + 3, top + 1);
+    }
+
+    // Derived tempo/meter change markers (design slice 2a): sparse labeled chips.
+    // ZERO storage — _tempoMarkers() is a pure function of S.beats, painted only
+    // through timeToX (the D-T1 invariant). Chips at (near-)coincident downbeats
+    // stack so a tempo + a meter change at the same barline both read.
+    ctx.font = 'bold 8px monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    let mkLastX = -999, mkRow = 0;
+    for (const mk of _tempoMarkers()) {
+        if (mk.time < st || mk.time > et) continue;
+        const x = timeToX(mk.time);
+        if (x < LABEL_W || x > w) continue;
+        const row = (Math.abs(x - mkLastX) < 44) ? Math.min(mkRow + 1, 2) : 0;
+        mkLastX = x; mkRow = row;
+        const isTempo = mk.kind === 'tempo';
+        const cy = top + 1 + row * 8.5;
+        const tw = ctx.measureText(mk.label).width;
+        ctx.fillStyle = isTempo ? 'rgba(56,189,248,0.16)' : 'rgba(167,139,250,0.16)';
+        ctx.fillRect(x + 2, cy, tw + 5, 8);
+        ctx.fillStyle = isTempo ? '#7dd3fc' : '#c4b5fd';
+        ctx.fillText(mk.label, x + 4, cy + 0.5);
     }
 
     // Baseline + playhead head (the triangle the scrub half drags).
