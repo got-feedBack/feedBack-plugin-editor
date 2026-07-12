@@ -19,40 +19,93 @@
  * ==================================================================== */
 
 /* ── Surfaces ─────────────────────────────────────────────────────── */
-#plugin-editor[data-v3-layout="1"] .bg-dark-900 { background-color: #0f172a; } /* app bg / canvas wrap */
-#plugin-editor[data-v3-layout="1"] .bg-dark-800 { background-color: #1e293b; } /* bars + panels (fb-card) */
-#plugin-editor[data-v3-layout="1"] .bg-dark-700 { background-color: #1e293b; } /* modals (fb-card) */
-#plugin-editor[data-v3-layout="1"] .bg-dark-600 { background-color: #334155; } /* neutral buttons */
-#plugin-editor[data-v3-layout="1"] .bg-dark-500 { background-color: #475569; } /* lighter / hover base */
+/* ── Theme variables: light / medium / dark CHROME (the timeline canvas keeps
+ *    its own dark palette regardless). The defaults below ARE the original dark
+ *    look, so an editor with no theme pref is byte-for-byte unchanged. The
+ *    `data-editor-theme` attribute is stamped on #plugin-editor by
+ *    editorApplyTheme() from the `editorTheme` localStorage pref. ──────────── */
+#plugin-editor[data-v3-layout="1"] {
+    --ed-app: #0f172a;          /* app bg / canvas wrap */
+    --ed-panel: #1e293b;        /* bars, panels, modals (fb-card) */
+    --ed-field: #0b1220;        /* inset wells (search, lists, inputs) */
+    --ed-btn: #334155;          /* neutral buttons */
+    --ed-btn-hover: #475569;    /* button hover / lighter base */
+    --ed-border: #334155;       /* borders, dividers, pips */
+    --ed-text-strong: #f8fafc;  /* .text-white */
+    --ed-text-2: #e2e8f0;       /* .text-gray-200 */
+    --ed-text: #cbd5e1;         /* .text-gray-300 */
+    --ed-text-dim: #94a3b8;     /* .text-gray-400/500 */
+    --ed-text-faint: #64748b;   /* .text-gray-600 */
+    --ed-accent: #0ea5e9;       /* sky primary */
+    --ed-accent-hover: #38bdf8;
+}
+/* Medium — a true mid-tone (dim, not dark): mid-slate surfaces, light text. */
+#plugin-editor[data-v3-layout="1"][data-editor-theme="medium"] {
+    --ed-app: #3a4150;
+    --ed-panel: #454d5e;
+    --ed-field: #2f3542;
+    --ed-btn: #566076;
+    --ed-btn-hover: #67728a;
+    --ed-border: #59627a;
+    --ed-text-strong: #ffffff;
+    --ed-text-2: #eef2f8;
+    --ed-text: #dbe1ea;
+    --ed-text-dim: #aeb7c6;
+    --ed-text-faint: #8b95a6;
+    --ed-accent: #38bdf8;
+    --ed-accent-hover: #7dd3fc;
+}
+/* Light — slate-on-white; the darkest "text" tokens become the DARKEST inks. */
+#plugin-editor[data-v3-layout="1"][data-editor-theme="light"] {
+    --ed-app: #eef2f7;
+    --ed-panel: #ffffff;
+    --ed-field: #f1f5f9;
+    --ed-btn: #e2e8f0;
+    --ed-btn-hover: #cbd5e1;
+    --ed-border: #d3dae4;
+    --ed-text-strong: #0f172a;
+    --ed-text-2: #1e293b;
+    --ed-text: #334155;
+    --ed-text-dim: #556274;
+    --ed-text-faint: #8a94a3;
+    --ed-accent: #0284c7;
+    --ed-accent-hover: #0369a1;
+}
+
+#plugin-editor[data-v3-layout="1"] .bg-dark-900 { background-color: var(--ed-app); }    /* app bg / canvas wrap */
+#plugin-editor[data-v3-layout="1"] .bg-dark-800 { background-color: var(--ed-panel); }  /* bars + panels (fb-card) */
+#plugin-editor[data-v3-layout="1"] .bg-dark-700 { background-color: var(--ed-panel); }  /* modals (fb-card) */
+#plugin-editor[data-v3-layout="1"] .bg-dark-600 { background-color: var(--ed-btn); }    /* neutral buttons */
+#plugin-editor[data-v3-layout="1"] .bg-dark-500 { background-color: var(--ed-btn-hover); } /* lighter / hover base */
 
 /* Inset wells (search box, track lists, metadata inputs) sit darker than
    their panel so they read as fields. */
 #plugin-editor[data-v3-layout="1"] input.bg-dark-800,
 #plugin-editor[data-v3-layout="1"] select.bg-dark-800,
-#plugin-editor[data-v3-layout="1"] input.bg-dark-700 { background-color: #0b1220; }
+#plugin-editor[data-v3-layout="1"] input.bg-dark-700 { background-color: var(--ed-field); }
 
 /* ── Hover states (escaped Tailwind class names) ──────────────────── */
-#plugin-editor[data-v3-layout="1"] .hover\:bg-dark-500:hover { background-color: #475569; }
-#plugin-editor[data-v3-layout="1"] .hover\:bg-dark-600:hover { background-color: #334155; }
-#plugin-editor[data-v3-layout="1"] .hover\:text-white:hover  { color: #f8fafc; }
+#plugin-editor[data-v3-layout="1"] .hover\:bg-dark-500:hover { background-color: var(--ed-btn-hover); }
+#plugin-editor[data-v3-layout="1"] .hover\:bg-dark-600:hover { background-color: var(--ed-btn); }
+#plugin-editor[data-v3-layout="1"] .hover\:text-white:hover  { color: var(--ed-text-strong); }
 
 /* ── Borders / dividers ───────────────────────────────────────────── */
 #plugin-editor[data-v3-layout="1"] .border-gray-800,
-#plugin-editor[data-v3-layout="1"] .border-gray-700 { border-color: #334155; } /* fb-border */
-#plugin-editor[data-v3-layout="1"] .bg-gray-700 { background-color: #334155; } /* toolbar divider pips */
+#plugin-editor[data-v3-layout="1"] .border-gray-700 { border-color: var(--ed-border); } /* fb-border */
+#plugin-editor[data-v3-layout="1"] .bg-gray-700 { background-color: var(--ed-border); } /* toolbar divider pips */
 
 /* ── Text ─────────────────────────────────────────────────────────── */
-#plugin-editor[data-v3-layout="1"] .text-white    { color: #f8fafc; }
-#plugin-editor[data-v3-layout="1"] .text-gray-200 { color: #e2e8f0; }
-#plugin-editor[data-v3-layout="1"] .text-gray-300 { color: #cbd5e1; }
-#plugin-editor[data-v3-layout="1"] .text-gray-400 { color: #94a3b8; }
-#plugin-editor[data-v3-layout="1"] .text-gray-500 { color: #94a3b8; }
-#plugin-editor[data-v3-layout="1"] .text-gray-600 { color: #64748b; }
+#plugin-editor[data-v3-layout="1"] .text-white    { color: var(--ed-text-strong); }
+#plugin-editor[data-v3-layout="1"] .text-gray-200 { color: var(--ed-text-2); }
+#plugin-editor[data-v3-layout="1"] .text-gray-300 { color: var(--ed-text); }
+#plugin-editor[data-v3-layout="1"] .text-gray-400 { color: var(--ed-text-dim); }
+#plugin-editor[data-v3-layout="1"] .text-gray-500 { color: var(--ed-text-dim); }
+#plugin-editor[data-v3-layout="1"] .text-gray-600 { color: var(--ed-text-faint); }
 
 /* ── Primary action (Save) — legacy accent (blue) → fb sky primary ── */
-#plugin-editor[data-v3-layout="1"] .bg-accent { background-color: #0ea5e9; }
-#plugin-editor[data-v3-layout="1"] .hover\:bg-accent-light:hover { background-color: #38bdf8; }
-#plugin-editor[data-v3-layout="1"] .text-accent { color: #0ea5e9; }
+#plugin-editor[data-v3-layout="1"] .bg-accent { background-color: var(--ed-accent); }
+#plugin-editor[data-v3-layout="1"] .hover\:bg-accent-light:hover { background-color: var(--ed-accent-hover); }
+#plugin-editor[data-v3-layout="1"] .text-accent { color: var(--ed-accent); }
 #plugin-editor[data-v3-layout="1"] .border-accent\/50 { border-color: rgba(14,165,233,.5); }
 #plugin-editor[data-v3-layout="1"] .border-accent\/30 { border-color: rgba(14,165,233,.3); }
 #plugin-editor[data-v3-layout="1"] .bg-accent\/5 { background-color: rgba(14,165,233,.05); }
@@ -101,19 +154,19 @@
 #plugin-editor .editor-lint-pop {
     display: flex; flex-direction: column; gap: 2px;
     min-width: 300px; max-width: 460px; max-height: 40vh; overflow-y: auto;
-    background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+    background: var(--ed-panel, #1e293b); border: 1px solid var(--ed-border, #334155); border-radius: 8px;
     padding: 8px; box-shadow: 0 10px 28px rgba(0,0,0,0.55);
 }
 #plugin-editor .editor-lint-head {
     font-size: 10px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .08em; color: #64748b; margin-bottom: 4px;
+    letter-spacing: .08em; color: var(--ed-text-faint, #64748b); margin-bottom: 4px;
 }
 #plugin-editor .editor-lint-row {
     display: flex; align-items: baseline; gap: 8px; width: 100%;
     padding: 3px 8px; border: none; border-radius: 4px; text-align: left;
-    background: transparent; color: #cbd5e1; cursor: pointer; font-size: 12px;
+    background: transparent; color: var(--ed-text, #cbd5e1); cursor: pointer; font-size: 12px;
 }
-#plugin-editor .editor-lint-row:hover { background: #0ea5e9; color: #f8fafc; }
+#plugin-editor .editor-lint-row:hover { background: var(--ed-accent, #0ea5e9); color: #f8fafc; }
 #plugin-editor .editor-lint-rule {
     flex-shrink: 0; font-size: 10px; font-weight: 700; color: #fbbf24;
 }
@@ -175,21 +228,21 @@
     position: relative;
     display: flex; align-items: center; gap: 2px;
     padding: 2px 8px;
-    background: #0b1220;
-    border-bottom: 1px solid #263349;
+    background: var(--ed-field, #0b1220);
+    border-bottom: 1px solid var(--ed-border, #263349);
     font-size: 12px;
 }
 #plugin-editor .editor-menu-title {
     padding: 3px 9px; border: none; border-radius: 4px;
-    background: transparent; color: #cbd5e1; cursor: pointer; font-size: 12px;
+    background: transparent; color: var(--ed-text, #cbd5e1); cursor: pointer; font-size: 12px;
 }
-#plugin-editor .editor-menu-title:hover { background: #1e293b; color: #f8fafc; }
-#plugin-editor .editor-menu-title.is-open { background: #0ea5e9; color: #f8fafc; }
+#plugin-editor .editor-menu-title:hover { background: var(--ed-panel, #1e293b); color: var(--ed-text-strong, #f8fafc); }
+#plugin-editor .editor-menu-title.is-open { background: var(--ed-accent, #0ea5e9); color: #f8fafc; }
 #plugin-editor .editor-menu-drop {
     position: absolute; top: 100%; z-index: 70;
     min-width: 260px; max-height: 70vh; overflow-y: auto;
     display: flex; flex-direction: column;
-    background: #1e293b; border: 1px solid #334155; border-radius: 0 0 8px 8px;
+    background: var(--ed-panel, #1e293b); border: 1px solid var(--ed-border, #334155); border-radius: 0 0 8px 8px;
     box-shadow: 0 10px 28px rgba(0,0,0,0.55);
     padding: 4px;
 }
@@ -197,16 +250,16 @@
 #plugin-editor .editor-menu-item {
     display: flex; align-items: center; justify-content: space-between; gap: 18px;
     padding: 3px 10px; border: none; border-radius: 4px;
-    background: transparent; color: #e2e8f0; cursor: pointer;
+    background: transparent; color: var(--ed-text-2, #e2e8f0); cursor: pointer;
     font-size: 12px; text-align: left; width: 100%;
 }
 #plugin-editor .editor-menu-item:hover:not([aria-disabled]),
 #plugin-editor .editor-menu-item:focus:not([aria-disabled]) {
-    background: #0ea5e9; color: #f8fafc; outline: none;
+    background: var(--ed-accent, #0ea5e9); color: #f8fafc; outline: none;
 }
-#plugin-editor .editor-menu-item[aria-disabled] { color: #475569; cursor: default; }
+#plugin-editor .editor-menu-item[aria-disabled] { color: var(--ed-text-faint, #475569); cursor: default; }
 #plugin-editor .editor-menu-key {
-    font-size: 10px; color: #64748b;
+    font-size: 10px; color: var(--ed-text-faint, #64748b);
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     white-space: nowrap;
 }
@@ -214,14 +267,14 @@
 #plugin-editor .editor-menu-item:focus:not([aria-disabled]) .editor-menu-key { color: #e0f2fe; }
 #plugin-editor .editor-menu-soon {
     font-size: 9px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .06em; color: #64748b;
-    border: 1px solid #334155; border-radius: 3px; padding: 0 4px; margin-left: 6px;
+    letter-spacing: .06em; color: var(--ed-text-faint, #64748b);
+    border: 1px solid var(--ed-border, #334155); border-radius: 3px; padding: 0 4px; margin-left: 6px;
 }
 #plugin-editor .editor-menu-hdr {
     font-size: 9px; font-weight: 800; text-transform: uppercase;
-    letter-spacing: .1em; color: #64748b; padding: 5px 10px 2px;
+    letter-spacing: .1em; color: var(--ed-text-faint, #64748b); padding: 5px 10px 2px;
 }
-#plugin-editor .editor-menu-sep { height: 1px; background: #334155; margin: 3px 6px; }
+#plugin-editor .editor-menu-sep { height: 1px; background: var(--ed-border, #334155); margin: 3px 6px; }
 /* ── Transport control bar + LCD (workspace-shell B2) ─────────────── */
 /* The bar itself: one always-present row directly above the timeline.
    Skin GRAMMAR ported from Virtuoso's .virtuoso-lcd-* (recessed panel,
@@ -231,24 +284,24 @@
 #plugin-editor .editor-transport-bar {
     display: flex; align-items: center; gap: 6px;
     padding: 4px 10px;
-    background: #131c2e;
-    border-bottom: 1px solid #263349;
+    background: var(--ed-panel, #131c2e);
+    border-bottom: 1px solid var(--ed-border, #263349);
     flex-wrap: wrap;
 }
 #plugin-editor .editor-transport-group { display: flex; align-items: center; gap: 4px; }
-#plugin-editor .editor-transport-sep { width: 1px; height: 16px; background: #334155; }
+#plugin-editor .editor-transport-sep { width: 1px; height: 16px; background: var(--ed-border, #334155); }
 #plugin-editor .editor-transport-btn {
     padding: 2px 8px; border-radius: 4px; font-size: 12px; line-height: 1.4;
-    background: #24324a; color: #cbd5e1; border: none; cursor: pointer;
+    background: var(--ed-btn, #24324a); color: var(--ed-text, #cbd5e1); border: none; cursor: pointer;
 }
-#plugin-editor .editor-transport-btn:hover { background: #334a6b; color: #f8fafc; }
-#plugin-editor .editor-transport-btn[aria-pressed="true"] { background: #0ea5e9; color: #f8fafc; }
+#plugin-editor .editor-transport-btn:hover { background: var(--ed-btn-hover, #334a6b); color: var(--ed-text-strong, #f8fafc); }
+#plugin-editor .editor-transport-btn[aria-pressed="true"] { background: var(--ed-accent, #0ea5e9); color: #f8fafc; }
 #plugin-editor .editor-transport-btn:disabled { opacity: .45; cursor: not-allowed; }
 #plugin-editor .editor-transport-rec[aria-pressed="true"],
 #plugin-editor .editor-transport-rec:hover { background: #9f1239; }
 #plugin-editor .editor-transport-rec { color: #fb7185; }
 #plugin-editor .editor-transport-snap {
-    background: #24324a; color: #cbd5e1; border: none; border-radius: 4px;
+    background: var(--ed-btn, #24324a); color: var(--ed-text, #cbd5e1); border: none; border-radius: 4px;
     font-size: 11px; padding: 2px 4px; outline: none;
 }
 #plugin-editor .editor-transport-customize { margin-left: auto; }
