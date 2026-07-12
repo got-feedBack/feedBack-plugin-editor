@@ -799,12 +799,20 @@
                 music, place the notes, mark the tempo and sections, and build a <code>.feedpak</code>.
                 Keys below are the default <strong>FeedBack</strong> profile — press
                 <kbd>?</kbd> for the full, profile-aware shortcut list.</p>
+            <figure>
+                <img src="/api/plugins/editor/assets/guide/workspace.png" alt="The Song Editor loaded with a song — menu bar, toolbar, transport, the timeline with waveform and notes, and the inspector.">
+                <figcaption>The editor with a song loaded: the menu bar and toolbars up top, the timeline (waveform + colored note blocks per string) in the middle, the transport and inspector around it.</figcaption>
+            </figure>
 
             <h3>1 · Start a project</h3>
             <ul>
                 <li><strong>From a recording</strong> — load audio and you get an empty timeline over the waveform. Set the tempo grid (§6), then place notes.</li>
                 <li><strong>From an import</strong> — <em>File ▸ Import</em> reads Guitar Pro (GP3–GP8), MIDI (with its tempo map), community arrangement XML, GoPlayAlong sync sidecars, and existing <code>.feedpak</code> files. All normalize into one model, so editing is the same afterward.</li>
             </ul>
+            <figure>
+                <img src="/api/plugins/editor/assets/guide/import.png" alt="The Create New Arrangement dialog: choose which parts to arrange, import a chart or audio, and fill in song details.">
+                <figcaption><strong>New…</strong> opens this: pick the parts you're arranging, drop in a chart and/or audio (or a YouTube URL), and fill in the song details.</figcaption>
+            </figure>
             <p class="tip">Nothing touches your library until you <strong>Build</strong> (§9). Save early with <kbd>Ctrl</kbd>+<kbd>S</kbd>.</p>
 
             <h3>2 · The workspace</h3>
@@ -835,6 +843,10 @@
                 <li><strong>Sustain</strong> — drag the tail, or <kbd>[</kbd>/<kbd>]</kbd>. <strong>Duplicate</strong> to next position <kbd>Ctrl</kbd>+<kbd>D</kbd>; <strong>select matching</strong> <kbd>Ctrl</kbd>+<kbd>L</kbd>; <strong>resnap</strong> <kbd>Shift</kbd>+<kbd>R</kbd>.</li>
             </ul>
             <p><strong>Techniques</strong> toggle on the selection — hammer-on <kbd>H</kbd>, pull-off <kbd>P</kbd>, bend <kbd>B</kbd>, slide <kbd>S</kbd>, palm-mute <kbd>M</kbd>, vibrato <kbd>V</kbd>, harmonics <kbd>N</kbd>/<kbd>Shift</kbd>+<kbd>N</kbd>, accent <kbd>A</kbd>, mute <kbd>X</kbd>. The rest are in the <em>Techniques</em> menu with their keys shown.</p>
+            <figure>
+                <img src="/api/plugins/editor/assets/guide/notes.png" alt="The timeline: colored note blocks laid out per string, with the anchors and handshape lanes along the bottom.">
+                <figcaption>Notes are colored blocks, one lane per string (e·B·G·D·A·E). The number on a block is its fret; the lanes along the bottom hold anchors and handshapes (§8).</figcaption>
+            </figure>
             <p class="tip">The <strong>playability</strong> and <strong>drum-limb</strong> lints flag awkward or impossible fingerings — they <em>advise</em>, never block or auto-change your chart.</p>
 
             <h3>5 · Parts</h3>
@@ -847,6 +859,10 @@
                 <li><strong>Set a constant BPM</strong> — type into the BPM box for a single-tempo song.</li>
                 <li><strong>Tempo Map mode</strong> (<kbd>T</kbd>) — the precise tool. Drag a barline onto its downbeat and neighbours re-space to fit. Inside it: <kbd>G</kbd> suggest a fit from the audio's onsets (click a ghost to accept), <kbd>Shift</kbd>+<kbd>B</kbd> tap tempo, <kbd>B</kbd> set BPM, <kbd>M</kbd> metric modulation, <kbd>I</kbd> mark a barline, <kbd>Del</kbd> delete one, <kbd>Shift</kbd>+<kbd>T</kbd> time signature. <strong>Beat-lock</strong> a hand-verified barline so later auto-fits leave its time alone (your manual edits are always kept).</li>
             </ol>
+            <figure>
+                <img src="/api/plugins/editor/assets/guide/tempomap.png" alt="Tempo Map mode: vertical barline poles across the timeline, each labeled with its measure and BPM, over the waveform.">
+                <figcaption>Tempo Map mode (<kbd>T</kbd>): each vertical pole is a barline (labeled with its measure and BPM). Drag one onto its downbeat in the waveform and the bars around it re-space to fit.</figcaption>
+            </figure>
             <p>The <strong>Offset</strong> box shifts the whole chart in time against the recording — for when the notes are right relative to each other but the chart sits a few ms early or late.</p>
             <p class="tip">Sync, BPM-rescale, and Offset move <strong>every part at once</strong> and are <strong>undoable</strong> — experiment freely.</p>
 
@@ -855,6 +871,10 @@
                 <li><strong>Drums</strong> — a piece-lane grid (rows = kit pieces, columns = grid positions). Click to place; the pad strip monitors a MIDI e-kit. Row density (Full / Compact) is in <em>View</em>.</li>
                 <li><strong>Structure</strong> menu — sections <kbd>Shift</kbd>+<kbd>M</kbd>, phrases <kbd>Shift</kbd>+<kbd>P</kbd>, hand anchors <kbd>Shift</kbd>+<kbd>F</kbd>, handshapes <kbd>Ctrl</kbd>+<kbd>H</kbd>, tone changes <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>.</li>
             </ul>
+            <figure>
+                <img src="/api/plugins/editor/assets/guide/drums.png" alt="The Add Drum Arrangement dialog, offering to import a Guitar Pro or MIDI drum track.">
+                <figcaption>Adding drums: import a Guitar Pro or MIDI drum track, then edit it on the piece-lane grid.</figcaption>
+            </figure>
 
             <h3>9 · Save &amp; build</h3>
             <p><kbd>Ctrl</kbd>+<kbd>S</kbd> saves your session. <strong>Build</strong> assembles the finished <code>.feedpak</code> into your library — the only step that changes what the rest of the app sees. Build once the grid fits, the notes are placed, and guide-claps-against-the-recording sounds right.</p>

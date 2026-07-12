@@ -9,6 +9,8 @@ covers the FeedBack shortcut profile (the default); the EOF Legacy profile
 remaps some keys — switch profiles in **Help ▸ Shortcut profile** or the
 shortcut panel (`?`).
 
+![The Song Editor loaded with a song: the menu bar and toolbars up top, the timeline (waveform and colored note blocks per string) in the middle, the transport and inspector around it.](../assets/guide/workspace.png)
+
 ---
 
 ## 1. Start a project
@@ -23,6 +25,8 @@ You begin one of two ways:
   **arrangement XML**, **GoPlayAlong** sync sidecars, and existing
   **`.feedpak`** / archive files. Every format normalizes into the same internal
   model, so editing works the same regardless of where a chart came from.
+
+![The Create New Arrangement dialog: choose which parts to arrange, import a chart or audio (or paste a YouTube URL), and fill in the song details.](../assets/guide/import.png)
 
 Import lives under the **File** menu (Import ▸ …). MIDI and XML/GP imports keep
 their note data; a GoPlayAlong sidecar brings bar→time sync points only (no
@@ -72,6 +76,8 @@ the command palette.
 ---
 
 ## 4. Edit notes
+
+![The timeline: colored note blocks laid out per string (e·B·G·D·A·E), the number on each block its fret, with the anchors and handshape lanes along the bottom.](../assets/guide/notes.png)
 
 Select a note by clicking it; drag a box to select several. Then:
 
@@ -132,6 +138,8 @@ its bar-and-beat, and its clock time is derived from where the barlines sit. Mov
 the barlines and every note rides along. The **ruler is authoritative** — you
 fit bars and beats to the fixed recording, never the other way around.
 
+![Tempo Map mode: vertical barline poles across the timeline, each labeled with its measure and BPM, over the waveform.](../assets/guide/tempomap.png)
+
 Three ways to set the tempo, from coarse to fine:
 
 1. **Sync tempo to audio** (Tempo menu) — detects the recording's BPM and scales
@@ -166,6 +174,8 @@ few milliseconds early or late. It moves every part together and is undoable.
 ---
 
 ## 7. Drums
+
+![The Add Drum Arrangement dialog, offering to import a Guitar Pro or MIDI drum track.](../assets/guide/drums.png)
 
 Drum parts use a **piece-lane grid**: rows are kit pieces (kick, snare, hats…),
 columns are grid positions. Click to place a hit; the **drum pad strip** maps a

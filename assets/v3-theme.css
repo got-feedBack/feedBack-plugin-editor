@@ -410,3 +410,11 @@ html.fb-immersive #plugin-editor .editor-root {
     padding: 0.5rem 0.75rem; border-radius: 0 6px 6px 0; margin: 0.6rem 0;
     color: #cbd5e1;
 }
+#plugin-editor .editor-guide-body figure { margin: 0.85rem 0 1rem; }
+#plugin-editor .editor-guide-body figure img {
+    display: block; width: 100%; height: auto;
+    border: 1px solid #374151; border-radius: 8px; background: #0b0f17;
+}
+#plugin-editor .editor-guide-body figcaption {
+    margin-top: 0.4rem; font-size: 0.78rem; color: #9ca3af;
+}
