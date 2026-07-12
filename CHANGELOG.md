@@ -68,6 +68,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says so), a checkpoint dropped by the undo cap or a session reset just falls
   back to that, and a refused undo can never spin.
 
+- **Select and delete multiple barlines at once** in Tempo Map mode. Shift-click
+  a second barline to select the contiguous range, drag a box on empty grid to
+  rubber-band-select, or Ctrl+A to select every barline; the selection washes
+  amber. Delete (or right-click ▸ "Delete N barlines") demotes them all in one
+  undoable step — the first and last barline are always kept (they bound the
+  map). Escape clears the selection. The single focused barline (BPM / tap /
+  lock / modulate / suggest) is unchanged; the multi-selection is separate and
+  is dropped on any grid-topology change.
+
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:
   Transport ▸ Guide voice ▸ Instrument (GM), with a per-part-kind instrument
