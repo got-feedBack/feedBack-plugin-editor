@@ -22,6 +22,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Mixer panel** (workspace-shell B6). The floating audio-mixer popover
+  (and the never-implemented stem-mixer stub it superseded) consolidate
+  into one first-class **docked Mixer panel** beside the canvas (the
+  inspector idiom): one channel strip per part — volume, **M**ute,
+  **S**olo — over the recording / guide / click bus faders and the edit
+  blip, reachable from `View ▸ Panels ▸ Mixer`, the toolbar `Mix` button,
+  the transport's left util group, and `Shift+C` (all four route through
+  one toggle). The strips own the canonical per-part mix state
+  (`S.partMix` — the same state the Parts-gutter M/S/A and per-part
+  instrument voices will read when they arrive): today the only per-part
+  sound is the guide voice, so mute/solo/volume gate and scale the claps
+  for the part being edited, under the DAW rule (mute wins; any solo
+  isolates). Part solo **never** touches the recording — the reference is
+  a bus on its own transparent gain path (D5). Bus levels stay on the
+  existing `editorMix*` prefs; panel open state is an editor pref
+  (`editorMixerPanel`, never the pack); part mute/solo is session state
+  and resets with the loaded song. Audio consults the state through an
+  inert-default `host.partClapState` hook, so nothing changes until the
+  panel says so.
 - **Foolproof editor job transitions + Save As.** Opening another feedpak
   or starting New now offers Save / Don't Save / Cancel when the current
   job is dirty; a failed save blocks the transition. Active MIDI takes are

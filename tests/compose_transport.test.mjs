@@ -157,6 +157,23 @@ t('_composeSongDuration on a degenerate (<2-beat) grid with no content is 0', ()
     assert.strictEqual(makeComposeDuration(S, [])(), 0);       // nothing to play ⇒ startPlayback bails
 });
 
+// ── 3b. compose duration is INVARIANT to the mixer's mute/solo (B6) ──────────
+// Regression guard: the mixer's per-part audible gate once lived INSIDE
+// _guideSourceTimes(), whose second consumer is _composeSongDuration(). Muting
+// the edited part (or soloing another) collapsed contentEnd → 0, truncating
+// S.duration or refusing to start. The gate must live at the clap SCHEDULER
+// (_guideTick), never on the shared event-source the duration reads.
+t('_guideSourceTimes does NOT consult the part mute/solo gate (keeps song duration whole)', () => {
+    const body = extractFn('_guideSourceTimes');
+    assert.ok(!/partClapState/.test(body),
+        'the audible gate must not sit in _guideSourceTimes — _composeSongDuration reads it, so mute/solo would shrink the transport');
+});
+t('the clap scheduler (_guideTick) DOES gate on partClapState().audible (claps still muted)', () => {
+    const body = extractFn('_guideTick');
+    assert.ok(/partClapState\(\)\.audible/.test(body),
+        'the mixer mute/solo gate belongs at the scheduler, so a muted part fires no clap voices');
+});
+
 // ── 4. buffer-less transport advances the cursor ────────────────────────────
 t('_anchorTransportAtCursor pins the anchor from the cursor (no source needed)', () => {
     let resetCalls = 0;

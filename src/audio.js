@@ -666,7 +666,7 @@ function _ensureMasterBus() {
 // Fader percents, cached so audio paths never read localStorage
 // synchronously mid-schedule; seeded once, kept in sync by _mixSetBusGain.
 let _mixPctCache = null;
-function _mixLoadPct() {
+export function _mixLoadPct() {
     if (_mixPctCache) return _mixPctCache;
     let ref = null, guide = null, click = null;
     try {
@@ -819,6 +819,10 @@ export function _auditionPitch(midi) {
 // Event times for the active editing surface: the drum grid claps drum hits,
 // every other view claps the current arrangement's (time-sorted) notes.
 function _guideSourceTimes() {
+    // NB: NOT gated by per-part mute/solo — this is the surface's raw event
+    // set, also consumed by _composeSongDuration() to bound the song. The
+    // mixer's audible gate lives at the clap scheduler (below), so muting a
+    // part silences its claps without shrinking the transport (mixer panel, B6).
     if (S.drumEditMode) {
         const hits = (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab.hits : [];
         return _guideSanitizeTimesPure(hits.map(h => h.t));
@@ -830,6 +834,11 @@ function _guideSourceTimes() {
 function _guideClapVoiceAt(when) {
     const bus = _ensureMasterBus();
     if (!bus) return;
+    // The part's strip volume (mixer panel, B6) scales the clap peak; at
+    // zero the voice is skipped entirely (an exponential ramp target must
+    // stay positive, and a silent oscillator is pointless bookkeeping).
+    const partVol = host.partClapState().vol;
+    if (!(partVol > 0)) return;
     const ctx = S.audioCtx;
     const osc = ctx.createOscillator();
     osc.type = 'triangle';
@@ -838,7 +847,7 @@ function _guideClapVoiceAt(when) {
     // Soft tick: 3 ms ramp in (never a 0 ms transient) and ~45 ms exponential
     // decay — a locatable placement cue without startle.
     g.gain.setValueAtTime(0.0001, when);
-    g.gain.exponentialRampToValueAtTime(0.8, when + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.8 * Math.min(1, partVol), when + 0.003);
     g.gain.exponentialRampToValueAtTime(0.0001, when + 0.048);
     osc.connect(g);
     g.connect(bus.guideGain);
@@ -926,7 +935,11 @@ function _guideTick() {
     // event exactly at the cursor audible.
     const from = Math.max(_guideScheduledUntil, nowChart - 0.005);
     if (to <= from) return;
-    if (claps) {
+    // Per-part mute/solo (mixer panel, B6): the active surface's part gates
+    // its own claps here (only the CLAPS — the reference recording is a bus,
+    // not a part, and stays audible under any solo, D5). Gated at the
+    // scheduler, not in _guideSourceTimes, so it never touches song duration.
+    if (claps && host.partClapState().audible) {
         const times = _guideClapTimesInWindowPure(_guideSourceTimes(), from, to);
         for (const t of times) {
             // Cross-tick dedupe: skip an event in the same 1 ms bucket as the last
@@ -1116,41 +1129,11 @@ export function _editorToggleMetronome() {
 }
 // window.editorToggleMetronome re-attached in main.js
 
-// ── Audio mixer popover ──────────────────────────────────────────────
-export function _refreshMixerBtn() {
-    const btn = document.getElementById('editor-mixer-btn');
-    if (!btn) return;
-    const panel = document.getElementById('editor-audio-mixer');
-    const open = !!(panel && !panel.classList.contains('hidden'));
-    btn.classList.toggle('bg-accent', open);
-    btn.classList.toggle('hover:bg-accent-light', open);
-    btn.classList.toggle('bg-dark-600', !open);
-    btn.classList.toggle('hover:bg-dark-500', !open);
-    btn.setAttribute('aria-pressed', open ? 'true' : 'false');
-}
-
-function _refreshMixerUI() {
-    const pcts = _mixLoadPct();
-    for (const [bus, id] of [['ref', 'editor-mix-ref'], ['guide', 'editor-mix-guide'], ['click', 'editor-mix-click']]) {
-        const slider = document.getElementById(id);
-        const label = document.getElementById(id + '-val');
-        if (slider) slider.value = String(pcts[bus]);
-        if (label) label.textContent = pcts[bus] + '%';
-    }
-    const blip = document.getElementById('editor-mix-blip');
-    if (blip) blip.checked = editorEditBlipEnabled();
-}
-
-export function _editorToggleMixer(force) {
-    const panel = document.getElementById('editor-audio-mixer');
-    if (!panel) return false;
-    const show = force === undefined ? panel.classList.contains('hidden') : !!force;
-    panel.classList.toggle('hidden', !show);
-    if (show) _refreshMixerUI();
-    _refreshMixerBtn();
-    return true;
-}
-// window.editorToggleMixer re-attached in main.js
+// ── Audio mixer faders ───────────────────────────────────────────────
+// The mixer UI moved to src/mixer-panel.js (workspace-shell B6 — the docked
+// panel that replaced the floating popover). This module keeps the bus
+// faders' write path and prefs; the panel seeds its controls through
+// host.mixUiState (wired in main.js to _mixLoadPct + editorEditBlipEnabled).
 
 export function editorSetMixLevel(bus, val) {
     if (bus !== 'ref' && bus !== 'guide' && bus !== 'click') return;
@@ -1182,7 +1165,6 @@ export function initAudio() {
     _refreshSnapModeBtn();
     _refreshGuideBtn();
     _refreshMetronomeBtn();
-    _refreshMixerBtn();
 }
 
 

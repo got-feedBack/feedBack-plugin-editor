@@ -122,6 +122,9 @@ export async function loadCDLC(filename, options = {}) {
         S.sessionId = data.session_id;
         S.format = data.format || 'archive';
         S.arrangements = data.arrangements || [];
+        // New song, new strips: part mute/solo/volume is session UI state
+        // keyed by part index, so it must not leak across loads (B6).
+        S.partMix = {};
         // Sloppak sources don't pad tuning to 6 slots like RS XML does,
         // so a bass arrangement arriving with tuning.length === 6 from
         // a sloppak is a genuine 6-string bass (not padded 4-string).

@@ -357,3 +357,23 @@ html.fb-immersive #plugin-editor .editor-root {
     min-width: 11rem;
     border-radius: 8px;
 }
+
+/* ── Mixer panel (workspace-shell B6) ─────────────────────────────── */
+/* Per-strip M / S toggles: quiet squares that light in the DAW colors
+   (mute amber, solo sky) via aria-pressed — same pattern as the drum-pad
+   listen/kit toggles above. */
+#plugin-editor .editor-mix-ms {
+    width: 1.35rem; height: 1.35rem;
+    border-radius: 4px;
+    border: 1px solid #374151;
+    background: #1f2937;
+    color: #9ca3af;
+    font-size: 10px; font-weight: 600; line-height: 1;
+}
+#plugin-editor .editor-mix-ms:hover { background: #374151; color: #e5e7eb; }
+#plugin-editor .editor-mix-ms[data-mix-act="mute"][aria-pressed="true"] {
+    background: #b45309; border-color: #d97706; color: #fef3c7;
+}
+#plugin-editor .editor-mix-ms[data-mix-act="solo"][aria-pressed="true"] {
+    background: #0369a1; border-color: #0ea5e9; color: #e0f2fe;
+}

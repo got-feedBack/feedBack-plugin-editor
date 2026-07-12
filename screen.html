@@ -51,7 +51,6 @@
         <button id="editor-strings-btn" onclick="editorShowStringsModal()" class="px-3 py-1 bg-amber-800 hover:bg-amber-700 rounded text-xs font-medium hidden" title="Add or remove strings on the active arrangement (extended-range guitar / bass)">⋮ Strings</button>
         <button id="editor-record-midi-btn" onclick="editorShowRecordMidiModal()" class="px-3 py-1 bg-rose-900 hover:bg-rose-800 rounded text-xs font-medium hidden disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-rose-900" title="Record a Keys arrangement live from a MIDI keyboard (Chrome/Edge)">● Record</button>
         <button id="editor-tones-btn" onclick="editorShowTonesModal()" class="px-3 py-1 bg-cyan-900 hover:bg-cyan-800 rounded text-xs font-medium hidden" title="Tone slot names and base tone for this arrangement">♪ Tones…</button>
-        <button id="editor-stems-mixer-btn" onclick="editorToggleStemMixer()" class="px-3 py-1 bg-teal-800 hover:bg-teal-700 rounded text-xs font-medium hidden" title="Per-instrument stem mixer (volume / mute / solo)">🎚 Stems</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
         </div>
@@ -87,7 +86,7 @@
             <option value="2">Count: 2 bars</option>
             <option value="4">Count: 4 bars</option>
         </select>
-        <button id="editor-mixer-btn" onclick="editorToggleMixer()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Audio mixer: recording / guide / click levels and the edit blip (Shift+C)" aria-pressed="false">Mix</button>
+        <button id="editor-mixer-btn" onclick="editorToggleMixer()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Mixer panel: part volume / mute / solo + recording / guide / click levels (Shift+C)" aria-pressed="false">Mix</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
         </div>
@@ -237,46 +236,6 @@
             <div id="editor-roll-lock-pill" class="hidden absolute top-12 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-dark-800/90 border border-amber-700/60 text-[11px] text-amber-200 pointer-events-none">
                 Piano roll is read-only for fretted parts — switch to String view to edit
             </div>
-            <!-- Stem mixer panel — floating, populated by _renderStemMixer() -->
-            <div id="editor-stem-mixer" class="hidden absolute top-3 right-3 z-20 w-60 bg-dark-800/95 border border-gray-700 rounded-lg shadow-xl backdrop-blur">
-                <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
-                    <span class="text-xs font-semibold">🎚 Stem Mixer</span>
-                    <button onclick="editorToggleStemMixer()" class="text-gray-500 hover:text-white text-sm leading-none">&times;</button>
-                </div>
-                <div id="editor-stem-mixer-rows" class="p-2 space-y-1.5 max-h-[60vh] overflow-y-auto"></div>
-            </div>
-            <!-- Audio mixer popover — recording / guide / click faders + the
-                 edit blip. Levels are editor prefs (never pack data); the
-                 recording fader is a transparent gain, guide/click stay
-                 behind the shared limiter. -->
-            <div id="editor-audio-mixer" class="hidden absolute top-12 left-3 z-30 w-64 bg-dark-800/95 border border-gray-700 rounded-lg shadow-xl backdrop-blur text-xs text-gray-200">
-                <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
-                    <span class="text-xs font-semibold">Mix</span>
-                    <button onclick="editorToggleMixer(false)" class="text-gray-500 hover:text-white text-sm leading-none">&times;</button>
-                </div>
-                <div class="p-3 space-y-2.5">
-                    <label class="flex items-center gap-2" title="Recording volume — a transparent gain, never limited">
-                        <span class="w-16 shrink-0 text-gray-400">Recording</span>
-                        <input id="editor-mix-ref" type="range" min="0" max="100" value="100" aria-label="Recording volume percent" oninput="editorSetMixLevel('ref', this.value)" class="flex-1 accent-accent">
-                        <span id="editor-mix-ref-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">100%</span>
-                    </label>
-                    <label class="flex items-center gap-2" title="Guide clap volume (behind the limiter)">
-                        <span class="w-16 shrink-0 text-gray-400">Guide</span>
-                        <input id="editor-mix-guide" type="range" min="0" max="100" value="35" aria-label="Guide clap volume percent" oninput="editorSetMixLevel('guide', this.value)" class="flex-1 accent-accent">
-                        <span id="editor-mix-guide-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">35%</span>
-                    </label>
-                    <label class="flex items-center gap-2" title="Metronome click volume (behind the limiter)">
-                        <span class="w-16 shrink-0 text-gray-400">Click</span>
-                        <input id="editor-mix-click" type="range" min="0" max="100" value="25" aria-label="Metronome click volume percent" oninput="editorSetMixLevel('click', this.value)" class="flex-1 accent-accent">
-                        <span id="editor-mix-click-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">25%</span>
-                    </label>
-                    <label class="flex items-center gap-2 pt-1 border-t border-gray-700/70" title="Play a soft tick when a note is added or changes pitch">
-                        <input id="editor-mix-blip" type="checkbox" checked onchange="editorSetEditBlip(this.checked)" class="accent-accent">
-                        <span class="text-gray-400">Edit blip on add / pitch change</span>
-                    </label>
-                    <p class="text-[10px] text-gray-500">Level changes ramp smoothly; guide and click stay behind a limiter. The first play each session fades the recording in.</p>
-                </div>
-            </div>
             <div id="editor-shortcut-panel" class="hidden absolute top-12 right-3 z-30 w-[34rem] max-w-[calc(100%-1.5rem)] bg-dark-800/95 border border-gray-700 rounded-lg shadow-xl backdrop-blur text-xs text-gray-200">
                 <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
                     <div>
@@ -300,6 +259,46 @@
                 </div>
                 <div class="px-3 py-1.5 border-b border-gray-800 text-[11px] text-gray-500">Shortcut keys are handled only while the editor has focus; browser/system conflicts stay outside editor focus.</div>
                 <div id="editor-shortcut-command-list" class="p-2 space-y-2 max-h-[62vh] overflow-y-auto"></div>
+            </div>
+        </div>
+        <!-- Mixer panel (workspace-shell B6) — the one first-class mixer,
+             DOCKED beside the canvas like the inspector (never a floating
+             popover): per-part strips (volume / mute / solo shape the part's
+             GUIDE voice; future part playback reads the same S.partMix)
+             over the recording / guide / click bus faders and the edit
+             blip. Bus levels + open state are editor prefs (never pack
+             data); the recording fader is a transparent gain outside the
+             limiter, and part solo never gates the recording (D5). Part
+             strips render via src/mixer-panel.js. -->
+        <div id="editor-mixer-panel" class="hidden w-64 shrink-0 bg-dark-800 border-l border-gray-800 overflow-y-auto text-xs text-gray-200">
+            <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+                <span class="text-xs font-semibold">Mixer</span>
+                <button onclick="editorToggleMixer(false)" class="text-gray-500 hover:text-white text-sm leading-none" title="Close the mixer panel">&times;</button>
+            </div>
+            <div class="px-3 pt-2 text-[10px] uppercase tracking-wide text-gray-500">Parts</div>
+            <div id="editor-mixer-parts" class="p-3 pt-1.5 space-y-2.5 border-b border-gray-700/70"></div>
+            <div class="px-3 pt-2 text-[10px] uppercase tracking-wide text-gray-500">Buses</div>
+            <div class="p-3 pt-1.5 space-y-2.5">
+                <label class="flex items-center gap-2" title="Recording volume — a transparent gain, never limited; solo never silences it">
+                    <span class="w-16 shrink-0 text-gray-400">Recording</span>
+                    <input id="editor-mix-ref" type="range" min="0" max="100" value="100" aria-label="Recording volume percent" oninput="editorSetMixLevel('ref', this.value)" class="flex-1 accent-accent">
+                    <span id="editor-mix-ref-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">100%</span>
+                </label>
+                <label class="flex items-center gap-2" title="Guide clap volume (behind the limiter)">
+                    <span class="w-16 shrink-0 text-gray-400">Guide</span>
+                    <input id="editor-mix-guide" type="range" min="0" max="100" value="35" aria-label="Guide clap volume percent" oninput="editorSetMixLevel('guide', this.value)" class="flex-1 accent-accent">
+                    <span id="editor-mix-guide-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">35%</span>
+                </label>
+                <label class="flex items-center gap-2" title="Metronome click volume (behind the limiter)">
+                    <span class="w-16 shrink-0 text-gray-400">Click</span>
+                    <input id="editor-mix-click" type="range" min="0" max="100" value="25" aria-label="Metronome click volume percent" oninput="editorSetMixLevel('click', this.value)" class="flex-1 accent-accent">
+                    <span id="editor-mix-click-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">25%</span>
+                </label>
+                <label class="flex items-center gap-2 pt-1 border-t border-gray-700/70" title="Play a soft tick when a note is added or changes pitch">
+                    <input id="editor-mix-blip" type="checkbox" checked onchange="editorSetEditBlip(this.checked)" class="accent-accent">
+                    <span class="text-gray-400">Edit blip on add / pitch change</span>
+                </label>
+                <p class="text-[10px] text-gray-500">Mute / solo shape the guide voices — the recording always stays audible. Level changes ramp smoothly; guide and click stay behind a limiter. The first play each session fades the recording in.</p>
             </div>
         </div>
         <!-- Inspector panel — populated by `_renderInspector` whenever the
