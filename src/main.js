@@ -1416,21 +1416,17 @@ window.editorApplyOffset = (val) => {
     const delta = offset - prevApplied;
     if (Math.abs(delta) < 0.0001) return;
     const el = document.getElementById('editor-offset');
-    // No usable grid: nothing to reproject against, so just record the scalar
-    // (a later +Keys / +Drums import still phases via _effectiveAudioOffset).
-    if (S.beats.length < 2) {
-        S.appliedOffset = offset;
-        if (el) el.value = String(offset);
-        setStatus(`Offset: ${offset >= 0 ? '+' : ''}${(offset * 1000).toFixed(0)}ms`);
-        return;
-    }
     // A rigid +delta shift of the whole grid. TempoOffsetCmd reprojects EVERY
     // part by that delta (beat is truth, extrapolated linearly past the grid
     // ends → a rigid +delta on the grid gives a rigid +delta on every note),
     // carries S.appliedOffset, clamps drum hits ≥0, and is undoable — the old
     // path shifted only the current arrangement's notes plus the global
     // beats/sections/drums directly and poisoned dataset.applied on partial
-    // realigns (silent multi-part corruption).
+    // realigns (silent multi-part corruption). A degenerate grid (< 2 beats)
+    // routes through the command too: beatOf/timeOf are identity there, so the
+    // reproject is a no-op and the command just carries the scalar — undoably.
+    // (A direct S.appliedOffset write here would skip history; the next nudge's
+    // delta would then compute off a base undo never restores.)
     const oldBeats = S.beats.map(b => ({ ...b }));
     const newBeats = S.beats.map(b => ({ ...b, time: b.time + delta }));
     S.history.exec(new TempoOffsetCmd(oldBeats, newBeats, prevApplied, offset));

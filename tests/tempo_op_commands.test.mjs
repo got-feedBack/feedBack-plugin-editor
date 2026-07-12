@@ -210,6 +210,24 @@ t('TempoOffsetCmd clamps drum hits to ≥0 on a leftward nudge, restoring exactl
     assert.strictEqual(timesSnapshot(), before, 'undo restored the pre-clamp seconds verbatim');
 });
 
+t('TempoOffsetCmd on a degenerate grid (<2 beats) carries appliedOffset undoably without moving notes', () => {
+    // beatOf/timeOf are identity on <2 beats, so lift→reproject is a no-op on
+    // note seconds — the command just records the scalar, undoably. This is why
+    // editorApplyOffset needs no <2-beat special case (a direct S.appliedOffset
+    // write there skipped history: Ctrl-Z restored nothing and the next nudge's
+    // delta computed off a stale base).
+    seedMultiPart();
+    S.beats = [];
+    const before = timesSnapshot();
+    S.history.exec(new TempoOffsetCmd([], [], 0, 0.25));
+    assert.strictEqual(S.appliedOffset, 0.25, 'appliedOffset recorded');
+    assert.strictEqual(timesSnapshot(), before, 'no note/section/drum seconds moved (identity reproject)');
+    S.history.doUndo();
+    assert.strictEqual(S.appliedOffset, 0, 'undo restored appliedOffset');
+    S.history.doRedo();
+    assert.strictEqual(S.appliedOffset, 0.25, 'redo re-applied appliedOffset');
+});
+
 // ── 4. Source guards: the wrappers route through the commands (fail-on-main) ──
 const syncSrc = fs.readFileSync(new URL('../src/sync-tempo.js', import.meta.url), 'utf8');
 const mainSrc = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
@@ -238,6 +256,7 @@ t('editorApplyOffset routes through TempoOffsetCmd and no longer pokes dataset.a
     assert.ok(/S\.history\.exec\(new TempoOffsetCmd/.test(b), 'offset execs a TempoOffsetCmd');
     assert.ok(!/\.dataset\.applied/.test(b), 'the DOM dataset.applied write is gone (S.appliedOffset owns it)');
     assert.ok(!/_shiftArrangementTimes/.test(mainSrc), 'the partial per-arrangement shifter is removed');
+    assert.ok(!/S\.appliedOffset\s*=/.test(b), 'no direct S.appliedOffset write — the <2-beat path also routes through the command (else it skips history)');
 });
 
 t('editorSetBPM constant-rescale routes through a pivoted TempoMapCmd', () => {
