@@ -12,16 +12,23 @@
 //   sound, no %, no score, no token (charrette §3.4: reward the music getting
 //   more accurate, never the user doing more actions).
 //
-// All one-shot state is a single localStorage flag per id, so a signpost/cue
-// that has appeared once never reappears.
+// All one-shot state is a single localStorage flag per id when storage is
+// available, with an in-memory fallback for private/sandboxed sessions.
 
 import { S } from './state.js';
 
 const LS_SIGNPOST = (id) => `editorSignpost:${id}`;
 const LS_CUE = (id) => `editorCue:${id}`;
 
-function _lsGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
-function _lsSet(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* private mode */ } }
+const _memStore = new Map();
+function _lsGet(k) {
+    try { return localStorage.getItem(k); }
+    catch (_) { return _memStore.has(k) ? _memStore.get(k) : null; }
+}
+function _lsSet(k, v) {
+    try { localStorage.setItem(k, v); }
+    catch (_) { _memStore.set(k, String(v)); }
+}
 
 export function _signpostSeen(id) { return _lsGet(LS_SIGNPOST(id)) === 'seen'; }
 export function _cueSeen(id) { return _lsGet(LS_CUE(id)) === 'seen'; }
@@ -71,9 +78,9 @@ export function _eligibleSignpostPure(counts, s, seenIds) {
 }
 
 function _showSignpost(sp) {
-    _lsSet(LS_SIGNPOST(sp.id), 'seen');   // one-shot: never eligible again
     const el = document.getElementById('editor-signpost');
     if (!el) return;
+    _lsSet(LS_SIGNPOST(sp.id), 'seen');   // one-shot: never eligible again
     const msg = document.getElementById('editor-signpost-msg');
     if (msg) msg.textContent = sp.message;
     el.dataset.signpostId = sp.id;
@@ -103,7 +110,7 @@ export function _signpostNote(action) {
 // ── First-win cues ──────────────────────────────────────────────────
 function _showCue(text) {
     const el = document.getElementById('editor-cue');
-    if (!el) return;
+    if (!el) return false;
     el.textContent = text;
     el.classList.remove('hidden', 'editor-cue-show');
     void el.offsetWidth;                    // reflow so the fade restarts
@@ -111,12 +118,13 @@ function _showCue(text) {
     // Short-lived flash, like the drum-pad listen flash; a stale timer after a
     // screen re-inject only re-hides an already-hidden element (harmless).
     setTimeout(() => { const e = document.getElementById('editor-cue'); if (e) e.classList.add('hidden'); }, 4200);
+    return true;
 }
 
 export function _fireCueOnce(id, text) {
     if (_cueSeen(id)) return false;
+    if (!_showCue(text)) return false;
     _lsSet(LS_CUE(id), 'seen');
-    _showCue(text);
     return true;
 }
 

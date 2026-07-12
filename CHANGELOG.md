@@ -73,8 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suggest-only hints triggered by what you're *doing* — e.g. resnapping notes
   repeatedly surfaces "the beat grid may be off — line it up with the Tempo
   tools (T), or Ctrl+K" — that only ever point at the menu/shortcut, never move
-  a surface, fire once per capability, and are permanently dismissible (capped
-  at ≤3). **First-win cues** are calm, one-time visual acknowledgements of a
+  a surface, fire once per capability, and are permanently dismissible when
+  browser storage is available (session-only in private/storage-blocked mode;
+  capped at ≤3). **First-win cues** are calm, one-time visual acknowledgements of a
   *correctness* milestone — locking a barline to the recording, and a section
   first gaining content — with no sound, score, or token. The section
   completeness shading stays presence-only (a span with content vs. not), never

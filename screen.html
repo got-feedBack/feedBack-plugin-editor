@@ -209,7 +209,7 @@
             <!-- Onboarding signpost (workspace-shell C2) — a quiet, SUGGEST-ONLY,
                  one-shot, permanently-dismissible hint pinned bottom-centre. It
                  only ever points at the menu/shortcut; it never moves a surface. -->
-            <div id="editor-signpost" class="hidden absolute bottom-3 left-1/2 -translate-x-1/2 z-30 max-w-lg flex items-start gap-2 px-3 py-2 rounded-lg bg-dark-800/95 border border-gray-700 shadow-xl backdrop-blur text-xs text-gray-200">
+            <div id="editor-signpost" role="status" aria-live="polite" class="hidden absolute bottom-3 left-1/2 -translate-x-1/2 z-30 max-w-lg flex items-start gap-2 px-3 py-2 rounded-lg bg-dark-800/95 border border-gray-700 shadow-xl backdrop-blur text-xs text-gray-200">
                 <span class="mt-0.5 text-sky-300" aria-hidden="true">💡</span>
                 <span id="editor-signpost-msg" class="leading-snug"></span>
                 <button onclick="editorDismissSignpost()" class="ml-1 -mr-0.5 text-gray-500 hover:text-white text-sm leading-none shrink-0" aria-label="Dismiss — won't show again" title="Dismiss — won't show again">&times;</button>

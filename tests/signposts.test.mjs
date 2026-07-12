@@ -46,6 +46,8 @@ const shown = (id) => !_els[id]._c.has('hidden');
 function reset() {
     _store.clear();
     _resetSignpostCounters();
+    localStorage.getItem = (k) => (_store.has(k) ? _store.get(k) : null);
+    localStorage.setItem = (k, v) => _store.set(k, String(v));
     for (const el of Object.values(_els)) { el._c = new Set(['hidden']); el.textContent = ''; el.dataset = {}; }
 }
 
@@ -79,6 +81,19 @@ t('a signpost fires once at threshold, then NEVER again (one-shot + dismiss)', (
     assert.ok(!shown('editor-signpost'), 'seen ⇒ never shows again, even fresh counters');
 });
 
+t('a missing signpost surface never burns the one-shot flag', () => {
+    reset();
+    const saved = _els['editor-signpost'];
+    _els['editor-signpost'] = null;
+    Object.assign(S, { sections: [], duration: 0 });
+    for (let i = 0; i < 3; i++) _signpostNote('gridFight');
+    assert.ok(!_signpostSeen('grid-fit'), 'flag must not be set when no signpost rendered');
+    _els['editor-signpost'] = saved;
+    _resetSignpostCounters();
+    for (let i = 0; i < 3; i++) _signpostNote('gridFight');
+    assert.ok(shown('editor-signpost') && _signpostSeen('grid-fit'), 'it can still render later');
+});
+
 t('sections signpost needs many jumps AND no sections AND a long song', () => {
     reset();
     Object.assign(S, { sections: [], duration: 120 });
@@ -103,6 +118,36 @@ t('a cue fires once, then is a no-op', () => {
     _els['editor-cue']._c = new Set(['hidden']);
     assert.strictEqual(_fireCueOnce('x', 'again'), false);
     assert.ok(!shown('editor-cue'), 'never fires twice');
+});
+
+t('a missing cue surface never burns the one-shot flag', () => {
+    reset();
+    const saved = _els['editor-cue'];
+    _els['editor-cue'] = null;
+    assert.strictEqual(_fireCueOnce('x', 'hi'), false);
+    assert.ok(!_cueSeen('x'), 'flag must not be set when no cue rendered');
+    _els['editor-cue'] = saved;
+    assert.strictEqual(_fireCueOnce('x', 'hi'), true);
+    assert.ok(shown('editor-cue') && _cueSeen('x'), 'it can still render later');
+});
+
+t('one-shot flags survive broken localStorage within the session', () => {
+    reset();
+    localStorage.getItem = () => { throw new Error('blocked'); };
+    localStorage.setItem = () => { throw new Error('blocked'); };
+
+    Object.assign(S, { sections: [], duration: 0 });
+    for (let i = 0; i < 3; i++) _signpostNote('gridFight');
+    assert.ok(shown('editor-signpost') && _signpostSeen('grid-fit'), 'signpost seen flag uses memory fallback');
+    editorDismissSignpost();
+    _resetSignpostCounters();
+    for (let i = 0; i < 3; i++) _signpostNote('gridFight');
+    assert.ok(!shown('editor-signpost'), 'memory fallback prevents repeat signpost in-session');
+
+    assert.strictEqual(_fireCueOnce('mem-cue', 'hi'), true);
+    _els['editor-cue']._c = new Set(['hidden']);
+    assert.strictEqual(_fireCueOnce('mem-cue', 'again'), false);
+    assert.ok(!shown('editor-cue'), 'memory fallback prevents repeat cue in-session');
 });
 
 t('first-covered cue: silent on a loaded-covered chart, fires on an edit transition', () => {
