@@ -1318,8 +1318,12 @@ window.editorTogglePlay = () => {
         window.editorStopRecordMidi();
         return;
     }
-    if (S.playing) stopPlayback(); else startPlayback();
-    _tourNoteAction('play');   // C3 Compose tour: step 3 task
+    if (S.playing) {
+        stopPlayback();
+    } else {
+        startPlayback();
+        _tourNoteAction('play');   // C3 Compose tour: step 3 task
+    }
 };
 window.editorZoom = (dir) => {
     const factor = dir > 0 ? 1.3 : 0.77;
