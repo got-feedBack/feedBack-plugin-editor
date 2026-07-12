@@ -38,7 +38,7 @@ export function _mixerPartsPure(arrangements, drumTab) {
     (arrangements || []).forEach((arr, i) => {
         parts.push({
             key: 'arr:' + i,
-            name: (arr && arr.name) || 'Part ' + (i + 1),
+            name: (arr && arr.name) || 'Track ' + (i + 1),
         });
     });
     if (drumTab && Array.isArray(drumTab.hits) && drumTab.hits.length) {
@@ -103,7 +103,7 @@ function _msBtn(key, act, pressed, label, title) {
 function _renderParts(container) {
     const parts = _mixerPartsPure(S.arrangements, S.drumTab);
     if (!parts.length) {
-        container.innerHTML = '<p class="text-[10px] text-gray-500">No parts yet — strips appear as parts are added.</p>';
+        container.innerHTML = '<p class="text-[10px] text-gray-500">No tracks yet — strips appear as tracks are added.</p>';
         return;
     }
     container.innerHTML = parts.map(p => {
@@ -175,8 +175,8 @@ function _wire(panel) {
         _mixerPanelRefresh();
         const now = _mixerPartStatePure(S.partMix, key);
         setStatus(act === 'mute'
-            ? (now.mute ? 'Part muted — its guide voice is silent' : 'Part unmuted')
-            : (now.solo ? 'Part soloed — other parts’ guide voices are silent; the recording stays audible' : 'Solo off'));
+            ? (now.mute ? 'Track muted — its guide voice is silent' : 'Track unmuted')
+            : (now.solo ? 'Track soloed — other tracks’ guide voices are silent; the recording stays audible' : 'Solo off'));
     });
     panel.addEventListener('input', (e) => {
         const el = e.target;

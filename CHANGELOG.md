@@ -35,6 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   titles, lock/status messages); "sync point" stays only as internal/export
   vocabulary.
 
+- **"Parts" renamed to "Tracks" throughout the UI.** The multi-track surface is
+  now called **Tracks**, matching how DAWs and tab editors (Guitar Pro,
+  TuxGuitar, Songsterr) name it. Renamed the toolbar group + its View-menu
+  toggle, the **Track** menu (was Part) and the Add-menu header, the transport
+  **Tracks** overview pill, the mixer panel header + its empty/fallback strip
+  names ("Track 1"…), the rename dialog ("Rename Track"), and every user-facing
+  tooltip / status message ("Reordering tracks…", "Keys tracks always use the
+  piano roll", etc.). Purely user-facing copy — the internal `part`/`arr` model,
+  command ids (`renamePart`, `movePart*`, `togglePartsView`), and toolbar id
+  (`parts`) are unchanged, so shortcuts, saves, and pack data are unaffected.
+
 ### Fixed
 
 - **The editor timeline rendered blank — chart and waveform invisible after
@@ -76,6 +87,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   markers that the grid can't express — tempo ramps, meter groupings like
   `7/8 (2+2+3)`, fermata holds, and per-marker provenance — are scoped in
   feedpak-spec#51 and come later.)
+- **Select and delete multiple barlines at once** in Tempo Map mode. Shift-click
+  a second barline to select the contiguous range, drag a box on empty grid to
+  rubber-band-select, or Ctrl+A to select every barline; the selection washes
+  amber. Delete (or right-click ▸ "Delete N barlines") demotes them all in one
+  undoable step — the first and last barline are always kept (they bound the
+  map). Escape clears the selection. The single focused barline (BPM / tap /
+  lock / modulate / suggest) is unchanged; the multi-selection is separate and
+  is dropped on any grid-topology change.
 
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:

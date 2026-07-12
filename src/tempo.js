@@ -273,6 +273,29 @@ export function _tempoMapDraw(w, h) {
     // to line up with them (and the waveform).
     _tempoDrawReferenceNotes(w, gridBottom, visibleStart, visibleEnd);
 
+    // Multi-selected barlines (PR 5a): a light amber wash for each contiguous
+    // selected downbeat run. Disjoint selections must not fill the gaps.
+    if (S.tempoSelMulti && S.tempoSelMulti.size) {
+        for (const run of _tempoSelectedDownbeatRunsPure(S.beats, S.tempoSelMulti)) {
+            const first = S.beats[run[0]], last = S.beats[run[run.length - 1]];
+            if (!first || !last) continue;
+            const xa = Math.max(LABEL_W, timeToX(first.time)), xb = Math.min(w, timeToX(last.time));
+            if (xb > xa) {
+                ctx.fillStyle = 'rgba(251,191,36,0.10)';
+                ctx.fillRect(xa, (TIMELINE_TOP + WAVEFORM_H), xb - xa, gridBottom - (TIMELINE_TOP + WAVEFORM_H));
+            }
+        }
+    }
+    // Marquee rubber-band while box-selecting downbeats on empty grid.
+    if (S.drag && S.drag.type === 'tempo-marquee' && S.drag.moved) {
+        const xa = Math.min(S.drag.startX, S.drag.curX), xb = Math.max(S.drag.startX, S.drag.curX);
+        ctx.fillStyle = 'rgba(251,191,36,0.08)';
+        ctx.fillRect(xa, (TIMELINE_TOP + WAVEFORM_H), xb - xa, gridBottom - (TIMELINE_TOP + WAVEFORM_H));
+        ctx.strokeStyle = 'rgba(251,191,36,0.5)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(xa + 0.5, (TIMELINE_TOP + WAVEFORM_H) + 0.5, xb - xa - 1, gridBottom - (TIMELINE_TOP + WAVEFORM_H) - 1);
+    }
+
     // Measures: per-measure labels + draggable sync-point poles.
     const measures = _tempoMeasures();
     // Pickup display shift (D3): with a partial first bar, the first FULL
@@ -304,6 +327,10 @@ export function _tempoMapDraw(w, h) {
         if (x >= LABEL_W && x <= w) {
             const sel = (m.i === S.tempoSel);
             const hov = (m.i === S.tempoHover);
+            // A multi-selected barline (PR 5a) reads amber like the focus, but
+            // without the thick focus halo (that stays unique to tempoSel).
+            const inMulti = !!(S.tempoSelMulti && S.tempoSelMulti.has(m.i));
+            const amber = sel || inMulti;
             // Beat-lock: a locked sync point renders EMERALD — its time is held
             // by global tempo re-fits (detect / modulate / re-space). The
             // selection halo still shows through, so lock ≠ selection.
@@ -316,13 +343,13 @@ export function _tempoMapDraw(w, h) {
                 ctx.lineTo(x, gridBottom);
                 ctx.stroke();
             }
-            ctx.strokeStyle = locked ? '#34d399' : sel ? '#fbbf24' : hov ? '#93c5fd' : '#64748b';
+            ctx.strokeStyle = locked ? '#34d399' : amber ? '#fbbf24' : hov ? '#93c5fd' : '#64748b';
             ctx.lineWidth = sel ? 3 : 2;
             ctx.beginPath();
             ctx.moveTo(x, (TIMELINE_TOP + WAVEFORM_H));
             ctx.lineTo(x, gridBottom);
             ctx.stroke();
-            ctx.fillStyle = locked ? '#34d399' : sel ? '#fbbf24' : hov ? '#93c5fd' : '#94a3b8';
+            ctx.fillStyle = locked ? '#34d399' : amber ? '#fbbf24' : hov ? '#93c5fd' : '#94a3b8';
             ctx.fillRect(x - TEMPO_POLE_HALF, (TIMELINE_TOP + WAVEFORM_H), TEMPO_POLE_HALF * 2, 13);
             ctx.fillStyle = '#0c0c1c';
             ctx.font = 'bold 9px monospace';
@@ -595,6 +622,7 @@ export function _editorToggleTempoMapMode() {
     S.tempoMapMode = !S.tempoMapMode;
     S.tempoSel = -1;
     S.tempoHover = -1;
+    if (S.tempoSelMulti) S.tempoSelMulti.clear();   // multi-select is mode-scoped (PR 5a)
     _tapTempo = null;   // abandon any pending tap run on mode change
     _suggestDismiss();  // proposals are mode-scoped — never survive an exit
     if (S.tempoMapMode) {
@@ -823,9 +851,20 @@ export function _tempoMapOnMouseDown(e, x, y) {
 
     // Click a sync-point pole to select it and start a drag.
     const hit = _tempoSyncAtX(x, y);
-    if (hit !== S.tempoSel) _tapTempo = null;   // selection moved — drop stale tap run
-    S.tempoSel = hit;
     if (hit >= 0) {
+        // Shift+click extends a contiguous range of downbeats from the current
+        // focus to the clicked pole into the multi-selection (PR 5a). No drag.
+        if (e.shiftKey && S.tempoSel >= 0 && S.beats[S.tempoSel] && S.beats[S.tempoSel].measure > 0) {
+            _tempoSelectDownbeatRange(S.tempoSel, hit);
+            S.tempoSel = hit;
+            _tapTempo = null;
+            host.draw();
+            setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
+            return;
+        }
+        if (hit !== S.tempoSel) _tapTempo = null;   // selection moved — drop stale tap run
+        S.tempoSel = hit;
+        if (S.tempoSelMulti) S.tempoSelMulti.clear();   // plain pole click = single focus
         S.drag = {
             type: 'tempo-sync',
             beatIdx: hit,
@@ -836,11 +875,13 @@ export function _tempoMapOnMouseDown(e, x, y) {
         host.draw();
         return;
     }
+    S.tempoSel = -1;
     // No pole under the cursor — try an individual (sub-)beat tick for a
     // rubato drag: re-time one beat inside its measure without touching
     // the downbeats. Essential for hand-syncing accel/rit within a bar.
     const beatHit = _tempoSubBeatAtX(x, y);
     if (beatHit >= 0) {
+        _tapTempo = null;
         S.drag = {
             type: 'tempo-beat',
             beatIdx: beatHit,
@@ -848,7 +889,12 @@ export function _tempoMapOnMouseDown(e, x, y) {
             origBeats: S.beats.map(b => ({ ...b })),
             moved: false,
         };
+        host.draw();
+        return;
     }
+    // Empty grid → marquee box-select of downbeats (PR 5a). Deferred 3px like the
+    // drum editor: a stationary press just clears (below), a drag rubber-bands.
+    S.drag = { type: 'tempo-marquee', startX: x, startY: y, curX: x, curY: y, shift: e.shiftKey, moved: false };
     host.draw();
 }
 
@@ -878,7 +924,11 @@ export function _tempoMapOnContextMenu(e) {
         html += mkBtn('togglelock',
             (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
             '', LOCK_TOOLTIP);
-        html += mkBtn('delete', 'Delete barline', 'text-red-400');
+        // With a multi-selection, offer bulk delete only for deletable interior barlines.
+        const nMulti = _tempoDeletableBarlineIndicesPure(S.beats, S.tempoSelMulti).length;
+        html += (nMulti > 1)
+            ? mkBtn('delete-multi', `Delete ${nMulti} barlines`, 'text-red-400')
+            : mkBtn('delete', 'Delete barline', 'text-red-400');
     } else {
         html += mkBtn('insert', 'Mark barline here');
     }
@@ -888,7 +938,8 @@ export function _tempoMapOnContextMenu(e) {
             host.hideContextMenu();
             const a = btn.dataset.action;
             if (a === 'pickup') { _tempoPromptPickup(); return; }
-            if (a === 'delete') _tempoDeleteSyncPoint(onPole);
+            if (a === 'delete-multi') _tempoDeleteSelection();
+            else if (a === 'delete') _tempoDeleteSyncPoint(onPole);
             else if (a === 'togglelock') { S.tempoSel = onPole; _editorToggleSyncLock(); }
             else if (a === 'insert') _tempoInsertSyncPoint(xToTime(x));
             else if (a === 'bpmedit') _tempoPromptMeasureBpm(onPole);
@@ -1029,6 +1080,115 @@ export function _tempoDeleteSyncPoint(beatIdx) {
     S.history.exec(new TempoGridCmd(oldBeats, newBeats, 'delete'));
     S.tempoSel = -1;
     host.draw();
+}
+
+// ── Barline multi-select: range / marquee / bulk delete (PR 5a) ──────
+
+// Add the contiguous downbeat range [a,b] to the multi-selection (Shift+click).
+export function _tempoSelectDownbeatRange(a, b) {
+    if (!S.tempoSelMulti) S.tempoSelMulti = new Set();
+    const beats = S.beats || [];
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    for (let i = lo; i <= hi; i++) {
+        if (beats[i] && beats[i].measure > 0) S.tempoSelMulti.add(i);
+    }
+}
+
+// Downbeat indices whose time falls in [tLo, tHi] — the marquee hit math. Pure.
+export function _tempoMarqueeDownbeatsPure(beats, tLo, tHi) {
+    const out = [];
+    if (!Array.isArray(beats)) return out;
+    const lo = Math.min(tLo, tHi), hi = Math.max(tLo, tHi);
+    for (let i = 0; i < beats.length; i++) {
+        const b = beats[i];
+        if (b && b.measure > 0 && b.time >= lo && b.time <= hi) out.push(i);
+    }
+    return out;
+}
+
+// Selected downbeats grouped into contiguous downbeat runs, ignoring sub-beats
+// and invalid indices. Used by the canvas wash so disjoint selections don't
+// paint one large min/max slab across unselected bars.
+export function _tempoSelectedDownbeatRunsPure(beats, indices) {
+    const runs = [];
+    if (!Array.isArray(beats)) return runs;
+    const selected = new Set(indices || []);
+    let run = [];
+    for (let i = 0; i < beats.length; i++) {
+        const b = beats[i];
+        if (!b || b.measure <= 0) continue;
+        if (selected.has(i)) {
+            run.push(i);
+        } else if (run.length) {
+            runs.push(run);
+            run = [];
+        }
+    }
+    if (run.length) runs.push(run);
+    return runs;
+}
+
+// Finalize the marquee drag: box-select the downbeats within the swept X range.
+// Plain replaces the selection, Shift unions; a press that never moved clears
+// (a click-away) — the drum-editor marquee idiom.
+export function _tempoMarqueeOnEnd() {
+    const dg = S.drag;
+    S.drag = null;
+    if (!dg || dg.type !== 'tempo-marquee') { host.draw(); return; }
+    if (!S.tempoSelMulti) S.tempoSelMulti = new Set();
+    if (!dg.moved) {
+        if (!dg.shift) { S.tempoSelMulti.clear(); S.tempoSel = -1; }
+        host.draw();
+        return;
+    }
+    if (!dg.shift) S.tempoSelMulti.clear();
+    for (const i of _tempoMarqueeDownbeatsPure(S.beats, xToTime(dg.startX), xToTime(dg.curX))) {
+        S.tempoSelMulti.add(i);
+    }
+    host.draw();
+    setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
+}
+
+// Demote the given interior downbeats to sub-beats + renumber — the bulk
+// delete's grid transform. Pure; returns { beats, count } or null. Never the
+// first/last downbeat (they bound the mapped range), matching
+// _tempoDeleteSyncPoint's guard generalized to a set.
+export function _tempoDeleteBarlinesPure(beats, indices) {
+    if (!Array.isArray(beats)) return null;
+    const del = new Set(_tempoDeletableBarlineIndicesPure(beats, indices));
+    if (!del.size) return null;
+    const out = beats.map(b => ({ ...b }));
+    for (const i of del) out[i].measure = -1;
+    _tempoRenumberMeasures(out);
+    return { beats: out, count: del.size };
+}
+
+export function _tempoDeletableBarlineIndicesPure(beats, indices) {
+    if (!Array.isArray(beats)) return [];
+    const dbIdx = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) dbIdx.push(i);
+    if (dbIdx.length < 3) return [];   // need at least one interior downbeat
+    const first = dbIdx[0], last = dbIdx[dbIdx.length - 1];
+    return [...new Set(indices || [])]
+        .filter(i => beats[i] && beats[i].measure > 0 && i !== first && i !== last)
+        .sort((a, b) => a - b);
+}
+
+// Del / right-click "Delete N barlines": bulk-demote the multi-selection (or the
+// single focus when nothing is multi-selected) in ONE TempoGridCmd.
+export function _tempoDeleteSelection() {
+    const beats = S.beats || [];
+    const sel = (S.tempoSelMulti && S.tempoSelMulti.size)
+        ? [...S.tempoSelMulti]
+        : (S.tempoSel >= 0 ? [S.tempoSel] : []);
+    const res = _tempoDeleteBarlinesPure(beats, sel);
+    if (!res) { setStatus("Select interior barlines to delete — the first and last can't be removed."); return; }
+    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), res.beats,
+        res.count > 1 ? 'delete-barlines' : 'delete'));
+    S.tempoSel = -1;
+    if (S.tempoSelMulti) S.tempoSelMulti.clear();
+    host.draw();
+    setStatus(res.count > 1 ? `Deleted ${res.count} barlines.` : 'Barline deleted.');
 }
 
 // ── Time signature ──────────────────────────────────────────────────
@@ -1242,6 +1402,9 @@ export class TempoGridCmd {
     exec() {
         S.beats = this.newBeats.map(b => ({ ...b }));
         if (Number.isInteger(this.newSelection)) S.tempoSel = this.newSelection;
+        // Topology changed: barline indices shifted, so the multi-selection (PR
+        // 5a) can't be remapped safely — drop it rather than point at stale beats.
+        if (S.tempoSelMulti) S.tempoSelMulti.clear();
         // Grid re-INDEXES (insert/delete sync-point, time-sig): note SECONDS
         // stay put, but a note's beat coordinate changed (a beat was added /
         // removed before it), so re-lift beats from the unchanged seconds
@@ -1257,6 +1420,7 @@ export class TempoGridCmd {
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
         if (Number.isInteger(this.oldSelection)) S.tempoSel = this.oldSelection;
+        if (S.tempoSelMulti) S.tempoSelMulti.clear();   // topology reverted — drop the stale set
         // Seconds are unchanged; re-lift beats back onto the old indexing.
         _liftAllBeats(S.beats);
         host.loopReliftBeats(S.beats);
@@ -2149,4 +2313,3 @@ export class TempoMapCmd {
         host.updateLoopIn3DBtn();
     }
 }
-

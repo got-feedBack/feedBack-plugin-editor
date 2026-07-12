@@ -283,7 +283,7 @@ export function drawRuler(w) {
         if (mk.time < st || mk.time > et) continue;
         const x = timeToX(mk.time);
         if (x < LABEL_W || x > w) continue;
-        const row = (Math.abs(x - mkLastX) < 44) ? mkRow + 1 : 0;
+        const row = (Math.abs(x - mkLastX) < 44) ? Math.min(mkRow + 1, 2) : 0;
         mkLastX = x; mkRow = row;
         const isTempo = mk.kind === 'tempo';
         const cy = top + 1 + row * 8.5;

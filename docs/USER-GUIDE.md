@@ -26,7 +26,7 @@ You begin one of two ways:
   **`.feedpak`** / archive files. Every format normalizes into the same internal
   model, so editing works the same regardless of where a chart came from.
 
-![The Create New Arrangement dialog: choose which parts to arrange, import a chart or audio (or paste a YouTube URL), and fill in the song details.](../assets/guide/import.png)
+![The Create New Arrangement dialog: choose which tracks to arrange, import a chart or audio (or paste a YouTube URL), and fill in the song details.](../assets/guide/import.png)
 
 Import lives under the **File** menu (Import ▸ …). MIDI and XML/GP imports keep
 their note data; a GoPlayAlong sidecar brings bar→time sync points only (no
@@ -40,7 +40,7 @@ notes) — useful for lining a grid up fast.
 ## 2. The workspace
 
 - **Menu bar** (top) — every command, grouped by what it acts on (File, Edit,
-  Add, Note, Part, View, Transport, Tempo/Grid, Help). Menus follow
+  Add, Note, Track, View, Transport, Tempo/Grid, Help). Menus follow
   your shortcut profile and grey out commands that don't apply right now.
 - **Toolbars** — quick toggles for the transport, snap, views, and the BPM /
   Offset boxes. Toolbars are collapsible; density presets live in **View**.
@@ -50,10 +50,10 @@ notes) — useful for lining a grid up fast.
   metronome, and follow-playhead.
 - **Inspector** (side) — details for whatever is selected: a note's fret and
   techniques, a barline's BPM, a section's name.
-- **Companion strips** — a **fretboard strip** for fretted parts (shows
+- **Companion strips** — a **fretboard strip** for fretted tracks (shows
   candidate positions from the position resolver — click one to assign) and a
-  **drum pad strip** for drum parts.
-- **Mixer** (`Shift+C`) — per-part volume / mute / solo for the guide voice.
+  **drum pad strip** for drum tracks.
+- **Mixer** (`Shift+C`) — per-track volume / mute / solo for the guide voice.
 
 Press **`?`** at any time for the searchable shortcut panel, or **`Ctrl+K`** for
 the command palette.
@@ -116,19 +116,19 @@ Slap/pop (`Shift+O` / `O`), tap (`Y`), tremolo, link-next and more are under
 
 ---
 
-## 5. Parts (arrangements)
+## 5. Tracks (arrangements)
 
-A song can hold several **parts** — lead, rhythm, bass, keys, drums. Each part
+A song can hold several **tracks** — lead, rhythm, bass, keys, drums. Each track
 gets the view that fits it automatically:
 
 - **String view** — lanes per string, for guitar/bass.
-- **Piano roll** — for keys parts (and available for fretted parts as a
+- **Piano roll** — for keys tracks (and available for fretted tracks as a
   read-only reference, with resolver-assisted authoring).
-- **Drum grid** — piece lanes, for drum parts.
+- **Drum grid** — piece lanes, for drum tracks.
 
-Switch parts from the part selector. **Parts overview** (`Shift+A`) stacks every
-part for a bird's-eye look. Rename / reorder parts from the **Part** menu.
-Add a part by importing into it (e.g. Import MIDI as a keys part).
+Switch tracks from the track selector. **Tracks overview** (`Shift+A`) stacks every
+track for a bird's-eye look. Rename / reorder tracks from the **Track** menu.
+Add a track by importing into it (e.g. Import MIDI as a keys track).
 
 ---
 
@@ -167,9 +167,9 @@ Three ways to set the tempo, from coarse to fine:
 
 The **Offset** box shifts the *whole* chart in time against the recording — use
 it when the notes are right relative to each other but the whole chart sits a
-few milliseconds early or late. It moves every part together and is undoable.
+few milliseconds early or late. It moves every track together and is undoable.
 
-> Sync, BPM-rescale, and Offset all move **every part at once** and can be
+> Sync, BPM-rescale, and Offset all move **every track at once** and can be
 > **undone** — experiment freely.
 
 ---
@@ -178,10 +178,10 @@ few milliseconds early or late. It moves every part together and is undoable.
 
 ![The Add Drum Arrangement dialog, offering to import a Guitar Pro or MIDI drum track.](../assets/guide/drums.png)
 
-Drum parts use a **piece-lane grid**: rows are kit pieces (kick, snare, hats…),
+Drum tracks use a **piece-lane grid**: rows are kit pieces (kick, snare, hats…),
 columns are grid positions. Click to place a hit; the **drum pad strip** maps a
 MIDI e-kit or your keyboard for monitoring. Row **density** (Full / Compact) is
-in the **Part** menu. The **drum limb lint** flags hits that would need three
+in the **Track** menu. The **drum limb lint** flags hits that would need three
 hands — advisory only.
 
 ---
@@ -192,7 +192,7 @@ Mark up the song so practice tools and the highway know what's happening:
 
 - **Sections** (`Shift+M`) — Verse / Chorus / Solo boundaries.
 - **Phrases** (`Shift+P`) — finer practice spans.
-- **Anchors** (`Shift+F`) — hand-position anchors for fretted parts; the
+- **Anchors** (`Shift+F`) — hand-position anchors for fretted tracks; the
   fretboard strip and position resolver use them.
 - **Handshapes** (`Ctrl+H`) — chord shapes from the current selection.
 - **Tone changes** (`Ctrl+Shift+T`) — mark where the amp/tone should switch.
