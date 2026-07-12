@@ -28,8 +28,10 @@ import { EditHistory } from './history.js';
 import { host } from './host.js';
 import { KEYS_PATTERN, isKeysMode, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
-import { S } from './state.js';
+import { S, markSessionDirty } from './state.js';
+import { disposeBackendSession, stopSessionProcesses } from './session-lifecycle.js';
 import { _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
+import { seedSurfacePreset, surfacePersistFor } from './toolbars.js';
 import { _editorEscHtml, _installModalKeyboard, setStatus } from './ui.js';
 
 
@@ -88,13 +90,15 @@ export function editorShowNewFormatPicker() {
         '🎵  Blank — start from audio',
         'Audio + an empty arrangement (drum tab optional). Chart it yourself '
         + 'in the editor. No Guitar Pro / XML needed.',
-        () => { window.editorShowCreateModal(); window.editorSetCreateMode('blank'); },
+        // Raw opener, not window.editorShowCreateModal: the transition was
+        // already guarded when this picker opened; the wrapper would re-prompt.
+        () => { editorShowCreateModal(); window.editorSetCreateMode('blank'); },
     ));
     inner.appendChild(mkBtn(
         '🎸  Import from Guitar Pro',
         'Build a chart from a Guitar Pro file (.gp3–.gp8), saved as a native '
         + '.feedpak.',
-        () => { window.editorShowCreateModal(); window.editorSetCreateMode('gp'); },
+        () => { editorShowCreateModal(); window.editorSetCreateMode('gp'); },
     ));
 
     const cancel = document.createElement('div');
@@ -426,7 +430,11 @@ export function editorShowCreateSloppakModal() {
             // Open the freshly-written sloppak via the existing load
             // path so the editor state initialises identically to a
             // normal sloppak load.
-            await host.loadCDLC(data.filename);
+            await host.loadCDLC(data.filename, { skipGuard: true });
+            // C1 lane seed: created from scratch → the Compose surface
+            // (intent, not audio-presence — an attached recording to
+            // compose over still starts light; charrette §3.1).
+            seedSurfacePreset('compose');
         } catch (e) {
             status.textContent = 'Failed: ' + e.message;
             status.className = 'text-xs mb-2 min-h-[1em] text-red-400';
@@ -2119,7 +2127,10 @@ async function _editorDoBlankCreate() {
         }
         editorHideCreateModal();
         host.kickLibraryRescan();
-        await host.loadCDLC(data.filename);
+        await host.loadCDLC(data.filename, { skipGuard: true });
+        // C1 lane seed: created from scratch → the Compose surface (intent,
+        // not audio-presence; charrette §3.1).
+        seedSurfacePreset('compose');
     } catch (e) {
         if (status) status.textContent = 'Failed: ' + e.message;
         if (btn) btn.disabled = false;
@@ -2136,12 +2147,28 @@ export async function editorApplyCreateResult(data) {
 
     // Load into editor
     window.editorHideCreateModal();
+    // Same outgoing-job teardown loadCDLC performs: stop the old playback,
+    // the pending audio load and any drag, and drop the decoded buffer. An
+    // audio-less import skips the loadAudio() branch below, so without this the
+    // previous recording keeps sounding under the new chart and S.audioBuffer
+    // stays stale. Dispose the old backend session too so its sandbox isn't leaked.
+    const oldSessionId = S.sessionId;
+    stopSessionProcesses();   // also cancels the outgoing audio load
+    S.audioBuffer = null;
+    S.waveformPeaks = null;
     S.title = data.title || '';
     S.artist = data.artist || '';
     S.filename = '';
     S.sessionId = data.session_id;
+    if (oldSessionId && oldSessionId !== data.session_id) {
+        await disposeBackendSession(oldSessionId);
+    }
+    markSessionDirty();
     S.format = 'sloppak';
     S.arrangements = data.arrangements || [];
+    // New song, new strips: part mute/solo/volume is session UI state keyed
+    // by part index, so it must not leak across installs (mixer panel, B6).
+    S.partMix = {};
     // Create-mode import — the source builds tuning to the actual string count,
     // so length 6 means a genuine 6-string bass / standard guitar (not a
     // padded tuning). Seed `_extendedStrings` to keep `_stringCountFor` honest.
@@ -2162,6 +2189,11 @@ export async function editorApplyCreateResult(data) {
     S.returnToHighway = false;
     S.history = new EditHistory();
     S.createMode = true;
+    // C1 lane seed: an import (Guitar Pro / XML project) → the Transcribe
+    // surface, since aligning the grid to the source is the first task
+    // (charrette §3.1). No filename yet, so this is in-memory only —
+    // editorBuild persists the session's surface under the built file.
+    seedSurfacePreset('transcribe');
 
     // An import may carry a drum track (returned as a `drum_tab`) and/or piano
     // "Keys" arrangements. Sessions are always sloppak now; load the imported
@@ -2389,6 +2421,10 @@ export async function editorBuild() {
         const data = await resp.json();
         if (data.error) { setStatus('Build error: ' + data.error); return; }
         host.kickLibraryRescan();   // refresh the library grid in the background
+        // C1: the surface shaped while arranging becomes the built file's
+        // memory, so re-opening it from the library lands on the same tools.
+        // (The create session itself has no filename — this is the handoff.)
+        if (data.filename) surfacePersistFor(data.filename);
         setStatus('Built - added to library!');
     } catch (e) {
         setStatus('Build failed: ' + e.message);

@@ -69,7 +69,7 @@ restart. In the packaged app the host serves `src/` with live-edit caching.
 
 ## Architecture in five minutes
 
-The frontend is ~40 ES modules under `src/`, orchestrated by a thin
+The frontend is ~50 ES modules under `src/`, orchestrated by a thin
 `src/main.js`. The load-bearing invariants:
 
 - **`src/state.js` exports `S`, the single mutable state object.** It is
@@ -87,12 +87,27 @@ The frontend is ~40 ES modules under `src/`, orchestrated by a thin
   seconds from beats, `TempoGridCmd` re-lifts beats from seconds.
 - **Modules must degrade under node** (no DOM, no host): inert defaults,
   no import-time side effects — that's how the real-import test suites work.
+- **Global listeners and timers must register with the teardown registry**
+  (`host.addGlobalListener`, tracked via `window.__editorScreenTeardown`):
+  the host re-injects the screen, so anything unregistered leaks across
+  re-injection. New chrome rides the rAF draw-coalesce — no per-frame work.
+- **Kind inference drives a part's entire view** (string lanes vs piano roll
+  vs drum grid): keys > drums > bass > guitar, with `KEYS_PATTERN`
+  start-anchored ("Electric Piano" is not a keys name).
+- **Never compose the capo pair blindly**: `_soundingPitchPure` adds the capo
+  once (matching core's `pitch_from_base`); `_absolutePitch` deliberately
+  omits it (string-move math). Both carry warning comments and a pinned test.
+- **Transient per-note UI marks live in module `WeakSet`s, not note fields**:
+  an underscore field leaks into the save body on solo notes and vanishes on
+  chord notes (`reconstructChords` rebuilds via an explicit field mapper).
 
 The backend (`routes.py`) keeps a `_sessions` dict keyed by session id, each
 owning an unpacked working directory. Every import format normalizes through
 its own endpoint into the same model; `/build` is the only path that writes
-to the user's library. When the editor and the host disagree about a field,
-the [feedpak spec](https://github.com/got-feedback/feedpak-spec) wins.
+to the user's library. `_NOTE_TECH_FIELDS` is the single source of truth for
+authorable note techniques — new ones go there, not in ad-hoc field lists.
+When the editor and the host disagree about a field, the
+[feedpak spec](https://github.com/got-feedback/feedpak-spec) wins.
 
 ## Testing conventions
 
