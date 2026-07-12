@@ -26,7 +26,7 @@ import { _drumLaneIdxForPiece, _drumPieceCount } from './drum.js';
 import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
 import { host } from './host.js';
 import { lanes } from './lanes.js';
-import { S } from './state.js';
+import { S, editGen } from './state.js';
 import {
     _suggestActive, _suggestApplyPure, _suggestAvgConf, _suggestDismiss,
     _suggestHitAt, _suggestHudTextPure, _suggestProposals, _suggestRegenerateFrom,
@@ -1296,6 +1296,59 @@ export function _tempoHasMultipleMeasureBpmsPure(beats, tolerance) {
     if (bpms.length < 2) return false;
     const first = bpms[0];
     return bpms.some(bpm => Math.abs(bpm - first) > tol);
+}
+
+// ── Derived tempo/meter change markers (design slice 2a, PR 10) ──────
+// ZERO storage: every marker is a PURE function of S.beats (the executable
+// truth — never a second source). A tempo marker sits on a downbeat whose
+// per-measure BPM leaves the current run beyond `tol` (the same 0.01 constant
+// _tempoHasMultipleMeasureBpmsPure uses); a meter marker sits where the
+// numerator (beats/bar) or `den` changes. Bar 1 gets a baseline of each. A
+// trailing partial final bar never emits a spurious meter change.
+// Returns [{ i, time, measure, kind: 'tempo'|'meter', label }], time-sorted.
+export function _tempoMarkersPure(beats, tolerance) {
+    const out = [];
+    if (!Array.isArray(beats) || beats.length < 2) return out;
+    const tol = Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.01;
+    const r3 = v => Math.round(v * 1000) / 1000;
+    const db = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) db.push(i);
+    if (!db.length) return out;
+    let runBpm = null, runNum = null, runDen = null;
+    for (let k = 0; k < db.length; k++) {
+        const i = db[k];
+        const nextI = (k + 1 < db.length) ? db[k + 1] : null;
+        const num = (nextI !== null) ? (nextI - i) : Math.max(1, beats.length - i);
+        const den = [2, 4, 8, 16].includes(Number(beats[i].den)) ? Number(beats[i].den) : (runDen == null ? 4 : runDen);
+        const bpm = (nextI !== null && beats[nextI].time > beats[i].time)
+            ? r3((num * 60) / (beats[nextI].time - beats[i].time))
+            : runBpm;   // last (open) measure reuses the run's tempo
+        const measure = beats[i].measure;
+        if (bpm !== null && (runBpm === null || Math.abs(bpm - runBpm) > tol)) {
+            out.push({ i, time: beats[i].time, measure, kind: 'tempo', label: `${_tempoFmtBpm(bpm)} BPM` });
+            runBpm = bpm;
+        }
+        const meterChanged = runNum === null || num !== runNum || den !== runDen;
+        const trailingPartial = nextI === null && runNum !== null && num < runNum;
+        if (meterChanged && !trailingPartial) {
+            out.push({ i, time: beats[i].time, measure, kind: 'meter', label: `${num}/${den}` });
+            runNum = num; runDen = den;
+        }
+    }
+    return out.sort((a, b) => a.time - b.time);
+}
+function _tempoFmtBpm(bpm) {
+    const v = Math.round(bpm * 10) / 10;
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+// editGen-memoized marker list for the ruler paint (recomputes only when an
+// edit bumps editGen or S.beats is reassigned by a grid command).
+let _markerCache = { gen: -1, beatsRef: null, value: [] };
+export function _tempoMarkers() {
+    if (_markerCache.gen === editGen && _markerCache.beatsRef === S.beats) return _markerCache.value;
+    _markerCache = { gen: editGen, beatsRef: S.beats, value: _tempoMarkersPure(S.beats, 0.01) };
+    return _markerCache.value;
 }
 
 export function _tempoParseBpmInputPure(value) {
