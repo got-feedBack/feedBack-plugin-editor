@@ -1803,7 +1803,7 @@ export function _tempoPivotTimePure(beats, tempoSel) {
 // anchors_user, handshapes (start+end), phrases. `visit(obj, tf, endKind)`:
 //   tf      — the object's seconds field: 'time' | 'start_time' | 't'
 //   endKind — 'none' (a point), 'sustain' (note: time+sustain → beatEnd),
-//             or 'span' (handshape: end_time → beatEnd)
+//             or 'span' (handshape/phrase: end_time → beatEnd)
 // The start-beat field is always `beat`; a duration's end-beat is `beatEnd`.
 // Both are runtime-only caches — _buildSaveBody strips them off the wire.
 export function _eachTimed(visit) {
@@ -1821,7 +1821,12 @@ export function _eachTimed(visit) {
         for (const a of (arr.anchors || [])) visit(a, 'time', 'none');
         for (const a of (arr.anchors_user || [])) visit(a, 'time', 'none');
         for (const hs of (arr.handshapes || [])) visit(hs, 'start_time', 'span');
-        for (const ph of (arr.phrases || [])) visit(ph, 'time', 'none');
+        // Phrases anchor on start_time (input.js authoring, routes.py save) —
+        // NOT `time`; visiting the wrong field left every phrase stranded on
+        // the old timeline through lift/reproject. end_time (present on
+        // server-loaded phrases) rides as a span; when absent, 'span' degrades
+        // to a point, like handshapes.
+        for (const ph of (arr.phrases || [])) visit(ph, 'start_time', 'span');
     }
 }
 
@@ -2011,9 +2016,19 @@ export class TempoOffsetCmd extends TempoMapCmd {
         this.prevApplied = prevApplied;
         this.newApplied = newApplied;
     }
+    // Keep the visible toolbar input in step with S.appliedOffset across
+    // undo/redo: editorNudgeOffset computes the NEXT offset from el.value, so a
+    // stale input after Ctrl-Z would make one +10ms click re-apply the undone
+    // nudge on top (delta computes against the restored S.appliedOffset).
+    _syncOffsetInput() {
+        if (typeof document === 'undefined') return;
+        const el = document.getElementById('editor-offset');
+        if (el) el.value = String(S.appliedOffset);
+    }
     exec() {
         super.exec();
         S.appliedOffset = this.newApplied;
+        this._syncOffsetInput();
         // Clamp AFTER the reproject (which already _r3-rounds every drum time):
         // a hit pushed before 0 by a leftward nudge would be rejected by the save
         // path. rollback restores the exact pre-shift seconds, so redo re-derives
@@ -2027,6 +2042,7 @@ export class TempoOffsetCmd extends TempoMapCmd {
     rollback() {
         super.rollback();
         S.appliedOffset = this.prevApplied;
+        this._syncOffsetInput();
     }
 }
 

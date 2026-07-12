@@ -59,7 +59,15 @@ function legacyApplyTempoRemap(remap, S, ride) {
             if (typeof hs.start_time === 'number') hs.start_time = _r3(remap(hs.start_time));
             if (typeof hs.end_time === 'number') hs.end_time = _r3(remap(hs.end_time));
         }
-        for (const ph of (arr.phrases || [])) if (typeof ph.time === 'number') ph.time = _r3(remap(ph.time));
+        // Deviation from the shipped pre-A2 remap: that code visited `ph.time`,
+        // a field real phrases never carry (they anchor on start_time — see
+        // input.js authoring / routes.py save), so it silently stranded every
+        // phrase. The golden gates the CORRECTED field, mirroring handshapes,
+        // so the phrase comparison is meaningful instead of vacuous.
+        for (const ph of (arr.phrases || [])) {
+            if (typeof ph.start_time === 'number') ph.start_time = _r3(remap(ph.start_time));
+            if (typeof ph.end_time === 'number') ph.end_time = _r3(remap(ph.end_time));
+        }
     }
 }
 
@@ -110,7 +118,7 @@ function song() {
                 anchors: [{ time: 0.0, fret: 1 }],
                 anchors_user: [{ time: 2.3, fret: 5 }],
                 handshapes: [{ start_time: 0.5, end_time: 1.5, chord_id: 0 }],
-                phrases: [{ time: 0.0 }, { time: 2.3 }],
+                phrases: [{ start_time: 0.0 }, { start_time: 2.3, end_time: 2.7 }],
             },
             {
                 name: 'Bass',
@@ -135,7 +143,10 @@ function collectTimes(S) {
         for (const a of arr.anchors) out.push(a.time);
         for (const a of arr.anchors_user) out.push(a.time);
         for (const hs of arr.handshapes) out.push(hs.start_time, hs.end_time);
-        for (const ph of arr.phrases) out.push(ph.time);
+        for (const ph of arr.phrases) {
+            out.push(ph.start_time);
+            if (typeof ph.end_time === 'number') out.push(ph.end_time);
+        }
     }
     return out;
 }
