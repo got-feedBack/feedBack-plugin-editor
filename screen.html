@@ -840,9 +840,9 @@
                 <li><strong>Fret</strong> — <kbd>F</kbd> to edit, or type <kbd>0</kbd>–<kbd>9</kbd> (<kbd>Shift</kbd>+<kbd>0</kbd> for 10; <kbd>Ctrl</kbd>+<kbd>+</kbd>/<kbd>-</kbd> to nudge).</li>
                 <li><strong>String</strong> — <kbd>↑</kbd>/<kbd>↓</kbd> move between strings; <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> move <em>keeping the pitch</em> (cycles fretting positions in the roll).</li>
                 <li><strong>Timing</strong> — drag along the timeline. With <strong>snap</strong> (<kbd>G</kbd> to toggle, <kbd>,</kbd>/<kbd>.</kbd> for resolution) notes land on the grid; switch snap to target <strong>audio onsets</strong> when matching a loose take.</li>
-                <li><strong>Sustain</strong> — drag the tail, or <kbd>[</kbd>/<kbd>]</kbd>. <strong>Duplicate</strong> to next position <kbd>Ctrl</kbd>+<kbd>D</kbd>; <strong>select matching</strong> <kbd>Ctrl</kbd>+<kbd>L</kbd>; <strong>resnap</strong> <kbd>Shift</kbd>+<kbd>R</kbd>.</li>
+                <li><strong>Sustain</strong> — drag the tail (or <em>Note ▸ Shorten/Lengthen sustain</em>; <kbd>[</kbd>/<kbd>]</kbd> in the EOF profile). <strong>Duplicate</strong> to next position <kbd>Ctrl</kbd>+<kbd>D</kbd>; <strong>select matching</strong> <kbd>Ctrl</kbd>+<kbd>L</kbd>; <strong>resnap</strong> <kbd>Shift</kbd>+<kbd>R</kbd>.</li>
             </ul>
-            <p><strong>Techniques</strong> toggle on the selection — hammer-on <kbd>H</kbd>, pull-off <kbd>P</kbd>, bend <kbd>B</kbd>, slide <kbd>S</kbd>, palm-mute <kbd>M</kbd>, vibrato <kbd>V</kbd>, harmonics <kbd>N</kbd>/<kbd>Shift</kbd>+<kbd>N</kbd>, accent <kbd>A</kbd>, mute <kbd>X</kbd>. The rest are in the <em>Techniques</em> menu with their keys shown.</p>
+            <p><strong>Techniques</strong> toggle on the selection — hammer-on <kbd>H</kbd>, pull-off <kbd>P</kbd>, bend <kbd>B</kbd>, slide <kbd>S</kbd>, palm-mute <kbd>M</kbd>, vibrato <kbd>V</kbd>, harmonics <kbd>N</kbd>/<kbd>Shift</kbd>+<kbd>N</kbd>, accent <kbd>A</kbd>, mute <kbd>X</kbd>. The rest are under <em>Note ▸ Techniques</em> with their keys shown.</p>
             <figure>
                 <img src="/api/plugins/editor/assets/guide/notes.png" alt="The timeline: colored note blocks laid out per string, with the anchors and handshape lanes along the bottom.">
                 <figcaption>Notes are colored blocks, one lane per string (e·B·G·D·A·E). The number on a block is its fret; the lanes along the bottom hold anchors and handshapes (§8).</figcaption>
@@ -850,12 +850,12 @@
             <p class="tip">The <strong>playability</strong> and <strong>drum-limb</strong> lints flag awkward or impossible fingerings — they <em>advise</em>, never block or auto-change your chart.</p>
 
             <h3>5 · Parts</h3>
-            <p>A song holds several parts (lead, rhythm, bass, keys, drums). Each gets the right view automatically — <strong>string lanes</strong>, <strong>piano roll</strong>, or <strong>drum grid</strong>. Switch with the part selector; <strong>Parts overview</strong> (<kbd>Shift</kbd>+<kbd>A</kbd>) stacks them all. Rename / reorder from the <em>Structure</em> menu; add a part by importing into it.</p>
+            <p>A song holds several parts (lead, rhythm, bass, keys, drums). Each gets the right view automatically — <strong>string lanes</strong>, <strong>piano roll</strong>, or <strong>drum grid</strong>. Switch with the part selector; <strong>Parts overview</strong> (<kbd>Shift</kbd>+<kbd>A</kbd>) stacks them all. Rename / reorder from the <em>Part</em> menu; add a part by importing into it.</p>
 
             <h3>6 · Tempo mapping — line the grid up</h3>
             <p>The grid is <strong>beat-primary</strong>: a note remembers its bar-and-beat and derives its clock time from where the barlines sit — move a barline and the notes ride along. The <strong>ruler is authoritative</strong>: you fit bars to the fixed recording, never the reverse. Three ways, coarse to fine:</p>
             <ol>
-                <li><strong>Sync tempo to audio</strong> (<em>Tempo</em> menu) — detects the BPM and scales the whole grid to match. A good first pass on a steady take.</li>
+                <li><strong>Sync tempo to audio</strong> (<em>Tempo/Grid</em> menu) — detects the BPM and scales the whole grid to match. A good first pass on a steady take.</li>
                 <li><strong>Set a constant BPM</strong> — type into the BPM box for a single-tempo song.</li>
                 <li><strong>Tempo Map mode</strong> (<kbd>T</kbd>) — the precise tool. Drag a barline onto its downbeat and neighbours re-space to fit. Inside it: <kbd>G</kbd> suggest a fit from the audio's onsets (click a ghost to accept), <kbd>Shift</kbd>+<kbd>B</kbd> tap tempo, <kbd>B</kbd> set BPM, <kbd>M</kbd> metric modulation, <kbd>I</kbd> mark a barline, <kbd>Del</kbd> delete one, <kbd>Shift</kbd>+<kbd>T</kbd> time signature. <strong>Beat-lock</strong> a hand-verified barline so later auto-fits leave its time alone (your manual edits are always kept).</li>
             </ol>
@@ -868,8 +868,8 @@
 
             <h3>7 · Drums &amp; 8 · Structure</h3>
             <ul>
-                <li><strong>Drums</strong> — a piece-lane grid (rows = kit pieces, columns = grid positions). Click to place; the pad strip monitors a MIDI e-kit. Row density (Full / Compact) is in <em>View</em>.</li>
-                <li><strong>Structure</strong> menu — sections <kbd>Shift</kbd>+<kbd>M</kbd>, phrases <kbd>Shift</kbd>+<kbd>P</kbd>, hand anchors <kbd>Shift</kbd>+<kbd>F</kbd>, handshapes <kbd>Ctrl</kbd>+<kbd>H</kbd>, tone changes <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>.</li>
+                <li><strong>Drums</strong> — a piece-lane grid (rows = kit pieces, columns = grid positions). Click to place; the pad strip monitors a MIDI e-kit. Row density (Full / Compact) is in the <em>Part</em> menu.</li>
+                <li><strong>Add</strong> menu — sections <kbd>Shift</kbd>+<kbd>M</kbd>, phrases <kbd>Shift</kbd>+<kbd>P</kbd>, hand anchors <kbd>Shift</kbd>+<kbd>F</kbd>, handshapes <kbd>Ctrl</kbd>+<kbd>H</kbd>, tone changes <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>.</li>
             </ul>
             <figure>
                 <img src="/api/plugins/editor/assets/guide/drums.png" alt="The Add Drum Arrangement dialog, offering to import a Guitar Pro or MIDI drum track.">

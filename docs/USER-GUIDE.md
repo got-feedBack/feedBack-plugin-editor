@@ -40,7 +40,7 @@ notes) — useful for lining a grid up fast.
 ## 2. The workspace
 
 - **Menu bar** (top) — every command, grouped by what it acts on (File, Edit,
-  Notes, Techniques, Structure, Tempo/Grid, View, Preview, Help). Menus follow
+  Add, Note, Part, View, Transport, Tempo/Grid, Help). Menus follow
   your shortcut profile and grey out commands that don't apply right now.
 - **Toolbars** — quick toggles for the transport, snap, views, and the BPM /
   Offset boxes. Toolbars are collapsible; density presets live in **View**.
@@ -89,7 +89,8 @@ Select a note by clicking it; drag a box to select several. Then:
 - **Timing** — drag a note along the timeline. With **snap** on (`G` to toggle,
   `,` / `.` to change resolution) notes land on the grid; switch snap to target
   **audio onsets** instead of grid lines when you're matching a loose take.
-- **Sustain** — drag a note's tail, or `[` / `]` to shorten / lengthen.
+- **Sustain** — drag a note's tail to shorten / lengthen (or **Note ▸**
+  Shorten / Lengthen sustain; `[` / `]` in the EOF profile).
 - **Duplicate** the selection to the next position with `Ctrl+D`; **select all
   matching** string/fret with `Ctrl+L`; **resnap** to the grid with `Shift+R`.
 
@@ -106,8 +107,8 @@ Toggle techniques on the selected note(s) — the essentials:
 | `A` | Accent | `K` | Cycle pick direction |
 | `X` | Mute (open) | `Shift+X` | Mute (retain fret) |
 
-Slap/pop (`Shift+O` / `O`), tap (`Y`), tremolo, link-next and more are in the
-**Techniques** menu with their keys shown.
+Slap/pop (`Shift+O` / `O`), tap (`Y`), tremolo, link-next and more are under
+**Note ▸ Techniques** with their keys shown.
 
 > The editor's **playability lint** flags fingerings that are physically awkward
 > and the **drum limb lint** flags hits a human couldn't play — both *advise*,
@@ -126,7 +127,7 @@ gets the view that fits it automatically:
 - **Drum grid** — piece lanes, for drum parts.
 
 Switch parts from the part selector. **Parts overview** (`Shift+A`) stacks every
-part for a bird's-eye look. Rename / reorder parts from the **Structure** menu.
+part for a bird's-eye look. Rename / reorder parts from the **Part** menu.
 Add a part by importing into it (e.g. Import MIDI as a keys part).
 
 ---
@@ -142,7 +143,7 @@ fit bars and beats to the fixed recording, never the other way around.
 
 Three ways to set the tempo, from coarse to fine:
 
-1. **Sync tempo to audio** (Tempo menu) — detects the recording's BPM and scales
+1. **Sync tempo to audio** (Tempo/Grid menu) — detects the recording's BPM and scales
    the whole grid to match in one step. A good first pass on a steady take.
 2. **Set a constant BPM** — type into the BPM box for a song at one tempo.
 3. **Tempo Map mode** (`T`) — the precise tool. The bottom strip shows every
@@ -180,7 +181,7 @@ few milliseconds early or late. It moves every part together and is undoable.
 Drum parts use a **piece-lane grid**: rows are kit pieces (kick, snare, hats…),
 columns are grid positions. Click to place a hit; the **drum pad strip** maps a
 MIDI e-kit or your keyboard for monitoring. Row **density** (Full / Compact) is
-in the **View** menu. The **drum limb lint** flags hits that would need three
+in the **Part** menu. The **drum limb lint** flags hits that would need three
 hands — advisory only.
 
 ---
@@ -196,7 +197,7 @@ Mark up the song so practice tools and the highway know what's happening:
 - **Handshapes** (`Ctrl+H`) — chord shapes from the current selection.
 - **Tone changes** (`Ctrl+Shift+T`) — mark where the amp/tone should switch.
 
-These live in the **Structure** menu and show in the inspector when selected.
+These live in the **Add** menu (Markers) and show in the inspector when selected.
 
 ---
 
@@ -225,7 +226,7 @@ you'll reach for constantly (FeedBack profile):
 | `G` | Toggle snap | `,` / `.` | Snap resolution down / up |
 | `F` | Edit fret | `0`–`9` | Set fret |
 | `↑` / `↓` | Move string | `Shift+↑`/`↓` | Move, keep pitch |
-| `[` / `]` | Sustain shorter / longer | `Ctrl+D` | Duplicate selection |
+| `Shift+R` | Resnap selection to grid | `Ctrl+D` | Duplicate selection |
 | `T` | Tempo Map mode | `W` | Show/hide waveform |
 | `Alt+B` | Loop A/B (audio ↔ guide) | `Shift+L` | Follow playhead |
 | `Shift+M` | Add section | `Shift+F` | Set anchor |

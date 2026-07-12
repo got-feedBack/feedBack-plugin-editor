@@ -712,7 +712,11 @@ _globalListeners.add(document, 'keydown', (e) => {
         hideAddNote();
         hideContextMenu();
         window.editorHideLoadModal();
-        window.editorToggleUserGuide(false);
+        // The User Guide is NOT closed here: this listener registers at import
+        // time, so it runs before input.js onKeyDown — closing the guide here
+        // would blind onKeyDown's read-only-lens gate (it would read the modal
+        // as already closed and let Escape fall through to tempo/suggest
+        // handlers). The gate owns Escape-close for the guide.
     }
 });
 

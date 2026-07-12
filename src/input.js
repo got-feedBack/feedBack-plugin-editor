@@ -1038,6 +1038,24 @@ export function onKeyDown(e) {
         return;
     }
 
+    // The User Guide (Help ▸ User Guide) is the same class of read-only modal
+    // lens as the Tab preview: while it's open NO editor shortcut may reach
+    // the chart hidden behind it (a stray H/2/Delete would silently mutate the
+    // arrangement and pollute undo/redo). Same policy — Escape closes, every
+    // other key is swallowed — and it too must sit before the spacebar handler.
+    const _guideModal = document.getElementById('editor-user-guide-modal');
+    const _guideOpen = !!(_guideModal && !_guideModal.classList.contains('hidden'));
+    const _guideAction = _tabPreviewKeyPolicyPure(_guideOpen, e.key);
+    if (_guideAction === 'close') {
+        e.preventDefault();
+        window.editorToggleUserGuide(false);
+        return;
+    }
+    if (_guideAction === 'swallow') {
+        e.preventDefault();
+        return;
+    }
+
     if (e.key === ' ' && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
         window.editorTogglePlay();
