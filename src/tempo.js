@@ -269,6 +269,29 @@ export function _tempoMapDraw(w, h) {
         }
     }
 
+    // Lead-in region (mirror of the Unmapped tail): the space BEFORE bar 1's
+    // downbeat — pickup / count-in time where no bar has started. Same hatched
+    // wash + label so the two "no mapped bar here" regions read alike; drawn
+    // under the notes/poles. Runs from the timeline start (0) to bar 1.
+    const _bar1T = _firstDownbeatTimePure(S.beats);
+    if (_bar1T !== null && _bar1T > 1e-6) {
+        const lx0 = Math.max(LABEL_W, timeToX(0));
+        const lx1 = Math.min(w, timeToX(_bar1T));
+        const ltop = (TIMELINE_TOP + WAVEFORM_H);
+        if (lx1 > lx0 + 2) {
+            ctx.fillStyle = 'rgba(100,116,139,0.06)';
+            ctx.fillRect(lx0, ltop, lx1 - lx0, gridBottom - ltop);
+            _tempoHatchRect(lx0, ltop, lx1 - lx0, gridBottom - ltop, '#64748b', 8, 0.10);
+            if (lx1 - lx0 > 56) {
+                ctx.fillStyle = '#64748b';
+                ctx.font = 'bold 10px monospace';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                ctx.fillText('Lead-in', lx0 + 6, ltop + 6);
+            }
+        }
+    }
+
     // Dimmed reference layer — the current arrangement's notes + drum
     // hits, fixed at their absolute times so the user can drag the grid
     // to line up with them (and the waveform).
@@ -442,6 +465,44 @@ export function _syncAppliedMessagePure(syncApplied, syncReason) {
 }
 /* @pure:tempo-map-guidance:end */
 
+/* @pure:tempo-bar1:start */
+// The seconds of bar 1's downbeat — the first beat carrying a real measure
+// number (measure > 0). Lead-in / pickup beats (measure <= 0) sit before it.
+// null when there is no downbeat to anchor to. Shared by the Bar-1-here verb,
+// the Lead-in region wash, and the import nudge.
+export function _firstDownbeatTimePure(beats) {
+    if (!Array.isArray(beats)) return null;
+    for (let i = 0; i < beats.length; i++) {
+        if (beats[i] && beats[i].measure > 0) return beats[i].time;
+    }
+    return null;
+}
+
+// The rigid grid shift that lands bar 1's downbeat at targetTime, plus the
+// shifted grid (beats moved by the same delta — a pure +delta, exactly what
+// TempoOffsetCmd extrapolates over every part). null when there is no downbeat.
+export function _tempoBar1ShiftPure(beats, targetTime) {
+    const t0 = _firstDownbeatTimePure(beats);
+    if (t0 === null) return null;
+    const delta = (Number(targetTime) || 0) - t0;
+    return { delta, newBeats: beats.map(b => ({ ...b, time: b.time + delta })) };
+}
+
+// Import nudge (SUGGEST only): the grid put bar 1 at ~0 but the recording
+// clearly starts later — return the copy that points the user at 'Bar 1 here'.
+// Empty string (no nudge) unless bar 1 is essentially at 0 AND the first onset
+// is both clearly past 0 and a meaningful gap beyond bar 1. Never auto-shifts —
+// the design non-negotiable is that imports only ever suggest a re-anchor.
+export function _importBar1NudgePure(bar1Time, firstOnsetTime) {
+    if (bar1Time === null || bar1Time === undefined) return '';
+    if (firstOnsetTime === null || firstOnsetTime === undefined) return '';
+    if (!(bar1Time <= 0.15)) return '';                    // bar 1 must already sit at ~0
+    if (!(firstOnsetTime >= 0.4)) return '';               // recording must clearly start later
+    if (firstOnsetTime - bar1Time < 0.4) return '';        // and by a musically meaningful gap
+    return `The recording seems to start around ${firstOnsetTime.toFixed(1)}s but the chart starts at 0:00 — open Tempo Map and use ‘Bar 1 here’.`;
+}
+/* @pure:tempo-bar1:end */
+
 /* @pure:tempo-sync-inspector:start */
 export function _tempoSyncInspectorStatePure(measures, selectedIndex) {
     const rows = Array.isArray(measures) ? measures : [];
@@ -502,12 +563,15 @@ function _ensureTempoSyncInspector() {
         + '<span id="editor-tempo-sync-label" class="text-gray-200 font-medium min-w-[5.5rem]">No selection</span>'
         + '<span id="editor-tempo-sync-hint" class="text-gray-500"></span>'
         + '<button type="button" id="editor-tempo-sync-insert" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Mark a barline at the playhead">Mark</button>'
+        + '<button type="button" id="editor-tempo-sync-bar1" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Shift the grid, notes and sections so bar 1 lands at the playhead (the audio does not move)">Bar 1 here</button>'
         + '<button type="button" id="editor-tempo-sync-delete" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete selected barline">Delete</button>'
         + '<button type="button" id="editor-tempo-sync-modulate" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Metric modulation: new tempo = current × ratio, from this measure to the next tempo change (M)">Modulate…</button>';
     const insertBtn = el.querySelector('#editor-tempo-sync-insert');
+    const bar1Btn = el.querySelector('#editor-tempo-sync-bar1');
     const deleteBtn = el.querySelector('#editor-tempo-sync-delete');
     const modulateBtn = el.querySelector('#editor-tempo-sync-modulate');
     if (insertBtn) insertBtn.onclick = () => _tempoInsertSyncPoint(S.cursorTime);
+    if (bar1Btn) bar1Btn.onclick = () => _tempoSetBar1Here();
     if (deleteBtn) deleteBtn.onclick = () => { if (S.tempoSel >= 0) _tempoDeleteSyncPoint(S.tempoSel); };
     if (modulateBtn) modulateBtn.onclick = () => _editorModulateTempoAtSelection();
     bpm.parentNode.insertBefore(el, bpm.previousElementSibling || bpm);
@@ -922,9 +986,14 @@ export function _tempoMapOnContextMenu(e) {
         html += mkBtn('tsedit', 'Set time signature…');
         if (cur < 16) html += mkBtn('tsplus', 'Add a beat (time signature +)');
         if (cur > 1) html += mkBtn('tsminus', 'Remove a beat (time signature −)');
-        // Pickup lives on the FIRST measure only (D3): a partial first bar.
+        // Bar-1 re-anchor + pickup live on the FIRST measure only (D3). "Bar 1
+        // here" is listed above the pickup: re-anchoring the whole song is the
+        // coarser, more common first move; the partial-bar pickup is the refinement.
         const _firstPole = _tempoMeasures()[0];
-        if (_firstPole && onPole === _firstPole.i && cur > 1) html += mkBtn('pickup', 'Set pickup (partial first bar)…');
+        if (_firstPole && onPole === _firstPole.i) {
+            html += mkBtn('bar1here', 'Bar 1 here (move bar 1 to the playhead)');
+            if (cur > 1) html += mkBtn('pickup', 'Set pickup (partial first bar — for music that starts before beat 1)…');
+        }
         html += '<div class="border-t border-gray-700 my-1"></div>';
         html += mkBtn('togglelock',
             (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
@@ -942,6 +1011,7 @@ export function _tempoMapOnContextMenu(e) {
         btn.onclick = () => {
             host.hideContextMenu();
             const a = btn.dataset.action;
+            if (a === 'bar1here') { _tempoSetBar1Here(); return; }
             if (a === 'pickup') { _tempoPromptPickup(); return; }
             if (a === 'delete-multi') _tempoDeleteSelection();
             else if (a === 'delete') _tempoDeleteSyncPoint(onPole);
@@ -1302,6 +1372,26 @@ export function _pickupBarShiftPure(beats) {
     return (dbs[1] - dbs[0]) < (dbs[2] - dbs[1]) ? 1 : 0;
 }
 /* @pure:tempo-pickup:end */
+
+// The verb: shift the whole grid (and, via TempoOffsetCmd's total reproject,
+// every part's notes/chords/anchors/drums AND the sections) so bar 1's downbeat
+// lands at the playhead. The audio never moves — this is a chart re-anchor, so
+// it rides the SAME offset command as a manual nudge (S.appliedOffset accrues,
+// undoable). Reachable from the inspector "Bar 1 here" button and the bar-1
+// pole's right-click item.
+export function _tempoSetBar1Here() {
+    const target = Number(S.cursorTime) || 0;
+    const res = _tempoBar1ShiftPure(S.beats, target);
+    if (!res) { setStatus('No measure grid to place bar 1 on.'); return; }
+    if (Math.abs(res.delta) < 1e-4) { setStatus('Bar 1 is already at the playhead.'); return; }
+    const prevApplied = Number(S.appliedOffset) || 0;
+    const oldBeats = S.beats.map(b => ({ ...b }));
+    S.history.exec(new TempoOffsetCmd(oldBeats, res.newBeats, prevApplied, prevApplied + res.delta));
+    const el = (typeof document !== 'undefined') ? document.getElementById('editor-offset') : null;
+    if (el) el.value = String(prevApplied + res.delta);
+    host.draw();
+    setStatus(`Bar 1 → ${target.toFixed(2)}s — chart and notes shifted; audio unchanged.`);
+}
 
 // The verb: prompt for the pickup beat count and apply as one undoable
 // grid command. Reachable from the Tempo Map context menu (first measure)
