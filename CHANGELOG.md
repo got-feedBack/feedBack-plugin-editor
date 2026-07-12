@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Assisted tempo mapping (Suggest ▸ G) reads music more musically.** The
+  onset-fit engine was hardened so it stops guessing where a human would:
+  - the snap window is now a fraction of the **beat**, not the bar, so a
+    syncopation half a beat off the downbeat is no longer grabbed as the barline
+    (the old ±12%-of-the-bar window was ±0.48 beat in 4/4 and far wider in long
+    bars);
+  - a candidate downbeat is scored by **one-bar comb corroboration** — the onset
+    support of the whole bar's pulse, not a single hit — and confidence is a
+    **product** of that corroboration, run continuity, and tempo consistency, so
+    a bare or off-tempo bar reads as less certain;
+  - the drift tracker is a **median of recent bars** (tap-tempo style) and a
+    single correction bigger than 25% of a bar **stops** instead of snapping the
+    whole grid onto one bad onset;
+  - the march now **names why it stopped** in the HUD — *silence*, a
+    *half/double-time* phase ambiguity, a *sudden tempo change*, or an
+    *out-of-range tempo* (outside 40–300 BPM) — and a sustained/held bar (onsets
+    present but off the downbeat) keeps marching where a truly silent bar stops.
+  Suggestions remain proposal-only (ghost poles); nothing commits without an
+  accept. `_suggestFitPure`'s signature is unchanged.
+
 - **The first Save of a session now opens the file explorer** (the same native
   picker as Save As), so you choose where the `.feedpak` lands instead of it
   going somewhere implicit. Once you've picked a location, later saves (Ctrl+S /

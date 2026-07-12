@@ -30,7 +30,7 @@ import { S } from './state.js';
 import {
     _suggestActive, _suggestApplyPure, _suggestAvgConf, _suggestDismiss,
     _suggestHitAt, _suggestHudTextPure, _suggestProposals, _suggestRegenerateFrom,
-    _suggestStopReason,
+    _suggestStopReason, _suggestStopDetail,
 } from './tempo-suggest.js';
 import { _editorPromptText, setStatus } from './ui.js';
 
@@ -379,7 +379,7 @@ export function _tempoMapDraw(w, h) {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     const hudStr = _suggestActive()
-        ? _suggestHudTextPure(_suggestProposals().length, _suggestAvgConf(), _suggestStopReason())
+        ? _suggestHudTextPure(_suggestProposals().length, _suggestAvgConf(), _suggestStopReason(), _suggestStopDetail())
         : _tempoMapHudTextPure(measures.length, w);
     ctx.fillText(hudStr, LABEL_W + 6, hudY);
     // Pole-colour legend at the right end — only when it clears the guidance text.
