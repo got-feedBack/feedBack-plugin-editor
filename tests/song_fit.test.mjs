@@ -62,7 +62,12 @@ t('editorSetBPM routes its flatten through the shared _editorFlattenSongToBpm', 
     assert.match(mainSrc, /async function _editorFlattenSongToBpm/, 'the shared flatten helper exists');
     assert.match(mainSrc, /window\.editorFlattenSongToBpm\s*=\s*_editorFlattenSongToBpm/, 'helper is window-exposed for Song Fit');
     // editorSetBPM's variable-map branch now delegates instead of inlining.
-    const setBpm = mainSrc.slice(mainSrc.indexOf('window.editorSetBPM ='), mainSrc.indexOf('window.editorSetBPM =') + 900);
+    const marker = 'window.editorSetBPM =';
+    const start = mainSrc.indexOf(marker);
+    assert.ok(start >= 0, 'editorSetBPM must exist');
+    const tail = mainSrc.slice(start + marker.length);
+    const next = tail.search(/\nwindow\.[A-Za-z0-9_$]+\s*=/);
+    const setBpm = mainSrc.slice(start, start + marker.length + (next >= 0 ? next : tail.length));
     assert.match(setBpm, /await _editorFlattenSongToBpm\(newBPM\)/, 'editorSetBPM delegates to the helper');
     assert.doesNotMatch(setBpm, /new TempoGridCmd\(oldBeats, flat/, 'the inline flatten body was removed from editorSetBPM');
 });
@@ -73,6 +78,14 @@ t('Song Fit + its set-constant message are wired', () => {
     // The inline controls are NOT rerouted — Song Fit dispatches to the verbs.
     assert.match(songFitSrc, /editorSyncTempo/, 'Fit tempo dispatches to the existing sync verb');
     assert.match(songFitSrc, /editorNudgeOffset/, 'Shift keeps the ±10ms nudge arrows');
+});
+t('Song Fit revalidates the session after awaited prompts and before shift actions', () => {
+    assert.match(songFitSrc, /const sessionBefore = S\.sessionId[\s\S]*await _editorPromptChoice[\s\S]*_sameSession\(sessionBefore\)/,
+        'choice prompt revalidates the session before dispatch');
+    assert.match(songFitSrc, /async function _songFitSetConstant\(sessionBefore = S\.sessionId\)[\s\S]*await _editorPromptText[\s\S]*_sameSession\(sessionBefore\)/,
+        'constant-BPM prompt revalidates before flattening');
+    assert.match(songFitSrc, /export function _editorShiftEverything\(sessionBefore = S\.sessionId\)[\s\S]*const guard = \(\) => [\s\S]*_sameSession\(sessionBefore\)[\s\S]*editorApplyOffset/,
+        'shift modal validates before applying offset actions');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

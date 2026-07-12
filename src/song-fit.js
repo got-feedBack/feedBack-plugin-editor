@@ -39,22 +39,24 @@ export async function _editorSongFit() {
         setStatus('Load a song with a beat grid before fitting it to the recording.');
         return;
     }
+    const sessionBefore = S.sessionId;
     const choice = await _editorPromptChoice({
         title: 'Song Fit',
         message: 'Line the chart up with the recording. The audio never moves — only the chart does.',
         choices: _songFitChoicesPure(),
     });
     if (!choice) return;
-    if (choice === 'shift') { _editorShiftEverything(); return; }
+    if (!_sameSession(sessionBefore)) return;
+    if (choice === 'shift') { _editorShiftEverything(sessionBefore); return; }
     if (choice === 'fit') { _callWindow('editorSyncTempo'); return; }
-    if (choice === 'constant') { await _songFitSetConstant(); return; }
+    if (choice === 'constant') { await _songFitSetConstant(sessionBefore); return; }
 }
 
 // "Set constant tempo": prompt for one BPM, then reuse editorSetBPM's flatten
 // helper (conform vs rebuild) — which works regardless of Tempo Map mode, so the
 // inspector button can reach it (the inline BPM box only offers flatten outside
 // Tempo Map mode).
-async function _songFitSetConstant() {
+async function _songFitSetConstant(sessionBefore = S.sessionId) {
     const raw = await _editorPromptText({
         title: 'Set constant tempo',
         label: 'One steady tempo for the whole song (BPM):',
@@ -62,6 +64,7 @@ async function _songFitSetConstant() {
         placeholder: 'e.g. 120',
     });
     if (raw === null) return;
+    if (!_sameSession(sessionBefore)) return;
     const bpm = parseFloat(raw);
     if (!bpm || bpm <= 0) { setStatus('Enter a tempo in BPM (a positive number).'); return; }
     if (typeof window !== 'undefined' && typeof window.editorFlattenSongToBpm === 'function') {
@@ -73,7 +76,7 @@ async function _songFitSetConstant() {
 // nudge arrows the toolbar has, plus a total-offset field. Each control routes
 // through the existing undoable offset verbs (window.editorNudgeOffset /
 // editorApplyOffset), so undo/redo and the toolbar input stay in step for free.
-export function _editorShiftEverything() {
+export function _editorShiftEverything(sessionBefore = S.sessionId) {
     if (typeof document === 'undefined') return;
     document.getElementById('editor-shift-modal')?.remove();
 
@@ -100,11 +103,16 @@ export function _editorShiftEverything() {
     const applied = () => (Number(S.appliedOffset) || 0);
     const sync = () => { if (valEl && document.activeElement !== valEl) valEl.value = applied().toFixed(3); };
     sync();
-    const nudge = (d) => { _callWindow('editorNudgeOffset', d); sync(); };
+    const done = () => modal.remove();
+    const guard = () => {
+        if (_sameSession(sessionBefore)) return true;
+        done();
+        return false;
+    };
+    const nudge = (d) => { if (!guard()) return; _callWindow('editorNudgeOffset', d); sync(); };
     inner.querySelector('#editor-shift-minus').onclick = () => nudge(-0.01);
     inner.querySelector('#editor-shift-plus').onclick = () => nudge(0.01);
-    if (valEl) valEl.onchange = () => { _callWindow('editorApplyOffset', valEl.value); sync(); };
-    const done = () => modal.remove();
+    if (valEl) valEl.onchange = () => { if (!guard()) return; _callWindow('editorApplyOffset', valEl.value); sync(); };
     inner.querySelector('#editor-shift-done').onclick = done;
 
     modal.appendChild(inner);
@@ -115,4 +123,10 @@ export function _editorShiftEverything() {
 
 function _callWindow(name, ...args) {
     if (typeof window !== 'undefined' && typeof window[name] === 'function') window[name](...args);
+}
+
+function _sameSession(sessionBefore) {
+    if (S.sessionId === sessionBefore) return true;
+    setStatus('Song changed while Song Fit was open — reopen Song Fit for this song.');
+    return false;
 }
