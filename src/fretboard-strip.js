@@ -437,7 +437,7 @@ export function editorToggleFretboardStrip() {
     const next = !fretboardStripEnabled();
     try { localStorage.setItem(PREF_KEY, next ? '1' : '0'); } catch (_) {}
     if (next && !stripArrCtx()) {
-        setStatus('Fretboard strip shows for fretted parts (not keys or drums)');
+        setStatus('Fretboard strip shows for fretted tracks (not keys or drums)');
     } else {
         setStatus(next
             ? 'Fretboard strip on — select notes to light their playable positions; click one to assign it'

@@ -21,7 +21,7 @@ function _tabPreviewGuardPure(filename, arrName, hasArrangements) {
     if (!hasArrangements) return { ok: false, reason: 'Load a song first.' };
     const nm = String(arrName || '');
     if (/^(keys|piano|keyboard|synth)/i.test(nm) || /^drums/i.test(nm)) {
-        return { ok: false, reason: 'Tab preview is for fretted parts — keys and drums parts have no tab.' };
+        return { ok: false, reason: 'Tab preview is for fretted tracks — keys and drums tracks have no tab.' };
     }
     if (!filename) {
         return { ok: false, reason: 'Save the song first — the preview reads the saved pack.' };

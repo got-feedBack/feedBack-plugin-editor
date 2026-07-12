@@ -174,6 +174,17 @@ t('regenerate-from re-keys to the current generation with the remembered onsets'
     assert.ok(_suggestProposals().every(p => p.i > 4), 'only the unconfirmed future');
 });
 
+t('range-bound suggest opts persist only for regeneration, not a fresh compute', () => {
+    Object.assign(S, { tempoMapMode: true, beats: grid(6, 60), zoom: 100, scrollX: 0 });
+    const onsets = onsetsAt(60, 6);
+    assert.strictEqual(_suggestCompute(0, onsets, { toIdx: 12 }), 3, 'bounded at idx 12');
+    assert.deepStrictEqual(_suggestProposals().map(p => p.i), [4, 8, 12]);
+    assert.strictEqual(_suggestRegenerateFrom(4), 2, 'regeneration keeps the bound');
+    assert.deepStrictEqual(_suggestProposals().map(p => p.i), [8, 12]);
+    assert.strictEqual(_suggestCompute(0, onsets), 5, 'fresh explicit onsets clear the bound');
+    assert.deepStrictEqual(_suggestProposals().map(p => p.i), [4, 8, 12, 16, 20]);
+});
+
 t('dismiss clears; leaving tempo-map mode reads as inactive', () => {
     _suggestRegenerateFrom(0);
     assert.strictEqual(_suggestActive(), true);
@@ -234,6 +245,16 @@ t('c2/c6: a fully-played bar is far more confident than a bare-downbeat bar', ()
     // Pre-hardening both scored the downbeat onset alone → equal confidence.
     assert.ok(full.conf > bare.conf + 0.2, `comb lifts confidence (full ${full.conf.toFixed(2)} vs bare ${bare.conf.toFixed(2)})`);
     assert.ok(Math.abs(_suggestCombPure(onsetsAllBeats(120, 6), 0, 2, 4, 0.2) - _suggestCombPure(onsetsAt(120, 6), 0, 2, 4, 0.2)) > 0.3, 'comb sees the interior beats');
+});
+
+// c2 + c3 — dense interior beats must not masquerade as downbeats
+t('c2/c3: a better full-bar comb outside the snap window stops instead of accepting an interior beat', () => {
+    const g = grid(8, 120);                  // grid downbeat prediction is 2.0s
+    const real = onsetsAllBeats(90, 8);      // real next downbeat is 2.667s; 2.0s is only an interior beat
+    const { stopReason, stopDetail, proposals } = _suggestFitPure(g, real, 0);
+    assert.strictEqual(stopReason, 'lost');
+    assert.strictEqual(stopDetail, 'tempo-jump');
+    assert.strictEqual(proposals.length, 0, 'refuses the wrong-pulse interior hit');
 });
 
 // c3 — median stretch + a single big correction stops

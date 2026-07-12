@@ -10,7 +10,7 @@ import { DPR, canvas, ctx, setCanvas } from './canvas.js';
 import {
 } from './position.js';
 
-import { _installModalKeyboard, setStatus } from './ui.js';
+import { _editorPromptChoice, _installModalKeyboard, setStatus } from './ui.js';
 import { EditHistory } from './history.js';
 import {
     _ROLL_REFUSE_REASONS,
@@ -117,10 +117,12 @@ import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teard
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
 import { initMenuBar } from './menu-bar.js';
 import { initToolbars } from './toolbars.js';
+import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
+import { editorDismissSignpost } from './signposts.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
 import {
-    MIN_MEASURE, TempoGridCmd, TempoMapCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
-    _tempoFlattenToBpmPure,
+    MIN_MEASURE, TempoGridCmd, TempoMapCmd, TempoOffsetCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
+    _tempoFlattenToBpmPure, _tempoPivotTimePure,
     _tempoHasMultipleMeasureBpmsPure, _tempoMapDraw, _tempoMapOnDragEnd, _tempoMeasureBeatCount,
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
     _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
@@ -544,6 +546,12 @@ window.editorShowTabPreview = _editorShowTabPreview;
 window.editorRefreshTabPreview = editorRefreshTabPreview;
 
 // Input layer (input.js owns the keyboard/command/shortcut-panel logic).
+// Entry tours (workspace-shell C3): Help ▸ Editor tour + the card's buttons.
+window.editorStartTour = editorStartTour;
+window.editorTourSkip = editorTourSkip;
+window.editorTourEscape = editorTourEscape;
+window.editorTourNext = () => _tourAdvance();
+window.editorDismissSignpost = editorDismissSignpost;
 window.editorToggleShortcutPanel = editorToggleShortcutPanel;
 window.editorRunShortcutCommand = editorRunShortcutCommand;
 window.editorHideTabPreview = editorHideTabPreview;
@@ -1310,7 +1318,12 @@ window.editorTogglePlay = () => {
         window.editorStopRecordMidi();
         return;
     }
-    if (S.playing) stopPlayback(); else startPlayback();
+    if (S.playing) {
+        stopPlayback();
+    } else {
+        startPlayback();
+        _tourNoteAction('play');   // C3 Compose tour: step 3 task
+    }
 };
 window.editorZoom = (dir) => {
     const factor = dir > 0 ? 1.3 : 0.77;
@@ -1321,9 +1334,11 @@ window.editorZoom = (dir) => {
 };
 window.editorSetSnap = (idx) => {
     const n = parseInt(idx, 10);
+    const prev = S.snapIdx;
     S.snapIdx = Math.max(0, Math.min(SNAP_VALUES.length - 1, Number.isFinite(n) ? n : S.snapIdx));
     const el = document.getElementById('editor-snap');
     if (el) el.selectedIndex = S.snapIdx;
+    if (S.snapIdx !== prev) _tourNoteAction('snapChange');   // C3 Compose tour: step 2 task
 };
 window.editorSetSwing = (pct) => {
     const n = Number(pct);
@@ -1342,32 +1357,57 @@ window.editorSetSnapEnabled = (enabled) => {
     if (el) el.checked = S.snapEnabled;
     setStatus(S.snapEnabled ? 'Snap enabled' : 'Snap disabled');
 };
-window.editorSetBPM = (val) => {
+window.editorSetBPM = async (val) => {
     const newBPM = parseFloat(val);
     if (!newBPM || newBPM <= 0 || S.beats.length < 2) return;
     if (!S.tempoMapMode && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01)) {
         // The song has a variable tempo map (multiple per-measure tempos). The
         // per-measure editor can only fix ONE measure at a time, so offer to
         // FLATTEN the whole map to this constant BPM — the escape hatch from a
-        // bad import's tempos (tester report: "can't remove all the BPM sync
-        // points without deleting measures"). Confirm because it discards the
-        // tempo variation; notes keep their times, and undo restores the map.
-        const ok = (typeof window !== 'undefined' && typeof window.confirm === 'function')
-            ? window.confirm(
-                `This song has a variable tempo map (multiple tempo events).\n\n` +
-                `Flatten the WHOLE map to a constant ${newBPM} BPM?\n\n` +
-                `Only the beat grid is rebuilt — notes keep their times. Undo restores the tempo map.`)
-            : true;
-        if (!ok) { updateBPMDisplay(); draw(); return; }
+        // bad import's tempos. The two directions are genuinely different edits,
+        // so NAME them (charrette UX P2) instead of a bare confirm.
+        const sessionBefore = S.sessionId;
+        const choice = await _editorPromptChoice({
+            title: `Set the whole song to ${newBPM} BPM`,
+            message: 'This song has a variable tempo map. Choose how to flatten it to one tempo:',
+            choices: [
+                { key: 'conform', label: 'Conform notes to the new tempo',
+                    hint: 'Notes keep their bar:beat positions and move with the grid — the usual choice.' },
+                { key: 'grid', label: 'Rebuild the grid only',
+                    hint: 'Notes keep their exact seconds; use when notes are already aligned to the recording.' },
+            ],
+        });
+        if (!choice) { updateBPMDisplay(); draw(); return; }
+        // The dialog awaits across real time: the overlay traps pointer +
+        // keyboard, but an already-in-flight async import can land meanwhile,
+        // swapping the session/grid — the choice would then flatten the NEW
+        // song unprompted. Re-validate the precondition before applying.
+        if (S.sessionId !== sessionBefore || !_tempoHasMultipleMeasureBpmsPure(S.beats, 0.01)) {
+            updateBPMDisplay(); draw(); return;
+        }
         // Exact spacing (no rounding) so the flattened map reads as PERFECTLY
         // constant — _r3's ±0.5ms would drift per-measure BPM past the 0.01
-        // variable-tempo detector and the grid would still look variable.
+        // variable-tempo detector and the grid would still look variable. The
+        // flattened grid is anchored at bar 1 (beats[0].time), i.e. PR-1's pivot.
         const flat = _tempoFlattenToBpmPure(S.beats, newBPM);
         if (!flat) { updateBPMDisplay(); return; }
-        S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), flat, 'flatten'));
+        const oldBeats = S.beats.map(b => ({ ...b }));
+        if (choice === 'conform') {
+            // Conform: beats are truth, seconds reproject onto the flat grid
+            // (TempoMapCmd direction) so every part — all arrangements, chords,
+            // drums, anchors, handshapes — rides to the new constant tempo. Do
+            // NOT hand-scale note seconds (an invariant violation on locked/
+            // warped grids; the command's lift→reproject is the safe path).
+            S.history.exec(new TempoMapCmd(oldBeats, flat, 'flatten-conform'));
+            setStatus(`Whole song conformed to a constant ${newBPM.toFixed(2)} BPM — notes moved with the grid. Undo restores the map.`);
+        } else {
+            // Rebuild grid only: seconds hold, beats re-lift (TempoGridCmd) —
+            // today's flatten, for when the notes already sit on the recording.
+            S.history.exec(new TempoGridCmd(oldBeats, flat, 'flatten'));
+            setStatus(`Beat grid rebuilt to a constant ${newBPM.toFixed(2)} BPM — notes kept their times. Undo restores the map.`);
+        }
         updateBPMDisplay();
         draw();
-        setStatus(`Tempo map flattened to a constant ${newBPM.toFixed(2)} BPM`);
         return;
     }
     if (S.tempoMapMode) {
@@ -1396,14 +1436,18 @@ window.editorSetBPM = (val) => {
     const factor = oldBPM / newBPM;
     if (Math.abs(factor - 1) < 0.001) return;
 
-    // Scale all times
-    const nn = notes();
-    for (const n of nn) {
-        n.time *= factor;
-        if (n.sustain) n.sustain *= factor;
-    }
-    for (const b of S.beats) b.time *= factor;
-    for (const s of S.sections) s.start_time *= factor;
+    // Rescale the whole (constant-tempo) song to a new BPM. Build the new grid by
+    // scaling every beat ABOUT the pivot — t' = t0 + (t − t0)·factor, pivoting at
+    // the first downbeat so a pickup / lead-in stays put instead of the t=0
+    // order-of-operations trap — then route through ONE TempoMapCmd: it lifts
+    // every part's beat from the old grid and reprojects onto the new, moving
+    // notes, chords, drums, anchors, handshapes and EVERY arrangement, undoably.
+    // (The old path scaled only the current arrangement's plain notes + beats +
+    // sections directly, with no undo: silent multi-part corruption.)
+    const t0 = _tempoPivotTimePure(S.beats, S.tempoMapMode ? S.tempoSel : -1);
+    const oldBeats = S.beats.map(b => ({ ...b }));
+    const rescaled = S.beats.map(b => ({ ...b, time: t0 + (b.time - t0) * factor }));
+    S.history.exec(new TempoMapCmd(oldBeats, _respaceWithLocksPure(oldBeats, rescaled), 'rescale'));
 
     updateBPMDisplay();
     draw();
@@ -1442,80 +1486,40 @@ window.editorSetTempoSignatureDenominator = (val) => {
         setStatus(`Measure ${m.measure} time signature changed: ${prevNum}/${prevDen} → ${prevNum}/${nextDen}`);
     }
 };
-// Rigidly shift all of ONE arrangement's time-bearing fields by `delta` seconds:
-// notes, chords (+ their notes), source + authored anchors, handshape spans, and
-// phrase windows. Sustains are durations, so they do NOT move. Field set mirrors
-// the beat-primary walk (_eachTimed / _reprojectAll). Pure — node-tested.
-function _shiftArrangementTimes(arr, delta) {
-    if (!arr) return;
-    for (const n of (arr.notes || [])) {
-        if (typeof n.time === 'number') n.time += delta;
-    }
-    for (const ch of (arr.chords || [])) {
-        if (typeof ch.time === 'number') ch.time += delta;
-        for (const cn of (ch.notes || [])) {
-            if (typeof cn.time === 'number') cn.time += delta;
-        }
-    }
-    for (const a of (arr.anchors || [])) {
-        if (typeof a.time === 'number') a.time += delta;
-    }
-    for (const a of (arr.anchors_user || [])) {
-        if (typeof a.time === 'number') a.time += delta;
-    }
-    for (const hs of (arr.handshapes || [])) {
-        if (typeof hs.start_time === 'number') hs.start_time += delta;
-        if (typeof hs.end_time === 'number') hs.end_time += delta;
-    }
-    for (const ph of (arr.phrases || [])) {
-        if (typeof ph.time === 'number') ph.time += delta;
-    }
-}
-
 window.editorApplyOffset = (val) => {
     const offset = parseFloat(val) || 0;
-    const currentOffset = parseFloat(document.getElementById('editor-offset').dataset.applied || '0');
-    const delta = offset - currentOffset;
+    const prevApplied = Number(S.appliedOffset) || 0;
+    const delta = offset - prevApplied;
     if (Math.abs(delta) < 0.0001) return;
-    // Shift EVERY arrangement, not just the current one. Beats / sections / drums
-    // (below) are global, so shifting only the current arrangement's notes left
-    // the OTHER arrangements (and every arrangement's chords / anchors /
-    // handshapes / phrases) out of phase. The user then re-nudged each one to
-    // realign it — poisoning `dataset.applied`, so each later +Keys / +Drums
-    // import landed progressively further off (#2). One apply now moves
-    // everything together and `dataset.applied` stays the single source of truth.
-    for (const arr of S.arrangements) _shiftArrangementTimes(arr, delta);
-    for (const b of S.beats) b.time += delta;
-    for (const s of S.sections) s.start_time += delta;
-    // Drum-tab hits live outside S.arrangements, so the loops above miss
-    // them — shift them by the same delta or an offset nudge leaves the
-    // drum chart out of sync with the guitar/beats it just realigned.
-    // Clamp at 0 and round to 3 dp: the save path rejects hits with a
-    // negative `t` as malformed (silent loss), and 3 dp matches the
-    // server-side and drum-editor rounding conventions.
-    if (S.drumTab && Array.isArray(S.drumTab.hits)) {
-        for (const h of S.drumTab.hits) {
-            if (typeof h.t === 'number') {
-                h.t = Math.max(0, Math.round((h.t + delta) * 1000) / 1000);
-            }
-        }
-        S.drumTabDirty = true;
-    }
-    document.getElementById('editor-offset').dataset.applied = String(offset);
+    const el = document.getElementById('editor-offset');
+    // A rigid +delta shift of the whole grid. TempoOffsetCmd reprojects EVERY
+    // part by that delta (beat is truth, extrapolated linearly past the grid
+    // ends → a rigid +delta on the grid gives a rigid +delta on every note),
+    // carries S.appliedOffset, clamps drum hits ≥0, and is undoable — the old
+    // path shifted only the current arrangement's notes plus the global
+    // beats/sections/drums directly and poisoned dataset.applied on partial
+    // realigns (silent multi-part corruption). A degenerate grid (< 2 beats)
+    // routes through the command too: beatOf/timeOf are identity there, so the
+    // reproject is a no-op and the command just carries the scalar — undoably.
+    // (A direct S.appliedOffset write here would skip history; the next nudge's
+    // delta would then compute off a base undo never restores.)
+    const oldBeats = S.beats.map(b => ({ ...b }));
+    const newBeats = S.beats.map(b => ({ ...b, time: b.time + delta }));
+    S.history.exec(new TempoOffsetCmd(oldBeats, newBeats, prevApplied, offset));
+    if (el) el.value = String(offset);
     draw();
     setStatus(`Offset: ${offset >= 0 ? '+' : ''}${(offset * 1000).toFixed(0)}ms`);
 };
 
-// Effective audio offset to send when importing a new arrangement: the
-// song's loaded offset plus any UI-applied shift the user already made
-// via editorApplyOffset (which moves notes/beats but never updates
-// S.offset). Without this, a +Keys/+Drums import after a sync nudge
-// lands out of phase with the chart the user just realigned.
+// Effective audio offset to send when importing a new arrangement: the song's
+// loaded offset plus any UI-applied shift the user already made via
+// editorApplyOffset (which moves notes/beats but never updates S.offset).
+// Without this, a +Keys/+Drums import after an offset nudge lands out of phase
+// with the chart the user just realigned. The applied delta now lives on
+// S.appliedOffset (command-owned, so undo restores it), not the DOM input.
 function _effectiveAudioOffset() {
     const base = Number(S.offset) || 0;
-    const el = document.getElementById('editor-offset');
-    const applied = el ? parseFloat(el.dataset.applied || '0') || 0 : 0;
-    return base + applied;
+    return base + (Number(S.appliedOffset) || 0);
 }
 window.editorNudgeOffset = (delta) => {
     const el = document.getElementById('editor-offset');
@@ -1804,6 +1808,33 @@ function _editorMaybeShowStartLanding() {
 // In the fee[dB]ack v0.3.0 "v3" shell the editor renders inside #v3-main — a
 // scrolling region whose first child is the (tall, ~170px) #v3-topbar, with the
 // screens stacked below it. The legacy root uses `h-screen pt-16`, which makes
+// ── Chrome theme (light / medium / dark) ───────────────────────────
+// Re-themes the CHROME only (menus/toolbars/panels/dialogs) via the CSS
+// variables in assets/v3-theme.css; the timeline canvas keeps its dark palette.
+// 'dark' is the default (no attribute), so an editor with no pref is unchanged.
+const EDITOR_THEMES = ['dark', 'medium', 'light'];
+function _editorThemePref() {
+    try { const v = localStorage.getItem('editorTheme'); return EDITOR_THEMES.includes(v) ? v : 'dark'; }
+    catch (_) { return 'dark'; }
+}
+function editorApplyTheme(theme) {
+    const screen = document.getElementById('plugin-editor');
+    if (!screen) return;
+    const t = theme || _editorThemePref();
+    if (t === 'dark') delete screen.dataset.editorTheme;
+    else screen.dataset.editorTheme = t;
+}
+window.editorSetTheme = (name) => {
+    const theme = EDITOR_THEMES.includes(name) ? name : 'dark';
+    try { localStorage.setItem('editorTheme', theme); } catch (_) {}
+    editorApplyTheme(theme);
+    setStatus(`Theme: ${theme[0].toUpperCase()}${theme.slice(1)}`);
+};
+window.editorCycleTheme = () => {
+    const next = EDITOR_THEMES[(EDITOR_THEMES.indexOf(_editorThemePref()) + 1) % EDITOR_THEMES.length];
+    window.editorSetTheme(next);
+};
+
 // the editor a full 100vh tall (so it overflows past the topbar) and pads the
 // top for the now-hidden legacy navbar. In v3 we instead size the root to the
 // space left under the topbar — height: calc(100vh - <topbar height>) — and
@@ -1822,6 +1853,7 @@ function _applyV3Layout() {
     // sheet — scoped under [data-v3-layout="1"] — also reaches the editor's
     // modals/dialogs, which are siblings of the root inside #plugin-editor.
     screen.dataset.v3Layout = '1';
+    editorApplyTheme();   // stamp the saved chrome theme once the v3 sheet is live
     // Re-query the topbar each call so a topbar that mounts AFTER us is still
     // accounted for (height falls back to full-viewport only while it's absent).
     const fit = () => {
@@ -1962,7 +1994,7 @@ function _editorMovePart(dir) {
     // part via the now-stale `arrangement_index`. Refuse here too so the
     // command palette / keyboard paths can't bypass the hidden buttons.
     if (S.format !== 'sloppak') {
-        setStatus('Reordering parts is only available for Sloppak songs.');
+        setStatus('Reordering tracks is only available for Sloppak songs.');
         return true;
     }
     const from = S.currentArr;
@@ -1980,7 +2012,7 @@ function _editorMovePart(dir) {
     updateArrangementSelector();
     draw();
     updateStatus();
-    setStatus(`Moved “${moved.name || 'part'}” ${dir < 0 ? 'earlier' : 'later'} — the order persists on save`);
+    setStatus(`Moved “${moved.name || 'track'}” ${dir < 0 ? 'earlier' : 'later'} — the order persists on save`);
     return true;
 }
 window.editorMovePart = _editorMovePart;

@@ -95,6 +95,28 @@ export function _suggestCombPure(onsets, startT, endT, beatsInBar, win) {
     return sum / nb;
 }
 
+// Look around the local snap for a better bar-level comb. This does NOT widen
+// the single-hit snap rule by itself: a better candidate outside jumpTol still
+// stops the march below. It prevents a dense interior beat from masquerading as
+// the downbeat when the real barline is just outside the beat-relative window.
+function _suggestBestCombCandidatePure(onsets, startT, gridInt, beatsInBar, win, stretch, jumpTol) {
+    if (!Array.isArray(onsets) || !(gridInt > 0)) return null;
+    const rawPad = win / gridInt;
+    const lo = startT + gridInt * Math.max(0.01, stretch - jumpTol - rawPad);
+    const hi = startT + gridInt * (stretch + jumpTol + rawPad);
+    let best = null;
+    for (const o of onsets) {
+        if (!Number.isFinite(o.t) || o.t <= lo || o.t > hi) continue;
+        const rawStretch = (o.t - startT) / gridInt;
+        if (!(rawStretch > 0)) continue;
+        const comb = _suggestCombPure(onsets, startT, o.t, beatsInBar, win);
+        if (!best || comb > best.comb || (comb === best.comb && Math.abs(o.t - (startT + gridInt * stretch)) < Math.abs(best.time - (startT + gridInt * stretch)))) {
+            best = { time: o.t, rawStretch, comb };
+        }
+    }
+    return best;
+}
+
 // (Hardening c3) Median of recent stretch samples — tap-tempo's trick: one bad
 // snap can't drag the running tempo the way a plain EMA (α=0.35 → 35% per bad
 // bar) does. Non-mutating.
@@ -130,6 +152,7 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
     const missConf = o.missConf || 0.12;
     const medianN = o.medianN || 5;             // stretch median window (c3)
     const jumpTol = o.jumpTol || 0.25;          // >25% single correction ⇒ stop
+    const combSwitchMargin = o.combSwitchMargin || 0.15;
     const minBpm = o.minBpm || 40;
     const maxBpm = o.maxBpm || 300;
     const eps = 0.01;
@@ -145,12 +168,9 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
     const stretchHist = [];
     let misses = 0;
     let stopReason = 'end', stopDetail = 'end';
-    const toIdx = Number.isInteger(o.toIdx) ? o.toIdx : null;   // range re-fit bound (PR 8)
+    const toIdx = Number.isInteger(o.toIdx) ? o.toIdx : null;
     for (let k = 1; k < downs.length; k++) {
         const d = downs[k];
-        // (PR 8) Bounded range re-fit: stop cleanly at the range's last downbeat
-        // — never propose past it, so a range fit can't disturb the grid outside
-        // the selection. A clean completion ('end'), not a loss.
         if (toIdx != null && d > toIdx) { stopReason = 'end'; stopDetail = 'bound'; break; }
         const gridInt = beats[d].time - prevOld;
         const beatsInBar = d - prevDownIdx;   // beats in the PREVIOUS measure's span
@@ -167,8 +187,15 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
         const missesBefore = misses;
         const hit = _suggestOnsetNearPure(onsets, predicted, win);
         if (hit && hit.t > prevNew + eps) {
-            const time = hit.t;
-            const rawStretch = (time - prevNew) / gridInt;
+            let time = hit.t;
+            let rawStretch = (time - prevNew) / gridInt;
+            let comb = _suggestCombPure(onsets, prevNew, time, beatsInBar, win);
+            const better = _suggestBestCombCandidatePure(onsets, prevNew, gridInt, beatsInBar, win, stretch, jumpTol);
+            if (better && better.time !== time && better.comb > comb + combSwitchMargin) {
+                time = better.time;
+                rawStretch = better.rawStretch;
+                comb = better.comb;
+            }
             // (c4) A snap implying ~half or ~double the bar is a metric-phase
             // ambiguity (halftime backbeat, double-time hat), not tempo drift —
             // stop and ask rather than lock the grid to the wrong pulse.
@@ -190,7 +217,6 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
             if (stretchHist.length > medianN) stretchHist.shift();
             stretch = _suggestMedianPure(stretchHist);
             // (c2)+(c6) Confidence = comb × continuity × consistency.
-            const comb = _suggestCombPure(onsets, prevNew, time, beatsInBar, win);
             const continuity = Math.max(0, 1 - missesBefore * 0.5);
             const consistency = Math.max(0, 1 - Math.abs(rawStretch - stretch) / jumpTol);
             const conf = Math.max(0, Math.min(1, comb * continuity * consistency));
@@ -318,9 +344,7 @@ export function _suggestDismiss() {
 export function _suggestCompute(anchorIdx, onsets, opts) {
     const list = onsets || (_sug && _sug.onsets) || null;
     if (!list || !list.length) { _sug = null; return 0; }
-    // Remember the opts (e.g. a range bound) so a forward-regenerate after an
-    // accept stays inside the same range.
-    const useOpts = opts || (_sug && _sug.opts) || undefined;
+    const useOpts = opts || (onsets ? undefined : (_sug && _sug.opts)) || undefined;
     const { proposals, stopReason, stopDetail } = _suggestFitPure(S.beats, list, anchorIdx, useOpts);
     _sug = { anchorIdx, proposals, stopReason, stopDetail, onsets: list, opts: useOpts, gen: editGen };
     return proposals.length;
@@ -330,7 +354,7 @@ export function _suggestCompute(anchorIdx, onsets, opts) {
 // newly authoritative downbeat with the remembered onsets.
 export function _suggestRegenerateFrom(anchorIdx) {
     if (!_sug) return 0;
-    return _suggestCompute(anchorIdx, _sug.onsets);
+    return _suggestCompute(anchorIdx, null);
 }
 
 // Ghost-handle hit test: x within `half` px of a proposal's ghost pole.

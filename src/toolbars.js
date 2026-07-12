@@ -45,7 +45,7 @@ import { S } from './state.js';
 // the right-click checklist show.
 export const TOOLBAR_GROUPS = Object.freeze([
     { id: 'file', label: 'File' },
-    { id: 'parts', label: 'Parts' },
+    { id: 'parts', label: 'Tracks' },
     { id: 'edit', label: 'Edit' },
     { id: 'transport', label: 'Transport' },
     { id: 'grid', label: 'Grid' },

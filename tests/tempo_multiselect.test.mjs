@@ -11,8 +11,8 @@ import assert from 'node:assert';
 import { S } from '../src/state.js';
 import { EditHistory } from '../src/history.js';
 import {
-    TempoGridCmd, _tempoDeleteBarlinesPure, _tempoDeleteSelection,
-    _tempoMarqueeDownbeatsPure, _tempoSelectDownbeatRange,
+    TempoGridCmd, _tempoDeletableBarlineIndicesPure, _tempoDeleteBarlinesPure, _tempoDeleteSelection,
+    _tempoMarqueeDownbeatsPure, _tempoSelectedDownbeatRunsPure, _tempoSelectDownbeatRange,
 } from '../src/tempo.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 
@@ -84,6 +84,8 @@ t('with nothing multi-selected, it falls back to the single focus', () => {
     S.tempoSel = 8;   // an interior downbeat
     _tempoDeleteSelection();
     assert.strictEqual(S.beats[8].measure, -1, 'the focused barline was demoted');
+    assert.strictEqual(S.tempoSel, -1, 'single-delete fallback clears focus');
+    assert.strictEqual(S.tempoSelMulti.size, 0, 'single-delete fallback clears multi-selection');
     assert.strictEqual(S.history.undo.length, 1);
 });
 
@@ -104,6 +106,23 @@ t('_tempoSelectDownbeatRange adds the contiguous downbeats between two poles', (
     seed();
     _tempoSelectDownbeatRange(4, 12);
     assert.deepStrictEqual([...S.tempoSelMulti].sort((a, b) => a - b), [4, 8, 12], 'downbeats 4,8,12 (not the sub-beats)');
+    S.tempoSelMulti.clear();
+    _tempoSelectDownbeatRange(12, 4);
+    assert.deepStrictEqual([...S.tempoSelMulti].sort((a, b) => a - b), [4, 8, 12], 'reverse endpoint order selects the same range');
+});
+
+t('_tempoSelectedDownbeatRunsPure keeps disjoint selected ranges separate', () => {
+    const b = grid();
+    b.push({ time: 16, measure: 5 }, { time: 17, measure: -1 }, { time: 18, measure: -1 }, { time: 19, measure: -1 });
+    b.push({ time: 20, measure: 6 });
+    assert.deepStrictEqual(_tempoSelectedDownbeatRunsPure(b, new Set([4, 8, 16, 20])), [[4, 8], [16, 20]]);
+    assert.deepStrictEqual(_tempoSelectedDownbeatRunsPure(b, new Set([0, 12])), [[0], [12]]);
+});
+
+t('_tempoDeletableBarlineIndicesPure counts only interior barlines', () => {
+    const b = grid();
+    assert.deepStrictEqual(_tempoDeletableBarlineIndicesPure(b, new Set([0, 4, 8, 12])), [4, 8]);
+    assert.deepStrictEqual(_tempoDeletableBarlineIndicesPure(b, new Set([0, 12])), []);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

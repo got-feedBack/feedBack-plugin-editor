@@ -26,13 +26,15 @@ import { _drumLaneIdxForPiece, _drumPieceCount } from './drum.js';
 import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
 import { host } from './host.js';
 import { lanes } from './lanes.js';
-import { S } from './state.js';
+import { S, editGen } from './state.js';
 import {
     _suggestActive, _suggestApplyPure, _suggestAvgConf, _suggestDismiss,
     _suggestHitAt, _suggestHudTextPure, _suggestProposals, _suggestRegenerateFrom,
     _suggestStopReason, _suggestStopDetail,
 } from './tempo-suggest.js';
 import { _editorPromptText, setStatus } from './ui.js';
+import { _tourNoteAction } from './tour.js';
+import { _signpostFirstLock, _signpostNote } from './signposts.js';
 
 // ════════════════════════════════════════════════════════════════════
 // Tempo Map editor — EOF-style sync-point editing of the song-wide
@@ -273,16 +275,13 @@ export function _tempoMapDraw(w, h) {
     // to line up with them (and the waveform).
     _tempoDrawReferenceNotes(w, gridBottom, visibleStart, visibleEnd);
 
-    // Multi-selected barlines (PR 5a): a light amber wash spanning the range
-    // between the outermost selected downbeats (the existing halo grammar).
+    // Multi-selected barlines (PR 5a): a light amber wash for each contiguous
+    // selected downbeat run. Disjoint selections must not fill the gaps.
     if (S.tempoSelMulti && S.tempoSelMulti.size) {
-        let minT = Infinity, maxT = -Infinity;
-        for (const i of S.tempoSelMulti) {
-            const b = S.beats[i];
-            if (b && b.measure > 0) { if (b.time < minT) minT = b.time; if (b.time > maxT) maxT = b.time; }
-        }
-        if (minT <= maxT) {
-            const xa = Math.max(LABEL_W, timeToX(minT)), xb = Math.min(w, timeToX(maxT));
+        for (const run of _tempoSelectedDownbeatRunsPure(S.beats, S.tempoSelMulti)) {
+            const first = S.beats[run[0]], last = S.beats[run[run.length - 1]];
+            if (!first || !last) continue;
+            const xa = Math.max(LABEL_W, timeToX(first.time)), xb = Math.min(w, timeToX(last.time));
             if (xb > xa) {
                 ctx.fillStyle = 'rgba(251,191,36,0.10)';
                 ctx.fillRect(xa, (TIMELINE_TOP + WAVEFORM_H), xb - xa, gridBottom - (TIMELINE_TOP + WAVEFORM_H));
@@ -640,6 +639,10 @@ export function _editorToggleTempoMapMode() {
         // Ctrl+Alt+Z can undo the whole session at once. Entering the mode is not
         // itself a history event, so the stamp lands on the last edit before it.
         if (S.history) S.history.checkpoint('Tempo Map session');
+        _tourNoteAction('tempoMap');   // C3 Transcribe tour: step 2 task
+        // Opening the Tempo tools resolves the grid-fighting signpost's premise,
+        // so it must never fire afterwards (charrette §3.2: action-triggered).
+        _signpostNote('enterTempoMap');
     }
     _refreshTempoMapButton();
     host.refreshDrumEditButton();
@@ -885,6 +888,7 @@ export function _tempoMapOnMouseDown(e, x, y) {
     const beatHit = _tempoSubBeatAtX(x, y);
     if (beatHit >= 0) {
         _tapTempo = null;
+        if (S.tempoSelMulti) S.tempoSelMulti.clear();
         S.drag = {
             type: 'tempo-beat',
             beatIdx: beatHit,
@@ -927,16 +931,16 @@ export function _tempoMapOnContextMenu(e) {
         html += mkBtn('togglelock',
             (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
             '', LOCK_TOOLTIP);
-        // With a multi-selection, offer the bulk delete (PR 5a); else the single.
-        const nMulti = S.tempoSelMulti ? S.tempoSelMulti.size : 0;
-        if (nMulti > 1) {
-            // Range operations over the selected barline span (PR 8).
+        const nSelected = S.tempoSelMulti ? S.tempoSelMulti.size : 0;
+        if (nSelected > 1) {
             html += '<div class="border-t border-gray-700 my-1"></div>';
             html += mkBtn('half-range', 'Half-time the range', '', 'Merge pairs of bars — audio positions hold; notes keep their times');
             html += mkBtn('double-range', 'Double-time the range', '', 'Split each bar at its midpoint — audio positions hold');
             html += mkBtn('flatten-range', 'Flatten range to a steady tempo', '', 'Even out the beats between the ends — notes follow');
             html += '<div class="border-t border-gray-700 my-1"></div>';
         }
+        // With a multi-selection, offer bulk delete only for deletable interior barlines.
+        const nMulti = _tempoDeletableBarlineIndicesPure(S.beats, S.tempoSelMulti).length;
         html += (nMulti > 1)
             ? mkBtn('delete-multi', `Delete ${nMulti} barlines`, 'text-red-400')
             : mkBtn('delete', 'Delete barline', 'text-red-400');
@@ -1120,6 +1124,28 @@ export function _tempoMarqueeDownbeatsPure(beats, tLo, tHi) {
     return out;
 }
 
+// Selected downbeats grouped into contiguous downbeat runs, ignoring sub-beats
+// and invalid indices. Used by the canvas wash so disjoint selections don't
+// paint one large min/max slab across unselected bars.
+export function _tempoSelectedDownbeatRunsPure(beats, indices) {
+    const runs = [];
+    if (!Array.isArray(beats)) return runs;
+    const selected = new Set(indices || []);
+    let run = [];
+    for (let i = 0; i < beats.length; i++) {
+        const b = beats[i];
+        if (!b || b.measure <= 0) continue;
+        if (selected.has(i)) {
+            run.push(i);
+        } else if (run.length) {
+            runs.push(run);
+            run = [];
+        }
+    }
+    if (run.length) runs.push(run);
+    return runs;
+}
+
 // Finalize the marquee drag: box-select the downbeats within the swept X range.
 // Plain replaces the selection, Shift unions; a press that never moved clears
 // (a click-away) — the drum-editor marquee idiom.
@@ -1147,17 +1173,23 @@ export function _tempoMarqueeOnEnd() {
 // _tempoDeleteSyncPoint's guard generalized to a set.
 export function _tempoDeleteBarlinesPure(beats, indices) {
     if (!Array.isArray(beats)) return null;
-    const dbIdx = [];
-    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) dbIdx.push(i);
-    if (dbIdx.length < 3) return null;   // need at least one interior downbeat
-    const first = dbIdx[0], last = dbIdx[dbIdx.length - 1];
-    const del = new Set([...(indices || [])].filter(
-        i => beats[i] && beats[i].measure > 0 && i !== first && i !== last));
+    const del = new Set(_tempoDeletableBarlineIndicesPure(beats, indices));
     if (!del.size) return null;
     const out = beats.map(b => ({ ...b }));
     for (const i of del) out[i].measure = -1;
     _tempoRenumberMeasures(out);
     return { beats: out, count: del.size };
+}
+
+export function _tempoDeletableBarlineIndicesPure(beats, indices) {
+    if (!Array.isArray(beats)) return [];
+    const dbIdx = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) dbIdx.push(i);
+    if (dbIdx.length < 3) return [];   // need at least one interior downbeat
+    const first = dbIdx[0], last = dbIdx[dbIdx.length - 1];
+    return [...new Set(indices || [])]
+        .filter(i => beats[i] && beats[i].measure > 0 && i !== first && i !== last)
+        .sort((a, b) => a - b);
 }
 
 // Del / right-click "Delete N barlines": bulk-demote the multi-selection (or the
@@ -1177,16 +1209,9 @@ export function _tempoDeleteSelection() {
     setStatus(res.count > 1 ? `Deleted ${res.count} barlines.` : 'Barline deleted.');
 }
 
-// ── Range operations (PR 8, charrette arch 2 / trans P5) ─────────────
-//
-// Ops over the multi-selected barline RANGE [lo, hi] (the min and max selected
-// downbeats). Half/double are TEMPO-GRID edits — times hold, beats re-lift, so
-// the AUDIO positions hold and the notes keep their seconds; flatten is a
-// TEMPO-MAP edit — times move to a steady tempo, so the NOTES follow. Each op's
-// status line declares that contract (the charrette's declared-contract rule).
+// ── Range operations ─────────────────────────────────────────────────
 
 /* @pure:tempo-range-ops:start */
-// The selected downbeat range, or null when fewer than two downbeats are picked.
 export function _tempoSelRangePure(beats, indices) {
     if (!Array.isArray(beats) || !indices) return null;
     const dbs = [...indices].filter(i => beats[i] && beats[i].measure > 0).sort((a, b) => a - b);
@@ -1194,21 +1219,16 @@ export function _tempoSelRangePure(beats, indices) {
     return { lo: dbs[0], hi: dbs[dbs.length - 1] };
 }
 
-// Downbeat indices in [lo, hi], inclusive.
 function _downbeatsInRange(beats, lo, hi) {
     const out = [];
     for (let i = lo; i <= hi; i++) if (beats[i] && beats[i].measure > 0) out.push(i);
     return out;
 }
 
-// Half-time: demote every second downbeat inside the range (bars merge pairwise
-// — same span, half the barlines ⇒ half the tempo). The range endpoints are
-// never demoted; an odd bar count leaves the last bar unpaired (reported).
-// Times NEVER move ⇒ TempoGridCmd. Returns { beats, merged, remainder } or null.
 export function _tempoHalveRangePure(beats, lo, hi) {
     if (!Array.isArray(beats)) return null;
     const dbs = _downbeatsInRange(beats, lo, hi);
-    if (dbs.length < 3) return null;                 // need at least two bars to merge
+    if (dbs.length < 3) return null;
     const out = beats.map(b => ({ ...b }));
     let merged = 0;
     for (let j = 1; j < dbs.length - 1; j += 2) { out[dbs[j]].measure = -1; merged++; }
@@ -1217,10 +1237,6 @@ export function _tempoHalveRangePure(beats, lo, hi) {
     return { beats: out, merged, remainder: (dbs.length - 1) % 2 === 1 };
 }
 
-// Double-time: promote the interior beat nearest each range bar's TIME midpoint
-// (bars split in two — same span, twice the barlines ⇒ double the tempo). A bar
-// with no interior beat (a 1-beat bar) can't split and is skipped (reported).
-// Times NEVER move ⇒ TempoGridCmd. Returns { beats, split, skipped } or null.
 export function _tempoDoubleRangePure(beats, lo, hi) {
     if (!Array.isArray(beats)) return null;
     const dbs = _downbeatsInRange(beats, lo, hi);
@@ -1235,8 +1251,8 @@ export function _tempoDoubleRangePure(beats, lo, hi) {
             const d = Math.abs(beats[i].time - mid);
             if (d < bestD) { bestD = d; best = i; }
         }
-        if (best < 0) { skipped++; continue; }       // 1-beat bar — nothing to promote
-        out[best].measure = 1;                        // placeholder; renumber follows
+        if (best < 0) { skipped++; continue; }
+        out[best].measure = 1;
         split++;
     }
     if (!split) return null;
@@ -1244,18 +1260,11 @@ export function _tempoDoubleRangePure(beats, lo, hi) {
     return { beats: out, split, skipped };
 }
 
-// Flatten the range to a STEADY tempo: re-time the beats strictly BETWEEN the
-// endpoints to uniform per-beat spacing, both endpoints pinned (no tail shift).
-// Interior locks are honoured (via _respaceWithLocksPure). Times MOVE ⇒
-// TempoMapCmd (notes follow). Equal-length output. Returns new beats or null.
 export function _tempoFlattenRangePure(beats, lo, hi) {
-    if (!Array.isArray(beats) || hi - lo < 2) return null;   // need an interior beat to move
+    if (!Array.isArray(beats) || hi - lo < 2) return null;
     const t0 = beats[lo].time, t1 = beats[hi].time;
     if (!(t1 > t0)) return null;
     const step = (t1 - t0) / (hi - lo);
-    // Operate on the sub-range [lo..hi] so _respaceWithLocksPure pins the RANGE
-    // ends (its "song ends") and honours any interior lock, leaving everything
-    // outside the range untouched (no tail shift).
     const subOld = beats.slice(lo, hi + 1).map(b => ({ ...b }));
     const subNew = subOld.map((b, k) => ({ ...b, time: t0 + k * step }));
     const subFixed = _respaceWithLocksPure(subOld, subNew);
@@ -1572,6 +1581,60 @@ export function _tempoHasMultipleMeasureBpmsPure(beats, tolerance) {
     if (bpms.length < 2) return false;
     const first = bpms[0];
     return bpms.some(bpm => Math.abs(bpm - first) > tol);
+}
+
+// ── Derived tempo/meter change markers (design slice 2a, PR 10) ──────
+// ZERO storage: every marker is a PURE function of S.beats (the executable
+// truth — never a second source). A tempo marker sits on a downbeat whose
+// per-measure BPM leaves the current run beyond `tol` (the same 0.01 constant
+// _tempoHasMultipleMeasureBpmsPure uses); a meter marker sits where the
+// numerator (beats/bar) or `den` changes. Bar 1 gets a baseline of each. A
+// trailing partial final bar never emits a spurious meter change.
+// Returns [{ i, time, measure, kind: 'tempo'|'meter', label }], time-sorted.
+export function _tempoMarkersPure(beats, tolerance) {
+    const out = [];
+    if (!Array.isArray(beats) || beats.length < 2) return out;
+    const tol = Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.01;
+    const r3 = v => Math.round(v * 1000) / 1000;
+    const db = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) db.push(i);
+    if (!db.length) return out;
+    let runBpm = null, runNum = null, runDen = null;
+    for (let k = 0; k < db.length; k++) {
+        const i = db[k];
+        const nextI = (k + 1 < db.length) ? db[k + 1] : null;
+        const num = (nextI !== null)
+            ? (nextI - i)
+            : (runNum ?? Math.max(1, beats.length - i));
+        const den = [2, 4, 8, 16].includes(Number(beats[i].den)) ? Number(beats[i].den) : (runDen == null ? 4 : runDen);
+        const bpm = (nextI !== null && beats[nextI].time > beats[i].time)
+            ? r3((num * 60) / (beats[nextI].time - beats[i].time))
+            : runBpm;   // last (open) measure reuses the run's tempo
+        const measure = beats[i].measure;
+        if (bpm !== null && (runBpm === null || Math.abs(bpm - runBpm) > tol)) {
+            out.push({ i, time: beats[i].time, measure, kind: 'tempo', label: `${_tempoFmtBpm(bpm)} BPM` });
+            runBpm = bpm;
+        }
+        const meterChanged = runNum === null || num !== runNum || den !== runDen;
+        if (meterChanged) {
+            out.push({ i, time: beats[i].time, measure, kind: 'meter', label: `${num}/${den}` });
+            runNum = num; runDen = den;
+        }
+    }
+    return out.sort((a, b) => a.time - b.time);
+}
+function _tempoFmtBpm(bpm) {
+    const v = Math.round(bpm * 10) / 10;
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+// editGen-memoized marker list for the ruler paint (recomputes only when an
+// edit bumps editGen or S.beats is reassigned by a grid command).
+let _markerCache = { gen: -1, beatsRef: null, value: [] };
+export function _tempoMarkers() {
+    if (_markerCache.gen === editGen && _markerCache.beatsRef === S.beats) return _markerCache.value;
+    _markerCache = { gen: editGen, beatsRef: S.beats, value: _tempoMarkersPure(S.beats, 0.01) };
+    return _markerCache.value;
 }
 
 export function _tempoParseBpmInputPure(value) {
@@ -1906,6 +1969,9 @@ export function _editorToggleSyncLock() {
     // A lock toggle is not a history command, so record the moment as a
     // checkpoint on the current top-of-undo — Ctrl+Alt+Z can rewind to it.
     if (S.history) S.history.checkpoint(b.locked ? 'Lock barline' : 'Unlock barline');
+    // First-win cue #1 (charrette §3.4): the first time a barline is locked to
+    // the recording — a correctness milestone, not an action count.
+    if (b.locked) _signpostFirstLock();
     setStatus(_lockStatusTextPure(b.locked));
     return true;
 }
@@ -2052,6 +2118,7 @@ export function _editorTapTempoAtSelection() {
         _tapTempo = { d: S.tempoSel, measure: m.measure, taps: [], bpm: null };
     }
     _tapTempo.taps.push(now);
+    _tourNoteAction('tapTempo');   // C3 Transcribe tour: step 3 task
     _tapTempo.bpm = _tapTempoBpmPure(_tapTempo.taps);
     if (_tapTempo.bpm !== null) {
         setStatus(`Tap tempo: ${_tapTempo.bpm.toFixed(1)} BPM over ${_tapTempo.taps.length} taps — Enter applies to measure ${_tapTempo.measure}, Esc cancels`);
@@ -2178,6 +2245,21 @@ export function _makeTimeRemap(oldBeats, newBeats) {
 
 export const _r3 = v => Math.round(v * 1000) / 1000;
 
+// Pivot time for a whole-song rescale / sync (t' = t0 + (t − t0)·scale): the
+// focused barline's time when one is selected (S.tempoSel in tempo-map mode),
+// else the first downbeat, else the grid's first beat. Scaling ABOUT the pivot
+// instead of t=0 keeps that barline fixed — a song with a pickup / lead-in
+// (bar 1 ≠ 0s) no longer drifts under a bare `time *= factor`, the
+// order-of-operations trap the charrette flagged. Pure.
+export function _tempoPivotTimePure(beats, tempoSel) {
+    if (!Array.isArray(beats) || !beats.length) return 0;
+    if (Number.isInteger(tempoSel) && tempoSel >= 0 && tempoSel < beats.length) {
+        return beats[tempoSel].time;
+    }
+    for (const b of beats) if (b.measure > 0) return b.time;
+    return beats[0].time;
+}
+
 // (The ride-scope resolver — _tempoRetimeArrangements / _tempoRideResolvePure /
 // _rebaseTempoRideForRemoval / _tempoRideSet — is gone. Under beat-primary a
 // grid flex reprojects EVERY part from its beat, so "which parts ride" is no
@@ -2191,7 +2273,7 @@ export const _r3 = v => Math.round(v * 1000) / 1000;
 // anchors_user, handshapes (start+end), phrases. `visit(obj, tf, endKind)`:
 //   tf      — the object's seconds field: 'time' | 'start_time' | 't'
 //   endKind — 'none' (a point), 'sustain' (note: time+sustain → beatEnd),
-//             or 'span' (handshape: end_time → beatEnd)
+//             or 'span' (handshape/phrase: end_time → beatEnd)
 // The start-beat field is always `beat`; a duration's end-beat is `beatEnd`.
 // Both are runtime-only caches — _buildSaveBody strips them off the wire.
 export function _eachTimed(visit) {
@@ -2209,7 +2291,12 @@ export function _eachTimed(visit) {
         for (const a of (arr.anchors || [])) visit(a, 'time', 'none');
         for (const a of (arr.anchors_user || [])) visit(a, 'time', 'none');
         for (const hs of (arr.handshapes || [])) visit(hs, 'start_time', 'span');
-        for (const ph of (arr.phrases || [])) visit(ph, 'time', 'none');
+        // Phrases anchor on start_time (input.js authoring, routes.py save) —
+        // NOT `time`; visiting the wrong field left every phrase stranded on
+        // the old timeline through lift/reproject. end_time (present on
+        // server-loaded phrases) rides as a span; when absent, 'span' degrades
+        // to a point, like handshapes.
+        for (const ph of (arr.phrases || [])) visit(ph, 'start_time', 'span');
     }
 }
 
@@ -2323,6 +2410,12 @@ export class TempoMapCmd {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
         this.label = label || 'tempo';
+        // The beat grid is SONG-level state (matching TempoGridCmd) — it opts out
+        // of the read-only-roll lock so Sync / BPM-rescale / Offset (all fired
+        // from the normal toolbar, potentially with a fretted part shown
+        // read-only in the piano roll) aren't silently refused, and undo tags it
+        // -1 rather than to whatever arrangement happened to be active.
+        this.songScope = true;
     }
     exec() {
         // Invariant: oldBeats / newBeats have equal length — TempoMapCmd only
@@ -2372,4 +2465,52 @@ export class TempoMapCmd {
         host.updateLoopIn3DBtn();
     }
 }
-
+// Whole-song audio offset (the toolbar "Offset" nudge): a RIGID +delta shift of
+// the entire beat grid, which TempoMapCmd's total lift→reproject carries onto
+// every part — every arrangement's notes / chords / anchors / handshapes /
+// phrases, the drum tab and sections. (The old path directly shifted only the
+// current arrangement's plain notes plus the global beats/sections/drums with
+// no undo, leaving other arrangements and all chords/anchors/handshapes behind;
+// the user re-nudged each part, poisoning the applied-offset scalar.) It also
+// carries, undoably:
+//   • S.appliedOffset — the cumulative applied shift _effectiveAudioOffset()
+//     adds so a later +Keys / +Drums import lands in phase with the realigned
+//     chart. Was the DOM input's dataset.applied; now command-owned so undo
+//     restores it (else the next nudge's delta computes off a stale base).
+//   • the drum-hit ≥0 clamp — the save path drops a hit with a negative `t`
+//     (silent loss), so a leftward nudge pins an early hit at 0.
+export class TempoOffsetCmd extends TempoMapCmd {
+    constructor(oldBeats, newBeats, prevApplied, newApplied) {
+        super(oldBeats, newBeats, 'offset');
+        this.prevApplied = prevApplied;
+        this.newApplied = newApplied;
+    }
+    // Keep the visible toolbar input in step with S.appliedOffset across
+    // undo/redo: editorNudgeOffset computes the NEXT offset from el.value, so a
+    // stale input after Ctrl-Z would make one +10ms click re-apply the undone
+    // nudge on top (delta computes against the restored S.appliedOffset).
+    _syncOffsetInput() {
+        if (typeof document === 'undefined') return;
+        const el = document.getElementById('editor-offset');
+        if (el) el.value = String(S.appliedOffset);
+    }
+    exec() {
+        super.exec();
+        S.appliedOffset = this.newApplied;
+        this._syncOffsetInput();
+        // Clamp AFTER the reproject (which already _r3-rounds every drum time):
+        // a hit pushed before 0 by a leftward nudge would be rejected by the save
+        // path. rollback restores the exact pre-shift seconds, so redo re-derives
+        // from those and re-clamps — idempotent across undo/redo.
+        if (S.drumTab && Array.isArray(S.drumTab.hits)) {
+            for (const h of S.drumTab.hits) {
+                if (typeof h.t === 'number' && h.t < 0) { h.t = 0; S.drumTabDirty = true; }
+            }
+        }
+    }
+    rollback() {
+        super.rollback();
+        S.appliedOffset = this.prevApplied;
+        this._syncOffsetInput();
+    }
+}

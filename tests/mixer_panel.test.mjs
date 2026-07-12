@@ -80,8 +80,8 @@ t('one strip per arrangement, keyed by index, drums appended only with hits', ()
     const arrs = [{ name: 'Lead' }, { name: '' }, null];
     assert.deepStrictEqual(_mixerPartsPure(arrs, null), [
         { key: 'arr:0', name: 'Lead' },
-        { key: 'arr:1', name: 'Part 2' },
-        { key: 'arr:2', name: 'Part 3' },
+        { key: 'arr:1', name: 'Track 2' },
+        { key: 'arr:2', name: 'Track 3' },
     ]);
     assert.deepStrictEqual(_mixerPartsPure([], { hits: [] }), []);
     assert.deepStrictEqual(_mixerPartsPure([], { hits: [{ t: 1 }] }),

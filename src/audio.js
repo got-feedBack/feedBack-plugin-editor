@@ -27,6 +27,7 @@ import {
     _gmVoiceDurationPure, editorGmVoiceFor, ensureGmPreset, gmPresetReady, gmVoiceAt,
 } from './gm-guide.js';
 import { host } from './host.js';
+import { _tourNoteAction } from './tour.js';
 import { _rollMidiForNote, _rollPitchCtx, midiToFreq } from './keys.js';
 import { _recState } from './midi-record.js';
 import { notes } from './notes.js';
@@ -240,6 +241,7 @@ export function _refreshOnsetBtn() {
 export function _editorToggleOnsetStrip() {
     const next = !_onsetStripEnabled();
     _onsetStripOn = next;
+    if (next) _tourNoteAction('onsets');   // C3 Transcribe tour: step 1 task
     try { localStorage.setItem('editorOnsetStrip', next ? '1' : '0'); } catch (_) {}
     _refreshOnsetBtn();
     host.draw();
@@ -265,6 +267,7 @@ export function _refreshSnapModeBtn() {
 
 export function _editorToggleSnapMode() {
     S.snapMode = S.snapMode === 'onset' ? 'grid' : 'onset';
+    if (S.snapMode === 'onset') _tourNoteAction('snapOnset');   // C3 Transcribe tour: final task
     try { localStorage.setItem('editorSnapMode', S.snapMode); } catch (_) {}
     _refreshSnapModeBtn();
     if (S.snapMode === 'onset') {
