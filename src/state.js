@@ -44,6 +44,13 @@ export const S = {
     partsViewMode: false,
     drumSel: new Set(),
 
+    // Per-part mix state (mixer panel, B6) — 'arr:<idx>' / 'drums' →
+    // { vol, mute, solo }. Session-scoped UI state (never the pack): the
+    // canonical source for part mute/solo/volume that the mixer strips,
+    // the guide-clap gate (via host.partClapState) and the future
+    // Parts-gutter M/S/A all read. Reset when a song is installed.
+    partMix: {},
+
     // Tempo Map mode — EOF-style: drag the song-wide beat grid's measure
     // downbeats ("sync points") to fit it to the audio; BPM is derived
     // from sync-point spacing. tempoSel/tempoHover index into S.beats. Under
@@ -94,6 +101,9 @@ export const S = {
 
     // History
     history: null,
+    // True when the current job contains work not durably saved. This is
+    // explicit because MIDI takes and imports are not all history commands.
+    sessionDirty: false,
 
     // Songs list cache
     songsList: null,
@@ -115,4 +125,30 @@ export let editGen = 0;
 
 export function bumpEditGen() {
     editGen++;
+}
+
+export function markSessionDirty() {
+    if (S.sessionId) S.sessionDirty = true;
+}
+
+export function markSessionSaved() {
+    S.sessionDirty = false;
+    S.drumTabDirty = false;
+    for (const arr of S.arrangements || []) {
+        if (!arr) continue;
+        if (arr.tones && Object.prototype.hasOwnProperty.call(arr.tones, '_editCount')) {
+            arr.tones._editCount = 0;
+        }
+        if (Object.prototype.hasOwnProperty.call(arr, '_anchorEditCount')) arr._anchorEditCount = 0;
+        if (Object.prototype.hasOwnProperty.call(arr, '_handshapeEditCount')) arr._handshapeEditCount = 0;
+    }
+}
+
+export function sessionIsDirty() {
+    if (!S.sessionId) return false;
+    if (S.sessionDirty || S.drumTabDirty) return true;
+    return (S.arrangements || []).some((arr) => !!(arr
+        && ((arr.tones && arr.tones._editCount > 0)
+            || arr._anchorEditCount > 0
+            || arr._handshapeEditCount > 0)));
 }

@@ -34,7 +34,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
     { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', eof: 'C' } },
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
-    { id: 'toggleMixer', label: 'Toggle audio mixer', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
+    { id: 'toggleMixer', label: 'Toggle Mixer panel', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
     { id: 'toggleLoopAB', label: 'Toggle loop A/B compare (recording ↔ guide)', group: 'Preview', status: 'ready', keys: { feedback: 'Alt+B', eof: 'Alt+B' } },
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
@@ -115,6 +115,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'tempoSetBpm', label: 'Set selected barline BPM', group: 'Tempo map', status: 'ready', keys: { feedback: 'B (Tempo Map)', eof: 'B (Tempo Map)' } },
     { id: 'tempoModulate', label: 'Metric modulation at selected barline', group: 'Tempo map', status: 'ready', keys: { feedback: 'M (Tempo Map)', eof: 'M (Tempo Map)' } },
     { id: 'tempoTapBpm', label: 'Tap tempo for selected barline', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+B (Tempo Map)', eof: 'Shift+B (Tempo Map)' } },
+    { id: 'tempoSuggestFit', label: 'Suggest barline fit from anchor (onsets)', group: 'Tempo map', status: 'ready', keys: { feedback: 'G (Tempo Map)', eof: 'G (Tempo Map)' } },
     { id: 'tempoInsertSync', label: 'Mark barline at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
     { id: 'tempoDeleteSync', label: 'Delete selected barline', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
     { id: 'tempoToggleSyncLock', label: 'Lock/unlock selected barline', group: 'Tempo map', status: 'ready', keys: { feedback: 'S (Tempo Map)', eof: 'S (Tempo Map)' } },
@@ -155,6 +156,7 @@ export function _editorEofCommandForKeyPure(e, mode) {
         if (plain && key === ']') return 'tempoBeatPlus';
         if (plain && key === 'd') return 'tempoBeatUnit';
         if (plain && key === 's') return 'tempoToggleSyncLock';
+        if (plain && key === 'g') return 'tempoSuggestFit';
         if (shift && key === 't') return 'setTimeSignature';
         if (alt && key === 't') return 'tempoFullDialog';
         if (ctrlShift && key === 't') return 'tempoRebuildGrid';
@@ -277,6 +279,7 @@ export function _editorFeedbackCommandForKeyPure(e, mode) {
         if (plain && key === ']') return 'tempoBeatPlus';
         if (plain && key === 'd') return 'tempoBeatUnit';
         if (plain && key === 's') return 'tempoToggleSyncLock';
+        if (plain && key === 'g') return 'tempoSuggestFit';
         if (shift && key === 't') return 'setTimeSignature';
         if (alt && key === 't') return 'tempoFullDialog';
         if (ctrlShift && key === 't') return 'tempoRebuildGrid';

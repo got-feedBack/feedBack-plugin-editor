@@ -7,7 +7,7 @@
 // stays in main.js (draw, updateStatus, updateArrangementSelector,
 // effectiveAudioOffset) routes through host.
 
-import { S } from './state.js';
+import { S, markSessionDirty } from './state.js';
 import { _editorEscHtml, _editorPromptText, setStatus } from './ui.js';
 import { flattenChords } from './chords.js';
 import { KEYS_PATTERN } from './keys.js';
@@ -188,6 +188,7 @@ export async function editorRemoveArrangement() {
 
     // Then update frontend state
     S.arrangements.splice(removeIdx, 1);
+    markSessionDirty();
     // The splice renumbers every arrangement after removeIdx, so history
     // commands tagged with the old indices (and the note indices inside them)
     // would undo into the wrong arrangement. Same rationale as the

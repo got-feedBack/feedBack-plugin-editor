@@ -6,7 +6,7 @@
 import { loadAudio, stopPlayback } from './audio.js';
 import { _uploadAudioForMode, createState } from './create.js';
 import { _editorApplyScrollBounds } from './loop.js';
-import { S } from './state.js';
+import { S, markSessionDirty } from './state.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -102,6 +102,7 @@ export async function editorApplyReplaceAudio() {
         document.getElementById('editor-sync-btn').classList.remove('hidden');
         host.updateTimeDisplay();
         host.draw();
+        if (!data.persisted) markSessionDirty();
 
         const HINTS = {
             none:    'Audio replaced',

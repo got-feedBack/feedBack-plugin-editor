@@ -27,6 +27,11 @@ import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.
 import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S } from './state.js';
+import {
+    _suggestActive, _suggestApplyPure, _suggestAvgConf, _suggestDismiss,
+    _suggestHitAt, _suggestHudTextPure, _suggestProposals, _suggestRegenerateFrom,
+    _suggestStopReason,
+} from './tempo-suggest.js';
 import { _editorPromptText, setStatus } from './ui.js';
 
 // ════════════════════════════════════════════════════════════════════
@@ -37,6 +42,8 @@ import { _editorPromptText, setStatus } from './ui.js';
 
 const TEMPO_HUD_H = 26;        // bottom strip height in tempo-map mode
 const TEMPO_POLE_HALF = 6;     // sync-point pole grab half-width (px)
+const SUGGEST_HANDLE_TOP = 16; // ghost handle band offset (below pole handles)
+const SUGGEST_HANDLE_H = 11;   // ghost handle band height
 
 // Dimmed, non-interactive reference layer for tempo-map mode: the
 // current arrangement's notes (spread by string) and the drum_tab
@@ -227,6 +234,33 @@ export function _tempoMapDraw(w, h) {
         }
     }
 
+    // Suggested-fit ghosts (assisted mapping) — dashed amber, confidence in
+    // the alpha, hollow handles OFFSET BELOW the real pole handles so the two
+    // grab bands never overlap. Proposals whose ghost sits where the pole
+    // already is (locked / already-right bars) draw handle-only, dimmed.
+    if (_suggestActive()) {
+        for (const p of _suggestProposals()) {
+            const gx = timeToX(p.time);
+            if (gx < LABEL_W || gx > w) continue;
+            const a = 0.25 + 0.55 * Math.max(0, Math.min(1, p.conf));
+            const moved = Math.abs(gx - timeToX(S.beats[p.i].time)) >= 1;
+            if (moved) {
+                ctx.setLineDash([4, 3]);
+                ctx.strokeStyle = `rgba(251,191,36,${a.toFixed(3)})`;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(gx, (TIMELINE_TOP + WAVEFORM_H) + SUGGEST_HANDLE_TOP);
+                ctx.lineTo(gx, gridBottom);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            ctx.strokeStyle = `rgba(251,191,36,${(moved ? a : a * 0.5).toFixed(3)})`;
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(gx - TEMPO_POLE_HALF + 1, (TIMELINE_TOP + WAVEFORM_H) + SUGGEST_HANDLE_TOP,
+                TEMPO_POLE_HALF * 2 - 2, SUGGEST_HANDLE_H);
+        }
+    }
+
     // Playback cursor.
     if (S.cursorTime >= visibleStart && S.cursorTime <= visibleEnd) {
         const cx = timeToX(S.cursorTime);
@@ -246,7 +280,9 @@ export function _tempoMapDraw(w, h) {
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(_tempoMapHudTextPure(measures.length, w), LABEL_W + 6, hudY);
+    ctx.fillText(_suggestActive()
+        ? _suggestHudTextPure(_suggestProposals().length, _suggestAvgConf(), _suggestStopReason())
+        : _tempoMapHudTextPure(measures.length, w), LABEL_W + 6, hudY);
 }
 
 /* @pure:tempo-map-guidance:start */
@@ -459,6 +495,7 @@ export function _editorToggleTempoMapMode() {
     S.tempoSel = -1;
     S.tempoHover = -1;
     _tapTempo = null;   // abandon any pending tap run on mode change
+    _suggestDismiss();  // proposals are mode-scoped — never survive an exit
     if (S.tempoMapMode) {
         // Tempo, drum, and parts modes are mutually exclusive.
         S.drumEditMode = false;
@@ -642,6 +679,35 @@ export function _tempoMapOnMouseDown(e, x, y) {
         if (S.playing) { host.stopPlayback(); host.startPlayback(); }
         host.draw();
         return;
+    }
+
+    // Ghost-handle band first (suggested fit): while proposals are showing,
+    // a click on a ghost handle accepts THROUGH that barline — one undoable
+    // TempoMapCmd (equal beat count; notes ride its reproject), locks held by
+    // the engine (a locked downbeat's proposal is pinned to its own time).
+    // The band sits strictly below the real pole handles, so this never
+    // shadows a pole grab; everything else about the click is unchanged.
+    if (_suggestActive()
+            && y >= (TIMELINE_TOP + WAVEFORM_H) + SUGGEST_HANDLE_TOP
+            && y <= (TIMELINE_TOP + WAVEFORM_H) + SUGGEST_HANDLE_TOP + SUGGEST_HANDLE_H) {
+        const gi = _suggestHitAt(x, TEMPO_POLE_HALF + 2);
+        if (gi >= 0) {
+            const applied = _suggestApplyPure(S.beats, _suggestProposals(), gi);
+            if (applied) {
+                S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })), applied, 'suggest-accept'));
+                S.tempoSel = gi;
+                // Forward regeneration: the accepted barline is now the
+                // authoritative anchor — recalculate only the unconfirmed
+                // future (with the remembered onsets).
+                const n = _suggestRegenerateFrom(gi);
+                host.updateBPMDisplay();
+                host.draw();
+                setStatus(n
+                    ? `Accepted through this barline — ${n} suggestion${n === 1 ? '' : 's'} regenerated ahead`
+                    : 'Accepted through this barline — no confident suggestions ahead (add an anchor and press G)');
+            }
+            return;
+        }
     }
 
     // Click a sync-point pole to select it and start a drag.

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The editor timeline rendered blank — chart and waveform invisible after
+  any load or import.** Two closing `</div>`s were lost at the canvas-wrap
+  overlay seam when the sweep bar and the drum-pad strip landed, so the main
+  `#editor-canvas` ended up nested inside the *hidden* drum-pad strip: the
+  canvas laid out at 0×0 (its whole subtree is `display:none`) while the
+  status bar happily reported the load and every JS suite stayed green.
+  Restored the two closers, and added `tests/screen_markup.test.mjs` — a
+  dependency-free tag-stack walk that fails the suite if screen.html ever
+  unbalances again or the canvas stops being a direct child of the wrap
+  (this seam collides on every chrome PR; now it's guarded).
+
 ### Added
 
 - **Entry-seeded workspace presets + per-song surface memory** (workspace-shell
@@ -23,6 +36,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the current preset's pure default and clears the song's memory so the song
   follows your default again.
 
+- **Assisted tempo mapping — suggest a barline fit from the recording**
+  (`docs/TEMPO-MAPPING-DESIGN.md` "Assisted Mapping", first slice). In Tempo
+  Map mode, **G** (also `Tempo/Grid ▸ Suggest barline fit`) proposes corrected
+  times for every downbeat ahead of the anchor (the selected barline, or bar
+  1): each bar is predicted from the grid's own spacing with a drift-tracking
+  stretch, snapped to the strongest nearby onset, and shown as a **dashed
+  ghost pole** whose opacity is its confidence — proposal-only, never
+  committed silently. Click a ghost's hollow handle to **accept through that
+  barline**: one undoable tempo re-fit (notes ride, beat positions preserved),
+  and the suggestions ahead regenerate from the newly confirmed anchor —
+  the seed → suggest → correct loop. Locked barlines are pinned at their own
+  times and re-anchor the march; where the onsets stop corroborating
+  (silence, phase break, tempo change) the run **stops and asks for the next
+  human anchor** instead of guessing onward, and the trailing guesses are
+  dropped. Esc dismisses; proposals are generation-keyed, so any edit
+  invalidates them before it can race a click.
+- **Mixer panel** (workspace-shell B6). The floating audio-mixer popover
+  (and the never-implemented stem-mixer stub it superseded) consolidate
+  into one first-class **docked Mixer panel** beside the canvas (the
+  inspector idiom): one channel strip per part — volume, **M**ute,
+  **S**olo — over the recording / guide / click bus faders and the edit
+  blip, reachable from `View ▸ Panels ▸ Mixer`, the toolbar `Mix` button,
+  the transport's left util group, and `Shift+C` (all four route through
+  one toggle). The strips own the canonical per-part mix state
+  (`S.partMix` — the same state the Parts-gutter M/S/A and per-part
+  instrument voices will read when they arrive): today the only per-part
+  sound is the guide voice, so mute/solo/volume gate and scale the claps
+  for the part being edited, under the DAW rule (mute wins; any solo
+  isolates). Part solo **never** touches the recording — the reference is
+  a bus on its own transparent gain path (D5). Bus levels stay on the
+  existing `editorMix*` prefs; panel open state is an editor pref
+  (`editorMixerPanel`, never the pack); part mute/solo is session state
+  and resets with the loaded song. Audio consults the state through an
+  inert-default `host.partClapState` hook, so nothing changes until the
+  panel says so.
+- **Foolproof editor job transitions + Save As.** Opening another feedpak
+  or starting New now offers Save / Don't Save / Cancel when the current
+  job is dirty; a failed save blocks the transition. Active MIDI takes are
+  finalized first, then playback, scheduled voices, pending audio/load
+  requests, drags and the outgoing backend session are stopped before the
+  replacement job is installed. File -> Save As opens the native system
+  picker where available (download fallback) and mirrors later saves to
+  that chosen external copy for the rest of the session.
 - **Authoritative musical-ruler tempo mapping.** Tempo Map's primary action is
   now **Mark barline**: inside the mapped range it preserves the existing split
   behavior, while a mark beyond the final beat closes the open measure at the
@@ -281,6 +337,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Loading a new feedpak while the old recording was playing no longer
+  leaves the old AudioBufferSource sounding under the new song. Audio-less
+  packs also clear the previous decoded buffer, and overlapping load/audio
+  requests cannot install stale results out of order. The same teardown now
+  also runs when a Guitar Pro / EOF **import** replaces the job (it took a
+  different code path than Open feedpak), so an audio-less import can no
+  longer inherit the previous recording, and the outgoing backend session is
+  disposed instead of leaked.
+- The session-transition confirm prompt's Escape listener now rides the
+  screen teardown registry, and dismissing it resolves the pending prompt —
+  a re-injected editor screen can no longer strand an in-flight transition.
+- Choosing the "New" format picker on a dirty job no longer double-prompts to
+  save (the picker already guarded the transition; the format buttons stopped
+  re-guarding).
 - **The screen teardown left the guide/metronome timer running.** The audio
   extraction (below) surfaced it: the old inline teardown cancelled the audio
   source and the rAF frame but not the `setInterval` that schedules guide claps,

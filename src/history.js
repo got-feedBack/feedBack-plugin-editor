@@ -15,7 +15,7 @@
 // module). They arrive through the shared `host` object in src/host.js.
 // ════════════════════════════════════════════════════════════════════
 import { host } from './host.js';
-import { S, bumpEditGen } from './state.js';
+import { S, bumpEditGen, markSessionDirty } from './state.js';
 import { isKeysMode, updatePianoRange, _rollReadOnly, _rollLockNotice } from './keys.js';
 
 // Cap the undo stack so a marathon session can't grow memory without bound —
@@ -106,6 +106,7 @@ export class EditHistory {
         // the notes array's identity and length, so their cheap cache keys
         // can't see it — this bump is what forces a recompute.
         bumpEditGen();
+        markSessionDirty();
         // Keep the keys viewport in sync with the current note range so
         // multi-octave authoring works without manual range control.
         // expandOnly=true so adding a note outside the current viewport

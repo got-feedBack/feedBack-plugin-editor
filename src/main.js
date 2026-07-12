@@ -42,10 +42,12 @@ import {
     hideContextMenu, promptBend } from './context-menu.js';
 import {
     _editBlipAt, _editorToggleGuideClap,
-    _editorToggleLoopAB, _editorToggleMetronome, _editorToggleMixer,
-    _editorToggleOnsetStrip, _editorToggleSnapMode, editorSetEditBlip, editorSetMixLevel, initAudio, loadAudio,
+    _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip,
+    _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
+    editorSetEditBlip, editorSetMixLevel, initAudio, loadAudio,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn,
 } from './audio.js';
+import { _mixerClapState, _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import {
     _barSpanForTimes, _editorApplyScrollBounds,
     _editorClampScrollX, _loopReliftBeats,
@@ -68,7 +70,7 @@ import {
 } from './arrangement.js';
 import {
     _activeArrangementExceedsArchiveLimit, _editorLoadsInFlight, _resetOffsetUI,
-    editorHideSaveFormatModal, editorSaveAsSloppakConfirm, filterSongs, loadCDLC,
+    editorHideSaveFormatModal, editorSaveAs, editorSaveAsSloppakConfirm, filterSongs, loadCDLC,
     saveCDLC, showLoadModal
 } from './file-ops.js';
 import {
@@ -108,6 +110,7 @@ import {
     editorSetViewMode
 } from './key-view.js';
 import { setHostHooks } from './host.js';
+import { dismissSessionPrompt, guardSessionTransition } from './session-lifecycle.js';
 import { initAnchorResolve } from './anchor-resolve.js';
 import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from './playability-lint.js';
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
@@ -449,6 +452,11 @@ setHostHooks({
     hideAddNote,
     startPlayback,
     stopPlayback,
+    cancelAudioLoad,
+    saveSession: () => saveCDLC(),
+    finalizeRecording: () => {
+        if (_recState === 'recording') editorStopRecordMidi();
+    },
     updateBPMDisplay,
     updateTempoSigDisplay,
     renderLoopStrip: _renderLoopStrip,
@@ -466,7 +474,7 @@ setHostHooks({
     kickLibraryRescan: _kickLibraryRescan,
     resetOffsetUI: _resetOffsetUI,
     updateTimeDisplay,
-    addGlobalListener: (target, ev, fn) => _globalListeners.add(target, ev, fn),
+    addGlobalListener: (target, ev, fn, opts) => _globalListeners.add(target, ev, fn, opts),
     drawNow: (...args) => drawNow(...args),
     editorClampScrollX: _editorClampScrollX,
     editorApplyScrollBounds: _editorApplyScrollBounds,
@@ -487,6 +495,8 @@ setHostHooks({
     editorToggleKeyHighlight: (...a) => _editorToggleKeyHighlight(...a),
     editorTogglePartsView: (...a) => _editorTogglePartsView(...a),
     tempoResolvedMeasureIdx: (...a) => _tempoResolvedMeasureIdx(...a),
+    partClapState: _mixerClapState,
+    mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML
@@ -515,6 +525,7 @@ window.editorDoAddDrums = editorDoAddDrums;
 // Save-format modal (file-ops.js owns the logic; HTML calls these by name).
 window.editorHideSaveFormatModal = editorHideSaveFormatModal;
 window.editorSaveAsSloppakConfirm = editorSaveAsSloppakConfirm;
+window.editorSaveAs = editorSaveAs;
 
 // Replace-audio modal (replace-audio.js owns the logic; HTML calls these by name).
 window.editorShowReplaceAudioModal = editorShowReplaceAudioModal;
@@ -563,7 +574,7 @@ window.editorSetMixLevel = editorSetMixLevel;
 window.editorToggleGuideClap = _editorToggleGuideClap;
 window.editorToggleLoopAB = _editorToggleLoopAB;
 window.editorToggleMetronome = _editorToggleMetronome;
-window.editorToggleMixer = _editorToggleMixer;
+window.editorToggleMixer = editorToggleMixerPanel;
 window.editorSetCountIn = editorSetCountIn;
 window.editorToggleLintPopover = editorToggleLintPopover;
 window.editorToggleDrumPadStrip = editorToggleDrumPadStrip;
@@ -596,9 +607,13 @@ window.editorRefineSync = editorRefineSync;
 window.editorSetAudioMode = editorSetAudioMode;
 window.editorSetCreateMode = editorSetCreateMode;
 window.editorSetGP8AudioMode = editorSetGP8AudioMode;
-window.editorShowCreateModal = editorShowCreateModal;
+window.editorShowCreateModal = async () => {
+    if (await guardSessionTransition('starting a new edit job')) editorShowCreateModal();
+};
 window.editorShowCreateSloppakModal = editorShowCreateSloppakModal;
-window.editorShowNewFormatPicker = editorShowNewFormatPicker;
+window.editorShowNewFormatPicker = async () => {
+    if (await guardSessionTransition('starting a new edit job')) editorShowNewFormatPicker();
+};
 window.editorStagedRemove = editorStagedRemove;
 window.editorYtUrlInput = editorYtUrlInput;
 
@@ -653,6 +668,9 @@ let _editorScreenObs = null;
 // can stop a late-firing interval from re-running a torn-down injection.
 let _bootPollInterval = null;
 window.__editorScreenTeardown = () => {
+    // Unblock any awaiting session-transition prompt before its listener is
+    // swept below, so a re-injection can't strand guardSessionTransition.
+    try { dismissSessionPrompt(); } catch (_) {}
     _globalListeners.removeAll();
     // Stop any playback this injection owns — the audio graph outlives the
     // DOM, so a replaced screen would otherwise keep sounding.
@@ -973,6 +991,7 @@ function updateStatus() {
     _lintChipRefresh();
     _drumPadStripRefresh();
     _fretboardStripRefresh();
+    _mixerPanelRefresh();
     _transportBarTick();
     setStatus('Ready');
 }
@@ -1853,6 +1872,7 @@ function init() {
     initMenuBar();
     initTransportBar();
     initToolbars();
+    initMixerPanel();
 
     // Observe screen visibility for resize + the entry landing. Held in
     // _editorScreenObs so the teardown can disconnect it on re-injection.
