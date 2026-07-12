@@ -73,7 +73,14 @@ function seedMultiPart() {
         anchors: [{ time: 1.0, fret: 1, width: 4 }],
         anchors_user: [{ time: 3.0, fret: 5, width: 4 }],
         handshapes: [{ chord_id: 0, start_time: 2.0, end_time: 2.5 }],
-        phrases: [{ time: 0.0 }, { time: 4.0 }],
+        // Real phrase shape: start_time is the anchor (input.js authoring,
+        // routes.py save); end_time rides when present (server-loaded phrases
+        // carry it). A `time`-keyed phrase here would vacuously pass a walk
+        // that visits the wrong field — the exact bug that stranded phrases.
+        phrases: [
+            { name: 'A', number: 1, start_time: 0.0, levels: [] },
+            { name: 'B', number: 1, start_time: 4.0, end_time: 4.5, levels: [] },
+        ],
     });
     seedState({
         arrangements: [mkArr(0), mkArr(1)],
@@ -97,7 +104,7 @@ function timesSnapshot() {
             anchors: a.anchors.map(x => x.time),
             anchors_user: a.anchors_user.map(x => x.time),
             handshapes: a.handshapes.map(h => [h.start_time, h.end_time]),
-            phrases: a.phrases.map(p => p.time),
+            phrases: a.phrases.map(p => [p.start_time, p.end_time ?? null]),
         })),
         drums: S.drumTab.hits.map(h => h.t),
         sections: S.sections.map(s => s.start_time),
@@ -120,6 +127,8 @@ t('a sync ×2 stretch reprojects EVERY part, not just the current arrangement', 
     assert.ok(near(S.arrangements[1].chords[0].time, 4.0), 'arr 1 chord moved');
     assert.ok(near(S.arrangements[1].chords[0].notes[1].sustain, 1.0), 'arr 1 chord-note sustain scaled');
     assert.ok(near(S.arrangements[1].handshapes[0].end_time, 5.0), 'arr 1 handshape span moved');
+    assert.ok(near(S.arrangements[1].phrases[1].start_time, 8.0), 'arr 1 phrase moved (start_time is the anchor — a time-keyed walk strands it)');
+    assert.ok(near(S.arrangements[1].phrases[1].end_time, 9.0), 'arr 1 phrase end_time rode as a span');
     // Drums + sections moved too.
     assert.ok(near(S.drumTab.hits[0].t, 4.0), 'drum kick moved (was stranded on main)');
     assert.ok(near(S.sections[0].start_time, 2.0), 'section moved');
@@ -141,7 +150,7 @@ t('TempoOffsetCmd shifts every part by +delta and carries S.appliedOffset undoab
     S.history.exec(new TempoOffsetCmd(oldBeats, newBeats, 0, delta));
 
     assert.ok(near(S.arrangements[1].notes[0].time, 2.5), 'arr 1 note shifted +delta');
-    assert.ok(near(S.arrangements[1].phrases[1].time, 5.5), 'arr 1 phrase shifted +delta');
+    assert.ok(near(S.arrangements[1].phrases[1].start_time, 5.5), 'arr 1 phrase shifted +delta');
     assert.ok(near(S.drumTab.hits[0].t, 3.5), 'drum hit shifted +delta');
     assert.ok(near(S.sections[0].start_time, 2.5), 'section shifted +delta');
     // Sustains are durations — they must NOT move.
