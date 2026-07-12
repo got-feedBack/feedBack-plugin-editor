@@ -605,6 +605,10 @@ export function _editorToggleTempoMapMode() {
         host.hideContextMenu();
         host.hideAddNote();
         S.sel.clear();
+        // A tempo-mapping session is a coarse rewind unit: stamp a checkpoint so
+        // Ctrl+Alt+Z can undo the whole session at once. Entering the mode is not
+        // itself a history event, so the stamp lands on the last edit before it.
+        if (S.history) S.history.checkpoint('Tempo Map session');
     }
     _refreshTempoMapButton();
     host.refreshDrumEditButton();
@@ -795,6 +799,12 @@ export function _tempoMapOnMouseDown(e, x, y) {
         if (gi >= 0) {
             const applied = _suggestApplyPure(S.beats, _suggestProposals(), gi);
             if (applied) {
+                // Accepting a fit is a coarse rewind unit: stamp the state just
+                // BEFORE the accept (undoToCheckpoint lands ON the stamped
+                // command, keeping it applied), so Ctrl+Alt+Z rewinds the accept
+                // — and any edits after it — in one step. On an empty stack the
+                // stamp no-ops; the single-undo fallback still covers the accept.
+                S.history.checkpoint('Suggest fit');
                 S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })), applied, 'suggest-accept'));
                 S.tempoSel = gi;
                 // Forward regeneration: the accepted barline is now the
@@ -1617,6 +1627,9 @@ export function _editorToggleSyncLock() {
     b.locked = !b.locked;
     _saveBeatLocks();
     host.draw();
+    // A lock toggle is not a history command, so record the moment as a
+    // checkpoint on the current top-of-undo — Ctrl+Alt+Z can rewind to it.
+    if (S.history) S.history.checkpoint(b.locked ? 'Lock barline' : 'Unlock barline');
     setStatus(_lockStatusTextPure(b.locked));
     return true;
 }

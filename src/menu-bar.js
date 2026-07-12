@@ -71,6 +71,7 @@ export const EDITOR_MENUS = Object.freeze([
     { title: 'Edit', items: [
         { label: 'Undo', fn: 'editorUndo', key: 'Ctrl+Z' },
         { label: 'Redo', fn: 'editorRedo', key: 'Ctrl+Y' },
+        { label: 'Undo to last checkpoint', fn: 'editorUndoToCheckpoint', key: 'Ctrl+Alt+Z' },
         { sep: true },
         { cmd: 'duplicateSelection' },
         { cmd: 'selectLike' },
