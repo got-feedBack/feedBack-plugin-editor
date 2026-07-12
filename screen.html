@@ -206,6 +206,18 @@
             </div>
             <!-- Playability-lint popover (P9) — anchored bottom-right of the timeline. -->
             <div id="editor-lint-pop" role="dialog" aria-label="Playability notes" class="hidden absolute right-3 bottom-2 z-30 editor-lint-pop"></div>
+            <!-- Onboarding signpost (workspace-shell C2) — a quiet, SUGGEST-ONLY,
+                 one-shot, permanently-dismissible hint pinned bottom-centre. It
+                 only ever points at the menu/shortcut; it never moves a surface. -->
+            <div id="editor-signpost" class="hidden absolute bottom-3 left-1/2 -translate-x-1/2 z-30 max-w-lg flex items-start gap-2 px-3 py-2 rounded-lg bg-dark-800/95 border border-gray-700 shadow-xl backdrop-blur text-xs text-gray-200">
+                <span class="mt-0.5 text-sky-300" aria-hidden="true">💡</span>
+                <span id="editor-signpost-msg" class="leading-snug"></span>
+                <button onclick="editorDismissSignpost()" class="ml-1 -mr-0.5 text-gray-500 hover:text-white text-sm leading-none shrink-0" aria-label="Dismiss — won't show again" title="Dismiss — won't show again">&times;</button>
+            </div>
+            <!-- First-win cue (workspace-shell C2) — a calm, one-time visual
+                 acknowledgement of a correctness milestone; auto-fades, no sound,
+                 no score, no token. Non-interactive. -->
+            <div id="editor-cue" class="hidden absolute bottom-14 left-1/2 -translate-x-1/2 z-30 px-3 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-400/40 text-xs text-emerald-100 pointer-events-none"></div>
             <!-- Drum-pad companion strip — kit legend / cursor input / GM MIDI
                  monitor; built by src/drum-pad-strip.js, drum edit mode only. -->
             <div id="editor-drum-pad-strip" class="hidden absolute bottom-2 left-[52px] right-3 z-20 h-44 select-none rounded-md border border-gray-700/80 bg-dark-800/90 backdrop-blur-sm px-2 py-1.5 flex items-center gap-2">

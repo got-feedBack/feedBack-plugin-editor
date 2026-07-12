@@ -33,6 +33,7 @@ import {
     _suggestStopReason,
 } from './tempo-suggest.js';
 import { _editorPromptText, setStatus } from './ui.js';
+import { _signpostFirstLock, _signpostNote } from './signposts.js';
 
 // ════════════════════════════════════════════════════════════════════
 // Tempo Map editor — EOF-style sync-point editing of the song-wide
@@ -609,6 +610,9 @@ export function _editorToggleTempoMapMode() {
         // Ctrl+Alt+Z can undo the whole session at once. Entering the mode is not
         // itself a history event, so the stamp lands on the last edit before it.
         if (S.history) S.history.checkpoint('Tempo Map session');
+        // Opening the Tempo tools resolves the grid-fighting signpost's premise,
+        // so it must never fire afterwards (charrette §3.2: action-triggered).
+        _signpostNote('enterTempoMap');
     }
     _refreshTempoMapButton();
     host.refreshDrumEditButton();
@@ -1630,6 +1634,9 @@ export function _editorToggleSyncLock() {
     // A lock toggle is not a history command, so record the moment as a
     // checkpoint on the current top-of-undo — Ctrl+Alt+Z can rewind to it.
     if (S.history) S.history.checkpoint(b.locked ? 'Lock barline' : 'Unlock barline');
+    // First-win cue #1 (charrette §3.4): the first time a barline is locked to
+    // the recording — a correctness milestone, not an action count.
+    if (b.locked) _signpostFirstLock();
     setStatus(_lockStatusTextPure(b.locked));
     return true;
 }

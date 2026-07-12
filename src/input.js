@@ -26,6 +26,7 @@ import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure
 import { S } from './state.js';
 import { _editorShowTabPreview, _tabPreviewKeyPolicyPure } from './tab-preview.js';
 import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSyncPoint, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup } from './tempo.js';
+import { _signpostNote } from './signposts.js';
 import { _editorPromptText, setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -276,6 +277,7 @@ function _editorGotoBookmark(n) {
         return true;
     }
     _editorSeekToTime(t);
+    _signpostNote('navJump');
     setStatus(`Bookmark ${n}`);
     return true;
 }
@@ -284,14 +286,14 @@ function _editorJumpBeat(dir) {
     const beats = (S.beats || []).map(b => b.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
     const cur = S.cursorTime || 0;
     const next = dir > 0 ? beats.find(t => t > cur + 0.0001) : [...beats].reverse().find(t => t < cur - 0.0001);
-    if (next !== undefined) _editorSeekToTime(next);
+    if (next !== undefined) { _editorSeekToTime(next); _signpostNote('navJump'); }
 }
 
 function _editorJumpNote(dir) {
     const times = notes().map(n => n.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
     const cur = S.cursorTime || 0;
     const next = dir > 0 ? times.find(t => t > cur + 0.0001) : [...times].reverse().find(t => t < cur - 0.0001);
-    if (next !== undefined) _editorSeekToTime(next);
+    if (next !== undefined) { _editorSeekToTime(next); _signpostNote('navJump'); }
 }
 
 function _editorJumpGrid(dir) {
@@ -412,6 +414,10 @@ function _editorResnapSelection() {
     const dtimes = newTimes.map((t, i) => t - oldTimes[i]);
     const dstrings = idxs.map(() => 0);
     S.history.exec(new MoveNoteCmd(idxs, dtimes, dstrings, null));
+    // Repeated resnapping is the canonical "fighting the grid" signal (charrette
+    // §3.2): the notes keep landing off the beat, so the GRID may be the thing
+    // that's wrong — nudge toward the Tempo tools.
+    _signpostNote('gridFight');
     host.draw();
     host.updateStatus();
     return true;

@@ -68,6 +68,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says so), a checkpoint dropped by the undo cap or a session reset just falls
   back to that, and a refused undo can never spin.
 
+- **Onboarding signposts + first-win cues** (workspace-shell C2). Two quiet,
+  un-gamified helpers, both editor-pref (never the pack): **signposts** are
+  suggest-only hints triggered by what you're *doing* — e.g. resnapping notes
+  repeatedly surfaces "the beat grid may be off — line it up with the Tempo
+  tools (T), or Ctrl+K" — that only ever point at the menu/shortcut, never move
+  a surface, fire once per capability, and are permanently dismissible (capped
+  at ≤3). **First-win cues** are calm, one-time visual acknowledgements of a
+  *correctness* milestone — locking a barline to the recording, and a section
+  first gaining content — with no sound, score, or token. The section
+  completeness shading stays presence-only (a span with content vs. not), never
+  a density target and never scolding an intentionally-empty region.
+
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:
   Transport ▸ Guide voice ▸ Instrument (GM), with a per-part-kind instrument

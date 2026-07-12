@@ -18,6 +18,7 @@ import {
     disposeBackendSession, guardSessionTransition, stopSessionProcesses,
 } from './session-lifecycle.js';
 import { _liftAllBeats, _restoreBeatLocks, _stripBeatsFromSaveBody } from './tempo.js';
+import { _resetSignpostCounters } from './signposts.js';
 import { surfaceMigrateFilename, surfaceOnSongLoaded } from './toolbars.js';
 import { _editorEscHtml, setStatus } from './ui.js';
 import { host } from './host.js';
@@ -205,6 +206,10 @@ export async function loadCDLC(filename, options = {}) {
         // Reset offset UI so _effectiveAudioOffset() doesn't carry over a
         // delta from a previous session's sync nudge into this one.
         _resetOffsetUI();
+        // Signposts are session-scoped (they react to what you're doing in THIS
+        // song); re-baseline the first-covered cue against the freshly loaded
+        // chart so opening an already-charted song never fires it.
+        _resetSignpostCounters();
 
         // Flatten chord notes into main notes array for unified editing
         flattenChords();

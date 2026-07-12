@@ -53,6 +53,7 @@ import {
 } from './lanes.js';
 import { _isSuggested, notes } from './notes.js';
 import { _lintFlaggedSet } from './playability-lint.js';
+import { _maybeFireFirstCovered } from './signposts.js';
 import {
     SCALE_INTERVALS,
     _SCALE_DEGREE_LABELS,
@@ -259,6 +260,9 @@ function _sectionCoverage() {
             key, notesRef: ns,
             value: _sectionCoveragePure(secs, _currentNoteTimes(), S.duration || 0),
         };
+        // Coverage only recomputes on an edit (editGen/section/duration change),
+        // not per frame — the right place to check the first-covered first-win.
+        _maybeFireFirstCovered(_covCache.value);
     }
     return _covCache.value;
 }

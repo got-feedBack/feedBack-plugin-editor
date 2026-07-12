@@ -117,6 +117,7 @@ import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teard
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
 import { initMenuBar } from './menu-bar.js';
 import { initToolbars } from './toolbars.js';
+import { editorDismissSignpost } from './signposts.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
 import {
     MIN_MEASURE, TempoGridCmd, TempoMapCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
@@ -544,6 +545,7 @@ window.editorShowTabPreview = _editorShowTabPreview;
 window.editorRefreshTabPreview = editorRefreshTabPreview;
 
 // Input layer (input.js owns the keyboard/command/shortcut-panel logic).
+window.editorDismissSignpost = editorDismissSignpost;
 window.editorToggleShortcutPanel = editorToggleShortcutPanel;
 window.editorRunShortcutCommand = editorRunShortcutCommand;
 window.editorHideTabPreview = editorHideTabPreview;
