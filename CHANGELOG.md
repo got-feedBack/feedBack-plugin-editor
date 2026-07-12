@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Flattening a variable tempo map now names both directions** instead of a
+  bare confirm. Typing a BPM for a song with multiple tempos opens a small in-app
+  dialog: **Conform notes to the new tempo** (notes keep their bar:beat positions
+  and move with the grid — the usual choice) or **Rebuild the grid only** (notes
+  keep their exact seconds; for when they already sit on the recording). "Conform"
+  is the previously-missing path — it flattens in the `TempoMapCmd` direction, so
+  every part rides to the new constant tempo (no hand-scaled seconds); "Rebuild"
+  is the existing `TempoGridCmd` flatten. Both anchor at bar 1 and are undoable
+  ("Undo restores the map").
 - **The first Save of a session now opens the file explorer** (the same native
   picker as Save As), so you choose where the `.feedpak` lands instead of it
   going somewhere implicit. Once you've picked a location, later saves (Ctrl+S /
@@ -35,7 +44,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   titles, lock/status messages); "sync point" stays only as internal/export
   vocabulary.
 
+- **"Parts" renamed to "Tracks" throughout the UI.** The multi-track surface is
+  now called **Tracks**, matching how DAWs and tab editors (Guitar Pro,
+  TuxGuitar, Songsterr) name it. Renamed the toolbar group + its View-menu
+  toggle, the **Track** menu (was Part) and the Add-menu header, the transport
+  **Tracks** overview pill, the mixer panel header + its empty/fallback strip
+  names ("Track 1"…), the rename dialog ("Rename Track"), and every user-facing
+  tooltip / status message ("Reordering tracks…", "Keys tracks always use the
+  piano roll", etc.). Purely user-facing copy — the internal `part`/`arr` model,
+  command ids (`renamePart`, `movePart*`, `togglePartsView`), and toolbar id
+  (`parts`) are unchanged, so shortcuts, saves, and pack data are unaffected.
+
 ### Fixed
+
+- **Whole-song tempo edits silently corrupted multi-part songs.** Sync tempo,
+  the BPM box's constant-tempo rescale, and the audio Offset nudge each mutated
+  the timeline directly — with **no undo** — and moved only the *current*
+  arrangement's plain notes (plus the global beat grid and sections). Every
+  *other* arrangement, and all chords / anchors / handshapes / phrases (and, for
+  the partial paths, the drum tab) were left behind, so a second part or a drum
+  chart drifted out of phase and the change couldn't be undone. All three now
+  route through one command (`TempoMapCmd` / `TempoOffsetCmd`) whose beat-primary
+  lift→reproject is total — every timed object in every part rides the grid — and
+  fully undoable. Sync and rescale now pivot the scale at the first downbeat (or
+  the focused barline) instead of `t=0`, so a song with a pickup / lead-in no
+  longer skews. The applied audio offset moved from a hidden DOM attribute onto
+  command-owned state (`S.appliedOffset`) so undo restores it, and the Sync
+  dialog's duplicate offset field was removed (use the undoable toolbar Offset).
+  New `tests/tempo_op_commands.test.mjs` deep-diffs a two-arrangement song with
+  chords + drums to prove every part moves and undo restores the exact seconds.
 
 - **The editor timeline rendered blank — chart and waveform invisible after
   any load or import.** Two closing `</div>`s were lost at the canvas-wrap
@@ -78,6 +115,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   LCD transport display stays dark (it reads as a hardware readout), while the
   category buttons keep their semantic colors. `window.editorSetTheme(name)` /
   `editorCycleTheme()` drive it.
+- **Entry tours** (workspace-shell C3). Two short (≤4-step), task-based first-run
+  tours, seeded by how you entered the editor: **Compose** (create-from-scratch)
+  walks place → snap → play → loop; **Transcribe** (import) leads with the
+  reframe *"the recording never moves — you line the GRID up to it,"* taught by
+  doing — turn on Onsets, put the first barline on the first attack, tap tempo,
+  switch snap to Onset. Steps advance when you actually do the task (or via the
+  card's Next). Non-modal, skippable, and resumable from **Help ▸ Editor tour**;
+  Transcribe's "I'll align later" drops you into the Compose tour. Tour state is
+  editor-pref, and a tour fires at most once per lane on its own.
+- **Onboarding signposts + first-win cues** (workspace-shell C2). Two quiet,
+  un-gamified helpers, both editor-pref (never the pack): **signposts** are
+  suggest-only hints triggered by what you're *doing* — e.g. resnapping notes
+  repeatedly surfaces "the beat grid may be off — line it up with the Tempo
+  tools (T), or Ctrl+K" — that only ever point at the menu/shortcut, never move
+  a surface, fire once per capability, and are permanently dismissible when
+  browser storage is available (session-only in private/storage-blocked mode;
+  capped at ≤3). **First-win cues** are calm, one-time visual acknowledgements of a
+  *correctness* milestone — locking a barline to the recording, and a section
+  first gaining content — with no sound, score, or token. The section
+  completeness shading stays presence-only (a span with content vs. not), never
+  a density target and never scolding an intentionally-empty region.
+- **Tempo & meter markers on the ruler.** Sparse labeled chips now show where the
+  tempo changes (e.g. `90 BPM`) and where the meter changes (e.g. `3/4`) through
+  the song, so a variable tempo map is legible at a glance. They're **derived
+  purely from the beat grid** — zero new storage, memoized on the edit
+  generation — so they can never drift from the actual tempo/meter. (Authored
+  markers that the grid can't express — tempo ramps, meter groupings like
+  `7/8 (2+2+3)`, fermata holds, and per-marker provenance — are scoped in
+  feedpak-spec#51 and come later.)
+- **Select and delete multiple barlines at once** in Tempo Map mode. Shift-click
+  a second barline to select the contiguous range, drag a box on empty grid to
+  rubber-band-select, or Ctrl+A to select every barline; the selection washes
+  amber. Delete (or right-click ▸ "Delete N barlines") demotes them all in one
+  undoable step — the first and last barline are always kept (they bound the
+  map). Escape clears the selection. The single focused barline (BPM / tap /
+  lock / modulate / suggest) is unchanged; the multi-selection is separate and
+  is dropped on any grid-topology change.
 
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:

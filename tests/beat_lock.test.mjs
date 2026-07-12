@@ -22,19 +22,15 @@
  * Run: node tests/beat_lock.test.mjs
  */
 import assert from 'node:assert';
-import fs from 'node:fs';
 import { beatOf as _beatOf, timeOf as _timeOf } from '../src/beats.js';
 import {
     _applyBeatLocksPure, _beatLockParsePure, _beatLockStorageKeyPure, _respaceWithLocksPure,
 } from '../src/tempo.js';
 
-// The beat-lock pures are real imports. One case still slices: editorApplySync's
-// "Scale section times" loop is inline in src/sync-tempo.js, and running the ACTUAL
-// loop is what makes that case fail on pre-fix code.
-const src = fs.readFileSync(new URL('../src/sync-tempo.js', import.meta.url), 'utf8');
-
-// beatOf / timeOf (the beat-primary converter) — used to prove the sync path now
-// reprojects notes onto the warped grid instead of drifting them off it.
+// beatOf / timeOf (the beat-primary converter) — used to prove the sync path
+// reprojects notes/sections onto the warped grid instead of drifting them off
+// it. End-to-end multi-part coverage of the sync/rescale/offset commands lives
+// in tests/tempo_op_commands.test.mjs.
 
 // A uniform old grid at 1s beats; a re-fit is a new same-length grid.
 const grid = (times, locks = []) => times.map((t, i) => ({ time: t, measure: i === 0 ? 1 : -1, locked: locks.includes(i) }));
@@ -163,28 +159,22 @@ t('editorApplySync reprojection keeps notes on the warped grid at a lock (FIX 2)
     assert.ok(Math.abs(reproj - linear) > 1e-6, 'the old linear scale would have drifted off the grid near the lock');
 });
 
-t('editorApplySync reprojects SECTION times onto the warped grid under a lock (FIX A)', () => {
-    // Extract and RUN the actual "Scale section times" loop from src/sync-tempo.js, so a
-    // pre-fix linear-scale body genuinely fails here (would-fail-on-main).
-    const secLoop = src.match(/\/\/ Scale section times[\s\S]*?\n    for \(const s of S\.sections\) \{[\s\S]*?\n    \}/);
-    assert.ok(secLoop, 'section-scaling loop found in src/sync-tempo.js');
-    const runSectionScale = new Function(
-        'S', 'locked', 'respaced', 'oldBeats', 'factor', 'offset', 'timeOf', 'beatOf',
-        '"use strict";' + secLoop[0]);
-
-    const factor = 0.5, offset = 0;                    // ×2 stretch, beat 2 locked at t=2
+t('sync reprojects SECTION times onto the warped grid under a lock (FIX A)', () => {
+    // Sections ride the SAME beat-primary reproject as notes now — TempoMapCmd's
+    // _eachTimed walk visits S.sections, so the proof is the same math as FIX 2:
+    // a section's time lands on the warped grid (beatOf→timeOf), not the old
+    // linear scale. (The inline "Scale section times" loop in sync-tempo.js is
+    // gone; the command applies it. End-to-end coverage: tempo_op_commands.)
+    const factor = 0.5;                                // ×2 stretch, beat 2 locked at t=2
     const oldB = grid([0, 1, 2, 3, 4], [2]);
-    const scaled = oldB.map(b => ({ ...b, time: b.time / factor + offset }));
+    const scaled = oldB.map(b => ({ ...b, time: b.time / factor }));
     const respaced = _respaceWithLocksPure(oldB, scaled);
     const start = 1.5;                                 // a section between beat 1 and the lock
-    const S = { sections: [{ name: 'x', start_time: start }] };
-    runSectionScale(S, respaced !== scaled, respaced, oldB, factor, offset, _timeOf, _beatOf);
-
     const onGrid = _timeOf(respaced, _beatOf(oldB, start));
-    const linear = start / factor + offset;
+    const linear = start / factor;
     assert.ok(Math.abs(onGrid - linear) > 1e-6, 'the two strategies actually diverge near the lock');
-    assert.ok(near(S.sections[0].start_time, onGrid),
-        'section landed on the warped grid (beatOf→timeOf), not the linear drift');
+    assert.ok(Math.abs(_beatOf(respaced, onGrid) - _beatOf(oldB, start)) < 1e-9,
+        'the reprojected section keeps its beat (stays on the warped grid)');
 });
 
 // ── 2. persistence pures ─────────────────────────────────────────────────────

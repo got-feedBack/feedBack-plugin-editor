@@ -18,6 +18,8 @@ import {
     disposeBackendSession, guardSessionTransition, stopSessionProcesses,
 } from './session-lifecycle.js';
 import { _liftAllBeats, _restoreBeatLocks, _stripBeatsFromSaveBody } from './tempo.js';
+import { _tourResetForLoad } from './tour.js';
+import { _resetSignpostCounters } from './signposts.js';
 import { surfaceMigrateFilename, surfaceOnSongLoaded } from './toolbars.js';
 import { _editorEscHtml, setStatus } from './ui.js';
 import { host } from './host.js';
@@ -205,6 +207,13 @@ export async function loadCDLC(filename, options = {}) {
         // Reset offset UI so _effectiveAudioOffset() doesn't carry over a
         // delta from a previous session's sync nudge into this one.
         _resetOffsetUI();
+        // Close any active entry tour — its task hints are tied to the song you
+        // entered on (the resume point is kept for Help > Editor tour).
+        _tourResetForLoad();
+        // Signposts are session-scoped (they react to what you're doing in THIS
+        // song); re-baseline the first-covered cue against the freshly loaded
+        // chart so opening an already-charted song never fires it.
+        _resetSignpostCounters();
 
         // Flatten chord notes into main notes array for unified editing
         flattenChords();
@@ -357,11 +366,13 @@ function renderBrowse(data) {
     }
 }
 
-// Reset the offset input and its applied-delta dataset, called when loading
-// any session so _effectiveAudioOffset() doesn't carry over a previous nudge.
+// Reset the offset input and its applied-delta scalar, called when loading any
+// session so _effectiveAudioOffset() doesn't carry over a previous nudge. The
+// applied delta lives on S.appliedOffset now (command-owned), not the DOM input.
 export function _resetOffsetUI() {
+    S.appliedOffset = 0;
     const el = document.getElementById('editor-offset');
-    if (el) { el.value = '0'; el.dataset.applied = '0'; }
+    if (el) el.value = '0';
 }
 
 function _normalizeSongList(raw) {

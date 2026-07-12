@@ -323,8 +323,8 @@ function buildBar() {
     builtMode = mode.tempoEditable;
     const util = prefs.groups.util
         ? `<div class="editor-transport-group" data-group="util">`
-        + tbtn('editor-tp-parts', 'Parts', 'Parts overview — all parts stacked (mirrors the toolbar toggle)')
-        + tbtn('editor-tp-mixer', 'Mix', 'Mixer panel: part volume / mute / solo + bus levels (Shift+C)', ' aria-pressed="false"')
+        + tbtn('editor-tp-parts', 'Tracks', 'Tracks overview — all tracks stacked (mirrors the toolbar toggle)')
+        + tbtn('editor-tp-mixer', 'Mix', 'Mixer panel: track volume / mute / solo + bus levels (Shift+C)', ' aria-pressed="false"')
         + tbtn('editor-tp-follow', 'Follow', 'Follow the playhead during playback (Shift+L)', ' aria-pressed="false"')
         + `</div><div class="editor-transport-sep"></div>` : '';
     const modes = prefs.groups.modes
@@ -359,7 +359,7 @@ function buildMenu() {
         `<label class="editor-transport-menu-row"><input type="checkbox" data-kind="${kind}" data-key="${key}"${checked ? ' checked' : ''}> ${esc(label)}</label>`;
     const cellLabels = { position: 'Position', time: 'Time', tempo: 'Tempo', meter: 'Meter', key: 'Key', countin: 'Count-in', sel: 'Selection', mode: 'Mode badge' };
     menu.innerHTML = `<div class="editor-transport-menu-head">Customize Control Bar</div>`
-        + row('group', 'util', 'Parts / Mix / Follow group', prefs.groups.util)
+        + row('group', 'util', 'Tracks / Mix / Follow group', prefs.groups.util)
         + row('group', 'modes', 'Click / Clap / A/B / Count / Snap group', prefs.groups.modes)
         + `<div class="editor-transport-menu-head">LCD cells</div>`
         + TRANSPORT_LCD_CELLS.map((c) => row('cell', c, cellLabels[c], prefs.cells[c])).join('')

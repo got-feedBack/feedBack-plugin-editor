@@ -38,6 +38,12 @@
     --ed-text-faint: #64748b;   /* .text-gray-600 */
     --ed-accent: #0ea5e9;       /* sky primary */
     --ed-accent-hover: #38bdf8;
+    --ed-on-accent: #082f49;
+    --ed-menu-field: #0b1220;
+    --ed-menu-border: #263349;
+    --ed-transport-panel: #131c2e;
+    --ed-transport-btn: #24324a;
+    --ed-transport-btn-hover: #334a6b;
 }
 /* Medium — a true mid-tone (dim, not dark): mid-slate surfaces, light text. */
 #plugin-editor[data-v3-layout="1"][data-editor-theme="medium"] {
@@ -51,9 +57,15 @@
     --ed-text-2: #eef2f8;
     --ed-text: #dbe1ea;
     --ed-text-dim: #aeb7c6;
-    --ed-text-faint: #8b95a6;
+    --ed-text-faint: #c7cfdb;
     --ed-accent: #38bdf8;
     --ed-accent-hover: #7dd3fc;
+    --ed-on-accent: #0f172a;
+    --ed-menu-field: #2f3542;
+    --ed-menu-border: #59627a;
+    --ed-transport-panel: #454d5e;
+    --ed-transport-btn: #566076;
+    --ed-transport-btn-hover: #67728a;
 }
 /* Light — slate-on-white; the darkest "text" tokens become the DARKEST inks. */
 #plugin-editor[data-v3-layout="1"][data-editor-theme="light"] {
@@ -67,9 +79,15 @@
     --ed-text-2: #1e293b;
     --ed-text: #334155;
     --ed-text-dim: #556274;
-    --ed-text-faint: #8a94a3;
-    --ed-accent: #0284c7;
-    --ed-accent-hover: #0369a1;
+    --ed-text-faint: #5f6b7a;
+    --ed-accent: #0369a1;
+    --ed-accent-hover: #075985;
+    --ed-on-accent: #ffffff;
+    --ed-menu-field: #f1f5f9;
+    --ed-menu-border: #d3dae4;
+    --ed-transport-panel: #ffffff;
+    --ed-transport-btn: #e2e8f0;
+    --ed-transport-btn-hover: #cbd5e1;
 }
 
 #plugin-editor[data-v3-layout="1"] .bg-dark-900 { background-color: var(--ed-app); }    /* app bg / canvas wrap */
@@ -166,7 +184,7 @@
     padding: 3px 8px; border: none; border-radius: 4px; text-align: left;
     background: transparent; color: var(--ed-text, #cbd5e1); cursor: pointer; font-size: 12px;
 }
-#plugin-editor .editor-lint-row:hover { background: var(--ed-accent, #0ea5e9); color: #f8fafc; }
+#plugin-editor .editor-lint-row:hover { background: var(--ed-accent, #0ea5e9); color: var(--ed-on-accent, #082f49); }
 #plugin-editor .editor-lint-rule {
     flex-shrink: 0; font-size: 10px; font-weight: 700; color: #fbbf24;
 }
@@ -219,7 +237,7 @@
 #plugin-editor .editor-drumpad[aria-pressed="true"],
 #plugin-editor #editor-drum-view-kit[aria-pressed="true"],
 #plugin-editor #editor-drum-view-pads[aria-pressed="true"],
-#plugin-editor #editor-drum-pads-listen[aria-pressed="true"] { background: #0ea5e9; color: #f8fafc; }
+#plugin-editor #editor-drum-pads-listen[aria-pressed="true"] { background: var(--ed-accent, #0ea5e9); color: var(--ed-on-accent, #082f49); }
 /* ── Menu bar (workspace-shell B4) ────────────────────────────────── */
 /* Nine flat menu titles; ONE dropdown element repositioned under the open
    title (content renders at open time — accelerators follow the active
@@ -228,8 +246,8 @@
     position: relative;
     display: flex; align-items: center; gap: 2px;
     padding: 2px 8px;
-    background: var(--ed-field, #0b1220);
-    border-bottom: 1px solid var(--ed-border, #263349);
+    background: var(--ed-menu-field, #0b1220);
+    border-bottom: 1px solid var(--ed-menu-border, #263349);
     font-size: 12px;
 }
 #plugin-editor .editor-menu-title {
@@ -237,7 +255,7 @@
     background: transparent; color: var(--ed-text, #cbd5e1); cursor: pointer; font-size: 12px;
 }
 #plugin-editor .editor-menu-title:hover { background: var(--ed-panel, #1e293b); color: var(--ed-text-strong, #f8fafc); }
-#plugin-editor .editor-menu-title.is-open { background: var(--ed-accent, #0ea5e9); color: #f8fafc; }
+#plugin-editor .editor-menu-title.is-open { background: var(--ed-accent, #0ea5e9); color: var(--ed-on-accent, #082f49); }
 #plugin-editor .editor-menu-drop {
     position: absolute; top: 100%; z-index: 70;
     min-width: 260px; max-height: 70vh; overflow-y: auto;
@@ -255,7 +273,7 @@
 }
 #plugin-editor .editor-menu-item:hover:not([aria-disabled]),
 #plugin-editor .editor-menu-item:focus:not([aria-disabled]) {
-    background: var(--ed-accent, #0ea5e9); color: #f8fafc; outline: none;
+    background: var(--ed-accent, #0ea5e9); color: var(--ed-on-accent, #082f49); outline: none;
 }
 #plugin-editor .editor-menu-item[aria-disabled] { color: var(--ed-text-faint, #475569); cursor: default; }
 #plugin-editor .editor-menu-key {
@@ -264,7 +282,7 @@
     white-space: nowrap;
 }
 #plugin-editor .editor-menu-item:hover:not([aria-disabled]) .editor-menu-key,
-#plugin-editor .editor-menu-item:focus:not([aria-disabled]) .editor-menu-key { color: #e0f2fe; }
+#plugin-editor .editor-menu-item:focus:not([aria-disabled]) .editor-menu-key { color: var(--ed-on-accent, #082f49); }
 #plugin-editor .editor-menu-soon {
     font-size: 9px; font-weight: 700; text-transform: uppercase;
     letter-spacing: .06em; color: var(--ed-text-faint, #64748b);
@@ -284,24 +302,24 @@
 #plugin-editor .editor-transport-bar {
     display: flex; align-items: center; gap: 6px;
     padding: 4px 10px;
-    background: var(--ed-panel, #131c2e);
-    border-bottom: 1px solid var(--ed-border, #263349);
+    background: var(--ed-transport-panel, #131c2e);
+    border-bottom: 1px solid var(--ed-menu-border, #263349);
     flex-wrap: wrap;
 }
 #plugin-editor .editor-transport-group { display: flex; align-items: center; gap: 4px; }
 #plugin-editor .editor-transport-sep { width: 1px; height: 16px; background: var(--ed-border, #334155); }
 #plugin-editor .editor-transport-btn {
     padding: 2px 8px; border-radius: 4px; font-size: 12px; line-height: 1.4;
-    background: var(--ed-btn, #24324a); color: var(--ed-text, #cbd5e1); border: none; cursor: pointer;
+    background: var(--ed-transport-btn, #24324a); color: var(--ed-text, #cbd5e1); border: none; cursor: pointer;
 }
-#plugin-editor .editor-transport-btn:hover { background: var(--ed-btn-hover, #334a6b); color: var(--ed-text-strong, #f8fafc); }
-#plugin-editor .editor-transport-btn[aria-pressed="true"] { background: var(--ed-accent, #0ea5e9); color: #f8fafc; }
+#plugin-editor .editor-transport-btn:hover { background: var(--ed-transport-btn-hover, #334a6b); color: var(--ed-text-strong, #f8fafc); }
+#plugin-editor .editor-transport-btn[aria-pressed="true"] { background: var(--ed-accent, #0ea5e9); color: var(--ed-on-accent, #082f49); }
 #plugin-editor .editor-transport-btn:disabled { opacity: .45; cursor: not-allowed; }
 #plugin-editor .editor-transport-rec[aria-pressed="true"],
 #plugin-editor .editor-transport-rec:hover { background: #9f1239; }
 #plugin-editor .editor-transport-rec { color: #fb7185; }
 #plugin-editor .editor-transport-snap {
-    background: var(--ed-btn, #24324a); color: var(--ed-text, #cbd5e1); border: none; border-radius: 4px;
+    background: var(--ed-transport-btn, #24324a); color: var(--ed-text, #cbd5e1); border: none; border-radius: 4px;
     font-size: 11px; padding: 2px 4px; outline: none;
 }
 #plugin-editor .editor-transport-customize { margin-left: auto; }
@@ -435,7 +453,7 @@ html.fb-immersive #plugin-editor .editor-root {
 /* The plugin ships no Tailwind typography plugin and the base reset strips
    list/heading styling, so the read-only guide modal styles its own prose. */
 #plugin-editor .editor-guide-body h3 {
-    font-size: 0.9rem; font-weight: 600; color: #f3f4f6;
+    font-size: 0.9rem; font-weight: 600; color: var(--ed-text-strong, #f3f4f6);
     margin: 1.15rem 0 0.4rem;
 }
 #plugin-editor .editor-guide-body h3:first-child { margin-top: 0; }
@@ -447,10 +465,10 @@ html.fb-immersive #plugin-editor .editor-root {
 #plugin-editor .editor-guide-body ul { list-style: disc; }
 #plugin-editor .editor-guide-body ol { list-style: decimal; }
 #plugin-editor .editor-guide-body li { margin: 0.25rem 0; }
-#plugin-editor .editor-guide-body strong { color: #e5e7eb; font-weight: 600; }
+#plugin-editor .editor-guide-body strong { color: var(--ed-text-2, #e5e7eb); font-weight: 600; }
 #plugin-editor .editor-guide-body code {
-    background: #111827; border: 1px solid #374151; border-radius: 4px;
-    padding: 0.05rem 0.3rem; font-size: 0.85em; color: #d1d5db;
+    background: var(--ed-field, #111827); border: 1px solid var(--ed-border, #374151); border-radius: 4px;
+    padding: 0.05rem 0.3rem; font-size: 0.85em; color: var(--ed-text, #d1d5db);
 }
 #plugin-editor .editor-guide-body kbd {
     display: inline-block; background: #1f2937; border: 1px solid #4b5563;
@@ -470,4 +488,22 @@ html.fb-immersive #plugin-editor .editor-root {
 }
 #plugin-editor .editor-guide-body figcaption {
     margin-top: 0.4rem; font-size: 0.78rem; color: #9ca3af;
+}
+
+/* ── Onboarding first-win cue (workspace-shell C2) ─────────────────── */
+/* A calm one-time acknowledgement: fade in, hold, fade out. No motion beyond
+   opacity + a small rise, so it reads as "noticed", never as a reward pop. */
+#plugin-editor #editor-cue.editor-cue-show {
+    animation: editor-cue-fade 4.2s ease-in-out forwards;
+}
+@keyframes editor-cue-fade {
+    0%   { opacity: 0; transform: translate(-50%, 6px); }
+    12%  { opacity: 1; transform: translate(-50%, 0); }
+    80%  { opacity: 1; transform: translate(-50%, 0); }
+    100% { opacity: 0; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+    #plugin-editor #editor-cue.editor-cue-show { animation-duration: 4.2s; }
+    #plugin-editor #editor-cue.editor-cue-show { animation-name: editor-cue-fade-plain; }
+    @keyframes editor-cue-fade-plain { 0%,100% { opacity: 0; } 12%,80% { opacity: 1; } }
 }

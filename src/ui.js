@@ -187,3 +187,82 @@ export function _editorPromptText({ title = '', label = '', value = '', placehol
         input.select();
     });
 }
+
+// A titled choice dialog (same modal idiom as _editorPromptText): a message plus
+// one button per choice (label + hint), and Cancel. Resolves to the chosen
+// `key`, or null on Cancel / Escape. (Clicking the dimmed overlay does not
+// dismiss — it re-focuses the dialog, same as the editor's other modals.)
+// `choices`: [{ key, label, hint }].
+export function _editorPromptChoice({ title = '', message = '', choices = [] } = {}) {
+    return new Promise((resolve) => {
+        if (_editorPromptCancel) _editorPromptCancel();
+        document.getElementById('editor-choice-prompt')?.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'editor-choice-prompt';
+        modal.className = 'fixed inset-0 bg-black/70 z-50 flex items-center justify-center';
+        const inner = document.createElement('div');
+        inner.className = 'bg-dark-800 border border-gray-700 rounded-lg p-6 max-w-md w-full mx-4';
+        inner.setAttribute('role', 'dialog');
+        inner.setAttribute('aria-modal', 'true');
+
+        let settled = false;
+        const done = (val) => {
+            if (settled) return;
+            settled = true;
+            _editorPromptCancel = null;
+            modal.remove();
+            resolve(val);
+        };
+
+        if (title) {
+            const h = document.createElement('h3');
+            h.id = 'editor-choice-prompt-title';
+            h.className = 'text-lg font-semibold mb-2';
+            h.textContent = title;
+            inner.appendChild(h);
+            inner.setAttribute('aria-labelledby', h.id);
+        } else {
+            inner.setAttribute('aria-label', 'Choose an option');
+        }
+        if (message) {
+            const p = document.createElement('p');
+            p.className = 'text-xs text-gray-400 mb-4';
+            p.textContent = message;
+            inner.appendChild(p);
+        }
+        for (const c of (Array.isArray(choices) ? choices : [])) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'w-full text-left px-3 py-2 mb-2 bg-dark-700 hover:bg-dark-600 border border-gray-600 rounded';
+            const l = document.createElement('div');
+            l.className = 'text-sm font-medium text-gray-100';
+            l.textContent = c.label;
+            btn.appendChild(l);
+            if (c.hint) {
+                const hint = document.createElement('div');
+                hint.className = 'text-[11px] text-gray-400 mt-0.5';
+                hint.textContent = c.hint;
+                btn.appendChild(hint);
+            }
+            btn.onclick = () => done(c.key);
+            inner.appendChild(btn);
+        }
+
+        const row = document.createElement('div');
+        row.className = 'flex justify-end mt-1';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'px-3 py-1 bg-dark-700 hover:bg-dark-600 rounded text-sm';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = () => done(null);
+        row.appendChild(cancelBtn);
+        inner.appendChild(row);
+
+        modal.appendChild(inner);
+        _installModalKeyboard(modal, inner, () => done(null));
+        _editorPromptCancel = () => done(null);
+        document.body.appendChild(modal);
+        inner.querySelector('button')?.focus();
+    });
+}

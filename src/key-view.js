@@ -64,7 +64,7 @@ export const editorDetectKey = () => {
         counted++;
     }
     const res = counted ? _detectKeyPure(weights) : null;
-    if (!res) { setStatus('Could not detect a key from this part'); return; }
+    if (!res) { setStatus('Could not detect a key from this track'); return; }
     S.editorKey = { tonic: res.tonic, scale: res.scale };
     try { localStorage.setItem('editorKeyHighlight', '1'); } catch (_) { /* private mode */ }
     _persistEditorKey();
@@ -108,7 +108,7 @@ export const editorSetViewMode = (mode) => {
     const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
     if (!arr) return;
     if (KEYS_PATTERN.test(arr.name || '')) {
-        setStatus('Keys parts always use the piano roll');
+        setStatus('Keys tracks always use the piano roll');
         return;
     }
     if (viewFor(arr) === mode) return;
@@ -139,7 +139,7 @@ export function _editorCycleViewMode() {
     const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
     if (!arr) { setStatus('Load a song first'); return true; }
     if (KEYS_PATTERN.test(arr.name || '')) {
-        setStatus('Keys parts always use the piano roll');
+        setStatus('Keys tracks always use the piano roll');
         return true;
     }
     window.editorSetViewMode(viewFor(arr) === 'piano' ? 'string' : 'piano');

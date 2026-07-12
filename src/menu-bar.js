@@ -78,7 +78,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'resnapSelection' },
     ] },
     { title: 'Add', items: [
-        { hdr: 'Part' },
+        { hdr: 'Track' },
         { label: 'Drums…', fn: 'editorShowAddDrumsModal' },
         { label: 'Record MIDI…', fn: 'editorShowRecordMidiModal' },
         { sep: true },
@@ -126,7 +126,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleSlap' },
         { cmd: 'cyclePickDirection' },
     ] },
-    { title: 'Part', items: [
+    { title: 'Track', items: [
         { cmd: 'renamePart' },
         { cmd: 'movePartEarlier' },
         { cmd: 'movePartLater' },
@@ -145,7 +145,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleFollow' },
         { cmd: 'showTabPreview' },
         { sep: true },
-        { label: 'Theme: Dark → Medium → Light', fn: 'editorCycleTheme' },
+        { label: 'Theme: Dark → Medium → Light', fn: 'editorCycleTheme', v3Only: true },
         { sep: true },
         { hdr: 'Panels' },
         { cmd: 'toggleMixer' },
@@ -155,7 +155,7 @@ export const EDITOR_MENUS = Object.freeze([
         // from ctx.toolbars at open time, same as accelerators do.
         { hdr: 'Toolbars' },
         { tb: 'file', label: 'File' },
-        { tb: 'parts', label: 'Parts' },
+        { tb: 'parts', label: 'Tracks' },
         { tb: 'edit', label: 'Edit' },
         { tb: 'transport', label: 'Transport' },
         { tb: 'grid', label: 'Grid' },
@@ -236,6 +236,7 @@ export const EDITOR_MENUS = Object.freeze([
     ] },
     { title: 'Help', items: [
         { label: 'User Guide', fn: 'editorToggleUserGuide' },
+        { label: 'Editor tour', fn: 'editorStartTour' },
         { sep: true },
         { cmd: 'openCommandPalette' },
         { cmd: 'showShortcutHelp' },
@@ -257,6 +258,7 @@ export function _menuModelPure(menus, rows, ctx) {
         for (const it of menu.items) {
             if (it.sep) { items.push({ sep: true }); continue; }
             if (it.hdr) { items.push({ hdr: it.hdr }); continue; }
+            if (it.v3Only && !ctx.v3) continue;
             if (it.tb || it.tbPreset || it.tbReset) {
                 // Toolbar checklist rows (B5). `✓ ` marks a visible toolbar /
                 // the active preset; the two-space pad keeps labels aligned.
@@ -386,6 +388,7 @@ function currentModel() {
         _editorShortcutRowsPure(editorShortcutProfile),
         {
             tempoMapMode: !!S.tempoMapMode, hasAudio: !!S.audioBuffer, fns: windowFns(),
+            v3: !!(window.slopsmith && window.slopsmith.uiVersion === 'v3'),
             toolbars: getToolbarCtx(),
             loopSnapMode: editorLoopSnapMode(),
             gmGuide: _gmGuideMenuCtx(),

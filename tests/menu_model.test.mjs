@@ -33,7 +33,7 @@ const CTX = { tempoMapMode: false, hasAudio: true, fns: allFns };
 
 t('nine menus, charrette order, Tempo/Grid is top-level', () => {
     assert.deepStrictEqual(EDITOR_MENUS.map((m) => m.title),
-        ['File', 'Edit', 'Add', 'Note', 'Part', 'View', 'Transport', 'Tempo/Grid', 'Help']);
+        ['File', 'Edit', 'Add', 'Note', 'Track', 'View', 'Transport', 'Tempo/Grid', 'Help']);
 });
 
 t('every registry-backed item resolves to a live registry id', () => {
@@ -92,6 +92,14 @@ t('audio-only items HIDE (not grey) without a recording', () => {
     const has = (model, label) => model.flatMap((m) => m.items).some((i) => i.label === label);
     assert.strictEqual(has(withAudio, 'Sync tempo to audio'), true);
     assert.strictEqual(has(noAudio, 'Sync tempo to audio'), false);
+});
+
+t('v3-only theme cycling hides outside the v3 layout', () => {
+    const labels = (ctx) => _menuModelPure(EDITOR_MENUS, rows, ctx)
+        .flatMap((m) => m.items)
+        .map((i) => i.label);
+    assert.strictEqual(labels({ ...CTX, v3: false }).includes('Theme: Dark → Medium → Light'), false);
+    assert.strictEqual(labels({ ...CTX, v3: true }).includes('Theme: Dark → Medium → Light'), true);
 });
 
 t('Help ▸ User Guide surfaces, enabled, and dispatches to its toggle', () => {
