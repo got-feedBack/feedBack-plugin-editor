@@ -892,7 +892,12 @@ export function _tempoMapOnMouseDown(e, x, y) {
                 host.draw();
                 return;
             }
-            // Every selected pole is locked — fall through to a single focus drag.
+            // Every selected pole is locked: keep the group selected and do not
+            // fall through to a single-pole drag, which would move a protected
+            // anchor despite the group no-op rule.
+            setStatus('Selected barlines are locked — unlock one to move it.');
+            host.draw();
+            return;
         }
         if (hit !== S.tempoSel) _tapTempo = null;   // selection moved — drop stale tap run
         S.tempoSel = hit;
@@ -2357,4 +2362,3 @@ export class TempoMapCmd {
         host.updateLoopIn3DBtn();
     }
 }
-

@@ -11,13 +11,15 @@
  * Run: node tests/tempo_group_drag.test.mjs
  */
 import assert from 'node:assert';
+import { setCanvas } from '../src/canvas.js';
+import { TIMELINE_TOP, WAVEFORM_H, timeToX } from '../src/geometry.js';
 import { S } from '../src/state.js';
 import { EditHistory } from '../src/history.js';
 import {
     TempoMapCmd, MIN_MEASURE,
-    _tempoApplyGroupDragPure, _tempoGroupDragClampPure,
+    _tempoApplyGroupDragPure, _tempoGroupDragClampPure, _tempoMapOnMouseDown,
 } from '../src/tempo.js';
-import { seedState, trackHooks } from './_history_env.mjs';
+import { lastStatus, seedState, trackHooks } from './_history_env.mjs';
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -121,6 +123,26 @@ t('apply: an all-locked selection is a no-op', () => {
     orig[4].locked = true; orig[8].locked = true;
     const out = _tempoApplyGroupDragPure(orig, [4, 8], 1, MIN_MEASURE, 16);
     assert.deepStrictEqual(out.map(b => b.time), orig.map(b => b.time), 'nothing moved');
+});
+
+t('mouse: grabbing an all-locked multi-selection does not fall through to single-pole drag', () => {
+    const calls = trackHooks();
+    const beats = grid();
+    beats[4].locked = true; beats[8].locked = true;
+    seedState({
+        arrangements: [], currentArr: 0, beats, sections: [], duration: 16,
+        history: new EditHistory(), tempoMapMode: true, tempoSel: 4,
+        tempoSelMulti: new Set([4, 8]), zoom: 100, scrollX: 0,
+    });
+    setCanvas({ height: 600, width: 900, getContext: () => ({}) });
+
+    _tempoMapOnMouseDown({ shiftKey: false }, timeToX(beats[4].time), TIMELINE_TOP + WAVEFORM_H + 5);
+
+    assert.strictEqual(S.drag, null, 'no single-pole drag is armed');
+    assert.deepStrictEqual([...S.tempoSelMulti].sort((a, b) => a - b), [4, 8], 'group selection is kept');
+    assert.strictEqual(S.tempoSel, 4, 'focus stays on the clicked locked barline');
+    assert.match(lastStatus(), /locked/i);
+    assert.ok(calls.draw > 0, 'redraws the unchanged selection');
 });
 
 // ── purity ───────────────────────────────────────────────────────────
