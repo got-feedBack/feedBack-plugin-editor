@@ -96,6 +96,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says so), a checkpoint dropped by the undo cap or a session reset just falls
   back to that, and a refused undo can never spin.
 
+- **Entry tours** (workspace-shell C3). Two short (≤4-step), task-based first-run
+  tours, seeded by how you entered the editor: **Compose** (create-from-scratch)
+  walks place → snap → play → loop; **Transcribe** (import) leads with the
+  reframe *"the recording never moves — you line the GRID up to it,"* taught by
+  doing — turn on Onsets, put the first barline on the first attack, tap tempo,
+  switch snap to Onset. Steps advance when you actually do the task (or via the
+  card's Next). Non-modal, skippable, and resumable from **Help ▸ Editor tour**;
+  Transcribe's "I'll align later" drops you into the Compose tour. Tour state is
+  editor-pref, and a tour fires at most once per lane on its own.
 - **Onboarding signposts + first-win cues** (workspace-shell C2). Two quiet,
   un-gamified helpers, both editor-pref (never the pack): **signposts** are
   suggest-only hints triggered by what you're *doing* — e.g. resnapping notes

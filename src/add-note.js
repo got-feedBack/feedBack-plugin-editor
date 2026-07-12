@@ -4,6 +4,7 @@
 
 import { _editBlipAt } from './audio.js';
 import { AddNoteCmd } from './commands.js';
+import { _tourNoteAction } from './tour.js';
 import { editorKeyNoteNames, isKeysMode, midiToNote, noteToMidi } from './keys.js';
 import { S } from './state.js';
 import { host } from './host.js';
@@ -54,6 +55,7 @@ export function editorConfirmAddNote() {
         techniques: {},
     };
     S.history.exec(new AddNoteCmd(note));
+    _tourNoteAction('placeNote');   // C3 Compose tour: step 1 task
     _editBlipAt();
     hideAddNote();
     host.draw();

@@ -234,6 +234,7 @@ export const EDITOR_MENUS = Object.freeze([
     ] },
     { title: 'Help', items: [
         { label: 'User Guide', fn: 'editorToggleUserGuide' },
+        { label: 'Editor tour', fn: 'editorStartTour' },
         { sep: true },
         { cmd: 'openCommandPalette' },
         { cmd: 'showShortcutHelp' },
