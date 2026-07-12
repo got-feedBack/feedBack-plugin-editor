@@ -1266,6 +1266,17 @@ window.editorLoadFile = (f) => { window.editorHideLoadModal(); loadCDLC(f); };
 window.editorSave = saveCDLC;
 window.editorUndo = () => S.history && S.history.doUndo();
 window.editorRedo = () => S.history && S.history.doRedo();
+// Undo back to the last checkpoint (Ctrl+Alt+Z) — a coarse rewind past a whole
+// tempo-mapping session, a suggested-fit accept, or a barline lock. doUndo()
+// already repaints per step; we just name the result on the status line.
+window.editorUndoToCheckpoint = () => {
+    if (!S.history) return;
+    const r = S.history.undoToCheckpoint();
+    if (r.undone === 0) { setStatus('Nothing to undo.'); return; }
+    setStatus(r.foundCheckpoint && r.label
+        ? `Undid ${r.undone} step${r.undone === 1 ? '' : 's'} back to checkpoint: ${r.label}.`
+        : 'No checkpoint set — undid one step.');
+};
 window.editorTogglePlay = () => {
     // Route stops through the recorder while a take is active so the
     // spacebar (or any other transport caller) finalizes the recording

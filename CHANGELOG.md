@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Undo to last checkpoint** (`Ctrl+Alt+Z`, Edit ▸ Undo to last checkpoint).
+  Checkpoints are coarse rewind points stamped automatically at milestones —
+  entering Tempo Map, accepting a suggested fit, locking/unlocking a barline —
+  so a single keystroke can undo a whole tempo-mapping session at once instead
+  of tapping Ctrl+Z through every step. The status line names what it unwound
+  to. Degrades gracefully: with no checkpoint in range it undoes one step (and
+  says so), a checkpoint dropped by the undo cap or a session reset just falls
+  back to that, and a refused undo can never spin.
+
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:
   Transport ▸ Guide voice ▸ Instrument (GM), with a per-part-kind instrument

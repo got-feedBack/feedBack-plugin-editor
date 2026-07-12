@@ -100,6 +100,44 @@ export class EditHistory {
     // Not _afterEdit() — that nudges the piano viewport, which a clear shouldn't.
     reset() { this.undo = []; this.redo = []; this._ui(); }
 
+    // Stamp the top-of-undo command as a named checkpoint — a coarse rewind point
+    // for undoToCheckpoint(). No-op on an empty stack: there is no command to
+    // stamp (and no state to return to), so the moment simply isn't recorded.
+    // The stamp rides the command object, so it survives redo.
+    checkpoint(label) {
+        if (this.undo.length) this.undo[this.undo.length - 1]._checkpoint = label || 'checkpoint';
+    }
+
+    // Undo repeatedly until a checkpoint-stamped command has been rolled back
+    // (that command is undone too — you land at the state BEFORE it). Returns
+    // { undone, label, foundCheckpoint } so the caller can name the result.
+    // Two graceful degradations:
+    //   • No checkpoint anywhere in the stack ⇒ a single plain undo, never a
+    //     silent rewind of the whole session (a checkpoint can be shifted off by
+    //     MAX_UNDO or dropped by reset()).
+    //   • No-progress guard: doUndo() can REFUSE without popping (ensureArr
+    //     switch-away, or the read-only-roll lock). Stop the instant the stack
+    //     stops shrinking, so a refusal can never spin.
+    undoToCheckpoint() {
+        if (!this.undo.length) return { undone: 0, label: null, foundCheckpoint: false };
+        if (!this.undo.some((c) => c._checkpoint)) {
+            const before = this.undo.length;
+            this.doUndo();
+            return { undone: before - this.undo.length, label: null, foundCheckpoint: false };
+        }
+        let undone = 0;
+        let label = null;
+        while (this.undo.length) {
+            const stamp = this.undo[this.undo.length - 1]._checkpoint;
+            const before = this.undo.length;
+            this.doUndo();
+            if (this.undo.length >= before) break;   // refused — no progress
+            undone++;
+            if (stamp) { label = stamp; break; }
+        }
+        return { undone, label, foundCheckpoint: true };
+    }
+
     _afterEdit() {
         // Bump the shared edit generation: the section-coverage, chord-display
         // and drum-lint memos all key on it. An in-place note-time move keeps
