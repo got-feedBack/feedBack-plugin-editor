@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The first Save of a session now opens the file explorer** (the same native
+  picker as Save As), so you choose where the `.feedpak` lands instead of it
+  going somewhere implicit. Once you've picked a location, later saves (Ctrl+S /
+  the Save button) write straight to it — no re-prompt. Where the File System
+  Access API isn't available, Save falls back to the plain library save as
+  before (never a download loop). Programmatic saves (the Loop-in-3D handoff,
+  the host save hook, build) are unaffected — only the user's Save routes
+  through the picker. Sessions that can't complete the picker flow — create
+  mode (no library file to export yet; use Build) and authoring-directory
+  sloppaks (no packed file for the export route to serve) — keep the plain
+  library save instead of prompting for a destination that would then fail.
 - **Tempo Map legibility pass.** The bottom HUD strip now carries a **colour
   legend** (mapped · selected · locked · suggested · unmapped) using the exact
   pole colours, so the grid's vocabulary is self-explanatory; it only draws when

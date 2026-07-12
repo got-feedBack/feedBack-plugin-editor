@@ -70,7 +70,7 @@ import {
 } from './arrangement.js';
 import {
     _activeArrangementExceedsArchiveLimit, _editorLoadsInFlight, _resetOffsetUI,
-    editorHideSaveFormatModal, editorSaveAs, editorSaveAsSloppakConfirm, filterSongs, loadCDLC,
+    editorHideSaveFormatModal, editorSave, editorSaveAs, editorSaveAsSloppakConfirm, filterSongs, loadCDLC,
     saveCDLC, showLoadModal
 } from './file-ops.js';
 import {
@@ -1263,7 +1263,7 @@ window.editorShowLoadModal = showLoadModal;
 window.editorHideLoadModal = () => document.getElementById('editor-load-modal').classList.add('hidden');
 window.editorFilterSongs = filterSongs;
 window.editorLoadFile = (f) => { window.editorHideLoadModal(); loadCDLC(f); };
-window.editorSave = saveCDLC;
+window.editorSave = editorSave;   // first save → file explorer, then saves to it
 window.editorUndo = () => S.history && S.history.doUndo();
 window.editorRedo = () => S.history && S.history.doRedo();
 // Undo back to the last checkpoint (Ctrl+Alt+Z) — a coarse rewind past a whole
