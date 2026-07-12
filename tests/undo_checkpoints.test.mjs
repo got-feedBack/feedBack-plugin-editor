@@ -1,8 +1,9 @@
 /*
  * Undo checkpoints (charrette arch 7): EditHistory.checkpoint(label) +
- * undoToCheckpoint(). A checkpoint is a coarse rewind point — stamped on the
- * top-of-undo command at a milestone (Tempo Map entry, Suggest-fit accept,
- * barline lock) — and Ctrl+Alt+Z rewinds through it in one step.
+ * undoToCheckpoint(). A checkpoint marks "the state as of this call" — stamped
+ * on the top-of-undo command at a milestone (Tempo Map entry, Suggest-fit
+ * accept, barline lock) — and Ctrl+Alt+Z rewinds everything ABOVE the stamp in
+ * one step, leaving the stamped command itself applied.
  *
  * Real EditHistory over the real S (tests/_history_env.mjs), with trivial
  * songScope commands that log their exec/rollback so the sequence is visible.
@@ -32,20 +33,57 @@ function fresh() {
     return S.history;
 }
 
-t('undoToCheckpoint rewinds through (and including) the stamped command', () => {
+t('undoToCheckpoint rewinds to the stamp, keeping the stamped command applied', () => {
     const log = [];
     const h = fresh();
     h.exec(mkCmd('a', log));
     h.exec(mkCmd('b', log));
-    h.checkpoint('cp');            // stamps 'b' (current top)
+    h.checkpoint('cp');            // "the state as of now" — right after 'b'
     h.exec(mkCmd('c', log));
     h.exec(mkCmd('d', log));
     const r = h.undoToCheckpoint();
-    assert.strictEqual(r.undone, 3, 'undoes d, c, and the stamped b');
+    assert.strictEqual(r.undone, 2, 'undoes d and c — NOT the stamped b');
     assert.strictEqual(r.label, 'cp');
     assert.strictEqual(r.foundCheckpoint, true);
-    assert.deepStrictEqual(log.slice(-3), ['-d', '-c', '-b']);
-    assert.strictEqual(h.undo.length, 1, 'only the pre-checkpoint command remains');
+    assert.deepStrictEqual(log.slice(-2), ['-d', '-c']);
+    assert.strictEqual(h.undo.length, 2, 'a and the stamped b both remain applied');
+});
+
+// Regression (checkpoint overshoot): a Tempo-Map-entry / barline-lock
+// checkpoint stamps the last edit made BEFORE the milestone. Rolling that edit
+// back too would silently lose one pre-session edit while the status line
+// claims a clean return "back to checkpoint".
+t('a pre-milestone edit under the stamp survives the rewind', () => {
+    const log = [];
+    const h = fresh();
+    h.exec(mkCmd('note', log));       // user's last edit before entering Tempo Map
+    h.checkpoint('Tempo Map session');
+    h.exec(mkCmd('drag1', log));
+    h.exec(mkCmd('drag2', log));
+    h.undoToCheckpoint();
+    assert.ok(!log.includes('-note'), 'the pre-session edit was NOT rolled back');
+    assert.strictEqual(h.undo.length, 1, 'the pre-session edit is still applied');
+});
+
+t('repeated presses walk back checkpoint by checkpoint, then degrade', () => {
+    const log = [];
+    const h = fresh();
+    h.exec(mkCmd('a', log));
+    h.checkpoint('A');
+    h.exec(mkCmd('b', log));
+    h.exec(mkCmd('c', log));
+    h.checkpoint('B');
+    h.exec(mkCmd('d', log));
+    const r1 = h.undoToCheckpoint();
+    assert.strictEqual(r1.label, 'B');
+    assert.strictEqual(r1.undone, 1, 'first press: back to B (undoes d only)');
+    const r2 = h.undoToCheckpoint();
+    assert.strictEqual(r2.label, 'A', 'second press at B targets the previous checkpoint');
+    assert.strictEqual(r2.undone, 2, 'undoes c and b');
+    assert.strictEqual(h.undo.length, 1);
+    const r3 = h.undoToCheckpoint();
+    assert.strictEqual(r3.foundCheckpoint, false, 'at A with nothing earlier: degrade to one undo');
+    assert.strictEqual(r3.undone, 1, 'single plain undo, not inert');
 });
 
 t('with no checkpoint anywhere, it degrades to a single plain undo', () => {
@@ -67,7 +105,8 @@ t('the checkpoint stamp survives an undo/redo round-trip', () => {
     h.exec(mkCmd('a', log));
     h.checkpoint('cp');            // stamps 'a'
     h.exec(mkCmd('b', log));
-    h.undoToCheckpoint();          // undoes b, then a (stamped) -> stack empty
+    h.doUndo();                    // roll a's stamp through the redo stack:
+    h.doUndo();                    // undo b, then the stamped a
     assert.strictEqual(h.undo.length, 0);
     h.doRedo();                    // re-exec a
     h.doRedo();                    // re-exec b
@@ -75,6 +114,7 @@ t('the checkpoint stamp survives an undo/redo round-trip', () => {
     const r = h.undoToCheckpoint();
     assert.strictEqual(r.label, 'cp', 'stamp still on the redone command');
     assert.strictEqual(r.foundCheckpoint, true);
+    assert.strictEqual(r.undone, 1, 'undoes b, lands on the redone stamped a');
 });
 
 t('the no-progress guard stops when doUndo refuses (never spins)', () => {

@@ -1272,10 +1272,19 @@ window.editorRedo = () => S.history && S.history.doRedo();
 window.editorUndoToCheckpoint = () => {
     if (!S.history) return;
     const r = S.history.undoToCheckpoint();
-    if (r.undone === 0) { setStatus('Nothing to undo.'); return; }
-    setStatus(r.foundCheckpoint && r.label
-        ? `Undid ${r.undone} step${r.undone === 1 ? '' : 's'} back to checkpoint: ${r.label}.`
-        : 'No checkpoint set — undid one step.');
+    if (r.undone === 0) {
+        // Zero steps with commands still on the stack = the first doUndo was
+        // REFUSED (read-only roll / missing arrangement) and already set an
+        // explanatory status — don't stomp it with "Nothing to undo."
+        if (!S.history.undo.length) setStatus('Nothing to undo.');
+        return;
+    }
+    const n = `${r.undone} step${r.undone === 1 ? '' : 's'}`;
+    setStatus(!r.foundCheckpoint
+        ? 'No earlier checkpoint — undid one step.'
+        : r.label
+            ? `Undid ${n} back to checkpoint: ${r.label}.`
+            : `Undid ${n} — undo refused before reaching the checkpoint.`);
 };
 window.editorTogglePlay = () => {
     // Route stops through the recorder while a take is active so the
