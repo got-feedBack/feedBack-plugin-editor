@@ -95,6 +95,28 @@ export function _suggestCombPure(onsets, startT, endT, beatsInBar, win) {
     return sum / nb;
 }
 
+// Look around the local snap for a better bar-level comb. This does NOT widen
+// the single-hit snap rule by itself: a better candidate outside jumpTol still
+// stops the march below. It prevents a dense interior beat from masquerading as
+// the downbeat when the real barline is just outside the beat-relative window.
+function _suggestBestCombCandidatePure(onsets, startT, gridInt, beatsInBar, win, stretch, jumpTol) {
+    if (!Array.isArray(onsets) || !(gridInt > 0)) return null;
+    const rawPad = win / gridInt;
+    const lo = startT + gridInt * Math.max(0.01, stretch - jumpTol - rawPad);
+    const hi = startT + gridInt * (stretch + jumpTol + rawPad);
+    let best = null;
+    for (const o of onsets) {
+        if (!Number.isFinite(o.t) || o.t <= lo || o.t > hi) continue;
+        const rawStretch = (o.t - startT) / gridInt;
+        if (!(rawStretch > 0)) continue;
+        const comb = _suggestCombPure(onsets, startT, o.t, beatsInBar, win);
+        if (!best || comb > best.comb || (comb === best.comb && Math.abs(o.t - (startT + gridInt * stretch)) < Math.abs(best.time - (startT + gridInt * stretch)))) {
+            best = { time: o.t, rawStretch, comb };
+        }
+    }
+    return best;
+}
+
 // (Hardening c3) Median of recent stretch samples — tap-tempo's trick: one bad
 // snap can't drag the running tempo the way a plain EMA (α=0.35 → 35% per bad
 // bar) does. Non-mutating.
@@ -130,6 +152,7 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
     const missConf = o.missConf || 0.12;
     const medianN = o.medianN || 5;             // stretch median window (c3)
     const jumpTol = o.jumpTol || 0.25;          // >25% single correction ⇒ stop
+    const combSwitchMargin = o.combSwitchMargin || 0.15;
     const minBpm = o.minBpm || 40;
     const maxBpm = o.maxBpm || 300;
     const eps = 0.01;
@@ -162,8 +185,15 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
         const missesBefore = misses;
         const hit = _suggestOnsetNearPure(onsets, predicted, win);
         if (hit && hit.t > prevNew + eps) {
-            const time = hit.t;
-            const rawStretch = (time - prevNew) / gridInt;
+            let time = hit.t;
+            let rawStretch = (time - prevNew) / gridInt;
+            let comb = _suggestCombPure(onsets, prevNew, time, beatsInBar, win);
+            const better = _suggestBestCombCandidatePure(onsets, prevNew, gridInt, beatsInBar, win, stretch, jumpTol);
+            if (better && better.time !== time && better.comb > comb + combSwitchMargin) {
+                time = better.time;
+                rawStretch = better.rawStretch;
+                comb = better.comb;
+            }
             // (c4) A snap implying ~half or ~double the bar is a metric-phase
             // ambiguity (halftime backbeat, double-time hat), not tempo drift —
             // stop and ask rather than lock the grid to the wrong pulse.
@@ -185,7 +215,6 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
             if (stretchHist.length > medianN) stretchHist.shift();
             stretch = _suggestMedianPure(stretchHist);
             // (c2)+(c6) Confidence = comb × continuity × consistency.
-            const comb = _suggestCombPure(onsets, prevNew, time, beatsInBar, win);
             const continuity = Math.max(0, 1 - missesBefore * 0.5);
             const consistency = Math.max(0, 1 - Math.abs(rawStretch - stretch) / jumpTol);
             const conf = Math.max(0, Math.min(1, comb * continuity * consistency));

@@ -236,6 +236,16 @@ t('c2/c6: a fully-played bar is far more confident than a bare-downbeat bar', ()
     assert.ok(Math.abs(_suggestCombPure(onsetsAllBeats(120, 6), 0, 2, 4, 0.2) - _suggestCombPure(onsetsAt(120, 6), 0, 2, 4, 0.2)) > 0.3, 'comb sees the interior beats');
 });
 
+// c2 + c3 — dense interior beats must not masquerade as downbeats
+t('c2/c3: a better full-bar comb outside the snap window stops instead of accepting an interior beat', () => {
+    const g = grid(8, 120);                  // grid downbeat prediction is 2.0s
+    const real = onsetsAllBeats(90, 8);      // real next downbeat is 2.667s; 2.0s is only an interior beat
+    const { stopReason, stopDetail, proposals } = _suggestFitPure(g, real, 0);
+    assert.strictEqual(stopReason, 'lost');
+    assert.strictEqual(stopDetail, 'tempo-jump');
+    assert.strictEqual(proposals.length, 0, 'refuses the wrong-pulse interior hit');
+});
+
 // c3 — median stretch + a single big correction stops
 t('c3: a single >25% correction stops (tempo-jump) instead of snapping the grid', () => {
     // Every beat a downbeat (beatsInBar=1) so the window admits the jumped onset.
