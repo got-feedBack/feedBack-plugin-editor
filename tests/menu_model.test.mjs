@@ -94,6 +94,14 @@ t('audio-only items HIDE (not grey) without a recording', () => {
     assert.strictEqual(has(noAudio, 'Sync tempo to audio'), false);
 });
 
+t('v3-only theme cycling hides outside the v3 layout', () => {
+    const labels = (ctx) => _menuModelPure(EDITOR_MENUS, rows, ctx)
+        .flatMap((m) => m.items)
+        .map((i) => i.label);
+    assert.strictEqual(labels({ ...CTX, v3: false }).includes('Theme: Dark → Medium → Light'), false);
+    assert.strictEqual(labels({ ...CTX, v3: true }).includes('Theme: Dark → Medium → Light'), true);
+});
+
 t('Help ▸ User Guide surfaces, enabled, and dispatches to its toggle', () => {
     const model = _menuModelPure(EDITOR_MENUS, rows, CTX);
     const help = model.find((m) => m.title === 'Help');

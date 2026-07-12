@@ -57,77 +57,199 @@ export function _suggestOnsetNearPure(onsets, t, win) {
     return best;
 }
 
+// (Hardening c1) Snap window as a fraction of the BEAT, not the bar: the old
+// `gridInt * winFrac` was ±12% of a whole bar (±0.48 beat in 4/4 — the adjacent
+// eighth is in-window), so a syncopation could be snapped as the downbeat.
+// Beat-relative keeps the window under half a beat and scales correctly across
+// meters. The 25 ms floor survives for very fast bars.
+export function _suggestBeatWinPure(gridInt, beatsInBar, winFrac, minWin) {
+    const nb = beatsInBar > 0 ? beatsInBar : 1;
+    return Math.max(minWin > 0 ? minWin : 0.025, (gridInt / nb) * (winFrac > 0 ? winFrac : 0.45));
+}
+
+// True if any onset falls in (lo, hi] — used to tell a SILENT bar (stop) from a
+// SUSTAINED one whose onsets simply miss the downbeat (keep marching).
+export function _suggestAnyOnsetInPure(onsets, lo, hi) {
+    if (!Array.isArray(onsets) || !(hi > lo)) return false;
+    for (const o of onsets) {
+        if (Number.isFinite(o.t) && o.t > lo && o.t <= hi) return true;
+    }
+    return false;
+}
+
+// (Hardening c2) One-bar comb corroboration: score a candidate downbeat by the
+// onset support of ALL the bar's implied beats (the interior subdivisions plus
+// the closing downbeat), not the single downbeat onset — so a bar whose whole
+// pulse is played reads as far more certain than a bare, possibly-spurious
+// downbeat hit. Even subdivision (no grouping field exists yet). Mean support
+// in [0,1]; `startT` is the previous (already-accepted) downbeat, excluded.
+export function _suggestCombPure(onsets, startT, endT, beatsInBar, win) {
+    const nb = beatsInBar > 0 ? beatsInBar : 1;
+    if (!(endT > startT)) return 0;
+    let sum = 0;
+    for (let j = 1; j <= nb; j++) {
+        const tj = startT + (endT - startT) * (j / nb);
+        const hit = _suggestOnsetNearPure(onsets, tj, win);
+        sum += hit ? hit.conf : 0;
+    }
+    return sum / nb;
+}
+
+// Look around the local snap for a better bar-level comb. This does NOT widen
+// the single-hit snap rule by itself: a better candidate outside jumpTol still
+// stops the march below. It prevents a dense interior beat from masquerading as
+// the downbeat when the real barline is just outside the beat-relative window.
+function _suggestBestCombCandidatePure(onsets, startT, gridInt, beatsInBar, win, stretch, jumpTol) {
+    if (!Array.isArray(onsets) || !(gridInt > 0)) return null;
+    const rawPad = win / gridInt;
+    const lo = startT + gridInt * Math.max(0.01, stretch - jumpTol - rawPad);
+    const hi = startT + gridInt * (stretch + jumpTol + rawPad);
+    let best = null;
+    for (const o of onsets) {
+        if (!Number.isFinite(o.t) || o.t <= lo || o.t > hi) continue;
+        const rawStretch = (o.t - startT) / gridInt;
+        if (!(rawStretch > 0)) continue;
+        const comb = _suggestCombPure(onsets, startT, o.t, beatsInBar, win);
+        if (!best || comb > best.comb || (comb === best.comb && Math.abs(o.t - (startT + gridInt * stretch)) < Math.abs(best.time - (startT + gridInt * stretch)))) {
+            best = { time: o.t, rawStretch, comb };
+        }
+    }
+    return best;
+}
+
+// (Hardening c3) Median of recent stretch samples — tap-tempo's trick: one bad
+// snap can't drag the running tempo the way a plain EMA (α=0.35 → 35% per bad
+// bar) does. Non-mutating.
+export function _suggestMedianPure(vals) {
+    if (!Array.isArray(vals) || !vals.length) return null;
+    const s = vals.slice().sort((a, b) => a - b);
+    const m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
 // The suggestion engine. From the anchor downbeat, march the following
 // downbeats: prediction = previous accepted time + the CURRENT grid's own
-// interval for that bar, scaled by a drift-tracking stretch EMA; snap to the
-// strongest onset within ±winFrac of the interval. A locked downbeat is
+// interval for that bar, scaled by a drift-tracking stretch; snap to the
+// strongest onset within a BEAT-relative window (c1). A locked downbeat is
 // authoritative — pinned at its own time, full confidence, and it re-anchors
-// the march. A bar with no corroborating onset keeps marching on the bare
-// prediction at low confidence; after `maxMiss` consecutive misses the run
-// stops and the trailing guesses are DROPPED (silence / phase break / tempo
-// change — ask the human for the next anchor rather than invent bars).
+// the march. Confidence is a PRODUCT (c6) of comb corroboration (c2), run
+// continuity, and tempo consistency, so a bare or off-tempo bar reads as less
+// certain. The march STOPS with a NAMED reason (c7) rather than inventing bars:
+//   'silence'    — the bar has no onset at all (c5);
+//   'phase'      — the snap implies a half/double-time feel (c4);
+//   'tempo-jump' — a single correction bigger than `jumpTol` of a bar (c3);
+//   'bpm-range'  — the fit implies a tempo outside [minBpm, maxBpm] (c7).
+// A SUSTAINED bar (onsets present but off the downbeat) keeps marching (c5).
 //
-// Returns { proposals: [{ i, time, conf, locked }], stopReason } where
-// `i` indexes into `beats` and times are strictly increasing. `proposals`
+// Returns { proposals: [{ i, time, conf, locked }], stopReason, stopDetail }
+// where `i` indexes into `beats` and times are strictly increasing. `proposals`
 // excludes the anchor itself. stopReason: 'end' | 'lost'.
 export function _suggestFitPure(beats, onsets, fromIdx, opts) {
     const o = opts || {};
-    const winFrac = o.winFrac || 0.12;
+    const winFrac = o.winFrac || 0.45;          // now a fraction of a BEAT (stays under the ½-beat eighth)
     const minWin = o.minWin || 0.025;
     const maxMiss = o.maxMiss || 4;
     const missConf = o.missConf || 0.12;
-    const alpha = o.alpha || 0.35;
+    const medianN = o.medianN || 5;             // stretch median window (c3)
+    const jumpTol = o.jumpTol || 0.25;          // >25% single correction ⇒ stop
+    const combSwitchMargin = o.combSwitchMargin || 0.15;
+    const minBpm = o.minBpm || 40;
+    const maxBpm = o.maxBpm || 300;
+    const eps = 0.01;
     const downs = _suggestDownbeatsFromPure(beats, fromIdx);
     if (downs.length < 2 || !Array.isArray(onsets) || !onsets.length) {
-        return { proposals: [], stopReason: 'end' };
+        return { proposals: [], stopReason: 'end', stopDetail: 'end' };
     }
     const proposals = [];
+    let prevDownIdx = downs[0];
     let prevOld = beats[downs[0]].time;   // grid time of the previous downbeat
     let prevNew = beats[downs[0]].time;   // accepted/proposed time of it
     let stretch = 1;
+    const stretchHist = [];
     let misses = 0;
-    let stopReason = 'end';
+    let stopReason = 'end', stopDetail = 'end';
+    const toIdx = Number.isInteger(o.toIdx) ? o.toIdx : null;
     for (let k = 1; k < downs.length; k++) {
         const d = downs[k];
+        if (toIdx != null && d > toIdx) { stopReason = 'end'; stopDetail = 'bound'; break; }
         const gridInt = beats[d].time - prevOld;
-        if (!(gridInt > 0)) { stopReason = 'lost'; break; }
+        const beatsInBar = d - prevDownIdx;   // beats in the PREVIOUS measure's span
+        if (!(gridInt > 0) || beatsInBar < 1) { stopReason = 'lost'; break; }
         if (beats[d].locked) {
             // Human-verified: never moved, resets the drift bookkeeping.
             proposals.push({ i: d, time: beats[d].time, conf: 1, locked: true });
-            prevOld = beats[d].time;
-            prevNew = beats[d].time;
-            stretch = 1;
-            misses = 0;
+            prevDownIdx = d; prevOld = beats[d].time; prevNew = beats[d].time;
+            stretch = 1; stretchHist.length = 0; misses = 0;
             continue;
         }
         const predicted = prevNew + gridInt * stretch;
-        const win = Math.max(minWin, gridInt * winFrac);
+        const win = _suggestBeatWinPure(gridInt, beatsInBar, winFrac, minWin);
+        const missesBefore = misses;
         const hit = _suggestOnsetNearPure(onsets, predicted, win);
-        let time, conf;
-        if (hit && hit.t > prevNew + 0.01) {
-            time = hit.t;
-            conf = hit.conf;
-            stretch = stretch * (1 - alpha) + ((time - prevNew) / gridInt) * alpha;
+        if (hit && hit.t > prevNew + eps) {
+            let time = hit.t;
+            let rawStretch = (time - prevNew) / gridInt;
+            let comb = _suggestCombPure(onsets, prevNew, time, beatsInBar, win);
+            const better = _suggestBestCombCandidatePure(onsets, prevNew, gridInt, beatsInBar, win, stretch, jumpTol);
+            if (better && better.time !== time && better.comb > comb + combSwitchMargin) {
+                time = better.time;
+                rawStretch = better.rawStretch;
+                comb = better.comb;
+            }
+            // (c4) A snap implying ~half or ~double the bar is a metric-phase
+            // ambiguity (halftime backbeat, double-time hat), not tempo drift —
+            // stop and ask rather than lock the grid to the wrong pulse.
+            if (Math.abs(rawStretch - 0.5) < 0.1 || Math.abs(rawStretch - 2) < 0.2) {
+                stopReason = 'lost'; stopDetail = 'phase'; break;
+            }
+            // (c3) A single correction bigger than jumpTol of a bar is a break,
+            // not drift — stop instead of snapping the whole grid onto it.
+            if (Math.abs(rawStretch - stretch) > jumpTol) {
+                stopReason = 'lost'; stopDetail = 'tempo-jump'; break;
+            }
+            // (c7) Reject a fit that implies an out-of-range tempo.
+            const bpm = 60 * beatsInBar / (time - prevNew);
+            if (!(bpm >= minBpm && bpm <= maxBpm)) {
+                stopReason = 'lost'; stopDetail = 'bpm-range'; break;
+            }
+            // (c3) Median-of-recent stretch resists one bad snap.
+            stretchHist.push(rawStretch);
+            if (stretchHist.length > medianN) stretchHist.shift();
+            stretch = _suggestMedianPure(stretchHist);
+            // (c2)+(c6) Confidence = comb × continuity × consistency.
+            const continuity = Math.max(0, 1 - missesBefore * 0.5);
+            const consistency = Math.max(0, 1 - Math.abs(rawStretch - stretch) / jumpTol);
+            const conf = Math.max(0, Math.min(1, comb * continuity * consistency));
+            proposals.push({ i: d, time, conf, locked: false });
+            prevDownIdx = d; prevOld = beats[d].time; prevNew = time;
             misses = 0;
         } else {
-            time = Math.max(predicted, prevNew + 0.01);
-            conf = missConf;
+            // (c5) Classify the miss: a bar with NO onset anywhere is silence —
+            // stop. A bar with onsets that just don't fall on the downbeat is a
+            // sustained/held passage — keep marching on the prediction.
+            if (!_suggestAnyOnsetInPure(onsets, prevNew + eps, predicted + win)) {
+                stopReason = 'lost'; stopDetail = 'silence'; break;
+            }
+            const time = Math.max(predicted, prevNew + eps);
+            proposals.push({ i: d, time, conf: missConf, locked: false, miss: true });
+            prevDownIdx = d; prevOld = beats[d].time; prevNew = time;
             misses++;
+            if (misses >= maxMiss) { stopReason = 'lost'; stopDetail = 'silence'; break; }
         }
-        proposals.push({ i: d, time, conf, locked: false });
-        prevOld = beats[d].time;
-        prevNew = time;
-        if (misses >= maxMiss) { stopReason = 'lost'; break; }
     }
-    // Drop the trailing uncorroborated run — those are guesses past the point
-    // where the audio stopped agreeing, exactly where the design says to stop
-    // and request another anchor.
+    // Drop the trailing uncorroborated run — the bare-prediction MISSES past the
+    // point where the audio stopped agreeing (design: stop and request another
+    // anchor). Keyed on the miss flag, NOT confidence: a real but low-comb hit
+    // (a bar whose downbeat played but whose interior didn't) is corroborated
+    // and must survive.
     while (proposals.length && !proposals[proposals.length - 1].locked
-            && proposals[proposals.length - 1].conf <= missConf) {
+            && proposals[proposals.length - 1].miss) {
         proposals.pop();
         stopReason = 'lost';
+        if (stopDetail === 'end') stopDetail = 'silence';
     }
-    return { proposals, stopReason };
+    for (const p of proposals) delete p.miss;   // internal flag; keep the public shape
+    return { proposals, stopReason, stopDetail };
 }
 
 // Apply proposals up to and including the one for downbeat `throughI`:
@@ -167,12 +289,24 @@ export function _suggestApplyPure(beats, proposals, throughI) {
     return out;
 }
 
+// (Hardening c7) Named stop reasons — the HUD says WHY the march stopped, so a
+// halftime feel, a tempo break, and plain silence read differently instead of
+// one generic "onsets stopped agreeing". Unknown / absent detail → the generic
+// line (keeps the old copy for the default 'lost').
+const _SUGGEST_STOP_COPY = {
+    silence: ' - stopped at silence (add an anchor past the gap and press G again)',
+    phase: ' - stopped: the onsets fit a half/double-time feel here (anchor the real downbeat and press G)',
+    'tempo-jump': ' - stopped at a sudden tempo change (anchor the new tempo and press G again)',
+    'bpm-range': ' - stopped: the fit implied an out-of-range tempo (anchor the downbeat and press G)',
+    default: ' - stopped where the onsets stop agreeing (add an anchor there and press G again)',
+};
+
 // HUD line while suggestions are showing (the guidance pure stays untouched —
 // its strings are pinned by tests).
-export function _suggestHudTextPure(count, avgConf, stopReason) {
+export function _suggestHudTextPure(count, avgConf, stopReason, stopDetail) {
     const pct = Math.round(Math.max(0, Math.min(1, avgConf)) * 100);
     const tail = stopReason === 'lost'
-        ? ' - stopped where the onsets stop agreeing (add an anchor there and press G again)'
+        ? (_SUGGEST_STOP_COPY[stopDetail] || _SUGGEST_STOP_COPY.default)
         : '';
     return `Suggested ${count} barline${count === 1 ? '' : 's'} (~${pct}% confidence)`
         + ` - click a ghost handle to accept through it - Esc dismisses${tail}`;
@@ -180,7 +314,7 @@ export function _suggestHudTextPure(count, avgConf, stopReason) {
 /* @pure:tempo-suggest:end */
 
 // ── Module state (proposal-only; keyed on editGen for staleness) ─────
-let _sug = null;   // { anchorIdx, proposals, stopReason, onsets, gen }
+let _sug = null;   // { anchorIdx, proposals, stopReason, stopDetail, onsets, gen }
 
 export function _suggestActive() {
     return !!(_sug && _sug.gen === editGen && S.tempoMapMode && _sug.proposals.length);
@@ -190,6 +324,9 @@ export function _suggestProposals() {
 }
 export function _suggestStopReason() {
     return _sug ? _sug.stopReason : 'end';
+}
+export function _suggestStopDetail() {
+    return _sug ? (_sug.stopDetail || 'end') : 'end';
 }
 export function _suggestAvgConf() {
     if (!_suggestActive()) return 0;
@@ -204,11 +341,12 @@ export function _suggestDismiss() {
 
 // Compute (or forward-regenerate) proposals from `anchorIdx`, using — and
 // remembering — the caller-provided onset list. Returns the proposal count.
-export function _suggestCompute(anchorIdx, onsets) {
+export function _suggestCompute(anchorIdx, onsets, opts) {
     const list = onsets || (_sug && _sug.onsets) || null;
     if (!list || !list.length) { _sug = null; return 0; }
-    const { proposals, stopReason } = _suggestFitPure(S.beats, list, anchorIdx);
-    _sug = { anchorIdx, proposals, stopReason, onsets: list, gen: editGen };
+    const useOpts = opts || (onsets ? undefined : (_sug && _sug.opts)) || undefined;
+    const { proposals, stopReason, stopDetail } = _suggestFitPure(S.beats, list, anchorIdx, useOpts);
+    _sug = { anchorIdx, proposals, stopReason, stopDetail, onsets: list, opts: useOpts, gen: editGen };
     return proposals.length;
 }
 
@@ -216,7 +354,7 @@ export function _suggestCompute(anchorIdx, onsets) {
 // newly authoritative downbeat with the remembered onsets.
 export function _suggestRegenerateFrom(anchorIdx) {
     if (!_sug) return 0;
-    return _suggestCompute(anchorIdx, _sug.onsets);
+    return _suggestCompute(anchorIdx, null);
 }
 
 // Ghost-handle hit test: x within `half` px of a proposal's ghost pole.
