@@ -25,7 +25,7 @@ import { _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofC
 import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure } from './snap.js';
 import { S } from './state.js';
 import { _editorShowTabPreview, _tabPreviewKeyPolicyPure } from './tab-preview.js';
-import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSelection, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup } from './tempo.js';
+import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSelection, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup, _tempoSelRangePure } from './tempo.js';
 import { _editorPromptText, setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -623,7 +623,13 @@ function _editorTempoSuggestFit() {
         setStatus('Suggest needs the recording’s onset analysis — load audio first.');
         return true;
     }
+    // With a multi-selection, fit only the selected RANGE (PR 8): anchor at its
+    // first downbeat, bound the march at its last — so the fit can't run past
+    // the selection into the rest of the song.
     let anchor = S.tempoSel;
+    let opts;
+    const range = _tempoSelRangePure(S.beats, S.tempoSelMulti);
+    if (range) { anchor = range.lo; opts = { toIdx: range.hi }; }
     if (anchor < 0 || !(S.beats[anchor] && S.beats[anchor].measure > 0)) {
         anchor = S.beats.findIndex(b => b && b.measure > 0);
     }
@@ -632,10 +638,12 @@ function _editorTempoSuggestFit() {
         return true;
     }
     S.tempoSel = anchor;
-    const n = _suggestCompute(anchor, onsets);
+    const n = _suggestCompute(anchor, onsets, opts);
     host.draw();
     setStatus(n
-        ? `Suggested ${n} barline${n === 1 ? '' : 's'} ahead of the anchor — click a ghost handle to accept through it; Esc dismisses`
+        ? (opts
+            ? `Suggested a fit for the selected range (${n} barline${n === 1 ? '' : 's'}) — click a ghost handle to accept through it; Esc dismisses`
+            : `Suggested ${n} barline${n === 1 ? '' : 's'} ahead of the anchor — click a ghost handle to accept through it; Esc dismisses`)
         : 'No confident suggestions from here — verify this anchor (drag it onto the downbeat) and press G again.');
     return true;
 }

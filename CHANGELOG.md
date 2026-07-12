@@ -97,6 +97,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lock / modulate / suggest) is unchanged; the multi-selection is separate and
   is dropped on any grid-topology change.
 
+- **Range operations on a barline selection** in Tempo Map mode (right-click a
+  barline while a range is selected). Each states its contract:
+  - **Half-time / Double-time the range** — merge pairs of bars, or split each
+    bar at its midpoint. The audio positions **hold** (the notes keep their
+    times); only the barline grid changes, so the tempo halves or doubles.
+    Double-time skips a one-beat bar (nothing to split) and half-time leaves an
+    odd trailing bar as-is — both reported.
+  - **Flatten range to a steady tempo** — even out the beats between the two
+    ends to a constant tempo, both ends pinned (no tail shift); the **notes
+    follow** the retimed grid. Interior locked barlines hold their time.
+  - **Suggest (G) with a range selected** fits only that range — the onset march
+    is bounded to the selection's last barline instead of running to the end of
+    the song.
+  All are one undoable step.
+
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:
   Transport ▸ Guide voice ▸ Instrument (GM), with a per-part-kind instrument

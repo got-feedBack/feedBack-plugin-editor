@@ -145,8 +145,13 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
     const stretchHist = [];
     let misses = 0;
     let stopReason = 'end', stopDetail = 'end';
+    const toIdx = Number.isInteger(o.toIdx) ? o.toIdx : null;   // range re-fit bound (PR 8)
     for (let k = 1; k < downs.length; k++) {
         const d = downs[k];
+        // (PR 8) Bounded range re-fit: stop cleanly at the range's last downbeat
+        // — never propose past it, so a range fit can't disturb the grid outside
+        // the selection. A clean completion ('end'), not a loss.
+        if (toIdx != null && d > toIdx) { stopReason = 'end'; stopDetail = 'bound'; break; }
         const gridInt = beats[d].time - prevOld;
         const beatsInBar = d - prevDownIdx;   // beats in the PREVIOUS measure's span
         if (!(gridInt > 0) || beatsInBar < 1) { stopReason = 'lost'; break; }
@@ -310,11 +315,14 @@ export function _suggestDismiss() {
 
 // Compute (or forward-regenerate) proposals from `anchorIdx`, using — and
 // remembering — the caller-provided onset list. Returns the proposal count.
-export function _suggestCompute(anchorIdx, onsets) {
+export function _suggestCompute(anchorIdx, onsets, opts) {
     const list = onsets || (_sug && _sug.onsets) || null;
     if (!list || !list.length) { _sug = null; return 0; }
-    const { proposals, stopReason, stopDetail } = _suggestFitPure(S.beats, list, anchorIdx);
-    _sug = { anchorIdx, proposals, stopReason, stopDetail, onsets: list, gen: editGen };
+    // Remember the opts (e.g. a range bound) so a forward-regenerate after an
+    // accept stays inside the same range.
+    const useOpts = opts || (_sug && _sug.opts) || undefined;
+    const { proposals, stopReason, stopDetail } = _suggestFitPure(S.beats, list, anchorIdx, useOpts);
+    _sug = { anchorIdx, proposals, stopReason, stopDetail, onsets: list, opts: useOpts, gen: editGen };
     return proposals.length;
 }
 
