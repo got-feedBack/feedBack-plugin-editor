@@ -22,8 +22,12 @@
 import { timeOf } from './beats.js';
 import { DPR, canvas } from './canvas.js';
 import { timeToX } from './geometry.js';
+import {
+    _gmEventsInWindowPure, _gmGuideModePure, _gmKindPure, _gmSanitizeEventsPure,
+    _gmVoiceDurationPure, editorGmVoiceFor, ensureGmPreset, gmPresetReady, gmVoiceAt,
+} from './gm-guide.js';
 import { host } from './host.js';
-import { midiToFreq } from './keys.js';
+import { _rollMidiForNote, _rollPitchCtx, midiToFreq } from './keys.js';
 import { _recState } from './midi-record.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
@@ -565,6 +569,28 @@ export function editorGuideClapEnabled() {
     try { return localStorage.getItem('editorGuideClap') === '1'; }
     catch (_) { return false; }
 }
+// Guide voice mode (DAW 1.2): 'clap' (default) or 'gm' — pitched GM
+// instrument voices at the same charted times. The guide toggle (C) stays
+// the master on/off either way; mode only changes WHAT sounds.
+export function editorGuideVoiceMode() {
+    let raw = null;
+    try { raw = localStorage.getItem('editorGuideVoice'); } catch (_) {}
+    return _gmGuideModePure(raw);
+}
+export function _editorSetGuideVoiceMode(mode) {
+    const next = _gmGuideModePure(mode);
+    try { localStorage.setItem('editorGuideVoice', next); } catch (_) {}
+    if (next === 'gm') {
+        // Warm the current part's preset now so the first play doesn't
+        // spend its opening bars on the clap fallback.
+        const gm = _guideGmProgram();
+        if (gm !== null && _ensureAudioCtx()) ensureGmPreset(gm, S.audioCtx);
+        setStatus('Guide voice: instrument — charted notes play as a GM voice'
+            + (editorGuideClapEnabled() ? '' : ' (turn guide claps on to hear it — C)'));
+    } else {
+        setStatus('Guide voice: clap');
+    }
+}
 export function editorMetronomeEnabled() {
     try { return localStorage.getItem('editorMetronome') === '1'; }
     catch (_) { return false; }
@@ -808,6 +834,29 @@ function _guideSourceTimes() {
     return _guideSanitizeTimesPure(notes().map(n => n.time));
 }
 
+// The current part's GM program for the pitched guide (null = keep
+// clapping: no arrangements, or the drum grid — drums keep their clap).
+function _guideGmProgram() {
+    if (S.drumEditMode || !S.arrangements.length) return null;
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return null;
+    return editorGmVoiceFor(_gmKindPure(arr.name));
+}
+
+// Pitched events for the current arrangement: the same charted times the
+// clap fires on, carrying the roll's MIDI truth — keys packing for keys
+// parts, capo-aware sounding pitch for fretted (the ONE shared converter,
+// _rollMidiForNote, so the guide can never disagree with the roll/strip).
+function _guidePitchedEvents() {
+    if (S.drumEditMode || !S.arrangements.length) return [];
+    const rctx = _rollPitchCtx();
+    return _gmSanitizeEventsPure(notes().map(n => ({
+        t: n.time,
+        midi: _rollMidiForNote(n, rctx),
+        sus: n.sustain,
+    })));
+}
+
 function _guideClapVoiceAt(when) {
     const bus = _ensureMasterBus();
     if (!bus) return;
@@ -908,14 +957,41 @@ function _guideTick() {
     const from = Math.max(_guideScheduledUntil, nowChart - 0.005);
     if (to <= from) return;
     if (claps) {
-        const times = _guideClapTimesInWindowPure(_guideSourceTimes(), from, to);
-        for (const t of times) {
-            // Cross-tick dedupe: skip an event in the same 1 ms bucket as the last
-            // clap already fired in a previous window (chord split by the boundary).
-            const key = Math.round(t * 1000);
-            if (key === _guideLastFiredKey) continue;
-            _guideLastFiredKey = key;
-            _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime));
+        // Pitched GM mode (DAW 1.2): same charted times, instrument voices.
+        // Falls back to the clap whenever the preset isn't ready (loading,
+        // offline, no source) — the guide is never silent while enabled.
+        const gm = editorGuideVoiceMode() === 'gm' ? _guideGmProgram() : null;
+        if (gm !== null && gmPresetReady(gm)) {
+            const bus = _ensureMasterBus();
+            const groups = _gmEventsInWindowPure(_guidePitchedEvents(), from, to, 4);
+            for (const gp of groups) {
+                // Same cross-tick dedupe as the clap path (bucket split by a
+                // window boundary must not re-fire).
+                if (gp.key === _guideLastFiredKey) continue;
+                _guideLastFiredKey = gp.key;
+                const when = _guideChartToCtxPure(gp.t, S.playStartWall, S.playStartTime);
+                for (const v of gp.voices) {
+                    const voice = bus && gmVoiceAt(
+                        S.audioCtx, bus.guideGain, gm, when, v.midi,
+                        _gmVoiceDurationPure(v.sus));
+                    if (voice) { _guideVoices.push(voice); continue; }
+                    // Race: preset dropped mid-tick — ONE clap for the whole
+                    // bucket (never a stacked clap per chord note), then on.
+                    _guideClapVoiceAt(when);
+                    break;
+                }
+            }
+        } else {
+            if (gm !== null) ensureGmPreset(gm, S.audioCtx);   // clap while it loads
+            const times = _guideClapTimesInWindowPure(_guideSourceTimes(), from, to);
+            for (const t of times) {
+                // Cross-tick dedupe: skip an event in the same 1 ms bucket as the last
+                // clap already fired in a previous window (chord split by the boundary).
+                const key = Math.round(t * 1000);
+                if (key === _guideLastFiredKey) continue;
+                _guideLastFiredKey = key;
+                _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime));
+            }
         }
     }
     if (metro) {

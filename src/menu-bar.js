@@ -33,6 +33,8 @@
  * disclosure, no nested-popover machinery; B5 can graduate them.
  */
 
+import { _editorSetGuideVoiceMode, editorGuideVoiceMode } from './audio.js';
+import { GM_VOICE_CHOICES, _gmKindPure, editorGmVoiceFor, editorSetGmVoice } from './gm-guide.js';
 import { _editorRunEofCommand } from './input.js';
 import { _editorShortcutRowsPure, editorShortcutProfile } from './shortcuts.js';
 import { S } from './state.js';
@@ -191,6 +193,13 @@ export const EDITOR_MENUS = Object.freeze([
         { sep: true },
         { cmd: 'toggleMetronome' },
         { cmd: 'toggleGuideClap' },
+        // Guide voice (DAW 1.2/1.5): what the guide toggle SOUNDS like —
+        // the clap, or the charted pitches on a GM instrument. The
+        // instrument radio rows follow the current part's kind (ctx.gmGuide).
+        { hdr: 'Guide voice' },
+        { guideVoice: 'clap', label: 'Clap' },
+        { guideVoice: 'gm', label: 'Instrument (GM)' },
+        { gmVoiceRows: true },
     ] },
     { title: 'Tempo/Grid', items: [
         { cmd: 'toggleTempoMap' },
@@ -271,6 +280,38 @@ export function _menuModelPure(menus, rows, ctx) {
                 });
                 continue;
             }
+            if (it.guideVoice) {
+                // Guide-voice radio (DAW 1.2): clap vs GM instrument. A ctx
+                // without gmGuide (older callers) renders unchecked.
+                const on = ctx.gmGuide && ctx.gmGuide.mode === it.guideVoice;
+                items.push({
+                    label: (on ? '✓ ' : '  ') + it.label,
+                    key: '',
+                    dispatch: { guideVoice: it.guideVoice },
+                    disabled: false,
+                    planned: false,
+                });
+                continue;
+            }
+            if (it.gmVoiceRows) {
+                // Per-kind instrument radio rows (DAW 1.5): expand to the
+                // CURRENT part kind's curated choices; no kind (no song, or
+                // the drum grid — drums keep their clap) renders nothing.
+                const gg = ctx.gmGuide;
+                if (gg && gg.kind && Array.isArray(gg.choices) && gg.choices.length) {
+                    items.push({ hdr: `Guide instrument (${gg.kind})` });
+                    for (const c of gg.choices) {
+                        items.push({
+                            label: (gg.program === c.gm ? '✓ ' : '  ') + c.label,
+                            key: '',
+                            dispatch: { gmVoice: c.gm, gmKind: gg.kind },
+                            disabled: false,
+                            planned: false,
+                        });
+                    }
+                }
+                continue;
+            }
             if (it.cmd) {
                 const row = byId.get(it.cmd);
                 if (!row) continue;   // registry moved on — never render a dangling id
@@ -318,6 +359,20 @@ function windowFns() {
     return fns;
 }
 
+// Guide-voice menu context: the current part's kind, its effective GM
+// program, and the curated rows. Null kind (no song / drum grid) tells the
+// model to render no instrument rows.
+function _gmGuideMenuCtx() {
+    const arr = (S.arrangements && S.arrangements[S.currentArr]) || null;
+    const kind = (!arr || S.drumEditMode) ? null : _gmKindPure(arr.name);
+    return {
+        mode: editorGuideVoiceMode(),
+        kind,
+        program: kind ? editorGmVoiceFor(kind) : null,
+        choices: kind ? (GM_VOICE_CHOICES[kind] || []) : [],
+    };
+}
+
 function currentModel() {
     return _menuModelPure(
         EDITOR_MENUS,
@@ -326,6 +381,7 @@ function currentModel() {
             tempoMapMode: !!S.tempoMapMode, hasAudio: !!S.audioBuffer, fns: windowFns(),
             toolbars: getToolbarCtx(),
             loopSnapMode: editorLoopSnapMode(),
+            gmGuide: _gmGuideMenuCtx(),
         });
 }
 
@@ -337,6 +393,8 @@ function dispatch(d) {
     if (d.tbReset) { resetToolbarLayout(); return; }
     if (d.loopSnap) { editorSetLoopSnapMode(d.loopSnap); return; }
     if (d.loopClear) { _clearBarSelection(); return; }
+    if (d.guideVoice) { _editorSetGuideVoiceMode(d.guideVoice); return; }
+    if (d.gmVoice != null) { editorSetGmVoice(d.gmKind, d.gmVoice); return; }
     if (d.fn === '__swapProfile') {
         const next = editorShortcutProfile === 'eof' ? 'feedback' : 'eof';
         if (typeof window.editorSetShortcutProfile === 'function') window.editorSetShortcutProfile(next);
