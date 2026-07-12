@@ -134,6 +134,7 @@ t('_tempoSetBar1Here lands bar 1 at the playhead across EVERY part + sections', 
     assert.ok(near(S.arrangements[0].notes[0].time, 3.0), 'current-arr note +delta');
     assert.ok(near(S.arrangements[1].notes[1].time, 5.0), 'other-arr note +delta');
     assert.ok(near(S.arrangements[1].chords[0].time, 4.0), 'other-arr chord +delta');
+    assert.ok(near(S.arrangements[1].anchors[0].time, 3.0), 'other-arr anchor +delta');
     assert.ok(near(S.arrangements[1].handshapes[0].end_time, 4.5), 'other-arr handshape span +delta');
     assert.ok(near(S.drumTab.hits[0].t, 4.0), 'drum hit +delta');
     assert.ok(near(S.sections[0].start_time, 3.0), 'section +delta');

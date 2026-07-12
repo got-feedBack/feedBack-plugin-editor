@@ -2060,7 +2060,7 @@ export async function editorDoCreate() {
             const _nudge = _importBar1NudgePure(_firstDownbeatTimePure(S.beats), _firstOnset);
             if (_nudge) _msg = _msg ? (_msg + ' ' + _nudge) : _nudge;
         }
-        if (_msg && typeof setStatus === 'function') setStatus(_msg);
+        if (typeof setStatus === 'function') setStatus(_msg);
     } catch (e) {
         status.textContent = 'Import failed: ' + e.message;
         btn.disabled = false;
