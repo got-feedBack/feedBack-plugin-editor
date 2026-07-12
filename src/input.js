@@ -5,7 +5,8 @@
 // the commands refresh in the composition root goes through host.
 
 import { AddAnchorCmd, AddHandshapeCmd, AddToneChangeCmd, RemoveAnchorCmd, RemoveHandshapeCmd, RemoveToneChangeCmd, _anchorLaneTopY, _currentAnchorArr, _currentToneArr, _ensureTones, _handshapeLaneTopY, _readAnchorSnapshot, onAnchorLaneContextMenu, onHandshapeLaneContextMenu, onToneLaneContextMenu } from './annotation-lanes.js';
-import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, startPlayback, stopPlayback } from './audio.js';
+import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsets, startPlayback, stopPlayback } from './audio.js';
+import { _suggestActive, _suggestCompute, _suggestDismiss } from './tempo-suggest.js';
 import { editorToggleMixerPanel } from './mixer-panel.js';
 import { canvas } from './canvas.js';
 import { AddNoteCmd, ChangeFretCmd, ChangeFretGroupCmd, DeleteNotesCmd, MoveNoteCmd, ResizeSustainGroupCmd, SetPitchedSlideTargetsCmd, SetTeachingMarkCmd, ToggleTechniqueCmd, _execCyclePosition, _execMoveString, _execMoveStringSameFret, _rollAddByPitch, _withStableSelection } from './commands.js';
@@ -609,6 +610,36 @@ function _editorPromptTempoBpmAtSelection() {
     return true;
 }
 
+// Assisted mapping (G): propose an onset fit for the downbeats ahead of the
+// anchor — the selected barline, or the first downbeat when none is selected.
+// Proposal-only; accepting is a ghost-handle click handled in tempo.js.
+function _editorTempoSuggestFit() {
+    if (!S.tempoMapMode) {
+        setStatus('Enter Tempo Map (T) first — Suggest fits the barlines to the recording.');
+        return true;
+    }
+    const onsets = _ensureOnsets();
+    if (!onsets || !onsets.length) {
+        setStatus('Suggest needs the recording’s onset analysis — load audio first.');
+        return true;
+    }
+    let anchor = S.tempoSel;
+    if (anchor < 0 || !(S.beats[anchor] && S.beats[anchor].measure > 0)) {
+        anchor = S.beats.findIndex(b => b && b.measure > 0);
+    }
+    if (anchor < 0) {
+        setStatus('No downbeats to fit — mark a barline first.');
+        return true;
+    }
+    S.tempoSel = anchor;
+    const n = _suggestCompute(anchor, onsets);
+    host.draw();
+    setStatus(n
+        ? `Suggested ${n} barline${n === 1 ? '' : 's'} ahead of the anchor — click a ghost handle to accept through it; Esc dismisses`
+        : 'No confident suggestions from here — verify this anchor (drag it onto the downbeat) and press G again.');
+    return true;
+}
+
 function _editorInsertTempoSyncAtCursor() {
     if (!S.tempoMapMode) return false;
     _tempoInsertSyncPoint(S.cursorTime);
@@ -788,6 +819,7 @@ export function _editorRunEofCommand(cmd) {
     case 'tempoBeatPlus': return _editorAdjustTempoMeasureBeats(+1);
     case 'tempoBeatUnit': return _editorPromptTempoBeatUnitAtSelection();
     case 'tempoSetBpm': return _editorPromptTempoBpmAtSelection();
+    case 'tempoSuggestFit': return _editorTempoSuggestFit();
     case 'tempoModulate': return _editorModulateTempoAtSelection();
     case 'tempoTapBpm': return _editorTapTempoAtSelection();
     case 'tempoInsertSync': return _editorInsertTempoSyncAtCursor();
@@ -1093,6 +1125,17 @@ export function onKeyDown(e) {
     // A pending tap-tempo run owns Enter/Escape until resolved — checked
     // before the profile dispatchers so neither can steal the keys.
     if (_tapTempoHandleKey(e)) return;
+
+    // Suggested-fit ghosts own Escape while showing (proposal-only state —
+    // dismissal must never fall through to anything destructive).
+    if (e.key === 'Escape' && S.tempoMapMode && _suggestActive()
+            && !e.target.matches('input, select, textarea')) {
+        e.preventDefault();
+        _suggestDismiss();
+        host.draw();
+        setStatus('Suggestions dismissed');
+        return;
+    }
 
     if (_editorDispatchFeedbackShortcut(e)) return;
     if (_editorDispatchEofShortcut(e)) return;

@@ -22,6 +22,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Assisted tempo mapping — suggest a barline fit from the recording**
+  (`docs/TEMPO-MAPPING-DESIGN.md` "Assisted Mapping", first slice). In Tempo
+  Map mode, **G** (also `Tempo/Grid ▸ Suggest barline fit`) proposes corrected
+  times for every downbeat ahead of the anchor (the selected barline, or bar
+  1): each bar is predicted from the grid's own spacing with a drift-tracking
+  stretch, snapped to the strongest nearby onset, and shown as a **dashed
+  ghost pole** whose opacity is its confidence — proposal-only, never
+  committed silently. Click a ghost's hollow handle to **accept through that
+  barline**: one undoable tempo re-fit (notes ride, beat positions preserved),
+  and the suggestions ahead regenerate from the newly confirmed anchor —
+  the seed → suggest → correct loop. Locked barlines are pinned at their own
+  times and re-anchor the march; where the onsets stop corroborating
+  (silence, phase break, tempo change) the run **stops and asks for the next
+  human anchor** instead of guessing onward, and the trailing guesses are
+  dropped. Esc dismisses; proposals are generation-keyed, so any edit
+  invalidates them before it can race a click.
 - **Mixer panel** (workspace-shell B6). The floating audio-mixer popover
   (and the never-implemented stem-mixer stub it superseded) consolidate
   into one first-class **docked Mixer panel** beside the canvas (the
