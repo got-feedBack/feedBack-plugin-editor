@@ -100,6 +100,54 @@ export class EditHistory {
     // Not _afterEdit() — that nudges the piano viewport, which a clear shouldn't.
     reset() { this.undo = []; this.redo = []; this._ui(); }
 
+    // Stamp the top-of-undo command as a named checkpoint: "the state as of
+    // this call is worth returning to". undoToCheckpoint() rewinds every
+    // command ABOVE the stamp and stops with the stamped command still
+    // applied — landing exactly on the state at the moment of this call, never
+    // one edit earlier. No-op on an empty stack: there is no command to stamp
+    // (and no state to return to), so the moment simply isn't recorded.
+    // The stamp rides the command object, so it survives redo.
+    checkpoint(label) {
+        if (this.undo.length) this.undo[this.undo.length - 1]._checkpoint = label || 'checkpoint';
+    }
+
+    // Undo repeatedly until a checkpoint-stamped command is on TOP of the undo
+    // stack (the stamped command itself stays applied — you land on the state
+    // as of the checkpoint() call, not one edit before it). Returns
+    // { undone, label, foundCheckpoint } so the caller can name the result.
+    // Pressing while ALREADY at a checkpoint targets the previous one, so
+    // repeated Ctrl+Alt+Z walks back boundary by boundary instead of going
+    // inert. Two graceful degradations:
+    //   • No (reachable) checkpoint in the stack ⇒ a single plain undo, never
+    //     a silent rewind of the whole session (a checkpoint can be shifted
+    //     off by MAX_UNDO or dropped by reset()).
+    //   • No-progress guard: doUndo() can REFUSE without popping (ensureArr
+    //     switch-away, or the read-only-roll lock). Stop the instant the stack
+    //     stops shrinking, so a refusal can never spin.
+    undoToCheckpoint() {
+        if (!this.undo.length) return { undone: 0, label: null, foundCheckpoint: false };
+        const last = this.undo.length - 1;
+        // Already sitting on a checkpoint: undoing to it would be a no-op, so
+        // the top stamp doesn't count as a target — rewind to the previous one.
+        const atCheckpoint = !!this.undo[last]._checkpoint;
+        if (!this.undo.some((c, i) => c._checkpoint && !(atCheckpoint && i === last))) {
+            const before = this.undo.length;
+            this.doUndo();
+            return { undone: before - this.undo.length, label: null, foundCheckpoint: false };
+        }
+        let undone = 0;
+        let label = null;
+        while (this.undo.length) {
+            const top = this.undo[this.undo.length - 1];
+            if (top._checkpoint && !(atCheckpoint && undone === 0)) { label = top._checkpoint; break; }
+            const before = this.undo.length;
+            this.doUndo();
+            if (this.undo.length >= before) break;   // refused — no progress
+            undone++;
+        }
+        return { undone, label, foundCheckpoint: true };
+    }
+
     _afterEdit() {
         // Bump the shared edit generation: the section-coverage, chord-display
         // and drum-lint memos all key on it. An in-place note-time move keeps

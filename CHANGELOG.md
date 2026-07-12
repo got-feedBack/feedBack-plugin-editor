@@ -20,6 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mode (no library file to export yet; use Build) and authoring-directory
   sloppaks (no packed file for the export route to serve) — keep the plain
   library save instead of prompting for a destination that would then fail.
+- **Tempo Map legibility pass.** The bottom HUD strip now carries a **colour
+  legend** (mapped · selected · locked · suggested · unmapped) using the exact
+  pole colours, so the grid's vocabulary is self-explanatory; it only draws when
+  it clears the guidance text, never overlapping it. The **Unmapped tail** — the
+  recording past the last confirmed downbeat, which carries no fitted tempo — is
+  now drawn as a hatched wash with an "Unmapped" label in the grid. **Lock copy
+  corrected**: the old "global tempo re-fits will hold this beat" implied you had
+  to lock a barline to keep an edit — you don't. It now reads "Lock: hold this
+  barline's time through automatic re-fits (Fit tempo, Suggest, Modulate). Your
+  manual edits are always kept — locking is not needed to save them." across the
+  right-click item (tooltip) and the S-key status. Finally, user-facing "sync
+  point" wording is retired in favour of **"barline"** (inspector hints, delete
+  titles, lock/status messages); "sync point" stays only as internal/export
+  vocabulary.
 
 ### Fixed
 
@@ -35,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (this seam collides on every chrome PR; now it's guarded).
 
 ### Added
+
+- **Undo to last checkpoint** (`Ctrl+Alt+Z`, Edit ▸ Undo to last checkpoint).
+  Checkpoints are coarse rewind points stamped automatically at milestones —
+  entering Tempo Map, accepting a suggested fit, locking/unlocking a barline —
+  so a single keystroke can undo a whole tempo-mapping session at once instead
+  of tapping Ctrl+Z through every step. The status line names what it unwound
+  to. Degrades gracefully: with no checkpoint in range it undoes one step (and
+  says so), a checkpoint dropped by the undo cap or a session reset just falls
+  back to that, and a refused undo can never spin.
 
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:
