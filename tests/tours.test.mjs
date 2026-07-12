@@ -107,6 +107,12 @@ t('the Transcribe "I\'ll align later" escape drops into the Compose tour', () =>
     const s = _tourState();
     assert.ok(s.active && s.lane === 'compose' && s.step === 0);
     assert.strictEqual(localStorage.getItem('editorTourSeen:transcribe'), '1', 'transcribe never re-nags');
+    assert.strictEqual(localStorage.getItem('editorTourSeen:compose'), '1', 'compose escape entry is seen');
+    for (let i = 0, n = _tourStepsFor('compose').length; i < n; i++) _tourAdvance();
+    assert.strictEqual(localStorage.getItem('editorTourDone:compose'), '1');
+    _tourResetForLoad();
+    _editorMaybeStartTour('compose');
+    assert.strictEqual(_tourState().active, false, 'create entry must not auto-restart Compose');
 });
 
 t('a fresh song load closes the card but keeps the resume point', () => {

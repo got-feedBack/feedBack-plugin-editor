@@ -105,6 +105,7 @@ export function editorTourSkip() {
 // transcribe tour is marked seen so it never re-nags.
 export function editorTourEscape() {
     if (_tour.lane) _lsSet(LS_SEEN(_tour.lane), '1');
+    _lsSet(LS_SEEN('compose'), '1');
     _tourStart('compose', 0);
 }
 

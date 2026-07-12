@@ -3,11 +3,9 @@
 // locked sync points). The window.editor* entry points are re-attached by
 // main.js; repaint goes through host.
 
-import { beatOf, timeOf } from './beats.js';
-import { notes } from './notes.js';
 import { _ensureOnsets } from './audio.js';
 import { S } from './state.js';
-import { _respaceWithLocksPure } from './tempo.js';
+import { TempoMapCmd, _respaceWithLocksPure, _tempoPivotTimePure } from './tempo.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -223,7 +221,6 @@ export function editorSyncTempo() {
     document.getElementById('sync-tab-bpm').textContent = syncState.tabBPM.toFixed(1);
     document.getElementById('sync-audio-bpm').textContent = syncState.audioBPM.toFixed(1);
     document.getElementById('sync-manual-bpm').value = '';
-    document.getElementById('sync-offset').value = '0';
     editorSyncUpdateFactor();
 
     const dlg = document.getElementById('editor-sync-dialog');
@@ -255,51 +252,28 @@ export function editorApplySync() {
     const manual = parseFloat(document.getElementById('sync-manual-bpm').value);
     const audioBPM = manual > 0 ? manual : syncState.audioBPM;
     const factor = audioBPM / syncState.tabBPM;
-    const offset = parseFloat(document.getElementById('sync-offset').value) || 0;
 
     if (factor <= 0 || !isFinite(factor)) return;
+    // Degenerate grid: beatOf/timeOf collapse to identity below two beats, so a
+    // fit has no meaning — refuse, as before.
+    if (S.beats.length < 2) { setStatus('Need at least two beats to sync the tempo.'); return; }
 
-    // Build the new grid first: unlocked beats scale, but a locked sync point
-    // holds its time through the re-fit and the runs re-space around the locks.
+    // Build the new grid: every beat scales by 1/factor about the pivot (first
+    // downbeat, or the focused barline) so a pickup / lead-in doesn't drift,
+    // then a locked sync point holds its time through the re-fit while the runs
+    // re-space around it. ONE TempoMapCmd then lifts every part's beat from the
+    // OLD grid and reprojects onto the new one — notes, chords, drum hits,
+    // anchors, handshapes and EVERY arrangement ride it, undoably. (The old path
+    // scaled only the current arrangement's plain notes + sections directly,
+    // with no undo: silent multi-part corruption. The Sync dialog's duplicate
+    // offset field is gone — use the toolbar Offset nudge, which is undoable.)
+    const t0 = _tempoPivotTimePure(S.beats, S.tempoMapMode ? S.tempoSel : -1);
     const oldBeats = S.beats.map(b => ({ ...b }));
-    const scaledBeats = S.beats.map(b => ({ ...b, time: b.time / factor + offset }));
+    const scaledBeats = S.beats.map(b => ({ ...b, time: t0 + (b.time - t0) / factor }));
     const respaced = _respaceWithLocksPure(oldBeats, scaledBeats);
-
-    // With a lock present the grid warps, so reproject note times from the OLD
-    // grid onto the new one (beat is truth), exactly as the TempoMapCmd tempo
-    // paths do — a note stays on the grid even right next to a lock. Without a
-    // lock _respaceWithLocksPure hands back `scaledBeats` unchanged; keep the
-    // plain linear scale there — it is identical to the reproject for a real
-    // grid (timeOf∘beatOf round-trips through an affine map) and, unlike the
-    // reproject, still scales notes on a degenerate <2-beat grid (where
-    // beatOf/timeOf are identity).
-    const locked = respaced !== scaledBeats;
-    const nn = notes();
-    for (const n of nn) {
-        if (locked) {
-            const t = timeOf(respaced, beatOf(oldBeats, n.time));
-            if (n.sustain) {
-                const endT = timeOf(respaced, beatOf(oldBeats, n.time + n.sustain));
-                n.sustain = Math.max(0, endT - t);
-            }
-            n.time = t;
-        } else {
-            n.time = n.time / factor + offset;
-            if (n.sustain) n.sustain = n.sustain / factor;
-        }
-    }
-
-    for (let i = 0; i < S.beats.length; i++) S.beats[i].time = respaced[i].time;
-
-    // Scale section times — like notes, reproject onto the warped grid under a
-    // lock (beat is truth) and keep the plain linear scale when unlocked.
-    for (const s of S.sections) {
-        s.start_time = locked
-            ? timeOf(respaced, beatOf(oldBeats, s.start_time))
-            : s.start_time / factor + offset;
-    }
+    S.history.exec(new TempoMapCmd(oldBeats, respaced, 'sync'));
 
     editorHideSyncDialog();
     host.draw();
-    setStatus(`Tempo synced: scaled ${factor.toFixed(4)}x` + (offset ? `, offset ${offset}s` : ''));
+    setStatus(`Tempo synced: grid scaled ${(1 / factor).toFixed(4)}×`);
 }

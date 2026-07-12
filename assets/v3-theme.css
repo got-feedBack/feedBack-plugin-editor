@@ -418,3 +418,21 @@ html.fb-immersive #plugin-editor .editor-root {
 #plugin-editor .editor-guide-body figcaption {
     margin-top: 0.4rem; font-size: 0.78rem; color: #9ca3af;
 }
+
+/* ── Onboarding first-win cue (workspace-shell C2) ─────────────────── */
+/* A calm one-time acknowledgement: fade in, hold, fade out. No motion beyond
+   opacity + a small rise, so it reads as "noticed", never as a reward pop. */
+#plugin-editor #editor-cue.editor-cue-show {
+    animation: editor-cue-fade 4.2s ease-in-out forwards;
+}
+@keyframes editor-cue-fade {
+    0%   { opacity: 0; transform: translate(-50%, 6px); }
+    12%  { opacity: 1; transform: translate(-50%, 0); }
+    80%  { opacity: 1; transform: translate(-50%, 0); }
+    100% { opacity: 0; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+    #plugin-editor #editor-cue.editor-cue-show { animation-duration: 4.2s; }
+    #plugin-editor #editor-cue.editor-cue-show { animation-name: editor-cue-fade-plain; }
+    @keyframes editor-cue-fade-plain { 0%,100% { opacity: 0; } 12%,80% { opacity: 1; } }
+}

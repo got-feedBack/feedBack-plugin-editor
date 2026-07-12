@@ -25,8 +25,9 @@ import { _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofC
 import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure } from './snap.js';
 import { S } from './state.js';
 import { _editorShowTabPreview, _tabPreviewKeyPolicyPure } from './tab-preview.js';
-import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSyncPoint, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup } from './tempo.js';
+import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSelection, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup } from './tempo.js';
 import { _tourNoteAction } from './tour.js';
+import { _signpostNote } from './signposts.js';
 import { _editorPromptText, setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -277,6 +278,7 @@ function _editorGotoBookmark(n) {
         return true;
     }
     _editorSeekToTime(t);
+    _signpostNote('navJump');
     setStatus(`Bookmark ${n}`);
     return true;
 }
@@ -285,14 +287,14 @@ function _editorJumpBeat(dir) {
     const beats = (S.beats || []).map(b => b.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
     const cur = S.cursorTime || 0;
     const next = dir > 0 ? beats.find(t => t > cur + 0.0001) : [...beats].reverse().find(t => t < cur - 0.0001);
-    if (next !== undefined) _editorSeekToTime(next);
+    if (next !== undefined) { _editorSeekToTime(next); _signpostNote('navJump'); }
 }
 
 function _editorJumpNote(dir) {
     const times = notes().map(n => n.time).filter(t => Number.isFinite(t)).sort((a, b) => a - b);
     const cur = S.cursorTime || 0;
     const next = dir > 0 ? times.find(t => t > cur + 0.0001) : [...times].reverse().find(t => t < cur - 0.0001);
-    if (next !== undefined) _editorSeekToTime(next);
+    if (next !== undefined) { _editorSeekToTime(next); _signpostNote('navJump'); }
 }
 
 function _editorJumpGrid(dir) {
@@ -413,6 +415,10 @@ function _editorResnapSelection() {
     const dtimes = newTimes.map((t, i) => t - oldTimes[i]);
     const dstrings = idxs.map(() => 0);
     S.history.exec(new MoveNoteCmd(idxs, dtimes, dstrings, null));
+    // Repeated resnapping is the canonical "fighting the grid" signal (charrette
+    // §3.2): the notes keep landing off the beat, so the GRID may be the thing
+    // that's wrong — nudge toward the Tempo tools.
+    _signpostNote('gridFight');
     host.draw();
     host.updateStatus();
     return true;
@@ -648,11 +654,13 @@ function _editorInsertTempoSyncAtCursor() {
 }
 
 function _editorDeleteTempoSyncSelection() {
-    if (!S.tempoMapMode || S.tempoSel < 0) {
+    // Bulk-delete the multi-selection when there is one (PR 5a), else the single
+    // focus — _tempoDeleteSelection covers both in one undoable command.
+    if (!S.tempoMapMode || (S.tempoSel < 0 && !(S.tempoSelMulti && S.tempoSelMulti.size))) {
         setStatus('Select a Tempo Map barline first.');
         return true;
     }
-    _tempoDeleteSyncPoint(S.tempoSel);
+    _tempoDeleteSelection();
     return true;
 }
 
@@ -1156,6 +1164,16 @@ export function onKeyDown(e) {
         setStatus('Suggestions dismissed');
         return;
     }
+    // Escape clears a barline multi-selection (PR 5a) — layered UNDER the
+    // suggest-dismiss above, so ghosts always own Escape first.
+    if (e.key === 'Escape' && S.tempoMapMode && S.tempoSelMulti && S.tempoSelMulti.size
+            && !e.target.matches('input, select, textarea')) {
+        e.preventDefault();
+        S.tempoSelMulti.clear();
+        host.draw();
+        setStatus('Selection cleared');
+        return;
+    }
 
     if (_editorDispatchFeedbackShortcut(e)) return;
     if (_editorDispatchEofShortcut(e)) return;
@@ -1169,11 +1187,12 @@ export function onKeyDown(e) {
     }
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
-        // Tempo-map mode: delete the selected barline.
-        if (S.tempoMapMode && S.tempoSel >= 0 &&
+        // Tempo-map mode: delete the selected barline(s) — bulk when a
+        // multi-selection exists (PR 5a), else the single focus.
+        if (S.tempoMapMode && (S.tempoSel >= 0 || (S.tempoSelMulti && S.tempoSelMulti.size)) &&
                 !e.target.matches('input, select, textarea')) {
             e.preventDefault();
-            _tempoDeleteSyncPoint(S.tempoSel);
+            _tempoDeleteSelection();
             return;
         }
         // Anchor-lane: delete the selected anchor. Same focus / mode
@@ -1279,8 +1298,16 @@ export function onKeyDown(e) {
                 host.draw();
                 return;
             }
-            // Tempo-map mode has no note selection — Ctrl+A is inert.
-            if (S.tempoMapMode) return;
+            // Tempo-map mode: Ctrl+A selects every downbeat (PR 5a).
+            if (S.tempoMapMode) {
+                if (!S.tempoSelMulti) S.tempoSelMulti = new Set();
+                S.tempoSelMulti.clear();
+                const beats = S.beats || [];
+                for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) S.tempoSelMulti.add(i);
+                host.draw();
+                setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
+                return;
+            }
             const nn = notes();
             for (let i = 0; i < nn.length; i++) S.sel.add(i);
             host.draw();

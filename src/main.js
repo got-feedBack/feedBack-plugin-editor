@@ -118,10 +118,11 @@ import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip 
 import { initMenuBar } from './menu-bar.js';
 import { initToolbars } from './toolbars.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
+import { editorDismissSignpost } from './signposts.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
 import {
-    MIN_MEASURE, TempoGridCmd, TempoMapCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
-    _tempoFlattenToBpmPure,
+    MIN_MEASURE, TempoGridCmd, TempoMapCmd, TempoOffsetCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
+    _tempoFlattenToBpmPure, _tempoPivotTimePure,
     _tempoHasMultipleMeasureBpmsPure, _tempoMapDraw, _tempoMapOnDragEnd, _tempoMeasureBeatCount,
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
     _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
@@ -550,6 +551,7 @@ window.editorStartTour = editorStartTour;
 window.editorTourSkip = editorTourSkip;
 window.editorTourEscape = editorTourEscape;
 window.editorTourNext = () => _tourAdvance();
+window.editorDismissSignpost = editorDismissSignpost;
 window.editorToggleShortcutPanel = editorToggleShortcutPanel;
 window.editorRunShortcutCommand = editorRunShortcutCommand;
 window.editorHideTabPreview = editorHideTabPreview;
@@ -1405,14 +1407,18 @@ window.editorSetBPM = (val) => {
     const factor = oldBPM / newBPM;
     if (Math.abs(factor - 1) < 0.001) return;
 
-    // Scale all times
-    const nn = notes();
-    for (const n of nn) {
-        n.time *= factor;
-        if (n.sustain) n.sustain *= factor;
-    }
-    for (const b of S.beats) b.time *= factor;
-    for (const s of S.sections) s.start_time *= factor;
+    // Rescale the whole (constant-tempo) song to a new BPM. Build the new grid by
+    // scaling every beat ABOUT the pivot — t' = t0 + (t − t0)·factor, pivoting at
+    // the first downbeat so a pickup / lead-in stays put instead of the t=0
+    // order-of-operations trap — then route through ONE TempoMapCmd: it lifts
+    // every part's beat from the old grid and reprojects onto the new, moving
+    // notes, chords, drums, anchors, handshapes and EVERY arrangement, undoably.
+    // (The old path scaled only the current arrangement's plain notes + beats +
+    // sections directly, with no undo: silent multi-part corruption.)
+    const t0 = _tempoPivotTimePure(S.beats, S.tempoMapMode ? S.tempoSel : -1);
+    const oldBeats = S.beats.map(b => ({ ...b }));
+    const rescaled = S.beats.map(b => ({ ...b, time: t0 + (b.time - t0) * factor }));
+    S.history.exec(new TempoMapCmd(oldBeats, _respaceWithLocksPure(oldBeats, rescaled), 'rescale'));
 
     updateBPMDisplay();
     draw();
@@ -1451,80 +1457,40 @@ window.editorSetTempoSignatureDenominator = (val) => {
         setStatus(`Measure ${m.measure} time signature changed: ${prevNum}/${prevDen} → ${prevNum}/${nextDen}`);
     }
 };
-// Rigidly shift all of ONE arrangement's time-bearing fields by `delta` seconds:
-// notes, chords (+ their notes), source + authored anchors, handshape spans, and
-// phrase windows. Sustains are durations, so they do NOT move. Field set mirrors
-// the beat-primary walk (_eachTimed / _reprojectAll). Pure — node-tested.
-function _shiftArrangementTimes(arr, delta) {
-    if (!arr) return;
-    for (const n of (arr.notes || [])) {
-        if (typeof n.time === 'number') n.time += delta;
-    }
-    for (const ch of (arr.chords || [])) {
-        if (typeof ch.time === 'number') ch.time += delta;
-        for (const cn of (ch.notes || [])) {
-            if (typeof cn.time === 'number') cn.time += delta;
-        }
-    }
-    for (const a of (arr.anchors || [])) {
-        if (typeof a.time === 'number') a.time += delta;
-    }
-    for (const a of (arr.anchors_user || [])) {
-        if (typeof a.time === 'number') a.time += delta;
-    }
-    for (const hs of (arr.handshapes || [])) {
-        if (typeof hs.start_time === 'number') hs.start_time += delta;
-        if (typeof hs.end_time === 'number') hs.end_time += delta;
-    }
-    for (const ph of (arr.phrases || [])) {
-        if (typeof ph.time === 'number') ph.time += delta;
-    }
-}
-
 window.editorApplyOffset = (val) => {
     const offset = parseFloat(val) || 0;
-    const currentOffset = parseFloat(document.getElementById('editor-offset').dataset.applied || '0');
-    const delta = offset - currentOffset;
+    const prevApplied = Number(S.appliedOffset) || 0;
+    const delta = offset - prevApplied;
     if (Math.abs(delta) < 0.0001) return;
-    // Shift EVERY arrangement, not just the current one. Beats / sections / drums
-    // (below) are global, so shifting only the current arrangement's notes left
-    // the OTHER arrangements (and every arrangement's chords / anchors /
-    // handshapes / phrases) out of phase. The user then re-nudged each one to
-    // realign it — poisoning `dataset.applied`, so each later +Keys / +Drums
-    // import landed progressively further off (#2). One apply now moves
-    // everything together and `dataset.applied` stays the single source of truth.
-    for (const arr of S.arrangements) _shiftArrangementTimes(arr, delta);
-    for (const b of S.beats) b.time += delta;
-    for (const s of S.sections) s.start_time += delta;
-    // Drum-tab hits live outside S.arrangements, so the loops above miss
-    // them — shift them by the same delta or an offset nudge leaves the
-    // drum chart out of sync with the guitar/beats it just realigned.
-    // Clamp at 0 and round to 3 dp: the save path rejects hits with a
-    // negative `t` as malformed (silent loss), and 3 dp matches the
-    // server-side and drum-editor rounding conventions.
-    if (S.drumTab && Array.isArray(S.drumTab.hits)) {
-        for (const h of S.drumTab.hits) {
-            if (typeof h.t === 'number') {
-                h.t = Math.max(0, Math.round((h.t + delta) * 1000) / 1000);
-            }
-        }
-        S.drumTabDirty = true;
-    }
-    document.getElementById('editor-offset').dataset.applied = String(offset);
+    const el = document.getElementById('editor-offset');
+    // A rigid +delta shift of the whole grid. TempoOffsetCmd reprojects EVERY
+    // part by that delta (beat is truth, extrapolated linearly past the grid
+    // ends → a rigid +delta on the grid gives a rigid +delta on every note),
+    // carries S.appliedOffset, clamps drum hits ≥0, and is undoable — the old
+    // path shifted only the current arrangement's notes plus the global
+    // beats/sections/drums directly and poisoned dataset.applied on partial
+    // realigns (silent multi-part corruption). A degenerate grid (< 2 beats)
+    // routes through the command too: beatOf/timeOf are identity there, so the
+    // reproject is a no-op and the command just carries the scalar — undoably.
+    // (A direct S.appliedOffset write here would skip history; the next nudge's
+    // delta would then compute off a base undo never restores.)
+    const oldBeats = S.beats.map(b => ({ ...b }));
+    const newBeats = S.beats.map(b => ({ ...b, time: b.time + delta }));
+    S.history.exec(new TempoOffsetCmd(oldBeats, newBeats, prevApplied, offset));
+    if (el) el.value = String(offset);
     draw();
     setStatus(`Offset: ${offset >= 0 ? '+' : ''}${(offset * 1000).toFixed(0)}ms`);
 };
 
-// Effective audio offset to send when importing a new arrangement: the
-// song's loaded offset plus any UI-applied shift the user already made
-// via editorApplyOffset (which moves notes/beats but never updates
-// S.offset). Without this, a +Keys/+Drums import after a sync nudge
-// lands out of phase with the chart the user just realigned.
+// Effective audio offset to send when importing a new arrangement: the song's
+// loaded offset plus any UI-applied shift the user already made via
+// editorApplyOffset (which moves notes/beats but never updates S.offset).
+// Without this, a +Keys/+Drums import after an offset nudge lands out of phase
+// with the chart the user just realigned. The applied delta now lives on
+// S.appliedOffset (command-owned, so undo restores it), not the DOM input.
 function _effectiveAudioOffset() {
     const base = Number(S.offset) || 0;
-    const el = document.getElementById('editor-offset');
-    const applied = el ? parseFloat(el.dataset.applied || '0') || 0 : 0;
-    return base + applied;
+    return base + (Number(S.appliedOffset) || 0);
 }
 window.editorNudgeOffset = (delta) => {
     const el = document.getElementById('editor-offset');
@@ -1971,7 +1937,7 @@ function _editorMovePart(dir) {
     // part via the now-stale `arrangement_index`. Refuse here too so the
     // command palette / keyboard paths can't bypass the hidden buttons.
     if (S.format !== 'sloppak') {
-        setStatus('Reordering parts is only available for Sloppak songs.');
+        setStatus('Reordering tracks is only available for Sloppak songs.');
         return true;
     }
     const from = S.currentArr;
@@ -1989,7 +1955,7 @@ function _editorMovePart(dir) {
     updateArrangementSelector();
     draw();
     updateStatus();
-    setStatus(`Moved “${moved.name || 'part'}” ${dir < 0 ? 'earlier' : 'later'} — the order persists on save`);
+    setStatus(`Moved “${moved.name || 'track'}” ${dir < 0 ? 'earlier' : 'later'} — the order persists on save`);
     return true;
 }
 window.editorMovePart = _editorMovePart;
