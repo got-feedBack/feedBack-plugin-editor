@@ -2011,9 +2011,19 @@ export class TempoOffsetCmd extends TempoMapCmd {
         this.prevApplied = prevApplied;
         this.newApplied = newApplied;
     }
+    // Keep the visible toolbar input in step with S.appliedOffset across
+    // undo/redo: editorNudgeOffset computes the NEXT offset from el.value, so a
+    // stale input after Ctrl-Z would make one +10ms click re-apply the undone
+    // nudge on top (delta computes against the restored S.appliedOffset).
+    _syncOffsetInput() {
+        if (typeof document === 'undefined') return;
+        const el = document.getElementById('editor-offset');
+        if (el) el.value = String(S.appliedOffset);
+    }
     exec() {
         super.exec();
         S.appliedOffset = this.newApplied;
+        this._syncOffsetInput();
         // Clamp AFTER the reproject (which already _r3-rounds every drum time):
         // a hit pushed before 0 by a leftward nudge would be rejected by the save
         // path. rollback restores the exact pre-shift seconds, so redo re-derives
@@ -2027,6 +2037,7 @@ export class TempoOffsetCmd extends TempoMapCmd {
     rollback() {
         super.rollback();
         S.appliedOffset = this.prevApplied;
+        this._syncOffsetInput();
     }
 }
 

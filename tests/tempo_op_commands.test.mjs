@@ -157,6 +157,23 @@ t('TempoOffsetCmd shifts every part by +delta and carries S.appliedOffset undoab
     assert.strictEqual(S.appliedOffset, 1.5, 'redo restored appliedOffset');
 });
 
+t('TempoOffsetCmd keeps the #editor-offset input in step across undo/redo', () => {
+    seedMultiPart();
+    // editorNudgeOffset computes the NEXT offset from el.value, so a stale
+    // input after Ctrl-Z would make one +10ms click re-apply the undone nudge
+    // on top of it (delta computes against the restored S.appliedOffset).
+    const el = document.getElementById('editor-offset');
+    el.value = '1.5';                                   // what the wrapper shows after apply
+    const oldBeats = S.beats.map(b => ({ ...b }));
+    const newBeats = S.beats.map(b => ({ ...b, time: b.time + 1.5 }));
+    S.history.exec(new TempoOffsetCmd(oldBeats, newBeats, 0, 1.5));
+    assert.strictEqual(el.value, '1.5', 'exec syncs the input');
+    S.history.doUndo();
+    assert.strictEqual(el.value, '0', 'undo restores the input alongside S.appliedOffset');
+    S.history.doRedo();
+    assert.strictEqual(el.value, '1.5', 'redo re-syncs the input');
+});
+
 t('TempoOffsetCmd extrapolates a rigid +delta past the grid ends (pin)', () => {
     seedMultiPart();
     // A note beyond the last beat (t=4): beatOf/timeOf extrapolate linearly, so a
