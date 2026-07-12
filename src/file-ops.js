@@ -122,6 +122,10 @@ export async function loadCDLC(filename, options = {}) {
         S.filename = filename;
         S.sessionId = data.session_id;
         S.format = data.format || 'archive';
+        // zip vs authoring-directory sloppak — /session/export can only serve
+        // the packed (zip) form, and editorSave gates the first-save picker on
+        // it. Default 'zip' keeps old servers (no sloppak_form field) working.
+        S.sloppakForm = data.sloppak_form || 'zip';
         S.arrangements = data.arrangements || [];
         // New song, new strips: part mute/solo/volume is session UI state
         // keyed by part index, so it must not leak across loads (B6).
@@ -685,6 +689,7 @@ export const editorSaveAsSloppakConfirm = async () => {
             S.filename = data.filename;
         }
         S.format = 'sloppak';
+        S.sloppakForm = 'zip';   // save_as_sloppak always writes the packed form
         // Normalize in-memory tuning to the real string count so a
         // subsequent /save (which now goes through the native sloppak
         // path) doesn't serialize the RS-XML length-6 padding back into
@@ -766,14 +771,28 @@ export async function editorSaveAs() {
 // saves (highway handoff, host saveSession hook, build) keep calling saveCDLC()
 // directly and are unaffected — only the user's Save routes through here.
 // Route the Save command to the picker only when no location has been chosen
-// this session (hasHandle=false) AND the picker API exists. Without the API,
-// editorSaveAs can only trigger a download, so fall back to the library save.
-export function _saveShouldPickPure(hasHandle, hasPickerApi) {
-    return !hasHandle && !!hasPickerApi;
+// this session (hasHandle=false) AND the picker API exists (without it,
+// editorSaveAs can only trigger a download, so fall back to the library save)
+// AND the session can actually complete the Save As flow (sessionCanExport).
+// The last gate matters: a create-mode session is rejected by /save outright,
+// and a directory-form sloppak library-saves fine but /session/export can't
+// serve a packed file for it — routing either through the picker would pop
+// the explorer, have the user pick a destination, then fail (and re-prompt on
+// every subsequent Ctrl+S, with the dir-form session falsely re-marked dirty
+// after a library save that succeeded).
+export function _saveShouldPickPure(hasHandle, hasPickerApi, sessionCanExport) {
+    return !hasHandle && !!hasPickerApi && !!sessionCanExport;
 }
 export async function editorSave() {
     if (!S.sessionId) return false;
     const hasPicker = typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
-    if (_saveShouldPickPure(!!externalSaveHandle, hasPicker)) return editorSaveAs();
+    // The `S.format === 'sloppak'` leg also deliberately excludes the vestigial
+    // 'archive' format (unreachable today — /load only accepts feedpak/sloppak
+    // and always reports 'sloppak'): for an archive session editorSaveAs would
+    // CONVERT it to a new .sloppak (editorSaveAsSloppakConfirm), and a plain
+    // Save must never perform a format conversion the user didn't ask for —
+    // that stays behind the explicit Save As command.
+    const canExport = !S.createMode && S.format === 'sloppak' && S.sloppakForm !== 'dir';
+    if (_saveShouldPickPure(!!externalSaveHandle, hasPicker, canExport)) return editorSaveAs();
     return saveCDLC();
 }

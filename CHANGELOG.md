@@ -16,7 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Access API isn't available, Save falls back to the plain library save as
   before (never a download loop). Programmatic saves (the Loop-in-3D handoff,
   the host save hook, build) are unaffected — only the user's Save routes
-  through the picker.
+  through the picker. Sessions that can't complete the picker flow — create
+  mode (no library file to export yet; use Build) and authoring-directory
+  sloppaks (no packed file for the export route to serve) — keep the plain
+  library save instead of prompting for a destination that would then fail.
 
 ### Fixed
 

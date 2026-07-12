@@ -26,16 +26,27 @@ function t(name, fn) {
 t('picks the file explorer only on the first save, and only when the API exists', () => {
     // hasHandle=false ⇒ nothing chosen yet this session (a new song, or one just
     // opened from the library — externalSaveHandle resets to null on load).
-    assert.strictEqual(_saveShouldPickPure(false, true), true, 'first save + API → picker');
-    assert.strictEqual(_saveShouldPickPure(true, true), false, 'location chosen → save straight to it');
-    assert.strictEqual(_saveShouldPickPure(false, false), false, 'no picker API → library save, never a re-download');
-    assert.strictEqual(_saveShouldPickPure(true, false), false);
+    assert.strictEqual(_saveShouldPickPure(false, true, true), true, 'first save + API → picker');
+    assert.strictEqual(_saveShouldPickPure(true, true, true), false, 'location chosen → save straight to it');
+    assert.strictEqual(_saveShouldPickPure(false, false, true), false, 'no picker API → library save, never a re-download');
+    assert.strictEqual(_saveShouldPickPure(true, false, true), false);
+});
+
+t('never routes a session that cannot complete Save As through the picker', () => {
+    // sessionCanExport=false covers: create-mode sessions (/save rejects them
+    // outright — the picker would pop, the user would pick a destination, then
+    // nothing would be written to it) and directory-form sloppaks
+    // (/session/export 409s — the library save succeeds but the external write
+    // fails, falsely re-marking the session dirty and re-prompting forever).
+    assert.strictEqual(_saveShouldPickPure(false, true, false), false, 'non-exportable session → plain library save');
+    assert.strictEqual(_saveShouldPickPure(true, true, false), false);
 });
 
 t('coerces truthiness (defensive against non-boolean inputs)', () => {
-    assert.strictEqual(_saveShouldPickPure(null, {}), true);       // no handle, api present
-    assert.strictEqual(_saveShouldPickPure(undefined, undefined), false);
-    assert.strictEqual(_saveShouldPickPure('handle', 'fn'), false); // truthy handle
+    assert.strictEqual(_saveShouldPickPure(null, {}, 1), true);    // no handle, api present, exportable
+    assert.strictEqual(_saveShouldPickPure(undefined, undefined, true), false);
+    assert.strictEqual(_saveShouldPickPure('handle', 'fn', true), false); // truthy handle
+    assert.strictEqual(_saveShouldPickPure(false, true, undefined), false, 'unknown exportability → no picker');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
