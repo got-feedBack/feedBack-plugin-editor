@@ -145,6 +145,8 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleFollow' },
         { cmd: 'showTabPreview' },
         { sep: true },
+        { label: 'Theme: Dark → Medium → Light', fn: 'editorCycleTheme' },
+        { sep: true },
         { hdr: 'Panels' },
         { cmd: 'toggleMixer' },
         { label: 'Shortcut panel', fn: 'editorToggleShortcutPanel' },

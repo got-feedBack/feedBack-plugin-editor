@@ -1804,6 +1804,33 @@ function _editorMaybeShowStartLanding() {
 // In the fee[dB]ack v0.3.0 "v3" shell the editor renders inside #v3-main — a
 // scrolling region whose first child is the (tall, ~170px) #v3-topbar, with the
 // screens stacked below it. The legacy root uses `h-screen pt-16`, which makes
+// ── Chrome theme (light / medium / dark) ───────────────────────────
+// Re-themes the CHROME only (menus/toolbars/panels/dialogs) via the CSS
+// variables in assets/v3-theme.css; the timeline canvas keeps its dark palette.
+// 'dark' is the default (no attribute), so an editor with no pref is unchanged.
+const EDITOR_THEMES = ['dark', 'medium', 'light'];
+function _editorThemePref() {
+    try { const v = localStorage.getItem('editorTheme'); return EDITOR_THEMES.includes(v) ? v : 'dark'; }
+    catch (_) { return 'dark'; }
+}
+function editorApplyTheme() {
+    const screen = document.getElementById('plugin-editor');
+    if (!screen) return;
+    const theme = _editorThemePref();
+    if (theme === 'dark') delete screen.dataset.editorTheme;
+    else screen.dataset.editorTheme = theme;
+}
+window.editorSetTheme = (name) => {
+    const theme = EDITOR_THEMES.includes(name) ? name : 'dark';
+    try { localStorage.setItem('editorTheme', theme); } catch (_) {}
+    editorApplyTheme();
+    setStatus(`Theme: ${theme[0].toUpperCase()}${theme.slice(1)}`);
+};
+window.editorCycleTheme = () => {
+    const next = EDITOR_THEMES[(EDITOR_THEMES.indexOf(_editorThemePref()) + 1) % EDITOR_THEMES.length];
+    window.editorSetTheme(next);
+};
+
 // the editor a full 100vh tall (so it overflows past the topbar) and pads the
 // top for the now-hidden legacy navbar. In v3 we instead size the root to the
 // space left under the topbar — height: calc(100vh - <topbar height>) — and
@@ -1822,6 +1849,7 @@ function _applyV3Layout() {
     // sheet — scoped under [data-v3-layout="1"] — also reaches the editor's
     // modals/dialogs, which are siblings of the root inside #plugin-editor.
     screen.dataset.v3Layout = '1';
+    editorApplyTheme();   // stamp the saved chrome theme once the v3 sheet is live
     // Re-query the topbar each call so a topbar that mounts AFTER us is still
     // accounted for (height falls back to full-viewport only while it's absent).
     const fit = () => {

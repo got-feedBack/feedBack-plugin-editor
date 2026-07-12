@@ -68,6 +68,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says so), a checkpoint dropped by the undo cap or a session reset just falls
   back to that, and a refused undo can never spin.
 
+- **Chrome theme modes — Dark / Medium / Light.** The dark-blue workspace was
+  hard to read in bright rooms, so the editor's chrome (menu bar, toolbars,
+  transport bar, panels, buttons, popovers) now themes through CSS variables
+  with three presets: the original **Dark**, a dim mid-tone **Medium**, and a
+  bright **Light**. View ▸ *Theme: Dark → Medium → Light* cycles them and the
+  choice persists (`localStorage`). Scope is deliberate: the timeline **canvas
+  stays dark** in every theme (waveform/note contrast is tuned for it) and the
+  LCD transport display stays dark (it reads as a hardware readout), while the
+  category buttons keep their semantic colors. `window.editorSetTheme(name)` /
+  `editorCycleTheme()` drive it.
+
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:
   Transport ▸ Guide voice ▸ Instrument (GM), with a per-part-kind instrument
