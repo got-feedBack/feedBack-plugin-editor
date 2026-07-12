@@ -30,6 +30,7 @@ import { KEYS_PATTERN, isKeysMode, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
 import { S } from './state.js';
 import { _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
+import { seedSurfacePreset, surfacePersistFor } from './toolbars.js';
 import { _editorEscHtml, _installModalKeyboard, setStatus } from './ui.js';
 
 
@@ -427,6 +428,10 @@ export function editorShowCreateSloppakModal() {
             // path so the editor state initialises identically to a
             // normal sloppak load.
             await host.loadCDLC(data.filename);
+            // C1 lane seed: created from scratch → the Compose surface
+            // (intent, not audio-presence — an attached recording to
+            // compose over still starts light; charrette §3.1).
+            seedSurfacePreset('compose');
         } catch (e) {
             status.textContent = 'Failed: ' + e.message;
             status.className = 'text-xs mb-2 min-h-[1em] text-red-400';
@@ -2120,6 +2125,9 @@ async function _editorDoBlankCreate() {
         editorHideCreateModal();
         host.kickLibraryRescan();
         await host.loadCDLC(data.filename);
+        // C1 lane seed: created from scratch → the Compose surface (intent,
+        // not audio-presence; charrette §3.1).
+        seedSurfacePreset('compose');
     } catch (e) {
         if (status) status.textContent = 'Failed: ' + e.message;
         if (btn) btn.disabled = false;
@@ -2162,6 +2170,11 @@ export async function editorApplyCreateResult(data) {
     S.returnToHighway = false;
     S.history = new EditHistory();
     S.createMode = true;
+    // C1 lane seed: an import (Guitar Pro / XML project) → the Transcribe
+    // surface, since aligning the grid to the source is the first task
+    // (charrette §3.1). No filename yet, so this is in-memory only —
+    // editorBuild persists the session's surface under the built file.
+    seedSurfacePreset('transcribe');
 
     // An import may carry a drum track (returned as a `drum_tab`) and/or piano
     // "Keys" arrangements. Sessions are always sloppak now; load the imported
@@ -2389,6 +2402,10 @@ export async function editorBuild() {
         const data = await resp.json();
         if (data.error) { setStatus('Build error: ' + data.error); return; }
         host.kickLibraryRescan();   // refresh the library grid in the background
+        // C1: the surface shaped while arranging becomes the built file's
+        // memory, so re-opening it from the library lands on the same tools.
+        // (The create session itself has no filename — this is the handoff.)
+        if (data.filename) surfacePersistFor(data.filename);
         setStatus('Built - added to library!');
     } catch (e) {
         setStatus('Build failed: ' + e.message);
