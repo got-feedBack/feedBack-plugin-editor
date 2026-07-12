@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Flattening a variable tempo map now names both directions** instead of a
+  bare confirm. Typing a BPM for a song with multiple tempos opens a small in-app
+  dialog: **Conform notes to the new tempo** (notes keep their bar:beat positions
+  and move with the grid — the usual choice) or **Rebuild the grid only** (notes
+  keep their exact seconds; for when they already sit on the recording). "Conform"
+  is the previously-missing path — it flattens in the `TempoMapCmd` direction, so
+  every part rides to the new constant tempo (no hand-scaled seconds); "Rebuild"
+  is the existing `TempoGridCmd` flatten. Both anchor at bar 1 and are undoable
+  ("Undo restores the map").
+
 ### Fixed
 
 - **Whole-song tempo edits silently corrupted multi-part songs.** Sync tempo,
