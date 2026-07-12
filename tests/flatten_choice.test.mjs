@@ -11,6 +11,7 @@
  * Run: node tests/flatten_choice.test.mjs
  */
 import assert from 'node:assert';
+import fs from 'node:fs';
 import { S } from '../src/state.js';
 import { EditHistory } from '../src/history.js';
 import { TempoGridCmd, TempoMapCmd, _tempoFlattenToBpmPure } from '../src/tempo.js';
@@ -75,6 +76,28 @@ t('rebuild-grid (TempoGridCmd) keeps every note\'s exact seconds; the grid flatt
     assert.deepStrictEqual(S.beats.map(b => b.time), flat.map(b => b.time), 'the grid is now constant');
     S.history.doUndo();
     assert.deepStrictEqual(S.beats.map(b => b.time), oldBeats.map(b => b.time), 'undo restores the variable map');
+});
+
+// Source guard (main.js isn't node-importable; same convention as
+// tempo_op_commands.test.mjs): the flatten dialog AWAITS across real time —
+// the overlay traps pointer/keyboard, but an already-in-flight async import
+// can land meanwhile and swap the session/grid, so the choice must be
+// re-validated against the live state before either command executes.
+t('editorSetBPM re-validates session + variable-map after the dialog await', () => {
+    const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+    const start = src.indexOf('window.editorSetBPM =');
+    assert.ok(start >= 0, 'editorSetBPM must exist');
+    const b = src.slice(start, src.indexOf('window.editorSetTempoSignature ='));
+    const awaitAt = b.indexOf('await _editorPromptChoice');
+    assert.ok(awaitAt >= 0, 'flatten prompt is awaited');
+    const after = b.slice(awaitAt);
+    assert.ok(/S\.sessionId !== sessionBefore/.test(after),
+        'post-await: bail when the session changed under the dialog');
+    assert.ok(/_tempoHasMultipleMeasureBpmsPure\(S\.beats, 0\.01\)/.test(after),
+        'post-await: re-check the variable-map precondition before applying');
+    const execAt = after.indexOf('S.history.exec');
+    assert.ok(after.indexOf('sessionBefore') < execAt,
+        'the re-validation sits BEFORE the command executes');
 });
 
 t('_tempoFlattenToBpmPure keeps the beat count and anchors at bar 1', () => {

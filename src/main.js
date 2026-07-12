@@ -1315,6 +1315,7 @@ window.editorSetBPM = async (val) => {
         // FLATTEN the whole map to this constant BPM — the escape hatch from a
         // bad import's tempos. The two directions are genuinely different edits,
         // so NAME them (charrette UX P2) instead of a bare confirm.
+        const sessionBefore = S.sessionId;
         const choice = await _editorPromptChoice({
             title: `Set the whole song to ${newBPM} BPM`,
             message: 'This song has a variable tempo map. Choose how to flatten it to one tempo:',
@@ -1326,6 +1327,13 @@ window.editorSetBPM = async (val) => {
             ],
         });
         if (!choice) { updateBPMDisplay(); draw(); return; }
+        // The dialog awaits across real time: the overlay traps pointer +
+        // keyboard, but an already-in-flight async import can land meanwhile,
+        // swapping the session/grid — the choice would then flatten the NEW
+        // song unprompted. Re-validate the precondition before applying.
+        if (S.sessionId !== sessionBefore || !_tempoHasMultipleMeasureBpmsPure(S.beats, 0.01)) {
+            updateBPMDisplay(); draw(); return;
+        }
         // Exact spacing (no rounding) so the flattened map reads as PERFECTLY
         // constant — _r3's ±0.5ms would drift per-measure BPM past the 0.01
         // variable-tempo detector and the grid would still look variable. The

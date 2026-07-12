@@ -190,7 +190,9 @@ export function _editorPromptText({ title = '', label = '', value = '', placehol
 
 // A titled choice dialog (same modal idiom as _editorPromptText): a message plus
 // one button per choice (label + hint), and Cancel. Resolves to the chosen
-// `key`, or null on Cancel / Escape / backdrop. `choices`: [{ key, label, hint }].
+// `key`, or null on Cancel / Escape. (Clicking the dimmed overlay does not
+// dismiss — it re-focuses the dialog, same as the editor's other modals.)
+// `choices`: [{ key, label, hint }].
 export function _editorPromptChoice({ title = '', message = '', choices = [] } = {}) {
     return new Promise((resolve) => {
         if (_editorPromptCancel) _editorPromptCancel();
