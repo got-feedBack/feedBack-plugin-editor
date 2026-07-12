@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The first Save of a session now opens the file explorer** (the same native
+  picker as Save As), so you choose where the `.feedpak` lands instead of it
+  going somewhere implicit. Once you've picked a location, later saves (Ctrl+S /
+  the Save button) write straight to it — no re-prompt. Where the File System
+  Access API isn't available, Save falls back to the plain library save as
+  before (never a download loop). Programmatic saves (the Loop-in-3D handoff,
+  the host save hook, build) are unaffected — only the user's Save routes
+  through the picker. Sessions that can't complete the picker flow — create
+  mode (no library file to export yet; use Build) and authoring-directory
+  sloppaks (no packed file for the export route to serve) — keep the plain
+  library save instead of prompting for a destination that would then fail.
+- **Tempo Map legibility pass.** The bottom HUD strip now carries a **colour
+  legend** (mapped · selected · locked · suggested · unmapped) using the exact
+  pole colours, so the grid's vocabulary is self-explanatory; it only draws when
+  it clears the guidance text, never overlapping it. The **Unmapped tail** — the
+  recording past the last confirmed downbeat, which carries no fitted tempo — is
+  now drawn as a hatched wash with an "Unmapped" label in the grid. **Lock copy
+  corrected**: the old "global tempo re-fits will hold this beat" implied you had
+  to lock a barline to keep an edit — you don't. It now reads "Lock: hold this
+  barline's time through automatic re-fits (Fit tempo, Suggest, Modulate). Your
+  manual edits are always kept — locking is not needed to save them." across the
+  right-click item (tooltip) and the S-key status. Finally, user-facing "sync
+  point" wording is retired in favour of **"barline"** (inspector hints, delete
+  titles, lock/status messages); "sync point" stays only as internal/export
+  vocabulary.
+
 ### Fixed
 
 - **The editor timeline rendered blank — chart and waveform invisible after
@@ -31,6 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   captioned screenshots (workspace, New… dialog, timeline, Tempo Map mode,
   drum import) under `assets/guide/`. The in-app copy mirrors the doc; a
   `menu_model` test pins the menu item and its dispatch.
+- **Undo to last checkpoint** (`Ctrl+Alt+Z`, Edit ▸ Undo to last checkpoint).
+  Checkpoints are coarse rewind points stamped automatically at milestones —
+  entering Tempo Map, accepting a suggested fit, locking/unlocking a barline —
+  so a single keystroke can undo a whole tempo-mapping session at once instead
+  of tapping Ctrl+Z through every step. The status line names what it unwound
+  to. Degrades gracefully: with no checkpoint in range it undoes one step (and
+  says so), a checkpoint dropped by the undo cap or a session reset just falls
+  back to that, and a refused undo can never spin.
 
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:

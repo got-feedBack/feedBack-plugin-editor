@@ -70,7 +70,7 @@ import {
 } from './arrangement.js';
 import {
     _activeArrangementExceedsArchiveLimit, _editorLoadsInFlight, _resetOffsetUI,
-    editorHideSaveFormatModal, editorSaveAs, editorSaveAsSloppakConfirm, filterSongs, loadCDLC,
+    editorHideSaveFormatModal, editorSave, editorSaveAs, editorSaveAsSloppakConfirm, filterSongs, loadCDLC,
     saveCDLC, showLoadModal
 } from './file-ops.js';
 import {
@@ -1279,9 +1279,29 @@ window.editorShowLoadModal = showLoadModal;
 window.editorHideLoadModal = () => document.getElementById('editor-load-modal').classList.add('hidden');
 window.editorFilterSongs = filterSongs;
 window.editorLoadFile = (f) => { window.editorHideLoadModal(); loadCDLC(f); };
-window.editorSave = saveCDLC;
+window.editorSave = editorSave;   // first save → file explorer, then saves to it
 window.editorUndo = () => S.history && S.history.doUndo();
 window.editorRedo = () => S.history && S.history.doRedo();
+// Undo back to the last checkpoint (Ctrl+Alt+Z) — a coarse rewind past a whole
+// tempo-mapping session, a suggested-fit accept, or a barline lock. doUndo()
+// already repaints per step; we just name the result on the status line.
+window.editorUndoToCheckpoint = () => {
+    if (!S.history) return;
+    const r = S.history.undoToCheckpoint();
+    if (r.undone === 0) {
+        // Zero steps with commands still on the stack = the first doUndo was
+        // REFUSED (read-only roll / missing arrangement) and already set an
+        // explanatory status — don't stomp it with "Nothing to undo."
+        if (!S.history.undo.length) setStatus('Nothing to undo.');
+        return;
+    }
+    const n = `${r.undone} step${r.undone === 1 ? '' : 's'}`;
+    setStatus(!r.foundCheckpoint
+        ? 'No earlier checkpoint — undid one step.'
+        : r.label
+            ? `Undid ${n} back to checkpoint: ${r.label}.`
+            : `Undid ${n} — undo refused before reaching the checkpoint.`);
+};
 window.editorTogglePlay = () => {
     // Route stops through the recorder while a take is active so the
     // spacebar (or any other transport caller) finalizes the recording

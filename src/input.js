@@ -1248,6 +1248,13 @@ export function onKeyDown(e) {
             return;
         }
     }
+    // Ctrl+Alt+Z — undo to the last checkpoint. Must precede the plain Ctrl+Z
+    // below (which doesn't exclude Alt, so it would otherwise swallow this).
+    if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        window.editorUndoToCheckpoint();
+        return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
         e.preventDefault();
         window.editorUndo();
