@@ -30,7 +30,8 @@ import { KEYS_PATTERN, isKeysMode, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
 import { S, markSessionDirty } from './state.js';
 import { disposeBackendSession, stopSessionProcesses } from './session-lifecycle.js';
-import { _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
+import { _ensureOnsets } from './audio.js';
+import { _firstDownbeatTimePure, _importBar1NudgePure, _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
 import { seedSurfacePreset, surfacePersistFor } from './toolbars.js';
 import { _editorMaybeStartTour } from './tour.js';
 import { _editorEscHtml, _installModalKeyboard, setStatus } from './ui.js';
@@ -2050,7 +2051,18 @@ export async function editorDoCreate() {
         // for either — point the user at the Tempo Map editor to fine-tune any
         // residual drift by hand. See _syncAppliedMessagePure.
         const _syncMsg = _syncAppliedMessagePure(data.sync_applied, data.sync_reason);
-        if (_syncMsg && typeof setStatus === 'function') setStatus(_syncMsg);
+        let _msg = _syncMsg;
+        // Import nudge (SUGGEST only — never auto-shift): the grid landed bar 1
+        // at ~0 but the recording clearly starts later. Skip for 'warp' imports
+        // (already bar-by-bar aligned). Onsets are ready here — the awaited
+        // editorApplyCreateResult above decoded the audio into S.waveformPeaks.
+        if (data.sync_applied !== 'warp') {
+            let _firstOnset = null;
+            try { const _on = _ensureOnsets(); if (_on && _on.length) _firstOnset = _on[0].t; } catch (_) {}
+            const _nudge = _importBar1NudgePure(_firstDownbeatTimePure(S.beats), _firstOnset);
+            if (_nudge) _msg = _msg ? (_msg + ' ' + _nudge) : _nudge;
+        }
+        if (typeof setStatus === 'function') setStatus(_msg);
     } catch (e) {
         status.textContent = 'Import failed: ' + e.message;
         btn.disabled = false;
