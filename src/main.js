@@ -1962,7 +1962,7 @@ function _editorMovePart(dir) {
     // part via the now-stale `arrangement_index`. Refuse here too so the
     // command palette / keyboard paths can't bypass the hidden buttons.
     if (S.format !== 'sloppak') {
-        setStatus('Reordering parts is only available for Sloppak songs.');
+        setStatus('Reordering tracks is only available for Sloppak songs.');
         return true;
     }
     const from = S.currentArr;
@@ -1980,7 +1980,7 @@ function _editorMovePart(dir) {
     updateArrangementSelector();
     draw();
     updateStatus();
-    setStatus(`Moved “${moved.name || 'part'}” ${dir < 0 ? 'earlier' : 'later'} — the order persists on save`);
+    setStatus(`Moved “${moved.name || 'track'}” ${dir < 0 ? 'earlier' : 'later'} — the order persists on save`);
     return true;
 }
 window.editorMovePart = _editorMovePart;
