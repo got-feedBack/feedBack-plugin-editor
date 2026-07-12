@@ -79,6 +79,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says so), a checkpoint dropped by the undo cap or a session reset just falls
   back to that, and a refused undo can never spin.
 
+- **Tempo & meter markers on the ruler.** Sparse labeled chips now show where the
+  tempo changes (e.g. `90 BPM`) and where the meter changes (e.g. `3/4`) through
+  the song, so a variable tempo map is legible at a glance. They're **derived
+  purely from the beat grid** — zero new storage, memoized on the edit
+  generation — so they can never drift from the actual tempo/meter. (Authored
+  markers that the grid can't express — tempo ramps, meter groupings like
+  `7/8 (2+2+3)`, fermata holds, and per-marker provenance — are scoped in
+  feedpak-spec#51 and come later.)
 - **Select and delete multiple barlines at once** in Tempo Map mode. Shift-click
   a second barline to select the contiguous range, drag a box on empty grid to
   rubber-band-select, or Ctrl+A to select every barline; the selection washes

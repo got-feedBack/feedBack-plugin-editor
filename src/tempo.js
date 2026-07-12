@@ -26,7 +26,7 @@ import { _drumLaneIdxForPiece, _drumPieceCount } from './drum.js';
 import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
 import { host } from './host.js';
 import { lanes } from './lanes.js';
-import { S } from './state.js';
+import { S, editGen } from './state.js';
 import {
     _suggestActive, _suggestApplyPure, _suggestAvgConf, _suggestDismiss,
     _suggestHitAt, _suggestHudTextPure, _suggestProposals, _suggestRegenerateFrom,
@@ -273,16 +273,13 @@ export function _tempoMapDraw(w, h) {
     // to line up with them (and the waveform).
     _tempoDrawReferenceNotes(w, gridBottom, visibleStart, visibleEnd);
 
-    // Multi-selected barlines (PR 5a): a light amber wash spanning the range
-    // between the outermost selected downbeats (the existing halo grammar).
+    // Multi-selected barlines (PR 5a): a light amber wash for each contiguous
+    // selected downbeat run. Disjoint selections must not fill the gaps.
     if (S.tempoSelMulti && S.tempoSelMulti.size) {
-        let minT = Infinity, maxT = -Infinity;
-        for (const i of S.tempoSelMulti) {
-            const b = S.beats[i];
-            if (b && b.measure > 0) { if (b.time < minT) minT = b.time; if (b.time > maxT) maxT = b.time; }
-        }
-        if (minT <= maxT) {
-            const xa = Math.max(LABEL_W, timeToX(minT)), xb = Math.min(w, timeToX(maxT));
+        for (const run of _tempoSelectedDownbeatRunsPure(S.beats, S.tempoSelMulti)) {
+            const first = S.beats[run[0]], last = S.beats[run[run.length - 1]];
+            if (!first || !last) continue;
+            const xa = Math.max(LABEL_W, timeToX(first.time)), xb = Math.min(w, timeToX(last.time));
             if (xb > xa) {
                 ctx.fillStyle = 'rgba(251,191,36,0.10)';
                 ctx.fillRect(xa, (TIMELINE_TOP + WAVEFORM_H), xb - xa, gridBottom - (TIMELINE_TOP + WAVEFORM_H));
@@ -927,8 +924,8 @@ export function _tempoMapOnContextMenu(e) {
         html += mkBtn('togglelock',
             (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
             '', LOCK_TOOLTIP);
-        // With a multi-selection, offer the bulk delete (PR 5a); else the single.
-        const nMulti = S.tempoSelMulti ? S.tempoSelMulti.size : 0;
+        // With a multi-selection, offer bulk delete only for deletable interior barlines.
+        const nMulti = _tempoDeletableBarlineIndicesPure(S.beats, S.tempoSelMulti).length;
         html += (nMulti > 1)
             ? mkBtn('delete-multi', `Delete ${nMulti} barlines`, 'text-red-400')
             : mkBtn('delete', 'Delete barline', 'text-red-400');
@@ -1109,6 +1106,28 @@ export function _tempoMarqueeDownbeatsPure(beats, tLo, tHi) {
     return out;
 }
 
+// Selected downbeats grouped into contiguous downbeat runs, ignoring sub-beats
+// and invalid indices. Used by the canvas wash so disjoint selections don't
+// paint one large min/max slab across unselected bars.
+export function _tempoSelectedDownbeatRunsPure(beats, indices) {
+    const runs = [];
+    if (!Array.isArray(beats)) return runs;
+    const selected = new Set(indices || []);
+    let run = [];
+    for (let i = 0; i < beats.length; i++) {
+        const b = beats[i];
+        if (!b || b.measure <= 0) continue;
+        if (selected.has(i)) {
+            run.push(i);
+        } else if (run.length) {
+            runs.push(run);
+            run = [];
+        }
+    }
+    if (run.length) runs.push(run);
+    return runs;
+}
+
 // Finalize the marquee drag: box-select the downbeats within the swept X range.
 // Plain replaces the selection, Shift unions; a press that never moved clears
 // (a click-away) — the drum-editor marquee idiom.
@@ -1136,17 +1155,23 @@ export function _tempoMarqueeOnEnd() {
 // _tempoDeleteSyncPoint's guard generalized to a set.
 export function _tempoDeleteBarlinesPure(beats, indices) {
     if (!Array.isArray(beats)) return null;
-    const dbIdx = [];
-    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) dbIdx.push(i);
-    if (dbIdx.length < 3) return null;   // need at least one interior downbeat
-    const first = dbIdx[0], last = dbIdx[dbIdx.length - 1];
-    const del = new Set([...(indices || [])].filter(
-        i => beats[i] && beats[i].measure > 0 && i !== first && i !== last));
+    const del = new Set(_tempoDeletableBarlineIndicesPure(beats, indices));
     if (!del.size) return null;
     const out = beats.map(b => ({ ...b }));
     for (const i of del) out[i].measure = -1;
     _tempoRenumberMeasures(out);
     return { beats: out, count: del.size };
+}
+
+export function _tempoDeletableBarlineIndicesPure(beats, indices) {
+    if (!Array.isArray(beats)) return [];
+    const dbIdx = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) dbIdx.push(i);
+    if (dbIdx.length < 3) return [];   // need at least one interior downbeat
+    const first = dbIdx[0], last = dbIdx[dbIdx.length - 1];
+    return [...new Set(indices || [])]
+        .filter(i => beats[i] && beats[i].measure > 0 && i !== first && i !== last)
+        .sort((a, b) => a - b);
 }
 
 // Del / right-click "Delete N barlines": bulk-demote the multi-selection (or the
@@ -1435,6 +1460,59 @@ export function _tempoHasMultipleMeasureBpmsPure(beats, tolerance) {
     if (bpms.length < 2) return false;
     const first = bpms[0];
     return bpms.some(bpm => Math.abs(bpm - first) > tol);
+}
+
+// ── Derived tempo/meter change markers (design slice 2a, PR 10) ──────
+// ZERO storage: every marker is a PURE function of S.beats (the executable
+// truth — never a second source). A tempo marker sits on a downbeat whose
+// per-measure BPM leaves the current run beyond `tol` (the same 0.01 constant
+// _tempoHasMultipleMeasureBpmsPure uses); a meter marker sits where the
+// numerator (beats/bar) or `den` changes. Bar 1 gets a baseline of each. A
+// trailing partial final bar never emits a spurious meter change.
+// Returns [{ i, time, measure, kind: 'tempo'|'meter', label }], time-sorted.
+export function _tempoMarkersPure(beats, tolerance) {
+    const out = [];
+    if (!Array.isArray(beats) || beats.length < 2) return out;
+    const tol = Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.01;
+    const r3 = v => Math.round(v * 1000) / 1000;
+    const db = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) db.push(i);
+    if (!db.length) return out;
+    let runBpm = null, runNum = null, runDen = null;
+    for (let k = 0; k < db.length; k++) {
+        const i = db[k];
+        const nextI = (k + 1 < db.length) ? db[k + 1] : null;
+        const num = (nextI !== null) ? (nextI - i) : Math.max(1, beats.length - i);
+        const den = [2, 4, 8, 16].includes(Number(beats[i].den)) ? Number(beats[i].den) : (runDen == null ? 4 : runDen);
+        const bpm = (nextI !== null && beats[nextI].time > beats[i].time)
+            ? r3((num * 60) / (beats[nextI].time - beats[i].time))
+            : runBpm;   // last (open) measure reuses the run's tempo
+        const measure = beats[i].measure;
+        if (bpm !== null && (runBpm === null || Math.abs(bpm - runBpm) > tol)) {
+            out.push({ i, time: beats[i].time, measure, kind: 'tempo', label: `${_tempoFmtBpm(bpm)} BPM` });
+            runBpm = bpm;
+        }
+        const meterChanged = runNum === null || num !== runNum || den !== runDen;
+        const trailingPartial = nextI === null && runNum !== null && num < runNum;
+        if (meterChanged && !trailingPartial) {
+            out.push({ i, time: beats[i].time, measure, kind: 'meter', label: `${num}/${den}` });
+            runNum = num; runDen = den;
+        }
+    }
+    return out.sort((a, b) => a.time - b.time);
+}
+function _tempoFmtBpm(bpm) {
+    const v = Math.round(bpm * 10) / 10;
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+// editGen-memoized marker list for the ruler paint (recomputes only when an
+// edit bumps editGen or S.beats is reassigned by a grid command).
+let _markerCache = { gen: -1, beatsRef: null, value: [] };
+export function _tempoMarkers() {
+    if (_markerCache.gen === editGen && _markerCache.beatsRef === S.beats) return _markerCache.value;
+    _markerCache = { gen: editGen, beatsRef: S.beats, value: _tempoMarkersPure(S.beats, 0.01) };
+    return _markerCache.value;
 }
 
 export function _tempoParseBpmInputPure(value) {
@@ -2235,4 +2313,3 @@ export class TempoMapCmd {
         host.updateLoopIn3DBtn();
     }
 }
-
