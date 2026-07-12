@@ -7,8 +7,14 @@ import { host } from './host.js';
 import { S, sessionIsDirty } from './state.js';
 
 let promptPromise = null;
+let _promptResolve = null;
+let _promptKeyHandler = null;
 
 function _removePrompt() {
+    if (_promptKeyHandler) {
+        try { document.removeEventListener('keydown', _promptKeyHandler, true); } catch (_) {}
+        _promptKeyHandler = null;
+    }
     document.getElementById('editor-session-confirm')?.remove();
 }
 
@@ -16,6 +22,7 @@ function _showTransitionPrompt(nextLabel) {
     if (promptPromise) return promptPromise;
     promptPromise = new Promise((resolve) => {
         _removePrompt();
+        _promptResolve = resolve;
         const modal = document.createElement('div');
         modal.id = 'editor-session-confirm';
         modal.className = 'fixed inset-0 z-[10000] bg-black/70 flex items-center justify-center p-4';
@@ -35,9 +42,9 @@ function _showTransitionPrompt(nextLabel) {
         const row = document.createElement('div');
         row.className = 'mt-5 flex justify-end gap-2';
         const done = (choice) => {
-            document.removeEventListener('keydown', onKey, true);
-            modal.remove();
+            _removePrompt();          // detaches the keydown listener + modal
             promptPromise = null;
+            _promptResolve = null;
             resolve(choice);
         };
         const button = (label, choice, cls) => {
@@ -51,6 +58,7 @@ function _showTransitionPrompt(nextLabel) {
         const onKey = (e) => {
             if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done('cancel'); }
         };
+        _promptKeyHandler = onKey;
         row.append(
             button('Cancel', 'cancel', 'bg-dark-600 hover:bg-dark-500 text-gray-200'),
             button("Don't Save", 'discard', 'bg-red-900 hover:bg-red-800 text-red-100'),
@@ -59,7 +67,8 @@ function _showTransitionPrompt(nextLabel) {
         panel.append(title, body, row);
         modal.appendChild(panel);
         document.body.appendChild(modal);
-        document.addEventListener('keydown', onKey, true);
+        // Rides the screen teardown registry so a re-injection can't strand it.
+        host.addGlobalListener(document, 'keydown', onKey, true);
         row.lastElementChild?.focus();
     });
     return promptPromise;
@@ -98,6 +107,11 @@ export async function disposeBackendSession(sessionId) {
 }
 
 export function dismissSessionPrompt() {
+    const resolve = _promptResolve;
     _removePrompt();
     promptPromise = null;
+    _promptResolve = null;
+    // Resolve as 'cancel' so any awaiting guardSessionTransition unblocks and
+    // aborts the transition instead of hanging on a torn-down prompt.
+    if (resolve) resolve('cancel');
 }

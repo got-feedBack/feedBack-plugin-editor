@@ -108,7 +108,7 @@ import {
     editorSetViewMode
 } from './key-view.js';
 import { setHostHooks } from './host.js';
-import { guardSessionTransition } from './session-lifecycle.js';
+import { dismissSessionPrompt, guardSessionTransition } from './session-lifecycle.js';
 import { initAnchorResolve } from './anchor-resolve.js';
 import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from './playability-lint.js';
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
@@ -472,7 +472,7 @@ setHostHooks({
     kickLibraryRescan: _kickLibraryRescan,
     resetOffsetUI: _resetOffsetUI,
     updateTimeDisplay,
-    addGlobalListener: (target, ev, fn) => _globalListeners.add(target, ev, fn),
+    addGlobalListener: (target, ev, fn, opts) => _globalListeners.add(target, ev, fn, opts),
     drawNow: (...args) => drawNow(...args),
     editorClampScrollX: _editorClampScrollX,
     editorApplyScrollBounds: _editorApplyScrollBounds,
@@ -664,6 +664,9 @@ let _editorScreenObs = null;
 // can stop a late-firing interval from re-running a torn-down injection.
 let _bootPollInterval = null;
 window.__editorScreenTeardown = () => {
+    // Unblock any awaiting session-transition prompt before its listener is
+    // swept below, so a re-injection can't strand guardSessionTransition.
+    try { dismissSessionPrompt(); } catch (_) {}
     _globalListeners.removeAll();
     // Stop any playback this injection owns — the audio graph outlives the
     // DOM, so a replaced screen would otherwise keep sounding.

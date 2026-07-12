@@ -29,6 +29,7 @@ import { host } from './host.js';
 import { KEYS_PATTERN, isKeysMode, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
 import { S, markSessionDirty } from './state.js';
+import { disposeBackendSession, stopSessionProcesses } from './session-lifecycle.js';
 import { _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
 import { _editorEscHtml, _installModalKeyboard, setStatus } from './ui.js';
 
@@ -88,13 +89,15 @@ export function editorShowNewFormatPicker() {
         '🎵  Blank — start from audio',
         'Audio + an empty arrangement (drum tab optional). Chart it yourself '
         + 'in the editor. No Guitar Pro / XML needed.',
-        () => { window.editorShowCreateModal(); window.editorSetCreateMode('blank'); },
+        // Raw opener, not window.editorShowCreateModal: the transition was
+        // already guarded when this picker opened; the wrapper would re-prompt.
+        () => { editorShowCreateModal(); window.editorSetCreateMode('blank'); },
     ));
     inner.appendChild(mkBtn(
         '🎸  Import from Guitar Pro',
         'Build a chart from a Guitar Pro file (.gp3–.gp8), saved as a native '
         + '.feedpak.',
-        () => { window.editorShowCreateModal(); window.editorSetCreateMode('gp'); },
+        () => { editorShowCreateModal(); window.editorSetCreateMode('gp'); },
     ));
 
     const cancel = document.createElement('div');
@@ -2136,10 +2139,22 @@ export async function editorApplyCreateResult(data) {
 
     // Load into editor
     window.editorHideCreateModal();
+    // Same outgoing-job teardown loadCDLC performs: stop the old playback,
+    // the pending audio load and any drag, and drop the decoded buffer. An
+    // audio-less import skips the loadAudio() branch below, so without this the
+    // previous recording keeps sounding under the new chart and S.audioBuffer
+    // stays stale. Dispose the old backend session too so its sandbox isn't leaked.
+    const oldSessionId = S.sessionId;
+    stopSessionProcesses();   // also cancels the outgoing audio load
+    S.audioBuffer = null;
+    S.waveformPeaks = null;
     S.title = data.title || '';
     S.artist = data.artist || '';
     S.filename = '';
     S.sessionId = data.session_id;
+    if (oldSessionId && oldSessionId !== data.session_id) {
+        await disposeBackendSession(oldSessionId);
+    }
     markSessionDirty();
     S.format = 'sloppak';
     S.arrangements = data.arrangements || [];

@@ -278,7 +278,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Loading a new feedpak while the old recording was playing no longer
   leaves the old AudioBufferSource sounding under the new song. Audio-less
   packs also clear the previous decoded buffer, and overlapping load/audio
-  requests cannot install stale results out of order.
+  requests cannot install stale results out of order. The same teardown now
+  also runs when a Guitar Pro / EOF **import** replaces the job (it took a
+  different code path than Open feedpak), so an audio-less import can no
+  longer inherit the previous recording, and the outgoing backend session is
+  disposed instead of leaked.
+- The session-transition confirm prompt's Escape listener now rides the
+  screen teardown registry, and dismissing it resolves the pending prompt —
+  a re-injected editor screen can no longer strand an in-flight transition.
+- Choosing the "New" format picker on a dirty job no longer double-prompts to
+  save (the picker already guarded the transition; the format buttons stopped
+  re-guarding).
 - **The screen teardown left the guide/metronome timer running.** The audio
   extraction (below) surfaced it: the old inline teardown cancelled the audio
   source and the rAF frame but not the `setInterval` that schedules guide claps,
