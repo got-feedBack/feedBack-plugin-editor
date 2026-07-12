@@ -145,6 +145,8 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleFollow' },
         { cmd: 'showTabPreview' },
         { sep: true },
+        { label: 'Theme: Dark → Medium → Light', fn: 'editorCycleTheme', v3Only: true },
+        { sep: true },
         { hdr: 'Panels' },
         { cmd: 'toggleMixer' },
         { label: 'Shortcut panel', fn: 'editorToggleShortcutPanel' },
@@ -256,6 +258,7 @@ export function _menuModelPure(menus, rows, ctx) {
         for (const it of menu.items) {
             if (it.sep) { items.push({ sep: true }); continue; }
             if (it.hdr) { items.push({ hdr: it.hdr }); continue; }
+            if (it.v3Only && !ctx.v3) continue;
             if (it.tb || it.tbPreset || it.tbReset) {
                 // Toolbar checklist rows (B5). `✓ ` marks a visible toolbar /
                 // the active preset; the two-space pad keeps labels aligned.
@@ -385,6 +388,7 @@ function currentModel() {
         _editorShortcutRowsPure(editorShortcutProfile),
         {
             tempoMapMode: !!S.tempoMapMode, hasAudio: !!S.audioBuffer, fns: windowFns(),
+            v3: !!(window.slopsmith && window.slopsmith.uiVersion === 'v3'),
             toolbars: getToolbarCtx(),
             loopSnapMode: editorLoopSnapMode(),
             gmGuide: _gmGuideMenuCtx(),
