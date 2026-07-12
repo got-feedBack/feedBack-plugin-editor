@@ -34,7 +34,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
     { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', eof: 'C' } },
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
-    { id: 'toggleMixer', label: 'Toggle audio mixer', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
+    { id: 'toggleMixer', label: 'Toggle Mixer panel', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
     { id: 'toggleLoopAB', label: 'Toggle loop A/B compare (recording ↔ guide)', group: 'Preview', status: 'ready', keys: { feedback: 'Alt+B', eof: 'Alt+B' } },
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Parts overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },

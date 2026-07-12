@@ -5,8 +5,9 @@
 // the commands refresh in the composition root goes through host.
 
 import { AddAnchorCmd, AddHandshapeCmd, AddToneChangeCmd, RemoveAnchorCmd, RemoveHandshapeCmd, RemoveToneChangeCmd, _anchorLaneTopY, _currentAnchorArr, _currentToneArr, _ensureTones, _handshapeLaneTopY, _readAnchorSnapshot, onAnchorLaneContextMenu, onHandshapeLaneContextMenu, onToneLaneContextMenu } from './annotation-lanes.js';
-import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleMixer, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsets, startPlayback, stopPlayback } from './audio.js';
+import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsets, startPlayback, stopPlayback } from './audio.js';
 import { _suggestActive, _suggestCompute, _suggestDismiss } from './tempo-suggest.js';
+import { editorToggleMixerPanel } from './mixer-panel.js';
 import { canvas } from './canvas.js';
 import { AddNoteCmd, ChangeFretCmd, ChangeFretGroupCmd, DeleteNotesCmd, MoveNoteCmd, ResizeSustainGroupCmd, SetPitchedSlideTargetsCmd, SetTeachingMarkCmd, ToggleTechniqueCmd, _execCyclePosition, _execMoveString, _execMoveStringSameFret, _rollAddByPitch, _withStableSelection } from './commands.js';
 import { hideContextMenu, promptBend, promptFret, promptSlide, promptSlideUnpitch, showContextMenu } from './context-menu.js';
@@ -733,7 +734,7 @@ export function _editorRunEofCommand(cmd) {
     case 'toggleWaveform': return _editorToggleWaveform();
     case 'toggleGuideClap': return _editorToggleGuideClap();
     case 'toggleMetronome': return _editorToggleMetronome();
-    case 'toggleMixer': return _editorToggleMixer();
+    case 'toggleMixer': return editorToggleMixerPanel();
     case 'toggleLoopAB': return _editorToggleLoopAB();
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return host.editorTogglePartsView();
