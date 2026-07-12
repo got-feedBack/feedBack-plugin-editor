@@ -4,6 +4,7 @@
  * Run: node tests/tempo_map_guidance.test.mjs
  */
 import assert from 'node:assert';
+import { readFileSync } from 'node:fs';
 import {
     LOCK_TOOLTIP,
     _lockStatusTextPure,
@@ -98,6 +99,18 @@ t('inspector guidance says "barline", never "sync point"', () => {
     const mid = _tempoSyncInspectorStatePure(measures, 4);
     assert.strictEqual(mid.canDelete, true);
     assert.strictEqual(mid.deleteTitle, 'Delete selected barline');
+});
+
+t('no user-facing string literal in tempo.js says "sync point"', () => {
+    // The P6 sweep retires "sync point" from user-facing copy; it survives only
+    // in comments and internal identifiers (SyncPoint, no separator). Scan every
+    // line for a string literal carrying the separated lowercase form — this
+    // caught the tap-tempo stale-selection status the sweep missed.
+    const src = readFileSync(new URL('../src/tempo.js', import.meta.url), 'utf8');
+    const offenders = src.split('\n')
+        .map((line, i) => ({ line: line.trim(), n: i + 1 }))
+        .filter(({ line }) => /['"`][^'"`]*sync[ -]point/.test(line));
+    assert.deepStrictEqual(offenders, [], 'string literals still say "sync point"');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

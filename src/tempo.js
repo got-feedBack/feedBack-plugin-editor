@@ -1800,7 +1800,7 @@ export function _tapTempoHandleKey(e) {
         _tapTempo = null;
         const decision = _tapTempoApplyDecisionPure(t, S.tempoSel, performance.now(), TAP_TEMPO_STALE_MS);
         if (decision === 'stale-selection') {
-            setStatus('Tap tempo cancelled — sync-point selection changed.');
+            setStatus('Tap tempo cancelled — barline selection changed.');
         } else if (decision === 'too-few') {
             setStatus('Tap tempo cancelled — not enough taps.');
         } else if (decision === 'expired') {
