@@ -87,6 +87,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Song Fit — one place to line the chart up with the recording.** A **Song
+  Fit…** button in the Tempo Map inspector opens a small menu with the three
+  ways to fit a chart to audio, each labelled with what it does to your notes:
+  **Shift everything…** (nudge the whole chart earlier/later — keeps the ±10ms
+  arrows), **Fit tempo to recording…** (auto-match the tempo), and **Set
+  constant tempo…** (flatten to one steady BPM, choosing whether notes ride or
+  hold). The audio never moves in any of them. Everything routes through the
+  existing undoable verbs, and the individual **Offset / Sync / BPM** controls
+  are unchanged — Song Fit is just a friendlier front door. (The flatten flow
+  was factored into a shared helper so "Set constant tempo" also works from
+  inside Tempo Map mode, where the inline BPM box doesn't offer it.)
 - **User Guide** — a task-oriented, end-user guide to charting in the editor
   (start a project, the workspace, play/navigate, edit notes & techniques,
   parts, tempo mapping, drums, structure, save/build, shortcut essentials).
