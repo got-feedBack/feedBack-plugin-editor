@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The first Save of a session now opens the file explorer** (the same native
+  picker as Save As), so you choose where the `.feedpak` lands instead of it
+  going somewhere implicit. Once you've picked a location, later saves (Ctrl+S /
+  the Save button) write straight to it — no re-prompt. Where the File System
+  Access API isn't available, Save falls back to the plain library save as
+  before (never a download loop). Programmatic saves (the Loop-in-3D handoff,
+  the host save hook, build) are unaffected — only the user's Save routes
+  through the picker.
+
 ### Fixed
 
 - **The editor timeline rendered blank — chart and waveform invisible after

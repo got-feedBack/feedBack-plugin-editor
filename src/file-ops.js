@@ -754,3 +754,26 @@ export async function editorSaveAs() {
         return false;
     }
 }
+
+// The Save command (Ctrl+S / the toolbar Save button / File ▸ Save). The FIRST
+// save of a session pulls up the file explorer — same picker as Save As — so the
+// user chooses where the .feedpak lands; once a location is chosen this session,
+// later saves write straight to it (and mirror to that file). The "chosen this
+// session" signal is externalSaveHandle: it's null on load / a new session and
+// set by editorSaveAs after a picked file. Guard on the picker API so that
+// where it's unavailable (no showSaveFilePicker) we fall back to the plain
+// library save rather than re-triggering a download on every Ctrl+S. Programmatic
+// saves (highway handoff, host saveSession hook, build) keep calling saveCDLC()
+// directly and are unaffected — only the user's Save routes through here.
+// Route the Save command to the picker only when no location has been chosen
+// this session (hasHandle=false) AND the picker API exists. Without the API,
+// editorSaveAs can only trigger a download, so fall back to the library save.
+export function _saveShouldPickPure(hasHandle, hasPickerApi) {
+    return !hasHandle && !!hasPickerApi;
+}
+export async function editorSave() {
+    if (!S.sessionId) return false;
+    const hasPicker = typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';
+    if (_saveShouldPickPure(!!externalSaveHandle, hasPicker)) return editorSaveAs();
+    return saveCDLC();
+}
