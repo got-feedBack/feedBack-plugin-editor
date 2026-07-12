@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The editor timeline rendered blank — chart and waveform invisible after
+  any load or import.** Two closing `</div>`s were lost at the canvas-wrap
+  overlay seam when the sweep bar and the drum-pad strip landed, so the main
+  `#editor-canvas` ended up nested inside the *hidden* drum-pad strip: the
+  canvas laid out at 0×0 (its whole subtree is `display:none`) while the
+  status bar happily reported the load and every JS suite stayed green.
+  Restored the two closers, and added `tests/screen_markup.test.mjs` — a
+  dependency-free tag-stack walk that fails the suite if screen.html ever
+  unbalances again or the canvas stops being a direct child of the wrap
+  (this seam collides on every chrome PR; now it's guarded).
+
 ### Added
 
 - **Authoritative musical-ruler tempo mapping.** Tempo Map's primary action is
