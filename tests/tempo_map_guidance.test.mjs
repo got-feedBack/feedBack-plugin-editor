@@ -5,8 +5,11 @@
  */
 import assert from 'node:assert';
 import {
+    LOCK_TOOLTIP,
+    _lockStatusTextPure,
     _syncAppliedMessagePure,
     _tempoMapHudTextPure,
+    _tempoSyncInspectorStatePure,
 } from '../src/tempo.js';
 
 let pass = 0;
@@ -58,6 +61,43 @@ t('offset (other) message is generic and points at Tempo Map', () => {
 t('no message when no audio sync was applied', () => {
     assert.strictEqual(_syncAppliedMessagePure(undefined, undefined), '');
     assert.strictEqual(_syncAppliedMessagePure('', ''), '');
+});
+
+// ── P6 copy corrections: "barline" vocabulary + accurate lock wording ─────────
+t('lock status wording is accurate and free of "sync point"', () => {
+    const on = _lockStatusTextPure(true);
+    const off = _lockStatusTextPure(false);
+    assert.ok(/^Barline locked/.test(on));
+    assert.ok(/manual edits are always kept/i.test(on), 'reassures edits persist regardless of lock');
+    assert.ok(!/sync point/i.test(on) && !/sync point/i.test(off), 'no legacy "sync point" wording');
+    assert.strictEqual(off, 'Barline unlocked.');
+});
+
+t('lock tooltip explains what a lock defends against (not "needed to save")', () => {
+    assert.ok(/automatic re-fits/i.test(LOCK_TOOLTIP));
+    assert.ok(/Fit tempo, Suggest, Modulate/.test(LOCK_TOOLTIP), 'names the re-fit operations');
+    assert.ok(/not needed to save/i.test(LOCK_TOOLTIP));
+    assert.ok(!/sync point/i.test(LOCK_TOOLTIP));
+});
+
+t('inspector guidance says "barline", never "sync point"', () => {
+    const measures = [
+        { i: 0, measure: 1, beats: 4, denominator: 4, bpm: 120, isLast: false },
+        { i: 4, measure: 2, beats: 4, denominator: 4, bpm: 120, isLast: false },
+        { i: 8, measure: 3, beats: 4, denominator: 4, bpm: 0, isLast: true },
+    ];
+    const none = _tempoSyncInspectorStatePure(measures, -1);
+    assert.ok(/barline/i.test(none.hint) && !/sync point/i.test(none.hint));
+    assert.ok(/interior barline/i.test(none.deleteTitle));
+    // A first/last barline can't be deleted — the message must say "barline".
+    const first = _tempoSyncInspectorStatePure(measures, 0);
+    assert.strictEqual(first.canDelete, false);
+    assert.ok(/First and final barlines/.test(first.deleteTitle));
+    assert.ok(!/sync point/i.test(first.deleteTitle));
+    // An interior barline deletes normally.
+    const mid = _tempoSyncInspectorStatePure(measures, 4);
+    assert.strictEqual(mid.canDelete, true);
+    assert.strictEqual(mid.deleteTitle, 'Delete selected barline');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
