@@ -65,6 +65,12 @@ export const S = {
     tempoMapMode: false,
     tempoSel: -1,
     tempoHover: -1,
+    // Multi-selected barlines (PR 5a) — a Set of downbeat indices into S.beats,
+    // the S.drumSel pattern. SEPARATE from tempoSel (the single focus that
+    // inspector/tap/lock/modulate/suggest key on): Shift+click a range, marquee
+    // on empty grid, or Ctrl+A add here. Index-based, so it is CLEARED (never
+    // remapped) on any topology change (TempoGridCmd) and on mode exit.
+    tempoSelMulti: new Set(),
 
     // View
     scrollX: 0,   // seconds

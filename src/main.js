@@ -70,7 +70,7 @@ import {
 } from './arrangement.js';
 import {
     _activeArrangementExceedsArchiveLimit, _editorLoadsInFlight, _resetOffsetUI,
-    editorHideSaveFormatModal, editorSaveAs, editorSaveAsSloppakConfirm, filterSongs, loadCDLC,
+    editorHideSaveFormatModal, editorSave, editorSaveAs, editorSaveAsSloppakConfirm, filterSongs, loadCDLC,
     saveCDLC, showLoadModal
 } from './file-ops.js';
 import {
@@ -548,6 +548,17 @@ window.editorToggleShortcutPanel = editorToggleShortcutPanel;
 window.editorRunShortcutCommand = editorRunShortcutCommand;
 window.editorHideTabPreview = editorHideTabPreview;
 
+// User Guide modal (Help ▸ User Guide) — a read-only reference lens; toggles the
+// overlay's hidden class like the other editor modals. Content is static HTML in
+// screen.html (canonical copy: docs/USER-GUIDE.md). Wired to window so the Help
+// menu's fn-item can reach it and the model's fns gate sees it.
+window.editorToggleUserGuide = (force) => {
+    const modal = document.getElementById('editor-user-guide-modal');
+    if (!modal) return;
+    const show = force === undefined ? modal.classList.contains('hidden') : !!force;
+    modal.classList.toggle('hidden', !show);
+};
+
 window.editorHideRecordMidiModal = editorHideRecordMidiModal;
 window.editorRecordMidiDeviceChanged = editorRecordMidiDeviceChanged;
 window.editorChordSetCaged = editorChordSetCaged;
@@ -701,6 +712,11 @@ _globalListeners.add(document, 'keydown', (e) => {
         hideAddNote();
         hideContextMenu();
         window.editorHideLoadModal();
+        // The User Guide is NOT closed here: this listener registers at import
+        // time, so it runs before input.js onKeyDown — closing the guide here
+        // would blind onKeyDown's read-only-lens gate (it would read the modal
+        // as already closed and let Escape fall through to tempo/suggest
+        // handlers). The gate owns Escape-close for the guide.
     }
 });
 
@@ -1263,9 +1279,29 @@ window.editorShowLoadModal = showLoadModal;
 window.editorHideLoadModal = () => document.getElementById('editor-load-modal').classList.add('hidden');
 window.editorFilterSongs = filterSongs;
 window.editorLoadFile = (f) => { window.editorHideLoadModal(); loadCDLC(f); };
-window.editorSave = saveCDLC;
+window.editorSave = editorSave;   // first save → file explorer, then saves to it
 window.editorUndo = () => S.history && S.history.doUndo();
 window.editorRedo = () => S.history && S.history.doRedo();
+// Undo back to the last checkpoint (Ctrl+Alt+Z) — a coarse rewind past a whole
+// tempo-mapping session, a suggested-fit accept, or a barline lock. doUndo()
+// already repaints per step; we just name the result on the status line.
+window.editorUndoToCheckpoint = () => {
+    if (!S.history) return;
+    const r = S.history.undoToCheckpoint();
+    if (r.undone === 0) {
+        // Zero steps with commands still on the stack = the first doUndo was
+        // REFUSED (read-only roll / missing arrangement) and already set an
+        // explanatory status — don't stomp it with "Nothing to undo."
+        if (!S.history.undo.length) setStatus('Nothing to undo.');
+        return;
+    }
+    const n = `${r.undone} step${r.undone === 1 ? '' : 's'}`;
+    setStatus(!r.foundCheckpoint
+        ? 'No earlier checkpoint — undid one step.'
+        : r.label
+            ? `Undid ${n} back to checkpoint: ${r.label}.`
+            : `Undid ${n} — undo refused before reaching the checkpoint.`);
+};
 window.editorTogglePlay = () => {
     // Route stops through the recorder while a take is active so the
     // spacebar (or any other transport caller) finalizes the recording
@@ -1890,7 +1926,7 @@ function _editorMovePart(dir) {
     // part via the now-stale `arrangement_index`. Refuse here too so the
     // command palette / keyboard paths can't bypass the hidden buttons.
     if (S.format !== 'sloppak') {
-        setStatus('Reordering parts is only available for Sloppak songs.');
+        setStatus('Reordering tracks is only available for Sloppak songs.');
         return true;
     }
     const from = S.currentArr;
@@ -1908,7 +1944,7 @@ function _editorMovePart(dir) {
     updateArrangementSelector();
     draw();
     updateStatus();
-    setStatus(`Moved “${moved.name || 'part'}” ${dir < 0 ? 'earlier' : 'later'} — the order persists on save`);
+    setStatus(`Moved “${moved.name || 'track'}” ${dir < 0 ? 'earlier' : 'later'} — the order persists on save`);
     return true;
 }
 window.editorMovePart = _editorMovePart;

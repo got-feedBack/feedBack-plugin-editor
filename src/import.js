@@ -839,7 +839,7 @@ export function _maybeOfferMidiTempoMap(tempoMap, onDone) {
     const group = document.createElement('div');
     group.className = 'mb-4';
     group.appendChild(mk('midi', 'Use MIDI tempo map', 'Replace the project timeline with the bars and tempos from this file.'));
-    group.appendChild(mk('keep', 'Keep project timing', 'Leave the current timeline untouched; only add the imported part.'));
+    group.appendChild(mk('keep', 'Keep project timing', 'Leave the current timeline untouched; only add the imported track.'));
     inner.appendChild(group);
 
     const buttons = document.createElement('div');

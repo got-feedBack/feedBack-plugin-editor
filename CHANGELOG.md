@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The first Save of a session now opens the file explorer** (the same native
+  picker as Save As), so you choose where the `.feedpak` lands instead of it
+  going somewhere implicit. Once you've picked a location, later saves (Ctrl+S /
+  the Save button) write straight to it — no re-prompt. Where the File System
+  Access API isn't available, Save falls back to the plain library save as
+  before (never a download loop). Programmatic saves (the Loop-in-3D handoff,
+  the host save hook, build) are unaffected — only the user's Save routes
+  through the picker. Sessions that can't complete the picker flow — create
+  mode (no library file to export yet; use Build) and authoring-directory
+  sloppaks (no packed file for the export route to serve) — keep the plain
+  library save instead of prompting for a destination that would then fail.
+- **Tempo Map legibility pass.** The bottom HUD strip now carries a **colour
+  legend** (mapped · selected · locked · suggested · unmapped) using the exact
+  pole colours, so the grid's vocabulary is self-explanatory; it only draws when
+  it clears the guidance text, never overlapping it. The **Unmapped tail** — the
+  recording past the last confirmed downbeat, which carries no fitted tempo — is
+  now drawn as a hatched wash with an "Unmapped" label in the grid. **Lock copy
+  corrected**: the old "global tempo re-fits will hold this beat" implied you had
+  to lock a barline to keep an edit — you don't. It now reads "Lock: hold this
+  barline's time through automatic re-fits (Fit tempo, Suggest, Modulate). Your
+  manual edits are always kept — locking is not needed to save them." across the
+  right-click item (tooltip) and the S-key status. Finally, user-facing "sync
+  point" wording is retired in favour of **"barline"** (inspector hints, delete
+  titles, lock/status messages); "sync point" stays only as internal/export
+  vocabulary.
+
+- **"Parts" renamed to "Tracks" throughout the UI.** The multi-track surface is
+  now called **Tracks**, matching how DAWs and tab editors (Guitar Pro,
+  TuxGuitar, Songsterr) name it. Renamed the toolbar group + its View-menu
+  toggle, the **Track** menu (was Part) and the Add-menu header, the transport
+  **Tracks** overview pill, the mixer panel header + its empty/fallback strip
+  names ("Track 1"…), the rename dialog ("Rename Track"), and every user-facing
+  tooltip / status message ("Reordering tracks…", "Keys tracks always use the
+  piano roll", etc.). Purely user-facing copy — the internal `part`/`arr` model,
+  command ids (`renamePart`, `movePart*`, `togglePartsView`), and toolbar id
+  (`parts`) are unchanged, so shortcuts, saves, and pack data are unaffected.
+
 ### Fixed
 
 - **Whole-song tempo edits silently corrupted multi-part songs.** Sync tempo,
@@ -38,6 +77,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (this seam collides on every chrome PR; now it's guarded).
 
 ### Added
+
+- **User Guide** — a task-oriented, end-user guide to charting in the editor
+  (start a project, the workspace, play/navigate, edit notes & techniques,
+  parts, tempo mapping, drums, structure, save/build, shortcut essentials).
+  It lives in the repo as `docs/USER-GUIDE.md` and opens in-app from
+  **Help ▸ User Guide** as a read-only modal (Esc or click-outside to close;
+  keys shown for the default FeedBack profile). Both are illustrated with
+  captioned screenshots (workspace, New… dialog, timeline, Tempo Map mode,
+  drum import) under `assets/guide/`. The in-app copy mirrors the doc; a
+  `menu_model` test pins the menu item and its dispatch.
+- **Undo to last checkpoint** (`Ctrl+Alt+Z`, Edit ▸ Undo to last checkpoint).
+  Checkpoints are coarse rewind points stamped automatically at milestones —
+  entering Tempo Map, accepting a suggested fit, locking/unlocking a barline —
+  so a single keystroke can undo a whole tempo-mapping session at once instead
+  of tapping Ctrl+Z through every step. The status line names what it unwound
+  to. Degrades gracefully: with no checkpoint in range it undoes one step (and
+  says so), a checkpoint dropped by the undo cap or a session reset just falls
+  back to that, and a refused undo can never spin.
+
+- **Tempo & meter markers on the ruler.** Sparse labeled chips now show where the
+  tempo changes (e.g. `90 BPM`) and where the meter changes (e.g. `3/4`) through
+  the song, so a variable tempo map is legible at a glance. They're **derived
+  purely from the beat grid** — zero new storage, memoized on the edit
+  generation — so they can never drift from the actual tempo/meter. (Authored
+  markers that the grid can't express — tempo ramps, meter groupings like
+  `7/8 (2+2+3)`, fermata holds, and per-marker provenance — are scoped in
+  feedpak-spec#51 and come later.)
+- **Select and delete multiple barlines at once** in Tempo Map mode. Shift-click
+  a second barline to select the contiguous range, drag a box on empty grid to
+  rubber-band-select, or Ctrl+A to select every barline; the selection washes
+  amber. Delete (or right-click ▸ "Delete N barlines") demotes them all in one
+  undoable step — the first and last barline are always kept (they bound the
+  map). Escape clears the selection. The single focused barline (BPM / tap /
+  lock / modulate / suggest) is unchanged; the multi-selection is separate and
+  is dropped on any grid-topology change.
 
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:

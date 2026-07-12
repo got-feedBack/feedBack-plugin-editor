@@ -33,7 +33,7 @@ const CTX = { tempoMapMode: false, hasAudio: true, fns: allFns };
 
 t('nine menus, charrette order, Tempo/Grid is top-level', () => {
     assert.deepStrictEqual(EDITOR_MENUS.map((m) => m.title),
-        ['File', 'Edit', 'Add', 'Note', 'Part', 'View', 'Transport', 'Tempo/Grid', 'Help']);
+        ['File', 'Edit', 'Add', 'Note', 'Track', 'View', 'Transport', 'Tempo/Grid', 'Help']);
 });
 
 t('every registry-backed item resolves to a live registry id', () => {
@@ -92,6 +92,20 @@ t('audio-only items HIDE (not grey) without a recording', () => {
     const has = (model, label) => model.flatMap((m) => m.items).some((i) => i.label === label);
     assert.strictEqual(has(withAudio, 'Sync tempo to audio'), true);
     assert.strictEqual(has(noAudio, 'Sync tempo to audio'), false);
+});
+
+t('Help ▸ User Guide surfaces, enabled, and dispatches to its toggle', () => {
+    const model = _menuModelPure(EDITOR_MENUS, rows, CTX);
+    const help = model.find((m) => m.title === 'Help');
+    const it = help.items.find((i) => i.label === 'User Guide');
+    assert.ok(it, 'Help menu offers a User Guide item');
+    assert.strictEqual(it.disabled, false, 'enabled when its window fn is wired');
+    assert.deepStrictEqual(it.dispatch, { fn: 'editorToggleUserGuide' });
+    // …and greys (never crashes) when the window fn is absent.
+    const noFn = _menuModelPure(EDITOR_MENUS, rows, { ...CTX, fns: new Set() });
+    const gated = noFn.find((m) => m.title === 'Help').items.find((i) => i.label === 'User Guide');
+    assert.strictEqual(gated.disabled, true);
+    assert.strictEqual(gated.dispatch, null);
 });
 
 t('a missing window entry point greys its item instead of crashing', () => {

@@ -265,6 +265,16 @@ export function initAnchorResolve() {
     // teardown-registered.
     host.addGlobalListener(document, 'keydown', (e) => {
         if (!sweep) return;
+        // A read-only lens modal (Tab preview, User Guide) sitting over the
+        // sweep owns the keyboard: accepting/ending a sweep the charter cannot
+        // see would mutate behind the overlay. This handler runs capture-phase,
+        // BEFORE onKeyDown's lens gates, so it must bail itself — the event
+        // then bubbles to the gates, which swallow or close as usual.
+        const lensOpen = ['editor-tab-preview-modal', 'editor-user-guide-modal'].some((id) => {
+            const m = document.getElementById(id);
+            return !!(m && !m.classList.contains('hidden'));
+        });
+        if (lensOpen) return;
         // Modifier chords pass through untouched — Ctrl/Cmd+A stays select-all.
         if (e.ctrlKey || e.metaKey || e.altKey) return;
         const k = e.key;

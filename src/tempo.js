@@ -26,7 +26,7 @@ import { _drumLaneIdxForPiece, _drumPieceCount } from './drum.js';
 import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
 import { host } from './host.js';
 import { lanes } from './lanes.js';
-import { S } from './state.js';
+import { S, editGen } from './state.js';
 import {
     _suggestActive, _suggestApplyPure, _suggestAvgConf, _suggestDismiss,
     _suggestHitAt, _suggestHudTextPure, _suggestProposals, _suggestRegenerateFrom,
@@ -41,9 +41,78 @@ import { _editorPromptText, setStatus } from './ui.js';
 // ════════════════════════════════════════════════════════════════════
 
 const TEMPO_HUD_H = 26;        // bottom strip height in tempo-map mode
-const TEMPO_POLE_HALF = 6;     // sync-point pole grab half-width (px)
+const TEMPO_POLE_HALF = 6;     // barline pole grab half-width (px)
 const SUGGEST_HANDLE_TOP = 16; // ghost handle band offset (below pole handles)
 const SUGGEST_HANDLE_H = 11;   // ghost handle band height
+
+// HUD legend (charrette UX P6): the pole vocabulary spelled out at the right end
+// of the tempo HUD strip, using the EXACT colours _tempoMapDraw paints the poles
+// with. Module const — no per-frame allocation.
+const TEMPO_LEGEND = [
+    { label: 'mapped',    kind: 'fill',  color: '#94a3b8' },
+    { label: 'selected',  kind: 'fill',  color: '#fbbf24' },
+    { label: 'locked',    kind: 'fill',  color: '#34d399' },
+    { label: 'suggested', kind: 'ghost', color: 'rgba(251,191,36,0.85)' },
+    { label: 'unmapped',  kind: 'hatch', color: '#64748b' },
+];
+
+// Diagonal 45° hatch inside a rect — the shared "no tempo fitted here" texture
+// for the Unmapped tail wash and the legend's `unmapped` swatch. Clips so the
+// lines don't bleed past the rect; the save/restore is the only per-call cost.
+function _tempoHatchRect(x, y, ww, hh, stroke, gap = 6, alpha = 0.5) {
+    if (ww <= 0 || hh <= 0) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, ww, hh);
+    ctx.clip();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let d = -hh; d < ww; d += gap) {
+        ctx.moveTo(x + d, y + hh);
+        ctx.lineTo(x + d + hh, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+}
+
+// Paint the pole-colour legend right-aligned in the HUD strip — but only when it
+// clears the guidance text to its left (guidanceEndX), so the two never collide
+// on a narrow canvas (the legend simply drops out, the guidance stays).
+function _tempoDrawLegend(w, gridBottom, guidanceEndX) {
+    const midY = gridBottom + TEMPO_HUD_H / 2;
+    const SW = 11, GAP = 4, ITEM_GAP = 13, PAD = 10;
+    ctx.font = '10px sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    let total = 0;
+    for (const it of TEMPO_LEGEND) total += SW + GAP + ctx.measureText(it.label).width + ITEM_GAP;
+    total -= ITEM_GAP;
+    let x = w - PAD - total;
+    if (x < guidanceEndX + 18) return;   // not enough room beside the guidance — skip
+    const sy = midY - SW / 2;
+    for (const it of TEMPO_LEGEND) {
+        if (it.kind === 'fill') {
+            ctx.fillStyle = it.color;
+            ctx.fillRect(x, sy, SW, SW);
+        } else if (it.kind === 'ghost') {
+            ctx.setLineDash([3, 2]);
+            ctx.strokeStyle = it.color;
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(x + 0.5, sy + 0.5, SW - 1, SW - 1);
+            ctx.setLineDash([]);
+        } else {
+            ctx.strokeStyle = '#334155';
+            ctx.strokeRect(x + 0.5, sy + 0.5, SW - 1, SW - 1);
+            _tempoHatchRect(x, sy, SW, SW, it.color, 3, 0.85);
+        }
+        x += SW + GAP;
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(it.label, x, midY);
+        x += ctx.measureText(it.label).width + ITEM_GAP;
+    }
+}
 
 // Dimmed, non-interactive reference layer for tempo-map mode: the
 // current arrangement's notes (spread by string) and the drum_tab
@@ -170,10 +239,62 @@ export function _tempoMapDraw(w, h) {
         ctx.stroke();
     }
 
+    // Unmapped tail (design doc: the last CONFIRMED downbeat ends the mapped
+    // range; the recording past it carries no fitted tempo). Hatched wash +
+    // label, drawn under the notes/poles so they stay legible. Runs from the last
+    // downbeat to the end of the grid (or the audio, whichever is later).
+    let _lastDbTime = null;
+    for (let i = S.beats.length - 1; i >= 0; i--) {
+        if (S.beats[i].measure > 0) { _lastDbTime = S.beats[i].time; break; }
+    }
+    if (_lastDbTime !== null) {
+        const tailEndT = Math.max(S.beats[S.beats.length - 1].time, Number(S.duration) || 0);
+        if (tailEndT > _lastDbTime + 1e-6) {
+            const x0 = Math.max(LABEL_W, timeToX(_lastDbTime));
+            const x1 = Math.min(w, timeToX(tailEndT));
+            const top = (TIMELINE_TOP + WAVEFORM_H);
+            if (x1 > x0 + 2) {
+                ctx.fillStyle = 'rgba(100,116,139,0.06)';
+                ctx.fillRect(x0, top, x1 - x0, gridBottom - top);
+                _tempoHatchRect(x0, top, x1 - x0, gridBottom - top, '#64748b', 8, 0.10);
+                if (x1 - x0 > 66) {
+                    ctx.fillStyle = '#64748b';
+                    ctx.font = 'bold 10px monospace';
+                    ctx.textAlign = 'left';
+                    ctx.textBaseline = 'top';
+                    ctx.fillText('Unmapped', x0 + 6, top + 6);
+                }
+            }
+        }
+    }
+
     // Dimmed reference layer — the current arrangement's notes + drum
     // hits, fixed at their absolute times so the user can drag the grid
     // to line up with them (and the waveform).
     _tempoDrawReferenceNotes(w, gridBottom, visibleStart, visibleEnd);
+
+    // Multi-selected barlines (PR 5a): a light amber wash for each contiguous
+    // selected downbeat run. Disjoint selections must not fill the gaps.
+    if (S.tempoSelMulti && S.tempoSelMulti.size) {
+        for (const run of _tempoSelectedDownbeatRunsPure(S.beats, S.tempoSelMulti)) {
+            const first = S.beats[run[0]], last = S.beats[run[run.length - 1]];
+            if (!first || !last) continue;
+            const xa = Math.max(LABEL_W, timeToX(first.time)), xb = Math.min(w, timeToX(last.time));
+            if (xb > xa) {
+                ctx.fillStyle = 'rgba(251,191,36,0.10)';
+                ctx.fillRect(xa, (TIMELINE_TOP + WAVEFORM_H), xb - xa, gridBottom - (TIMELINE_TOP + WAVEFORM_H));
+            }
+        }
+    }
+    // Marquee rubber-band while box-selecting downbeats on empty grid.
+    if (S.drag && S.drag.type === 'tempo-marquee' && S.drag.moved) {
+        const xa = Math.min(S.drag.startX, S.drag.curX), xb = Math.max(S.drag.startX, S.drag.curX);
+        ctx.fillStyle = 'rgba(251,191,36,0.08)';
+        ctx.fillRect(xa, (TIMELINE_TOP + WAVEFORM_H), xb - xa, gridBottom - (TIMELINE_TOP + WAVEFORM_H));
+        ctx.strokeStyle = 'rgba(251,191,36,0.5)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(xa + 0.5, (TIMELINE_TOP + WAVEFORM_H) + 0.5, xb - xa - 1, gridBottom - (TIMELINE_TOP + WAVEFORM_H) - 1);
+    }
 
     // Measures: per-measure labels + draggable sync-point poles.
     const measures = _tempoMeasures();
@@ -206,6 +327,10 @@ export function _tempoMapDraw(w, h) {
         if (x >= LABEL_W && x <= w) {
             const sel = (m.i === S.tempoSel);
             const hov = (m.i === S.tempoHover);
+            // A multi-selected barline (PR 5a) reads amber like the focus, but
+            // without the thick focus halo (that stays unique to tempoSel).
+            const inMulti = !!(S.tempoSelMulti && S.tempoSelMulti.has(m.i));
+            const amber = sel || inMulti;
             // Beat-lock: a locked sync point renders EMERALD — its time is held
             // by global tempo re-fits (detect / modulate / re-space). The
             // selection halo still shows through, so lock ≠ selection.
@@ -218,13 +343,13 @@ export function _tempoMapDraw(w, h) {
                 ctx.lineTo(x, gridBottom);
                 ctx.stroke();
             }
-            ctx.strokeStyle = locked ? '#34d399' : sel ? '#fbbf24' : hov ? '#93c5fd' : '#64748b';
+            ctx.strokeStyle = locked ? '#34d399' : amber ? '#fbbf24' : hov ? '#93c5fd' : '#64748b';
             ctx.lineWidth = sel ? 3 : 2;
             ctx.beginPath();
             ctx.moveTo(x, (TIMELINE_TOP + WAVEFORM_H));
             ctx.lineTo(x, gridBottom);
             ctx.stroke();
-            ctx.fillStyle = locked ? '#34d399' : sel ? '#fbbf24' : hov ? '#93c5fd' : '#94a3b8';
+            ctx.fillStyle = locked ? '#34d399' : amber ? '#fbbf24' : hov ? '#93c5fd' : '#94a3b8';
             ctx.fillRect(x - TEMPO_POLE_HALF, (TIMELINE_TOP + WAVEFORM_H), TEMPO_POLE_HALF * 2, 13);
             ctx.fillStyle = '#0c0c1c';
             ctx.font = 'bold 9px monospace';
@@ -280,9 +405,12 @@ export function _tempoMapDraw(w, h) {
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(_suggestActive()
+    const hudStr = _suggestActive()
         ? _suggestHudTextPure(_suggestProposals().length, _suggestAvgConf(), _suggestStopReason())
-        : _tempoMapHudTextPure(measures.length, w), LABEL_W + 6, hudY);
+        : _tempoMapHudTextPure(measures.length, w);
+    ctx.fillText(hudStr, LABEL_W + 6, hudY);
+    // Pole-colour legend at the right end — only when it clears the guidance text.
+    _tempoDrawLegend(w, gridBottom, LABEL_W + 6 + ctx.measureText(hudStr).width);
 }
 
 /* @pure:tempo-map-guidance:start */
@@ -328,8 +456,8 @@ export function _tempoSyncInspectorStatePure(measures, selectedIndex) {
             signatureDisabled: true,
             canInsert: rows.length > 0,
             canDelete: false,
-            deleteTitle: 'Select an interior sync point to delete it',
-            hint: 'Select a sync point on the Tempo Map grid.',
+            deleteTitle: 'Select an interior barline to delete it',
+            hint: 'Select a barline on the Tempo Map grid.',
         };
     }
     const numerator = Math.max(1, Math.min(16, Number(selected.beats) || 4));
@@ -353,7 +481,7 @@ export function _tempoSyncInspectorStatePure(measures, selectedIndex) {
         canDelete,
         deleteTitle: canDelete
             ? 'Delete selected barline'
-            : 'First and final sync points cannot be deleted',
+            : 'First and final barlines cannot be deleted',
         hint: hasBpm
             ? `${numerator}/${denominator}`
             : `${numerator}/${denominator} - final measure BPM needs a closing downbeat.`,
@@ -494,6 +622,7 @@ export function _editorToggleTempoMapMode() {
     S.tempoMapMode = !S.tempoMapMode;
     S.tempoSel = -1;
     S.tempoHover = -1;
+    if (S.tempoSelMulti) S.tempoSelMulti.clear();   // multi-select is mode-scoped (PR 5a)
     _tapTempo = null;   // abandon any pending tap run on mode change
     _suggestDismiss();  // proposals are mode-scoped — never survive an exit
     if (S.tempoMapMode) {
@@ -504,6 +633,10 @@ export function _editorToggleTempoMapMode() {
         host.hideContextMenu();
         host.hideAddNote();
         S.sel.clear();
+        // A tempo-mapping session is a coarse rewind unit: stamp a checkpoint so
+        // Ctrl+Alt+Z can undo the whole session at once. Entering the mode is not
+        // itself a history event, so the stamp lands on the last edit before it.
+        if (S.history) S.history.checkpoint('Tempo Map session');
     }
     _refreshTempoMapButton();
     host.refreshDrumEditButton();
@@ -694,6 +827,12 @@ export function _tempoMapOnMouseDown(e, x, y) {
         if (gi >= 0) {
             const applied = _suggestApplyPure(S.beats, _suggestProposals(), gi);
             if (applied) {
+                // Accepting a fit is a coarse rewind unit: stamp the state just
+                // BEFORE the accept (undoToCheckpoint lands ON the stamped
+                // command, keeping it applied), so Ctrl+Alt+Z rewinds the accept
+                // — and any edits after it — in one step. On an empty stack the
+                // stamp no-ops; the single-undo fallback still covers the accept.
+                S.history.checkpoint('Suggest fit');
                 S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })), applied, 'suggest-accept'));
                 S.tempoSel = gi;
                 // Forward regeneration: the accepted barline is now the
@@ -712,9 +851,20 @@ export function _tempoMapOnMouseDown(e, x, y) {
 
     // Click a sync-point pole to select it and start a drag.
     const hit = _tempoSyncAtX(x, y);
-    if (hit !== S.tempoSel) _tapTempo = null;   // selection moved — drop stale tap run
-    S.tempoSel = hit;
     if (hit >= 0) {
+        // Shift+click extends a contiguous range of downbeats from the current
+        // focus to the clicked pole into the multi-selection (PR 5a). No drag.
+        if (e.shiftKey && S.tempoSel >= 0 && S.beats[S.tempoSel] && S.beats[S.tempoSel].measure > 0) {
+            _tempoSelectDownbeatRange(S.tempoSel, hit);
+            S.tempoSel = hit;
+            _tapTempo = null;
+            host.draw();
+            setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
+            return;
+        }
+        if (hit !== S.tempoSel) _tapTempo = null;   // selection moved — drop stale tap run
+        S.tempoSel = hit;
+        if (S.tempoSelMulti) S.tempoSelMulti.clear();   // plain pole click = single focus
         S.drag = {
             type: 'tempo-sync',
             beatIdx: hit,
@@ -725,11 +875,13 @@ export function _tempoMapOnMouseDown(e, x, y) {
         host.draw();
         return;
     }
+    S.tempoSel = -1;
     // No pole under the cursor — try an individual (sub-)beat tick for a
     // rubato drag: re-time one beat inside its measure without touching
     // the downbeats. Essential for hand-syncing accel/rit within a bar.
     const beatHit = _tempoSubBeatAtX(x, y);
     if (beatHit >= 0) {
+        _tapTempo = null;
         S.drag = {
             type: 'tempo-beat',
             beatIdx: beatHit,
@@ -737,7 +889,12 @@ export function _tempoMapOnMouseDown(e, x, y) {
             origBeats: S.beats.map(b => ({ ...b })),
             moved: false,
         };
+        host.draw();
+        return;
     }
+    // Empty grid → marquee box-select of downbeats (PR 5a). Deferred 3px like the
+    // drum editor: a stationary press just clears (below), a drag rubber-bands.
+    S.drag = { type: 'tempo-marquee', startX: x, startY: y, curX: x, curY: y, shift: e.shiftKey, moved: false };
     host.draw();
 }
 
@@ -748,9 +905,9 @@ export function _tempoMapOnContextMenu(e) {
     const menu = document.getElementById('editor-context-menu');
     if (!menu) return;
     const onPole = _tempoSyncAtX(x, y);
-    const mkBtn = (action, label, cls) =>
+    const mkBtn = (action, label, cls, title) =>
         `<button class="w-full text-left px-3 py-1 text-xs hover:bg-dark-500 ${cls || ''}" `
-        + `data-action="${action}">${label}</button>`;
+        + `data-action="${action}"${title ? ` title="${title}"` : ''}>${label}</button>`;
     let html = '';
     if (onPole >= 0) {
         const cur = _tempoMeasureBeatCount(onPole);
@@ -765,8 +922,13 @@ export function _tempoMapOnContextMenu(e) {
         if (_firstPole && onPole === _firstPole.i && cur > 1) html += mkBtn('pickup', 'Set pickup (partial first bar)…');
         html += '<div class="border-t border-gray-700 my-1"></div>';
         html += mkBtn('togglelock',
-            (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock sync point' : 'Lock sync point');
-        html += mkBtn('delete', 'Delete barline', 'text-red-400');
+            (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
+            '', LOCK_TOOLTIP);
+        // With a multi-selection, offer bulk delete only for deletable interior barlines.
+        const nMulti = _tempoDeletableBarlineIndicesPure(S.beats, S.tempoSelMulti).length;
+        html += (nMulti > 1)
+            ? mkBtn('delete-multi', `Delete ${nMulti} barlines`, 'text-red-400')
+            : mkBtn('delete', 'Delete barline', 'text-red-400');
     } else {
         html += mkBtn('insert', 'Mark barline here');
     }
@@ -776,7 +938,8 @@ export function _tempoMapOnContextMenu(e) {
             host.hideContextMenu();
             const a = btn.dataset.action;
             if (a === 'pickup') { _tempoPromptPickup(); return; }
-            if (a === 'delete') _tempoDeleteSyncPoint(onPole);
+            if (a === 'delete-multi') _tempoDeleteSelection();
+            else if (a === 'delete') _tempoDeleteSyncPoint(onPole);
             else if (a === 'togglelock') { S.tempoSel = onPole; _editorToggleSyncLock(); }
             else if (a === 'insert') _tempoInsertSyncPoint(xToTime(x));
             else if (a === 'bpmedit') _tempoPromptMeasureBpm(onPole);
@@ -907,7 +1070,7 @@ export function _tempoDeleteSyncPoint(beatIdx) {
     const dbIdx = [];
     for (let i = 0; i < beats.length; i++) if (beats[i].measure > 0) dbIdx.push(i);
     if (dbIdx[0] === beatIdx || dbIdx[dbIdx.length - 1] === beatIdx) {
-        setStatus("Can't delete the first or last sync point.");
+        setStatus("Can't delete the first or last barline.");
         return;
     }
     const oldBeats = beats.map(b => ({ ...b }));
@@ -917,6 +1080,115 @@ export function _tempoDeleteSyncPoint(beatIdx) {
     S.history.exec(new TempoGridCmd(oldBeats, newBeats, 'delete'));
     S.tempoSel = -1;
     host.draw();
+}
+
+// ── Barline multi-select: range / marquee / bulk delete (PR 5a) ──────
+
+// Add the contiguous downbeat range [a,b] to the multi-selection (Shift+click).
+export function _tempoSelectDownbeatRange(a, b) {
+    if (!S.tempoSelMulti) S.tempoSelMulti = new Set();
+    const beats = S.beats || [];
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    for (let i = lo; i <= hi; i++) {
+        if (beats[i] && beats[i].measure > 0) S.tempoSelMulti.add(i);
+    }
+}
+
+// Downbeat indices whose time falls in [tLo, tHi] — the marquee hit math. Pure.
+export function _tempoMarqueeDownbeatsPure(beats, tLo, tHi) {
+    const out = [];
+    if (!Array.isArray(beats)) return out;
+    const lo = Math.min(tLo, tHi), hi = Math.max(tLo, tHi);
+    for (let i = 0; i < beats.length; i++) {
+        const b = beats[i];
+        if (b && b.measure > 0 && b.time >= lo && b.time <= hi) out.push(i);
+    }
+    return out;
+}
+
+// Selected downbeats grouped into contiguous downbeat runs, ignoring sub-beats
+// and invalid indices. Used by the canvas wash so disjoint selections don't
+// paint one large min/max slab across unselected bars.
+export function _tempoSelectedDownbeatRunsPure(beats, indices) {
+    const runs = [];
+    if (!Array.isArray(beats)) return runs;
+    const selected = new Set(indices || []);
+    let run = [];
+    for (let i = 0; i < beats.length; i++) {
+        const b = beats[i];
+        if (!b || b.measure <= 0) continue;
+        if (selected.has(i)) {
+            run.push(i);
+        } else if (run.length) {
+            runs.push(run);
+            run = [];
+        }
+    }
+    if (run.length) runs.push(run);
+    return runs;
+}
+
+// Finalize the marquee drag: box-select the downbeats within the swept X range.
+// Plain replaces the selection, Shift unions; a press that never moved clears
+// (a click-away) — the drum-editor marquee idiom.
+export function _tempoMarqueeOnEnd() {
+    const dg = S.drag;
+    S.drag = null;
+    if (!dg || dg.type !== 'tempo-marquee') { host.draw(); return; }
+    if (!S.tempoSelMulti) S.tempoSelMulti = new Set();
+    if (!dg.moved) {
+        if (!dg.shift) { S.tempoSelMulti.clear(); S.tempoSel = -1; }
+        host.draw();
+        return;
+    }
+    if (!dg.shift) S.tempoSelMulti.clear();
+    for (const i of _tempoMarqueeDownbeatsPure(S.beats, xToTime(dg.startX), xToTime(dg.curX))) {
+        S.tempoSelMulti.add(i);
+    }
+    host.draw();
+    setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
+}
+
+// Demote the given interior downbeats to sub-beats + renumber — the bulk
+// delete's grid transform. Pure; returns { beats, count } or null. Never the
+// first/last downbeat (they bound the mapped range), matching
+// _tempoDeleteSyncPoint's guard generalized to a set.
+export function _tempoDeleteBarlinesPure(beats, indices) {
+    if (!Array.isArray(beats)) return null;
+    const del = new Set(_tempoDeletableBarlineIndicesPure(beats, indices));
+    if (!del.size) return null;
+    const out = beats.map(b => ({ ...b }));
+    for (const i of del) out[i].measure = -1;
+    _tempoRenumberMeasures(out);
+    return { beats: out, count: del.size };
+}
+
+export function _tempoDeletableBarlineIndicesPure(beats, indices) {
+    if (!Array.isArray(beats)) return [];
+    const dbIdx = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) dbIdx.push(i);
+    if (dbIdx.length < 3) return [];   // need at least one interior downbeat
+    const first = dbIdx[0], last = dbIdx[dbIdx.length - 1];
+    return [...new Set(indices || [])]
+        .filter(i => beats[i] && beats[i].measure > 0 && i !== first && i !== last)
+        .sort((a, b) => a - b);
+}
+
+// Del / right-click "Delete N barlines": bulk-demote the multi-selection (or the
+// single focus when nothing is multi-selected) in ONE TempoGridCmd.
+export function _tempoDeleteSelection() {
+    const beats = S.beats || [];
+    const sel = (S.tempoSelMulti && S.tempoSelMulti.size)
+        ? [...S.tempoSelMulti]
+        : (S.tempoSel >= 0 ? [S.tempoSel] : []);
+    const res = _tempoDeleteBarlinesPure(beats, sel);
+    if (!res) { setStatus("Select interior barlines to delete — the first and last can't be removed."); return; }
+    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), res.beats,
+        res.count > 1 ? 'delete-barlines' : 'delete'));
+    S.tempoSel = -1;
+    if (S.tempoSelMulti) S.tempoSelMulti.clear();
+    host.draw();
+    setStatus(res.count > 1 ? `Deleted ${res.count} barlines.` : 'Barline deleted.');
 }
 
 // ── Time signature ──────────────────────────────────────────────────
@@ -1130,6 +1402,9 @@ export class TempoGridCmd {
     exec() {
         S.beats = this.newBeats.map(b => ({ ...b }));
         if (Number.isInteger(this.newSelection)) S.tempoSel = this.newSelection;
+        // Topology changed: barline indices shifted, so the multi-selection (PR
+        // 5a) can't be remapped safely — drop it rather than point at stale beats.
+        if (S.tempoSelMulti) S.tempoSelMulti.clear();
         // Grid re-INDEXES (insert/delete sync-point, time-sig): note SECONDS
         // stay put, but a note's beat coordinate changed (a beat was added /
         // removed before it), so re-lift beats from the unchanged seconds
@@ -1145,6 +1420,7 @@ export class TempoGridCmd {
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
         if (Number.isInteger(this.oldSelection)) S.tempoSel = this.oldSelection;
+        if (S.tempoSelMulti) S.tempoSelMulti.clear();   // topology reverted — drop the stale set
         // Seconds are unchanged; re-lift beats back onto the old indexing.
         _liftAllBeats(S.beats);
         host.loopReliftBeats(S.beats);
@@ -1184,6 +1460,60 @@ export function _tempoHasMultipleMeasureBpmsPure(beats, tolerance) {
     if (bpms.length < 2) return false;
     const first = bpms[0];
     return bpms.some(bpm => Math.abs(bpm - first) > tol);
+}
+
+// ── Derived tempo/meter change markers (design slice 2a, PR 10) ──────
+// ZERO storage: every marker is a PURE function of S.beats (the executable
+// truth — never a second source). A tempo marker sits on a downbeat whose
+// per-measure BPM leaves the current run beyond `tol` (the same 0.01 constant
+// _tempoHasMultipleMeasureBpmsPure uses); a meter marker sits where the
+// numerator (beats/bar) or `den` changes. Bar 1 gets a baseline of each. A
+// trailing partial final bar never emits a spurious meter change.
+// Returns [{ i, time, measure, kind: 'tempo'|'meter', label }], time-sorted.
+export function _tempoMarkersPure(beats, tolerance) {
+    const out = [];
+    if (!Array.isArray(beats) || beats.length < 2) return out;
+    const tol = Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.01;
+    const r3 = v => Math.round(v * 1000) / 1000;
+    const db = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) db.push(i);
+    if (!db.length) return out;
+    let runBpm = null, runNum = null, runDen = null;
+    for (let k = 0; k < db.length; k++) {
+        const i = db[k];
+        const nextI = (k + 1 < db.length) ? db[k + 1] : null;
+        const num = (nextI !== null)
+            ? (nextI - i)
+            : (runNum ?? Math.max(1, beats.length - i));
+        const den = [2, 4, 8, 16].includes(Number(beats[i].den)) ? Number(beats[i].den) : (runDen == null ? 4 : runDen);
+        const bpm = (nextI !== null && beats[nextI].time > beats[i].time)
+            ? r3((num * 60) / (beats[nextI].time - beats[i].time))
+            : runBpm;   // last (open) measure reuses the run's tempo
+        const measure = beats[i].measure;
+        if (bpm !== null && (runBpm === null || Math.abs(bpm - runBpm) > tol)) {
+            out.push({ i, time: beats[i].time, measure, kind: 'tempo', label: `${_tempoFmtBpm(bpm)} BPM` });
+            runBpm = bpm;
+        }
+        const meterChanged = runNum === null || num !== runNum || den !== runDen;
+        if (meterChanged) {
+            out.push({ i, time: beats[i].time, measure, kind: 'meter', label: `${num}/${den}` });
+            runNum = num; runDen = den;
+        }
+    }
+    return out.sort((a, b) => a.time - b.time);
+}
+function _tempoFmtBpm(bpm) {
+    const v = Math.round(bpm * 10) / 10;
+    return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+
+// editGen-memoized marker list for the ruler paint (recomputes only when an
+// edit bumps editGen or S.beats is reassigned by a grid command).
+let _markerCache = { gen: -1, beatsRef: null, value: [] };
+export function _tempoMarkers() {
+    if (_markerCache.gen === editGen && _markerCache.beatsRef === S.beats) return _markerCache.value;
+    _markerCache = { gen: editGen, beatsRef: S.beats, value: _tempoMarkersPure(S.beats, 0.01) };
+    return _markerCache.value;
 }
 
 export function _tempoParseBpmInputPure(value) {
@@ -1489,6 +1819,20 @@ export function _restoreBeatLocks() {
     _applyBeatLocksPure(S.beats, _beatLockParsePure(raw), 0.02);
 }
 
+// Lock copy (charrette P6): the old wording ("global tempo re-fits will hold
+// this beat") read as if locking were needed to KEEP a manual edit. It isn't —
+// edits always persist; a lock only defends a barline's time from the AUTOMATIC
+// re-fits. One source of truth for the right-click tooltip and the S-key status.
+export const LOCK_TOOLTIP =
+    "Lock: hold this barline's time through automatic re-fits (Fit tempo, Suggest, "
+    + 'Modulate). Your manual edits are always kept — locking is not needed to save them.';
+export function _lockStatusTextPure(locked) {
+    return locked
+        ? 'Barline locked — its time is held through automatic re-fits (Fit tempo, '
+          + 'Suggest, Modulate). Your manual edits are always kept.'
+        : 'Barline unlocked.';
+}
+
 // Toggle the lock on the selected barline: a locked anchor's time is held by
 // later global tempo re-fits (see _respaceWithLocksPure). Editor-pref, persisted.
 export function _editorToggleSyncLock() {
@@ -1501,9 +1845,10 @@ export function _editorToggleSyncLock() {
     b.locked = !b.locked;
     _saveBeatLocks();
     host.draw();
-    setStatus(b.locked
-        ? 'Sync point locked — global tempo re-fits will hold this beat.'
-        : 'Sync point unlocked.');
+    // A lock toggle is not a history command, so record the moment as a
+    // checkpoint on the current top-of-undo — Ctrl+Alt+Z can rewind to it.
+    if (S.history) S.history.checkpoint(b.locked ? 'Lock barline' : 'Unlock barline');
+    setStatus(_lockStatusTextPure(b.locked));
     return true;
 }
 
@@ -1686,7 +2031,7 @@ export function _tapTempoHandleKey(e) {
         _tapTempo = null;
         const decision = _tapTempoApplyDecisionPure(t, S.tempoSel, performance.now(), TAP_TEMPO_STALE_MS);
         if (decision === 'stale-selection') {
-            setStatus('Tap tempo cancelled — sync-point selection changed.');
+            setStatus('Tap tempo cancelled — barline selection changed.');
         } else if (decision === 'too-few') {
             setStatus('Tap tempo cancelled — not enough taps.');
         } else if (decision === 'expired') {
@@ -1995,7 +2340,6 @@ export class TempoMapCmd {
         host.updateLoopIn3DBtn();
     }
 }
-
 // Whole-song audio offset (the toolbar "Offset" nudge): a RIGID +delta shift of
 // the entire beat grid, which TempoMapCmd's total lift→reproject carries onto
 // every part — every arrangement's notes / chords / anchors / handshapes /
@@ -2045,4 +2389,3 @@ export class TempoOffsetCmd extends TempoMapCmd {
         this._syncOffsetInput();
     }
 }
-
