@@ -82,22 +82,27 @@ t('rebuild-grid (TempoGridCmd) keeps every note\'s exact seconds; the grid flatt
 // tempo_op_commands.test.mjs): the flatten dialog AWAITS across real time —
 // the overlay traps pointer/keyboard, but an already-in-flight async import
 // can land meanwhile and swap the session/grid, so the choice must be
-// re-validated against the live state before either command executes.
-t('editorSetBPM re-validates session + variable-map after the dialog await', () => {
+// re-validated against the live state before either command executes. PR 9
+// EXTRACTED this flatten flow from editorSetBPM into the shared
+// _editorFlattenSongToBpm (so Song Fit reaches it inside Tempo Map mode), and
+// editorSetBPM now delegates to it — the guard follows the function.
+t('_editorFlattenSongToBpm re-validates the session after the dialog await', () => {
     const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-    const start = src.indexOf('window.editorSetBPM =');
-    assert.ok(start >= 0, 'editorSetBPM must exist');
-    const b = src.slice(start, src.indexOf('window.editorSetTempoSignature ='));
+    const start = src.indexOf('async function _editorFlattenSongToBpm');
+    assert.ok(start >= 0, 'the shared flatten helper must exist');
+    const b = src.slice(start, src.indexOf('window.editorSetBPM ='));
     const awaitAt = b.indexOf('await _editorPromptChoice');
     assert.ok(awaitAt >= 0, 'flatten prompt is awaited');
     const after = b.slice(awaitAt);
     assert.ok(/S\.sessionId !== sessionBefore/.test(after),
         'post-await: bail when the session changed under the dialog');
-    assert.ok(/_tempoHasMultipleMeasureBpmsPure\(S\.beats, 0\.01\)/.test(after),
-        'post-await: re-check the variable-map precondition before applying');
     const execAt = after.indexOf('S.history.exec');
-    assert.ok(after.indexOf('sessionBefore') < execAt,
+    assert.ok(execAt >= 0 && after.indexOf('sessionBefore') < execAt,
         'the re-validation sits BEFORE the command executes');
+    // editorSetBPM keeps the variable-map GATE (only the inline box offers
+    // flatten outside Tempo Map mode) but delegates the flow to the helper.
+    const setBpm = src.slice(src.indexOf('window.editorSetBPM ='), src.indexOf('window.editorSetTempoSignature ='));
+    assert.ok(/await _editorFlattenSongToBpm\(newBPM\)/.test(setBpm), 'editorSetBPM delegates to the shared helper');
 });
 
 t('_tempoFlattenToBpmPure keeps the beat count and anchors at bar 1', () => {

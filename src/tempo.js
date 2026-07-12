@@ -563,14 +563,17 @@ function _ensureTempoSyncInspector() {
     el.innerHTML = '<span class="text-gray-500">Barline:</span>'
         + '<span id="editor-tempo-sync-label" class="text-gray-200 font-medium min-w-[5.5rem]">No selection</span>'
         + '<span id="editor-tempo-sync-hint" class="text-gray-500"></span>'
+        + '<button type="button" id="editor-tempo-sync-songfit" class="px-2 py-0.5 rounded bg-dark-600 text-gray-200 hover:bg-dark-500" title="Song Fit — one place to line the chart up with the recording (shift, fit tempo, or set a constant tempo). The audio never moves.">Song Fit…</button>'
         + '<button type="button" id="editor-tempo-sync-insert" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Mark a barline at the playhead">Mark</button>'
         + '<button type="button" id="editor-tempo-sync-bar1" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Shift the grid, notes and sections so bar 1 lands at the playhead (the audio does not move)">Bar 1 here</button>'
         + '<button type="button" id="editor-tempo-sync-delete" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete selected barline">Delete</button>'
         + '<button type="button" id="editor-tempo-sync-modulate" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Metric modulation: new tempo = current × ratio, from this measure to the next tempo change (M)">Modulate…</button>';
+    const songFitBtn = el.querySelector('#editor-tempo-sync-songfit');
     const insertBtn = el.querySelector('#editor-tempo-sync-insert');
     const bar1Btn = el.querySelector('#editor-tempo-sync-bar1');
     const deleteBtn = el.querySelector('#editor-tempo-sync-delete');
     const modulateBtn = el.querySelector('#editor-tempo-sync-modulate');
+    if (songFitBtn) songFitBtn.onclick = () => { if (typeof window !== 'undefined' && window.editorSongFit) window.editorSongFit(); };
     if (insertBtn) insertBtn.onclick = () => _tempoInsertSyncPoint(S.cursorTime);
     if (bar1Btn) bar1Btn.onclick = () => _tempoSetBar1Here();
     if (deleteBtn) deleteBtn.onclick = () => { if (S.tempoSel >= 0) _tempoDeleteSyncPoint(S.tempoSel); };
