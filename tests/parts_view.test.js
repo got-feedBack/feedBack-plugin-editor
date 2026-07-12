@@ -49,7 +49,7 @@ t('every arrangement becomes a lane; drums appends as its own lane', () => {
 t('an empty drum tab adds no lane; unnamed arrangements get a fallback', () => {
     const parts = _partsListPure([{ notes: [] }], { hits: [] });
     assert.strictEqual(parts.length, 1);
-    assert.strictEqual(parts[0].name, 'Part 1');
+    assert.strictEqual(parts[0].name, 'Track 1');
     assert.deepStrictEqual(_partsListPure(null, null), []);
 });
 

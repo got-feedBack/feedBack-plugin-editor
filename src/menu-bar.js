@@ -71,13 +71,14 @@ export const EDITOR_MENUS = Object.freeze([
     { title: 'Edit', items: [
         { label: 'Undo', fn: 'editorUndo', key: 'Ctrl+Z' },
         { label: 'Redo', fn: 'editorRedo', key: 'Ctrl+Y' },
+        { label: 'Undo to last checkpoint', fn: 'editorUndoToCheckpoint', key: 'Ctrl+Alt+Z' },
         { sep: true },
         { cmd: 'duplicateSelection' },
         { cmd: 'selectLike' },
         { cmd: 'resnapSelection' },
     ] },
     { title: 'Add', items: [
-        { hdr: 'Part' },
+        { hdr: 'Track' },
         { label: 'Drums…', fn: 'editorShowAddDrumsModal' },
         { label: 'Record MIDI…', fn: 'editorShowRecordMidiModal' },
         { sep: true },
@@ -125,7 +126,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleSlap' },
         { cmd: 'cyclePickDirection' },
     ] },
-    { title: 'Part', items: [
+    { title: 'Track', items: [
         { cmd: 'renamePart' },
         { cmd: 'movePartEarlier' },
         { cmd: 'movePartLater' },
@@ -152,7 +153,7 @@ export const EDITOR_MENUS = Object.freeze([
         // from ctx.toolbars at open time, same as accelerators do.
         { hdr: 'Toolbars' },
         { tb: 'file', label: 'File' },
-        { tb: 'parts', label: 'Parts' },
+        { tb: 'parts', label: 'Tracks' },
         { tb: 'edit', label: 'Edit' },
         { tb: 'transport', label: 'Transport' },
         { tb: 'grid', label: 'Grid' },
@@ -232,6 +233,8 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleGridDisplay' },
     ] },
     { title: 'Help', items: [
+        { label: 'User Guide', fn: 'editorToggleUserGuide' },
+        { sep: true },
         { cmd: 'openCommandPalette' },
         { cmd: 'showShortcutHelp' },
         { cmd: 'midiTones' },

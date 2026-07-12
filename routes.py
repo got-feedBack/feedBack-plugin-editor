@@ -3729,6 +3729,10 @@ def setup(app, context):
             "last_touched": time.time(),
         }
         result["session_id"] = session_id
+        # Surface the sloppak form (zip vs authoring directory) so the frontend
+        # only offers the first-save file-explorer flow for sessions that
+        # /session/export can actually serve (it 409s on the directory form).
+        result["sloppak_form"] = (sloppak_state or {}).get("form") or "zip"
         return result
 
     # ── Save edited arrangement back to archive ────────────────────────────

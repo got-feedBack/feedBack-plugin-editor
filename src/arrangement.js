@@ -83,7 +83,7 @@ function _renameGuardPure(oldName, rawNewName, otherNames) {
     if (name === String(oldName || '')) return { ok: false, reason: '', name };  // silent no-op
     const taken = new Set((otherNames || []).map(n => String(n || '').trim().toLowerCase()));
     if (taken.has(name.toLowerCase())) {
-        return { ok: false, reason: `Another part is already named “${name}”.`, name };
+        return { ok: false, reason: `Another track is already named “${name}”.`, name };
     }
     const runtimeMoved = _arrKindPure(oldName) !== _arrKindPure(name);
     const saveMoved = _arrSaveKindPure(oldName) !== _arrSaveKindPure(name);
@@ -92,14 +92,14 @@ function _renameGuardPure(oldName, rawNewName, otherNames) {
         const newLabel = _arrKindLabelPure(name);
         const reason = (oldLabel !== newLabel)
             // A clean instrument change (e.g. guitar → bass, guitar → keys).
-            ? `That name would change the part’s instrument (${oldLabel} → ${newLabel}) — `
-                + 'lane layout and notation still key off the name. Add a new part instead.'
+            ? `That name would change the track’s instrument (${oldLabel} → ${newLabel}) — `
+                + 'lane layout and notation still key off the name. Add a new track instead.'
             // Same label, but the two interpreters disagree on this exact name
             // (e.g. "Piano" → "Electric Piano": the editor keys off the first
             // word and would drop to guitar lanes, while the save still writes
             // keys). Re-laning either way strands notes, so refuse.
             : 'That name is read differently by the editor and the saved file, so it would '
-                + 'change the part’s layout. The editor keys off the FIRST word, the save off '
+                + 'change the track’s layout. The editor keys off the FIRST word, the save off '
                 + 'any keys word — pick a name both agree on.';
         return { ok: false, reason, name };
     }
@@ -135,8 +135,8 @@ export async function editorRenameArrangement() {
     const arr = S.arrangements[S.currentArr];
     if (!arr) return;
     const val = await _editorPromptText({
-        title: 'Rename Part',
-        label: 'Part name (display label — the instrument kind can’t change here)',
+        title: 'Rename Track',
+        label: 'Track name (display label — the instrument kind can’t change here)',
         value: String(arr.name || ''),
     });
     if (val === null) return;
