@@ -6995,6 +6995,11 @@ def setup(app, context):
             "success": True,
             "path": output_path,
             "format": "sloppak",
+            # Library-relative filename (built paks land at the DLC root),
+            # mirroring create_sloppak's response: the frontend keys per-song
+            # editor prefs (e.g. C1 surface memory) by the same filename a
+            # later load/loadCDLC will use.
+            "filename": Path(output_path).name,
         }
 
     # ── Helpers ──────────────────────────────────────────────────────────

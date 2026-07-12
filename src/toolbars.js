@@ -1,5 +1,6 @@
 /* Slopsmith Arrangement Editor — toggleable toolbars + density presets
- * (workspace-shell B5, charrette §2.3 / §3.1 / D-C4).
+ * (workspace-shell B5, charrette §2.3 / §3.1 / D-C4), plus entry-seeded
+ * presets + per-song surface memory (C1, charrette §3.1 / §3.3).
  *
  * The flat toolbar row's divider-groups become named, individually toggleable
  * toolbars. Each group is wrapped in a `.editor-tb` span (`display: contents`,
@@ -19,6 +20,14 @@
  *    auto-show, which keeps its own inner show/hide logic untouched).
  *  - State is an editor-pref blob (localStorage `editorToolbars`), never the
  *    pack. First run (no pref) = Everything, i.e. exactly today's surface.
+ *  - C1 layers PER-SONG surface memory on top (charrette §3.3): every manual
+ *    change ALSO writes `editorSurface:<filename>`, and opening a song
+ *    re-resolves per-song blob → global default. So the global blob is the
+ *    "last manual state = the default" (graduation), and each song lands
+ *    exactly where its tools were left. The starting preset for a NEW song
+ *    is seeded from the create-vs-import LANE (intent, not audio-presence):
+ *    create-from-scratch → Compose, import → Transcribe. A lane seed writes
+ *    the song's memory only, never the global default.
  *  - `Structure` has no toolbar buttons yet (section/phrase ops live in the
  *    menu bar under Add ▸ Markers) — it joins TOOLBAR_GROUPS when it does;
  *    the Transport cluster (loop/claps/click/count) takes its slot for now.
@@ -29,6 +38,7 @@
  */
 
 import { host } from './host.js';
+import { S } from './state.js';
 
 /* @pure:toolbar-state:start */
 // The toggleable toolbars, in row order. `label` is what the View menu and
@@ -129,6 +139,30 @@ export function _toolbarRevealPure(state, id) {
         revealed: { ...state.revealed, [id]: true },
     };
 }
+
+// Per-song surface memory (C1). The key idiom matches the V2 per-part view
+// pref (`editorViewPref:` in keys.js): keyed by library filename, editor-side
+// only, never the pack. Create mode (`S.filename === ''`) has no key yet —
+// its surface lives in memory until Build persists it under the new file.
+export function _surfaceKeyPure(filename) {
+    return filename ? 'editorSurface:' + filename : null;
+}
+
+// Resolve the surface for a song: its own remembered blob when one parses,
+// otherwise the global default (= the last manual state, so graduation on
+// one song propagates to every song without a memory). Partial garbage in a
+// present per-song blob degrades per-field via _toolbarStateLoadPure; only
+// an absent/unparseable blob falls through to global.
+export function _surfaceResolvePure(perSongRaw, globalRaw) {
+    let obj = null;
+    if (typeof perSongRaw === 'string' && perSongRaw) {
+        try { obj = JSON.parse(perSongRaw); } catch (_) { obj = null; }
+    }
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+        return { state: _toolbarStateLoadPure(perSongRaw), source: 'song' };
+    }
+    return { state: _toolbarStateLoadPure(globalRaw), source: 'global' };
+}
 /* @pure:toolbar-state:end */
 
 const PREF_KEY = 'editorToolbars';
@@ -142,8 +176,20 @@ function tbState() {
     return _state;
 }
 
+function _songKey() {
+    let fn = '';
+    try { fn = S.filename || ''; } catch (_) { /* no state wired (tests) */ }
+    return _surfaceKeyPure(fn);
+}
+
+// A manual change is both graduation (the global blob = the default every
+// memory-less song resolves to) and this song's memory (its per-song blob).
 function saveTb() {
-    try { localStorage.setItem(PREF_KEY, JSON.stringify(_state)); } catch (_) { /* blocked storage */ }
+    let json = null;
+    try { json = JSON.stringify(_state); } catch (_) { return; }
+    try { localStorage.setItem(PREF_KEY, json); } catch (_) { /* blocked storage */ }
+    const key = _songKey();
+    if (key) { try { localStorage.setItem(key, json); } catch (_) { /* blocked storage */ } }
 }
 
 // Apply effective visibility to the DOM. A toolbar id can own several
@@ -175,10 +221,15 @@ export function applyToolbarPreset(name) {
 }
 
 // Reset layout = back to the current preset's pure default (clear overrides
-// and reveals; the preset choice itself is kept).
+// and reveals; the preset choice itself is kept). C1 widens it into the
+// charrette's "Reset workspace" rescue: the song's memory is DELETED (not
+// overwritten), so this song follows the global default again until the
+// next manual change re-establishes a memory.
 export function resetToolbarLayout() {
     _state = _toolbarPresetPure(tbState(), tbState().preset);
-    saveTb();
+    try { localStorage.setItem(PREF_KEY, JSON.stringify(_state)); } catch (_) { /* blocked storage */ }
+    const key = _songKey();
+    if (key) { try { localStorage.removeItem(key); } catch (_) { /* blocked storage */ } }
     applyToolbars();
 }
 
@@ -192,6 +243,62 @@ export function revealToolbar(id) {
 export function getToolbarCtx() {
     const state = tbState();
     return { visible: _toolbarVisiblePure(state), preset: state.preset };
+}
+
+// ── Per-song surface memory (C1) ──────────────────────────────────────
+
+// Re-resolve the surface for the song that just loaded (loadCDLC sets
+// S.filename first): its own memory when it has one, the global default
+// otherwise. Loading a song NEVER writes memory — a song you merely open
+// keeps following the default, so later graduation still reaches it; its
+// memory starts with its first manual change (saveTb) or a lane seed.
+export function surfaceOnSongLoaded() {
+    const key = _songKey();
+    if (!key) return;
+    let perSong = null;
+    try { perSong = localStorage.getItem(key); } catch (_) { /* blocked storage */ }
+    let global = null;
+    try { global = localStorage.getItem(PREF_KEY); } catch (_) { /* blocked storage */ }
+    _state = _surfaceResolvePure(perSong, global).state;
+    applyToolbars();
+}
+
+// Lane seed (charrette §3.1): a NEW song's starting preset comes from the
+// entry lane — create-from-scratch → 'compose', import → 'transcribe'. A
+// seed is a starting configuration, not a user choice: it writes the song's
+// memory (when a filename exists) but NEVER the global default. In create
+// mode (no filename yet) it applies in-memory only; editorBuild persists
+// the session's surface under the built filename via surfacePersistFor.
+export function seedSurfacePreset(name) {
+    if (!_hasPreset(name)) return;
+    _state = _toolbarPresetPure(tbState(), name);
+    const key = _songKey();
+    if (key) {
+        try { localStorage.setItem(key, JSON.stringify(_state)); } catch (_) { /* blocked storage */ }
+    }
+    applyToolbars();
+}
+
+// Persist the current surface as `filename`'s memory — the create-session →
+// built-song handoff (editorBuild success), where the surface the user shaped
+// while arranging becomes the new file's memory before it is ever re-opened.
+export function surfacePersistFor(filename) {
+    const key = _surfaceKeyPure(typeof filename === 'string' ? filename : '');
+    if (!key) return;
+    try { localStorage.setItem(key, JSON.stringify(tbState())); } catch (_) { /* blocked storage */ }
+}
+
+// A save that renames the file (archive → sloppak save-as) carries the
+// song's memory to the new name — same idiom as the suggested-mark key
+// migration beside the call site in file-ops.js. Old key left intact (the
+// original file stays on disk).
+export function surfaceMigrateFilename(oldFilename, newFilename) {
+    const from = _surfaceKeyPure(oldFilename), to = _surfaceKeyPure(newFilename);
+    if (!from || !to || from === to) return;
+    try {
+        const v = localStorage.getItem(from);
+        if (v !== null) localStorage.setItem(to, v);
+    } catch (_) { /* blocked storage */ }
 }
 
 // ── Right-click checklist ─────────────────────────────────────────────

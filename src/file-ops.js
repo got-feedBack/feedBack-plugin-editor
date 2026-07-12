@@ -18,6 +18,7 @@ import {
     disposeBackendSession, guardSessionTransition, stopSessionProcesses,
 } from './session-lifecycle.js';
 import { _liftAllBeats, _restoreBeatLocks, _stripBeatsFromSaveBody } from './tempo.js';
+import { surfaceMigrateFilename, surfaceOnSongLoaded } from './toolbars.js';
 import { _editorEscHtml, setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -217,6 +218,9 @@ export async function loadCDLC(filename, options = {}) {
         document.getElementById('editor-song-title').textContent =
             `${S.artist} — ${S.title}`;
         S.createMode = false;
+        // C1 surface memory: land this song's toolbars where they were left
+        // (its remembered surface, or the global default when it has none).
+        surfaceOnSongLoaded();
         document.getElementById('editor-save-btn').disabled = false;
         document.getElementById('editor-save-btn').classList.remove('hidden');
         document.getElementById('editor-build-btn').classList.add('hidden');
@@ -675,6 +679,8 @@ export const editorSaveAsSloppakConfirm = async () => {
                         if (v !== null) localStorage.setItem(_suggestedStorageKeyPure(data.filename, i), v);
                     }
                 } catch (_) { /* localStorage unavailable */ }
+                // The surface memory (C1) rides the same rename.
+                surfaceMigrateFilename(oldFilename, data.filename);
             }
             S.filename = data.filename;
         }

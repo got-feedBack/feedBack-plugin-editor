@@ -18,6 +18,7 @@ globalThis.window = globalThis.window || globalThis;
 globalThis.document = {
     getElementById: () => el,
     createElement: () => el,
+    querySelectorAll: () => [],
     body: el,
     addEventListener: () => {},
     removeEventListener: () => {},

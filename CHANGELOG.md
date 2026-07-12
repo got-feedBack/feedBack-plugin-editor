@@ -22,6 +22,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Entry-seeded workspace presets + per-song surface memory** (workspace-shell
+  C1). A new song's starting toolbar preset now follows the entry lane —
+  create-from-scratch opens the light **Compose** surface, a Guitar Pro / XML
+  project import opens **Transcribe** (aligning the grid to the source is the
+  first task); intent decides, never audio-presence, and a seed never changes
+  your saved default. The workspace is remembered **per song** (editor-side,
+  keyed by filename — never in the pack): opening a song lands your toolbars
+  exactly where you left them for it, songs without a memory follow your last
+  manually-chosen surface, and building a create-mode session hands the surface
+  you shaped to the built file (the archive→sloppak save-as carries it across
+  the rename too). "Reset layout" is now the full workspace rescue: it returns
+  the current preset's pure default and clears the song's memory so the song
+  follows your default again.
+
 - **Assisted tempo mapping — suggest a barline fit from the recording**
   (`docs/TEMPO-MAPPING-DESIGN.md` "Assisted Mapping", first slice). In Tempo
   Map mode, **G** (also `Tempo/Grid ▸ Suggest barline fit`) proposes corrected
