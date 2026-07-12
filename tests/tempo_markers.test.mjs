@@ -44,16 +44,16 @@ t('a within-tolerance drift does NOT emit a new tempo marker (run behaviour)', (
 });
 
 t('a meter change (mid-song) emits a meter marker; the last partial bar does not', () => {
-    // m1 4/4, m2 3/4, m3 back to 4 beats. Downbeats at 0, 4, 7.
+    // m1 4/4, m2 3/4, m3 is unclosed. Downbeats at 0, 4, 7.
     const beats = g([0, 1], [1, -1], [2, -1], [3, -1], [4, 2], [5, -1], [6, -1], [7, 3], [8, -1], [9, -1], [10, -1]);
     const mk = _tempoMarkersPure(beats, 0.01).filter(m => m.kind === 'meter');
-    assert.deepStrictEqual(kinds(mk), ['meter:4/4@0', 'meter:3/4@4', 'meter:4/4@7']);
+    assert.deepStrictEqual(kinds(mk), ['meter:4/4@0', 'meter:3/4@4']);
 });
 
 t('a denominator change emits a meter marker even at the same numerator', () => {
     const beats = g([0, 1, 4], [1, -1], [2, -1], [3, -1], [4, 2, 8], [5, -1], [6, -1], [8, 3, 8], [9, -1], [10, -1], [11, -1]);
-    const mk = _tempoMarkersPure(beats, 0.01).filter(m => m.kind === 'meter').map(m => m.label);
-    assert.ok(mk.includes('4/4') && mk.includes('3/8'), 'den change surfaces: ' + mk.join(','));
+    const mk = _tempoMarkersPure(beats, 0.01).filter(m => m.kind === 'meter');
+    assert.deepStrictEqual(kinds(mk), ['meter:4/4@0', 'meter:3/8@4']);
 });
 
 t('degenerate inputs are safe', () => {

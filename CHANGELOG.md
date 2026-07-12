@@ -48,6 +48,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Whole-song tempo edits silently corrupted multi-part songs.** Sync tempo,
+  the BPM box's constant-tempo rescale, and the audio Offset nudge each mutated
+  the timeline directly — with **no undo** — and moved only the *current*
+  arrangement's plain notes (plus the global beat grid and sections). Every
+  *other* arrangement, and all chords / anchors / handshapes / phrases (and, for
+  the partial paths, the drum tab) were left behind, so a second part or a drum
+  chart drifted out of phase and the change couldn't be undone. All three now
+  route through one command (`TempoMapCmd` / `TempoOffsetCmd`) whose beat-primary
+  lift→reproject is total — every timed object in every part rides the grid — and
+  fully undoable. Sync and rescale now pivot the scale at the first downbeat (or
+  the focused barline) instead of `t=0`, so a song with a pickup / lead-in no
+  longer skews. The applied audio offset moved from a hidden DOM attribute onto
+  command-owned state (`S.appliedOffset`) so undo restores it, and the Sync
+  dialog's duplicate offset field was removed (use the undoable toolbar Offset).
+  New `tests/tempo_op_commands.test.mjs` deep-diffs a two-arrangement song with
+  chords + drums to prove every part moves and undo restores the exact seconds.
+
 - **The editor timeline rendered blank — chart and waveform invisible after
   any load or import.** Two closing `</div>`s were lost at the canvas-wrap
   overlay seam when the sweep bar and the drum-pad strip landed, so the main

@@ -357,11 +357,13 @@ function renderBrowse(data) {
     }
 }
 
-// Reset the offset input and its applied-delta dataset, called when loading
-// any session so _effectiveAudioOffset() doesn't carry over a previous nudge.
+// Reset the offset input and its applied-delta scalar, called when loading any
+// session so _effectiveAudioOffset() doesn't carry over a previous nudge. The
+// applied delta lives on S.appliedOffset now (command-owned), not the DOM input.
 export function _resetOffsetUI() {
+    S.appliedOffset = 0;
     const el = document.getElementById('editor-offset');
-    if (el) { el.value = '0'; el.dataset.applied = '0'; }
+    if (el) el.value = '0';
 }
 
 function _normalizeSongList(raw) {

@@ -1482,7 +1482,9 @@ export function _tempoMarkersPure(beats, tolerance) {
     for (let k = 0; k < db.length; k++) {
         const i = db[k];
         const nextI = (k + 1 < db.length) ? db[k + 1] : null;
-        const num = (nextI !== null) ? (nextI - i) : Math.max(1, beats.length - i);
+        const num = (nextI !== null)
+            ? (nextI - i)
+            : (runNum ?? Math.max(1, beats.length - i));
         const den = [2, 4, 8, 16].includes(Number(beats[i].den)) ? Number(beats[i].den) : (runDen == null ? 4 : runDen);
         const bpm = (nextI !== null && beats[nextI].time > beats[i].time)
             ? r3((num * 60) / (beats[nextI].time - beats[i].time))
@@ -1493,8 +1495,7 @@ export function _tempoMarkersPure(beats, tolerance) {
             runBpm = bpm;
         }
         const meterChanged = runNum === null || num !== runNum || den !== runDen;
-        const trailingPartial = nextI === null && runNum !== null && num < runNum;
-        if (meterChanged && !trailingPartial) {
+        if (meterChanged) {
             out.push({ i, time: beats[i].time, measure, kind: 'meter', label: `${num}/${den}` });
             runNum = num; runDen = den;
         }
@@ -2119,6 +2120,21 @@ export function _makeTimeRemap(oldBeats, newBeats) {
 
 export const _r3 = v => Math.round(v * 1000) / 1000;
 
+// Pivot time for a whole-song rescale / sync (t' = t0 + (t − t0)·scale): the
+// focused barline's time when one is selected (S.tempoSel in tempo-map mode),
+// else the first downbeat, else the grid's first beat. Scaling ABOUT the pivot
+// instead of t=0 keeps that barline fixed — a song with a pickup / lead-in
+// (bar 1 ≠ 0s) no longer drifts under a bare `time *= factor`, the
+// order-of-operations trap the charrette flagged. Pure.
+export function _tempoPivotTimePure(beats, tempoSel) {
+    if (!Array.isArray(beats) || !beats.length) return 0;
+    if (Number.isInteger(tempoSel) && tempoSel >= 0 && tempoSel < beats.length) {
+        return beats[tempoSel].time;
+    }
+    for (const b of beats) if (b.measure > 0) return b.time;
+    return beats[0].time;
+}
+
 // (The ride-scope resolver — _tempoRetimeArrangements / _tempoRideResolvePure /
 // _rebaseTempoRideForRemoval / _tempoRideSet — is gone. Under beat-primary a
 // grid flex reprojects EVERY part from its beat, so "which parts ride" is no
@@ -2132,7 +2148,7 @@ export const _r3 = v => Math.round(v * 1000) / 1000;
 // anchors_user, handshapes (start+end), phrases. `visit(obj, tf, endKind)`:
 //   tf      — the object's seconds field: 'time' | 'start_time' | 't'
 //   endKind — 'none' (a point), 'sustain' (note: time+sustain → beatEnd),
-//             or 'span' (handshape: end_time → beatEnd)
+//             or 'span' (handshape/phrase: end_time → beatEnd)
 // The start-beat field is always `beat`; a duration's end-beat is `beatEnd`.
 // Both are runtime-only caches — _buildSaveBody strips them off the wire.
 export function _eachTimed(visit) {
@@ -2150,7 +2166,12 @@ export function _eachTimed(visit) {
         for (const a of (arr.anchors || [])) visit(a, 'time', 'none');
         for (const a of (arr.anchors_user || [])) visit(a, 'time', 'none');
         for (const hs of (arr.handshapes || [])) visit(hs, 'start_time', 'span');
-        for (const ph of (arr.phrases || [])) visit(ph, 'time', 'none');
+        // Phrases anchor on start_time (input.js authoring, routes.py save) —
+        // NOT `time`; visiting the wrong field left every phrase stranded on
+        // the old timeline through lift/reproject. end_time (present on
+        // server-loaded phrases) rides as a span; when absent, 'span' degrades
+        // to a point, like handshapes.
+        for (const ph of (arr.phrases || [])) visit(ph, 'start_time', 'span');
     }
 }
 
@@ -2264,6 +2285,12 @@ export class TempoMapCmd {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
         this.label = label || 'tempo';
+        // The beat grid is SONG-level state (matching TempoGridCmd) — it opts out
+        // of the read-only-roll lock so Sync / BPM-rescale / Offset (all fired
+        // from the normal toolbar, potentially with a fretted part shown
+        // read-only in the piano roll) aren't silently refused, and undo tags it
+        // -1 rather than to whatever arrangement happened to be active.
+        this.songScope = true;
     }
     exec() {
         // Invariant: oldBeats / newBeats have equal length — TempoMapCmd only
@@ -2311,5 +2338,54 @@ export class TempoMapCmd {
         host.loopReprojectFromBeats(S.beats);
         host.renderLoopStrip();
         host.updateLoopIn3DBtn();
+    }
+}
+// Whole-song audio offset (the toolbar "Offset" nudge): a RIGID +delta shift of
+// the entire beat grid, which TempoMapCmd's total lift→reproject carries onto
+// every part — every arrangement's notes / chords / anchors / handshapes /
+// phrases, the drum tab and sections. (The old path directly shifted only the
+// current arrangement's plain notes plus the global beats/sections/drums with
+// no undo, leaving other arrangements and all chords/anchors/handshapes behind;
+// the user re-nudged each part, poisoning the applied-offset scalar.) It also
+// carries, undoably:
+//   • S.appliedOffset — the cumulative applied shift _effectiveAudioOffset()
+//     adds so a later +Keys / +Drums import lands in phase with the realigned
+//     chart. Was the DOM input's dataset.applied; now command-owned so undo
+//     restores it (else the next nudge's delta computes off a stale base).
+//   • the drum-hit ≥0 clamp — the save path drops a hit with a negative `t`
+//     (silent loss), so a leftward nudge pins an early hit at 0.
+export class TempoOffsetCmd extends TempoMapCmd {
+    constructor(oldBeats, newBeats, prevApplied, newApplied) {
+        super(oldBeats, newBeats, 'offset');
+        this.prevApplied = prevApplied;
+        this.newApplied = newApplied;
+    }
+    // Keep the visible toolbar input in step with S.appliedOffset across
+    // undo/redo: editorNudgeOffset computes the NEXT offset from el.value, so a
+    // stale input after Ctrl-Z would make one +10ms click re-apply the undone
+    // nudge on top (delta computes against the restored S.appliedOffset).
+    _syncOffsetInput() {
+        if (typeof document === 'undefined') return;
+        const el = document.getElementById('editor-offset');
+        if (el) el.value = String(S.appliedOffset);
+    }
+    exec() {
+        super.exec();
+        S.appliedOffset = this.newApplied;
+        this._syncOffsetInput();
+        // Clamp AFTER the reproject (which already _r3-rounds every drum time):
+        // a hit pushed before 0 by a leftward nudge would be rejected by the save
+        // path. rollback restores the exact pre-shift seconds, so redo re-derives
+        // from those and re-clamps — idempotent across undo/redo.
+        if (S.drumTab && Array.isArray(S.drumTab.hits)) {
+            for (const h of S.drumTab.hits) {
+                if (typeof h.t === 'number' && h.t < 0) { h.t = 0; S.drumTabDirty = true; }
+            }
+        }
+    }
+    rollback() {
+        super.rollback();
+        S.appliedOffset = this.prevApplied;
+        this._syncOffsetInput();
     }
 }

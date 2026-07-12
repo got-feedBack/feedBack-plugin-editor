@@ -12,6 +12,12 @@ export const S = {
     arrangements: [],
     currentArr: 0,
     beats: [], sections: [], duration: 0, offset: 0,
+    // Cumulative UI-applied audio offset (the toolbar "Offset" nudge), kept
+    // separate from the pack's `offset`. _effectiveAudioOffset() adds it so a
+    // mid-session +Keys/+Drums import lands in phase with a chart the user has
+    // already realigned. TempoOffsetCmd is the only writer (so undo restores it);
+    // _resetOffsetUI clears it on load. Never written to the pack.
+    appliedOffset: 0,
     // Selected tone-change marker — stored as a direct ref into the
     // active arrangement's `arr.tones.changes` array (not an index)
     // so commands that sort/splice that array don't invalidate the
