@@ -800,11 +800,10 @@ export function _auditionPitch(midi) {
 // Event times for the active editing surface: the drum grid claps drum hits,
 // every other view claps the current arrangement's (time-sorted) notes.
 function _guideSourceTimes() {
-    // Per-part mute/solo (mixer panel, B6): the active surface's part decides
-    // whether its guide voice sounds. Only the CLAPS are gated — the
-    // reference recording is a bus, not a part, and stays audible under any
-    // solo (D5); its gain path never consults this.
-    if (!host.partClapState().audible) return [];
+    // NB: NOT gated by per-part mute/solo — this is the surface's raw event
+    // set, also consumed by _composeSongDuration() to bound the song. The
+    // mixer's audible gate lives at the clap scheduler (below), so muting a
+    // part silences its claps without shrinking the transport (mixer panel, B6).
     if (S.drumEditMode) {
         const hits = (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab.hits : [];
         return _guideSanitizeTimesPure(hits.map(h => h.t));
@@ -917,7 +916,11 @@ function _guideTick() {
     // event exactly at the cursor audible.
     const from = Math.max(_guideScheduledUntil, nowChart - 0.005);
     if (to <= from) return;
-    if (claps) {
+    // Per-part mute/solo (mixer panel, B6): the active surface's part gates
+    // its own claps here (only the CLAPS — the reference recording is a bus,
+    // not a part, and stays audible under any solo, D5). Gated at the
+    // scheduler, not in _guideSourceTimes, so it never touches song duration.
+    if (claps && host.partClapState().audible) {
         const times = _guideClapTimesInWindowPure(_guideSourceTimes(), from, to);
         for (const t of times) {
             // Cross-tick dedupe: skip an event in the same 1 ms bucket as the last
