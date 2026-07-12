@@ -27,7 +27,7 @@ function _partsListPure(arrangements, drumTab) {
         parts.push({
             kind: 'arr',
             idx: i,
-            name: (arr && arr.name) || 'Part ' + (i + 1),
+            name: (arr && arr.name) || 'Track ' + (i + 1),
             count: ((arr && Array.isArray(arr.notes)) ? arr.notes.length : 0)
                  + ((arr && Array.isArray(arr.chords)) ? arr.chords.length : 0),
         });

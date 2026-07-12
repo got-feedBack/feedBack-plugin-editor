@@ -111,7 +111,7 @@ export function isKeysMode() {
 export function _rollReadOnly() { return isKeysMode() && !isKeysArr(); }
 
 export function _rollLockNotice() {
-    setStatus('Piano roll is read-only for fretted parts — Shift+↑/↓ cycles same-pitch positions; switch to String view to edit (suggest-position editing is coming)');
+    setStatus('Piano roll is read-only for fretted tracks — Shift+↑/↓ cycles same-pitch positions; switch to String view to edit (suggest-position editing is coming)');
 }
 
 // Sounding-pitch context for showing a FRETTED part in the roll — hoisted

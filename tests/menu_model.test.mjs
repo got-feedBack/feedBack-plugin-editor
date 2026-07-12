@@ -33,7 +33,7 @@ const CTX = { tempoMapMode: false, hasAudio: true, fns: allFns };
 
 t('nine menus, charrette order, Tempo/Grid is top-level', () => {
     assert.deepStrictEqual(EDITOR_MENUS.map((m) => m.title),
-        ['File', 'Edit', 'Add', 'Note', 'Part', 'View', 'Transport', 'Tempo/Grid', 'Help']);
+        ['File', 'Edit', 'Add', 'Note', 'Track', 'View', 'Transport', 'Tempo/Grid', 'Help']);
 });
 
 t('every registry-backed item resolves to a live registry id', () => {
