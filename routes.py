@@ -73,6 +73,24 @@ _NOTE_TECH_BOOL_FIELDS = frozenset({
 })
 
 
+# Filenames the /wafont asset route will serve: the WebAudioFont player and
+# FluidR3_GM preset renders only (`0270_FluidR3_GM_sf2_file.js`,
+# `12835_0_FluidR3_GM_sf2_file.js`, `WebAudioFontPlayer.js`) — a whitelist
+# shape, not a blacklist, so path traversal / arbitrary-name requests can't
+# reach the filesystem at all. Provenance contract: assets/wafonts/README.md.
+# \Z, not $: $ would also match before a trailing newline.
+_WAFONT_NAME_RE = re.compile(
+    r"^(?:WebAudioFontPlayer\.js|\d{4,5}(?:_\d+)?_FluidR3_GM_sf2_file\.js)\Z")
+
+
+def _safe_wafont_name(name):
+    """The vendored-asset filename if `name` is a legal /wafont request,
+    else None. Pure string validation — no filesystem access."""
+    if not isinstance(name, str):
+        return None
+    return name if _WAFONT_NAME_RE.match(name) else None
+
+
 def _parse_sync_points_payload(raw):
     """Validate a client sync_points payload (the JSON shape autosync-gp
     returns). Returns (points, error): `points` is a list of coerced
@@ -3287,6 +3305,32 @@ def setup(app, context):
         if not candidate.exists() or not candidate.is_file():
             return JSONResponse({"error": "not found"}, status_code=404)
         return FileResponse(candidate)
+
+    # ── GM guide-voice assets (DAW 1.2) ─────────────────────────────────
+    # Serves WebAudioFont assets vendored under the plugin's own
+    # assets/wafonts/ — the FIRST rung of the frontend's source chain
+    # (plugin → org-hosted base URL → upstream CDN; src/gm-guide.js).
+    # Registered unconditionally: while nothing is vendored (the FTO/size
+    # call for committing preset renders is a follow-up — see
+    # assets/wafonts/README.md), every request 404s cleanly and the
+    # frontend falls through to the next source. `_safe_wafont_name` is a
+    # whitelist (player + FluidR3_GM renders only), so no request shape
+    # can probe the filesystem.
+    WAFONTS_DIR = Path(__file__).resolve().parent / "assets" / "wafonts"
+
+    @app.get("/api/plugins/editor/wafont/{name}")
+    def get_wafont_asset(name: str):
+        safe = _safe_wafont_name(name)
+        if not safe:
+            return JSONResponse({"error": "invalid asset name"}, status_code=400)
+        candidate = (WAFONTS_DIR / safe).resolve()
+        try:
+            candidate.relative_to(WAFONTS_DIR.resolve())
+        except ValueError:
+            return JSONResponse({"error": "invalid path"}, status_code=400)
+        if not candidate.is_file():
+            return JSONResponse({"error": "not vendored"}, status_code=404)
+        return FileResponse(candidate, media_type="application/javascript")
 
     # ── List available custom song files ────────────────────────────────────────
 

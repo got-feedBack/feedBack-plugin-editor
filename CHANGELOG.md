@@ -22,6 +22,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
+  the charted notes as a real General-MIDI instrument instead of the clap:
+  Transport ▸ Guide voice ▸ Instrument (GM), with a per-part-kind instrument
+  picker (guitar / bass / keys — curated FluidR3_GM programs; drums keep their
+  clap). Pitches come from the roll's own converter — keys packing for keys
+  parts, capo-aware sounding pitch for fretted — so the guide can never
+  disagree with what the roll shows; chords ring as chords (up to four
+  distinct pitches, each with its own sustain). The clap remains the default
+  and the permanent fallback: while a preset is loading (or unavailable) the
+  guide claps, never goes silent. Assets lazy-load through a three-rung
+  source chain — plugin-vendored (`/api/plugins/editor/wafont/`, whitelist
+  route; nothing vendored yet, see `assets/wafonts/README.md` for the
+  FluidR3-only provenance contract), an org-hosted base URL (editor-pref),
+  and the upstream WebAudioFont CDN the ecosystem already uses. All voices
+  sum through the existing guide bus, so the mixer fader and limiter apply
+  unchanged.
+
 - **Entry-seeded workspace presets + per-song surface memory** (workspace-shell
   C1). A new song's starting toolbar preset now follows the entry lane —
   create-from-scratch opens the light **Compose** surface, a Guitar Pro / XML
