@@ -349,7 +349,9 @@ function _onMouseMoveBody(e, x, y, L) {
     }
 
     // Tempo-map drag: re-space the two measures around the dragged pole.
-    if (S.drag.type === 'tempo-sync') {
+    // A group drag (a multi-selection grabbed by one of its poles) rides the
+    // same handler — it dispatches on S.drag.type internally.
+    if (S.drag.type === 'tempo-sync' || S.drag.type === 'tempo-group') {
         _tempoMapOnDragMove(x);
         return;
     }
@@ -472,7 +474,7 @@ export function onMouseUp(e) {
         return;
     }
 
-    if (S.drag.type === 'tempo-sync' || S.drag.type === 'tempo-beat') {
+    if (S.drag.type === 'tempo-sync' || S.drag.type === 'tempo-beat' || S.drag.type === 'tempo-group') {
         _tempoMapOnDragEnd();
         return;
     }
