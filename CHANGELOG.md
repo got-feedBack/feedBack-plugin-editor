@@ -36,6 +36,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Map Health — see where the grid drifts from the recording.** A new **Map
+  Health** toggle (Tempo/Grid menu) paints a thin colour strip under the ruler,
+  one span per bar, showing how well the beat grid agrees with the notes the
+  recording actually plays: **green** where they line up, **amber** where the
+  grid is drifting, **red** where it clearly disagrees with the audio — and,
+  crucially, **grey where there's nothing to judge** (a silent, held or pedaled
+  bar is never marked wrong). Drift is measured as a *fraction of the beat*, so a
+  little slack at a slow tempo reads calm while the same slack on fast notes reads
+  hot, and a bar's colour is the *median* of its beats so one expressive off-beat
+  note can't flag an otherwise-solid bar. It's a review lens only — it never
+  changes the chart, and it's off by default. Wherever you chart, you can see at a
+  glance whether the automatic tempo map can be trusted.
 - **Audition speed — slow the recording down for practice, pitch preserved.** A
   new speed control in the transport bar (**100% / 75% / 50%**) plays the
   reference slower without dropping its pitch, so you can hear a fast run or a
