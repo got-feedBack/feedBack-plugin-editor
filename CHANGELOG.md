@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Author credits now match the feedpak spec.** The manifest `authors:` array
+  was written as plain strings; the spec (§5.4) requires objects with a `name`
+  (plus optional `role`), so string credits failed schema validation and the
+  host's in-player credits overlay silently skipped them. Built packs now
+  carry `{name, role: "charter"}` objects.
+
+### Added
+
+- **Chart provenance.** Built packs carry an `origin: {tool: "feedback-editor",
+  version}` extension key (ignored-but-preserved per feedpak §4), so
+  editor-built charts stay distinguishable from bundled/imported packs —
+  groundwork for career mode's trusted-chart policy. Nothing consumes it yet.
+
 ### Changed
 
 - **Flattening a variable tempo map now names both directions** instead of a

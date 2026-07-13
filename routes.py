@@ -27,6 +27,38 @@ import yaml
 # GP imports (the converter parses albumYear as Int32 and rejects anything else).
 _YEAR_RE = re.compile(r"\b(1[89]\d{2}|20\d{2})\b")
 
+
+def _manifest_authors(raw):
+    """Author credits in spec shape (feedpak §5.4: objects with name/role).
+
+    Session metadata carries authors as plain strings; the manifest must
+    carry objects — string entries previously failed schema validation and
+    were skipped by the host's credits-overlay sanitizer. Dict entries pass
+    through (name required); strings become {name, role: "charter"}.
+    """
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for a in raw:
+        if isinstance(a, dict):
+            name = a.get("name")
+            if isinstance(name, str) and name.strip():
+                out.append(a)
+        elif isinstance(a, str) and a.strip():
+            out.append({"name": a.strip(), "role": "charter"})
+    return out
+
+
+def _plugin_version() -> str:
+    try:
+        manifest = json.loads(
+            (Path(__file__).resolve().parent / "plugin.json").read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            return ""
+        return str(manifest.get("version") or "")
+    except (OSError, ValueError):
+        return ""
+
 # Sentinel object used to distinguish "drum_tab key absent from JSON body"
 # from an explicit None (removal) or a dict (new payload).  Using an object
 # rather than a string avoids a spoofing vector where a client sends the
@@ -7314,13 +7346,20 @@ def setup(app, context):
             }
             if year:
                 manifest["year"] = year
-            # Optional author credits (feedpak `authors:` array). Written only
-            # when non-empty so packs without credits stay byte-identical.
-            _authors = meta.get("authors")
-            if isinstance(_authors, list):
-                _authors = [str(a).strip() for a in _authors if str(a).strip()]
-                if _authors:
-                    manifest["authors"] = _authors
+            # Optional author credits, in spec shape (see _manifest_authors —
+            # the plain strings written previously failed schema validation).
+            # Written only when non-empty so packs without credits stay
+            # byte-identical.
+            _authors = _manifest_authors(meta.get("authors"))
+            if _authors:
+                manifest["authors"] = _authors
+            # Machine-readable provenance (extension key, rides the spec's
+            # ignored-but-preserved rule): marks editor-built charts so a
+            # future trusted-chart policy can tell them apart from bundled /
+            # imported packs. Stamped unconditionally — charts built before
+            # this marker existed can never be distinguished retroactively.
+            manifest["origin"] = {"tool": "feedback-editor",
+                                  "version": _plugin_version()}
 
             # Spec-complete optional metadata (feedpak §5.1) — written only when
             # present so packs without them stay minimal. String scalars,
