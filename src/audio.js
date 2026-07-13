@@ -27,6 +27,7 @@ import {
     _gmVoiceDurationPure, editorGmVoiceFor, ensureGmPreset, gmPresetReady, gmVoiceAt,
 } from './gm-guide.js';
 import { host } from './host.js';
+import { _spectralFluxOnsetsPure } from './onsets.js';
 import { _tourNoteAction } from './tour.js';
 import { _rollMidiForNote, _rollPitchCtx, midiToFreq } from './keys.js';
 import { _recState } from './midi-record.js';
@@ -131,6 +132,7 @@ export function computeWaveform() {
     S.waveformPeaks = _buildWaveformPeaks(data, binSamples);
     // New audio ⇒ any cached onset analysis is stale.
     _onsetCache = null;
+    _onsetDetector = null;
 }
 
 /* @pure:onset-strip:start */
@@ -218,12 +220,31 @@ export function _onsetStripEnabled() {
     return _onsetStripOn;
 }
 
+// Which detector produced the current cache — 'spectral-flux' (banded, PCM) or
+// 'rms' (the pass-1 envelope fallback). Read for the status/debug surface.
+let _onsetDetector = null;
+export function _onsetDetectorLabel() { return _onsetDetector; }
+
 export function _ensureOnsets() {
     if (_onsetCache) return _onsetCache;
-    const pk = S.waveformPeaks;
     const dur = S.duration || 0;
-    if (!pk || !pk.bins || !pk.rms || dur <= 0) return null;
+    if (dur <= 0) return null;
+    // Banded spectral-flux from the decoded PCM (P2-2): it sees a note entering a
+    // sustained/pedaled chord, a low bass attack with no pitch, and kick / snare /
+    // hat separately — the failure classes broadband RMS-rise is blind to. Computed
+    // once per load and cached (memoised on the peaks reset in computeWaveform).
+    if (S.audioBuffer) {
+        try {
+            const flux = _spectralFluxOnsetsPure(S.audioBuffer.getChannelData(0), S.audioBuffer.sampleRate);
+            if (flux && flux.length) { _onsetCache = flux; _onsetDetector = 'spectral-flux'; return _onsetCache; }
+        } catch (_) { /* fall through to the RMS envelope detector */ }
+    }
+    // Fallback: the pass-1 RMS-envelope detector (no decoded buffer, or flux found
+    // nothing). Same [{t, s}] shape, minus the per-band strengths.
+    const pk = S.waveformPeaks;
+    if (!pk || !pk.bins || !pk.rms) return null;
     _onsetCache = _onsetTimesFromPeaksPure(pk.rms, dur / pk.bins);
+    _onsetDetector = 'rms';
     return _onsetCache;
 }
 
@@ -238,7 +259,7 @@ export function _ensureOnsetsShifted() {
     const raw = _ensureOnsets();
     const sh = Number(S.audioShift) || 0;
     if (!raw || !sh) return raw;
-    return raw.map(o => ({ t: o.t + sh, s: o.s }));
+    return raw.map(o => ({ ...o, t: o.t + sh }));   // carry s + per-band strengths
 }
 
 export function _refreshOnsetBtn() {
