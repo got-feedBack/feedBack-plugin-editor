@@ -17,7 +17,7 @@ import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, TIMELINE_TOP, TONE_LANE_H, W
 import { hitNote } from './hit-test.js';
 import { _renderInspector, _selectedChordContext } from './inspector.js';
 import { PIANO_LANE_H, _rollLockNotice, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, pianoLaneCount, yToMidi } from './keys.js';
-import { lanes } from './lanes.js';
+import { lanes, _stringCountFor } from './lanes.js';
 import { _editorClampScrollX, _loopNudgeEdge, snapTime } from './loop.js';
 import { _recState } from './midi-record.js';
 import { getMousePos } from './mouse.js';
@@ -100,9 +100,48 @@ function _editorToggleTechnique(key, { openFret = false } = {}) {
     return true;
 }
 
+// Keyboard note entry: with nothing selected, a fret digit places a note on the
+// caret string at the (snapped) playhead — the no-mouse add path (String view /
+// fretted parts only; keys enter by pitch). Reuses the mouse-add AddNoteCmd path.
+function _editorPlaceAtCaret(fret) {
+    if (isKeysMode()) { setStatus('Select notes first'); return false; }
+    const arr = S.arrangements && S.arrangements[S.currentArr];
+    const nStr = arr ? _stringCountFor(arr) : 0;
+    if (!nStr) { setStatus('Select notes first'); return false; }
+    const string = Math.max(0, Math.min(nStr - 1, Number(S.caretString) || 0));
+    const time = snapTime(S.cursorTime || 0);
+    const note = { time, string, fret: Math.max(0, Math.min(24, Number(fret) || 0)), sustain: 0, techniques: {} };
+    const cmd = new AddNoteCmd(note);
+    S.history.exec(cmd);
+    _tourNoteAction('placeNote');
+    _editBlipAt();
+    // Entry flow: leave NO selection (so the next digit places again) and advance
+    // the caret one snap step for rapid sequential entry.
+    S.sel.clear();
+    _editorSeekToTime((S.cursorTime || 0) + _editorSnapStepSeconds());
+    host.draw();
+    host.updateStatus();
+    setStatus(`Placed fret ${note.fret} on string ${string + 1} — type to keep placing, or click a note to edit`);
+    return true;
+}
+
+// Move the entry caret up/down a string (String view, nothing selected). Mirrors
+// the moveStringUp/Down sign so ↑/↓ feel identical whether or not a note is held.
+function _editorMoveCaretString(dir) {
+    const arr = S.arrangements && S.arrangements[S.currentArr];
+    const nStr = arr ? _stringCountFor(arr) : 0;
+    if (!nStr) return false;
+    // Mirror _getMoveStringSameFretResult (n.string + direction) so ↑/↓ move the
+    // caret the SAME way they move a selected note's string.
+    S.caretString = Math.max(0, Math.min(nStr - 1, (Number(S.caretString) || 0) + dir));
+    host.draw();
+    setStatus(`Entry caret on string ${S.caretString + 1} — type 0-9 to place a note`);
+    return true;
+}
+
 function _editorSetSelectedFret(fret) {
     const idxs = _editorCurrentNoteIndices();
-    if (!idxs.length) { setStatus('Select notes first'); return false; }
+    if (!idxs.length) return _editorPlaceAtCaret(fret);   // no selection → keyboard entry
     const next = Math.max(0, Math.min(24, Number(fret) || 0));
     S.history.exec(new ChangeFretGroupCmd(idxs, next));
     _editBlipAt();
@@ -790,8 +829,8 @@ export function _editorRunEofCommand(cmd) {
     case 'bend': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptBend(idxs[0]); else setStatus('Select a note first'); return true; }
     case 'slideEditor': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptSlide(idxs[0]); else setStatus('Select a note first'); return true; }
     case 'unpitchedSlide': { const idxs = _editorCurrentNoteIndices(); if (idxs.length) promptSlideUnpitch(idxs[0]); else setStatus('Select a note first'); return true; }
-    case 'moveStringUp': return _execMoveStringSameFret(+1);
-    case 'moveStringDown': return _execMoveStringSameFret(-1);
+    case 'moveStringUp': return _editorCurrentNoteIndices().length ? _execMoveStringSameFret(+1) : _editorMoveCaretString(+1);
+    case 'moveStringDown': return _editorCurrentNoteIndices().length ? _execMoveStringSameFret(-1) : _editorMoveCaretString(-1);
     case 'slideUp': return _editorSetPitchedSlideByStep(+1);
     case 'slideDown': return _editorSetPitchedSlideByStep(-1);
     // In the roll on a fretted part the string axis Shift+↑/↓ walks in
