@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Resolving positions now shapes chords as one coherent grip.** When you run
+  "Resolve positions" over an anchor window, simultaneous notes (a chord) used
+  to be placed one at a time, each grabbing its own lowest free fret — which
+  could spread a chord across the neck into a stretch no hand can play (and that
+  the playability lint then flags). The resolver now places a chord's notes
+  **together**, choosing the tightest fret-hand shape (smallest fret span,
+  distinct strings, open strings free) that fits the hand, pulled toward the
+  anchor / previous note. A cluster with no playable grip falls back to the old
+  per-note behaviour, so nothing that resolved before stops resolving.
 - **Flattening a variable tempo map now names both directions** instead of a
   bare confirm. Typing a BPM for a song with multiple tempos opens a small in-app
   dialog: **Conform notes to the new tempo** (notes keep their bar:beat positions

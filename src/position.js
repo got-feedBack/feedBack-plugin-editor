@@ -148,6 +148,103 @@ export function _suggestPositionPure(pitch, time, prevNote, anchorList, occupied
     return { resolved: best, reason: null, candidates };
 }
 
+/* @pure:chord-grip:start */
+// Resolve a SIMULTANEOUS cluster of notes to a coherent fret-hand GRIP, instead
+// of resolving each note greedily (per-note _suggestPositionPure spreads a chord
+// across the neck until the playability lint scolds the stretch). Given each
+// note's sounding `pitch`, enumerate its playable positions, then choose ONE
+// {string, fret} per note — all on DISTINCT strings — that MINIMISES the fretted
+// span (open strings, fret 0, are free and don't count), pulled toward the hand
+// (prevFret, else the anchor). Only a grip whose fretted span fits `cfg.maxSpan`
+// (the lint's window + tolerance) is returned; otherwise null, so the caller
+// leaves the cluster to the per-note path (still lint-flagged) rather than
+// writing a different unplayable spread.
+//
+//   cluster      [{ idx, pitch }]  the simultaneous notes (idx = caller's key)
+//   ctx          { openMidi, tuning, capo }
+//   cfg          { anchorFret|null, window, maxSpan }
+//   prevFret     the previous note's fret (hand reference) or null
+//   occByOthers  strings already sounding from NON-cluster notes at this instant
+//
+// Returns { assignments: [{ idx, string, fret }], span } (assignments in the
+// input cluster order) or null. Deterministic: the search order and every
+// tie-break are pinned, so the same cluster always resolves to the same grip.
+export function _resolveChordGripPure(cluster, ctx, cfg, prevFret, occByOthers) {
+    const items = (Array.isArray(cluster) ? cluster : []).filter(c => c && Number.isFinite(c.pitch));
+    if (!items.length) return null;
+    const c = ctx || {};
+    const cf = cfg || {};
+    const occ = occByOthers instanceof Set ? occByOthers : new Set(occByOthers || []);
+    const anchorFret = Number.isFinite(cf.anchorFret) ? cf.anchorFret : null;
+    const window = Number.isFinite(cf.window) && cf.window > 0 ? cf.window : 4;
+    const maxSpan = Number.isFinite(cf.maxSpan) && cf.maxSpan >= 0 ? cf.maxSpan : window + 1;
+
+    // Per-note eligible candidates: a free string, inside the hand window (open
+    // string fret 0 is always allowed — it needs no hand position). Bail if any
+    // note has nowhere to go — the whole cluster is left to the per-note path.
+    const perNote = [];
+    for (const it of items) {
+        const cands = _enumerateFrettedPositionsPure(it.pitch, c.openMidi, c.tuning, c.capo)
+            .filter(p => !occ.has(p.string))
+            .filter(p => anchorFret === null || p.fret === 0 || (p.fret >= anchorFret && p.fret < anchorFret + window));
+        if (!cands.length) return null;
+        perNote.push({ idx: it.idx, cands });
+    }
+    // Assign the fewest-choice notes first (fail fast, and pins the walk order).
+    const order = perNote.map((_, k) => k).sort((a, b) => perNote[a].cands.length - perNote[b].cands.length);
+    const ref = (prevFret !== null && Number.isFinite(prevFret)) ? prevFret : anchorFret;
+
+    const frettedSpan = (picks) => {
+        const frets = picks.map(p => p.fret).filter(f => f > 0);
+        return frets.length ? Math.max(...frets) - Math.min(...frets) : 0;
+    };
+    const scoreOf = (picks) => {
+        const frets = picks.map(p => p.fret).filter(f => f > 0);
+        const span = frets.length ? Math.max(...frets) - Math.min(...frets) : 0;
+        const travel = ref !== null ? picks.reduce((s, p) => s + (p.fret > 0 ? Math.abs(p.fret - ref) : 0), 0) : 0;
+        const maxFret = frets.length ? Math.max(...frets) : 0;
+        const strSum = picks.reduce((s, p) => s + p.string, 0);
+        return [span, travel, maxFret, strSum];
+    };
+    const lt = (a, b) => {
+        for (let i = 0; i < a.length; i++) { if (a[i] !== b[i]) return a[i] < b[i]; }
+        return false;
+    };
+
+    let best = null;               // { picks, score } — picks parallel to `order`
+    const usedStr = new Set();
+    const chosen = [];
+    const search = (oi) => {
+        // Prune: the fretted span only grows, so a partial over the ceiling (or
+        // already worse than the best full grip) can never win.
+        const ps = frettedSpan(chosen);
+        if (ps > maxSpan) return;
+        if (best && ps > best.score[0]) return;
+        if (oi === order.length) {
+            const score = scoreOf(chosen);
+            if (score[0] <= maxSpan && (!best || lt(score, best.score))) {
+                best = { picks: chosen.slice(), score };
+            }
+            return;
+        }
+        for (const cand of perNote[order[oi]].cands) {
+            if (usedStr.has(cand.string)) continue;
+            usedStr.add(cand.string); chosen.push(cand);
+            search(oi + 1);
+            chosen.pop(); usedStr.delete(cand.string);
+        }
+    };
+    search(0);
+    if (!best) return null;
+    const byIdx = new Map();
+    order.forEach((k, ci) => byIdx.set(perNote[k].idx, best.picks[ci]));
+    return {
+        assignments: items.map(it => ({ idx: it.idx, string: byIdx.get(it.idx).string, fret: byIdx.get(it.idx).fret })),
+        span: best.score[0],
+    };
+}
+/* @pure:chord-grip:end */
+
 /* @pure:suggest-fingers:start */
 // The fret-hand finger for a note at `fret`, hand anchored at `anchorFret` with a
 // `width`-fret span (default 4). Open string (fret 0) → -1 (none — no fretting
