@@ -158,6 +158,7 @@ export async function loadCDLC(filename, options = {}) {
         S.sections = data.sections || [];
         S.duration = data.duration || 0;
         S.offset = data.offset || 0;
+        S.audioShift = data.audio_shift || 0;
         // Drum tab is loaded server-side when the manifest carries a
         // `drum_tab:` key and the file passes schema validation. Treat
         // a missing/falsey value as "no drums" so the +Drums modal can
@@ -240,6 +241,7 @@ export async function loadCDLC(filename, options = {}) {
         document.getElementById('editor-play-btn').disabled = !data.audio_url;
         document.getElementById('editor-sync-btn').classList.toggle('hidden', !data.audio_url);
         document.getElementById('editor-replace-audio-btn').classList.remove('hidden');
+        document.getElementById('editor-shift-audio-btn')?.classList.toggle('hidden', !data.audio_url);
         _updateTonesButtonVisibility();
         host.updateArrangementSelector();
         host.updateStatus();
@@ -531,6 +533,10 @@ function _buildSaveBody(forceFullSnapshot) {
         chord_templates: arr.chord_templates,
         beats: S.beats,
         sections: S.sections,
+        // Audio placement shift (recording slid vs. a fixed chart). Sent so the
+        // backend can persist it into the pack manifest as `audio_shift` (read
+        // back on load via data.audio_shift). Harmless if the backend ignores it.
+        audio_shift: Number(S.audioShift) || 0,
         // Always ship title/artist so archive saves persist in-session
         // metadata edits too. Backend merges with session metadata
         // (album/year captured at load time) so all four fields

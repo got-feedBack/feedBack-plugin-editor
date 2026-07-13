@@ -106,6 +106,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Shift Audio — slide the recording in time, keeping the chart fixed.** A
+  **Shift Audio…** button (next to Replace Audio) slides the whole recording
+  earlier or later against the chart — the inverse of the chart-side Offset. Use
+  it when a recording starts late, has leading silence, or you swapped it via
+  Replace Audio and it no longer lines up with the chart you already built:
+  move the *audio* instead of re-timing every note. It's **non-destructive**
+  (the samples are never stretched — playback just reads the buffer from a
+  shifted position) and **undoable**; the waveform and onset strip slide with it
+  so what you see matches what you hear, and onset snap / Suggest / Sync follow
+  the shifted audio. One shift applies to the whole audio group, so stems (when
+  they arrive in the editor) will move together. *(Persisting the shift into the
+  built pack is a follow-up — the value is wired onto the save/load path and
+  honored on load, pending the pack field.)*
 - **Song Fit — one place to line the chart up with the recording.** A **Song
   Fit…** button in the Tempo Map inspector opens a small menu with the three
   ways to fit a chart to audio, each labelled with what it does to your notes:

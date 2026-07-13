@@ -227,6 +227,20 @@ export function _ensureOnsets() {
     return _onsetCache;
 }
 
+// Onsets in CHART/timeline time — buffer-time onsets plus the audio placement
+// shift — for everything that relates a detected attack to a musical position
+// (Suggest-fit, onset snap, Sync phase). Returns the raw cached array UNCHANGED
+// when there is no shift (the common case → zero allocation on hot paths); only
+// maps when the recording has been slid. The buffer-time `_ensureOnsets()` cache
+// stays the source of truth (memoized on the peaks); the shift is applied on read
+// so it always tracks the live S.audioShift.
+export function _ensureOnsetsShifted() {
+    const raw = _ensureOnsets();
+    const sh = Number(S.audioShift) || 0;
+    if (!raw || !sh) return raw;
+    return raw.map(o => ({ t: o.t + sh, s: o.s }));
+}
+
 export function _refreshOnsetBtn() {
     const btn = document.getElementById('editor-onset-btn');
     if (!btn) return;
@@ -283,19 +297,78 @@ export function _editorToggleSnapMode() {
 // window.editorToggleSnapMode re-attached in main.js
 
 
+/* @pure:audio-shift:start */
+// Where to start the buffer given the playhead chart-time, the audio placement
+// shift, and the buffer length. The audio plays buffer-time (cursorTime -
+// audioShift): a positive shift slides the recording LATER, so the chart runs
+// ahead of the audio and the source start is delayed; a negative shift skips
+// into the buffer. Returns { play, offset, delay } — `play:false` when the
+// (shifted) audio has already ended at this chart position, so no source is
+// created and only the transport clock runs.
+export function _audioBufferStartPure(cursorTime, audioShift, bufferDuration) {
+    const bufOff = (Number(cursorTime) || 0) - (Number(audioShift) || 0);
+    const dur = Number(bufferDuration) || 0;
+    if (dur > 0 && bufOff >= dur) return { play: false, offset: 0, delay: 0 };
+    if (bufOff < 0) return { play: true, offset: 0, delay: -bufOff };
+    return { play: true, offset: bufOff, delay: 0 };
+}
+/* @pure:audio-shift:end */
+
 export function _startAudioSourceAtCursor(preRoll = 0) {
-    S.audioSource = S.audioCtx.createBufferSource();
-    S.audioSource.buffer = S.audioBuffer;
-    // Reference recording stays on a transparent path to destination — its
-    // mixer fader is a plain gain (unity by default): the guide-clap limiter
-    // must never color the recording, even when claps are off. Only the
-    // guide/click voices sum through the limiter (see _ensureMasterBus).
-    const refGain = _ensureRefGain();
-    if (refGain) S.audioSource.connect(refGain);
-    else S.audioSource.connect(S.audioCtx.destination);
-    _mixApplyFirstPlayFade();
-    S.audioSource.start(preRoll > 0 ? S.audioCtx.currentTime + preRoll : 0, S.cursorTime);
+    // Slide the recording by S.audioShift (the chart clock, anchored below, is
+    // untouched — only the buffer read position moves). A positive shift can
+    // push the audio start into the future (delay) or, near the end, past the
+    // buffer entirely (no source; the transport still runs so the cursor and
+    // guide advance over the trailing silence).
+    const st = _audioBufferStartPure(S.cursorTime, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
+    if (st.play) {
+        S.audioSource = S.audioCtx.createBufferSource();
+        S.audioSource.buffer = S.audioBuffer;
+        // Reference recording stays on a transparent path to destination — its
+        // mixer fader is a plain gain (unity by default): the guide-clap limiter
+        // must never color the recording, even when claps are off. Only the
+        // guide/click voices sum through the limiter (see _ensureMasterBus).
+        const refGain = _ensureRefGain();
+        if (refGain) S.audioSource.connect(refGain);
+        else S.audioSource.connect(S.audioCtx.destination);
+        _mixApplyFirstPlayFade();
+        const when = (preRoll > 0 || st.delay > 0) ? S.audioCtx.currentTime + preRoll + st.delay : 0;
+        S.audioSource.start(when, st.offset);
+    } else {
+        S.audioSource = null;
+    }
     _anchorTransportAtCursor(preRoll);
+}
+
+// Undoable audio placement shift. Song-scoped (it's not tied to one arrangement)
+// and a pure scalar move — no beats/notes change. Re-seats a live audio source so
+// the new placement is heard immediately, and redraws the (shifted) waveform.
+export class AudioShiftCmd {
+    constructor(oldShift, newShift) {
+        this.oldShift = Number(oldShift) || 0;
+        this.newShift = Number(newShift) || 0;
+        this.songScope = true;
+    }
+    exec() { S.audioShift = this.newShift; _afterAudioShiftChange(); }
+    rollback() { S.audioShift = this.oldShift; _afterAudioShiftChange(); }
+}
+function _afterAudioShiftChange() {
+    // If playing, restart the source at the cursor so the buffer offset updates
+    // mid-playback (the transport clock/cursor are untouched — only the audio moves).
+    if (S.playing) _restartPlaybackAt(S.cursorTime);
+    if (host && typeof host.draw === 'function') host.draw();
+}
+
+// Verb: set the absolute audio shift (seconds, 1ms resolution), undoably.
+export function editorSetAudioShift(val) {
+    const next = Math.round((parseFloat(val) || 0) * 1000) / 1000;
+    const cur = Number(S.audioShift) || 0;
+    if (Math.abs(next - cur) < 1e-4) return;
+    S.history.exec(new AudioShiftCmd(cur, next));
+    setStatus(`Audio shifted ${next >= 0 ? '+' : ''}${(next * 1000).toFixed(0)}ms — recording moved, chart unchanged.`);
+}
+export function editorNudgeAudioShift(delta) {
+    editorSetAudioShift((Number(S.audioShift) || 0) + (Number(delta) || 0));
 }
 
 // Anchor the transport clock at the current cursor: pin wall-time to the
