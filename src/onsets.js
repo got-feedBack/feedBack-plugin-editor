@@ -104,56 +104,72 @@ export function _downsamplePure(samples, factor) {
     return out;
 }
 
-// STFT → per-frame half-wave-rectified spectral flux, total and per band.
-// Returns { total, lo, mid, hi } (Float32Array per frame) plus hopSec/frames.
-// Flux[f] = Σ max(0, |X_f[k]| − |X_{f-1}[k]|): energy that AROSE this frame, so a
-// new voice entering a sustained texture registers even with no total-energy rise.
-export function _spectralFluxFramesPure(samples, sampleRate, opts) {
+// Set up a RESUMABLE STFT-flux computation: pre-allocates the output + scratch
+// buffers and returns a `plan`. Drive it with _spectralFluxStep() until done,
+// then _pickOnsetsPure(plan.res). Splitting the frame loop this way lets a caller
+// chunk the (few-hundred-ms) analysis across rAF ticks so it never blocks a frame
+// — the synchronous path below just steps it all at once.
+export function _spectralFluxPlan(samples, sampleRate, opts) {
     const o = opts || {};
     const fftSize = o.fftSize || 512;
     const hop = o.hop || (fftSize >> 1);   // 50% overlap: adjacent frames share half
     const n = samples ? samples.length : 0;   // their samples, so the flux curve is smooth
     const frames = n >= fftSize ? 1 + Math.floor((n - fftSize) / hop) : 0;
-    const res = {
-        total: new Float32Array(Math.max(0, frames)),
-        lo: new Float32Array(Math.max(0, frames)),
-        mid: new Float32Array(Math.max(0, frames)),
-        hi: new Float32Array(Math.max(0, frames)),
-        hopSec: hop / sampleRate,
-        // Frame f spans samples [f·hop, f·hop+fftSize) — it is not zero-padded, so
-        // the energy it reports is centred half a window in. Timestamps must carry
-        // that offset or every onset lands systematically EARLY by fftSize/2.
-        centreSec: (fftSize / 2) / sampleRate,
-        frames,
-    };
-    if (frames <= 0) return res;
     const { loHi, midHi, nyq } = _bandBinsPure(sampleRate, fftSize);
-    const win = _hannWindowPure(fftSize);
-    const re = new Float64Array(fftSize);
-    const im = new Float64Array(fftSize);
-    let prevMag = new Float64Array(nyq + 1);
-    let curMag = new Float64Array(nyq + 1);
-    for (let f = 0; f < frames; f++) {
+    return {
+        samples, fftSize, hop, frames, loHi, midHi, nyq,
+        win: _hannWindowPure(fftSize),
+        re: new Float64Array(fftSize), im: new Float64Array(fftSize),
+        prevMag: new Float64Array(nyq + 1), curMag: new Float64Array(nyq + 1),
+        next: 0,
+        res: {
+            total: new Float32Array(Math.max(0, frames)),
+            lo: new Float32Array(Math.max(0, frames)),
+            mid: new Float32Array(Math.max(0, frames)),
+            hi: new Float32Array(Math.max(0, frames)),
+            hopSec: hop / sampleRate,
+            centreSec: (fftSize / 2) / sampleRate,
+            frames,
+        },
+    };
+}
+
+// Compute up to `budget` more frames of a plan; returns true once every frame is
+// done. Bit-identical to the one-shot loop regardless of how the budget is split.
+export function _spectralFluxStep(plan, budget) {
+    const { samples, fftSize, hop, frames, loHi, midHi, nyq, win, re, im, res } = plan;
+    const end = Math.min(frames, plan.next + Math.max(1, budget | 0));
+    for (let f = plan.next; f < end; f++) {
         const start = f * hop;
         for (let i = 0; i < fftSize; i++) { re[i] = samples[start + i] * win[i]; im[i] = 0; }
         _fftRadix2(re, im);
+        const curMag = plan.curMag;
         // sqrt(re²+im²), not Math.hypot — hypot's overflow-safe scaling is ~5x
-        // slower and this is the inner loop of the whole detector (millions of calls).
+        // slower and this runs millions of times.
         for (let b = 0; b <= nyq; b++) curMag[b] = Math.sqrt(re[b] * re[b] + im[b] * im[b]);
         if (f > 0) {
             let tot = 0, lo = 0, mid = 0, hi = 0;
+            const prevMag = plan.prevMag;
             for (let b = 1; b <= nyq; b++) {
                 const d = curMag[b] - prevMag[b];
-                if (d > 0) {
-                    tot += d;
-                    if (b <= loHi) lo += d; else if (b <= midHi) mid += d; else hi += d;
-                }
+                if (d > 0) { tot += d; if (b <= loHi) lo += d; else if (b <= midHi) mid += d; else hi += d; }
             }
             res.total[f] = tot; res.lo[f] = lo; res.mid[f] = mid; res.hi[f] = hi;
         }
-        const t = prevMag; prevMag = curMag; curMag = t;   // swap scratch
+        const t = plan.prevMag; plan.prevMag = plan.curMag; plan.curMag = t;   // swap scratch
     }
-    return res;
+    plan.next = end;
+    return plan.next >= frames;
+}
+
+// STFT → per-frame half-wave-rectified spectral flux, total and per band (the
+// one-shot synchronous form). Flux[f] = Σ max(0, |X_f[k]| − |X_{f-1}[k]|): energy
+// that AROSE this frame, so a new voice entering a sustained texture registers
+// even with no total-energy rise. Returns { total, lo, mid, hi, hopSec, frames }.
+export function _spectralFluxFramesPure(samples, sampleRate, opts) {
+    const plan = _spectralFluxPlan(samples, sampleRate, opts);
+    while (!_spectralFluxStep(plan, 1 << 24)) { /* all at once */ }
+    return plan.res;
 }
 
 // Peak-pick an onset-detection function into onset events. A frame is an onset
@@ -161,14 +177,15 @@ export function _spectralFluxFramesPure(samples, sampleRate, opts) {
 // median × mult + delta·globalMax — median so one loud hit doesn't raise the bar
 // for its neighbours), and clears a refractory gap. Time is refined to sub-hop
 // accuracy by PARABOLIC interpolation of the three flux samples around the peak
-// (measured: within ~5 ms of a synthetic click train, and unbiased — see the test).
-// `frames.centreSec` is added because a frame reports the energy of a window that
-// STARTS at f·hop; omit it and every onset lands half a window early. Strengths are normalised
+// (so a coarse hop still places fast passages to ~1 ms). Strengths are normalised
 // 0..1 against the global max (total) / per-band max (bands).
 export function _pickOnsetsPure(frames, opts) {
     const o = opts || {};
     const { total, lo, mid, hi, hopSec } = frames;
-    const centreSec = frames.centreSec || 0;   // see _spectralFluxFramesPure
+    // A frame spans [f*hop, f*hop+fftSize) and is not zero-padded, so f*hopSec is
+    // the window's START, not the energy it measured. Without this the whole
+    // detector reads ~10 ms EARLY on every consumer.
+    const centreSec = frames.centreSec || 0;
     const out = [];
     const nF = total ? total.length : 0;
     if (nF < 3 || !(hopSec > 0)) return out;
@@ -222,15 +239,27 @@ export function _pickOnsetsPure(frames, opts) {
 // Returns [{t, s, bands:{lo,mid,hi}}] sorted by time. `opts.downsampleTo` caps
 // the working sample rate (default 22050 — quarters the STFT cost vs 44.1 kHz
 // while keeping hats). All timing is reported in ORIGINAL-signal seconds.
-export function _spectralFluxOnsetsPure(samples, sampleRate, opts) {
-    if (!samples || !samples.length || !(sampleRate > 0)) return [];
+// The downsample + STFT setup of _spectralFluxOnsetsPure, on its own, so the
+// CHUNKED caller (src/audio.js's background job) drives the very same pipeline
+// — same working rate, same fftSize/hop — instead of a second copy of it that
+// would silently keep the old numbers the day these are retuned. Step the
+// returned plan to completion, then _pickOnsetsPure(plan.res, opts).
+export function _spectralFluxOnsetsPlan(samples, sampleRate, opts) {
     const o = opts || {};
     const target = o.downsampleTo || 22050;
     const factor = target > 0 ? Math.max(1, Math.floor(sampleRate / target)) : 1;
     const sig = _downsamplePure(samples, factor);
-    const sr = sampleRate / factor;
     const fftSize = o.fftSize || 512;
-    const frames = _spectralFluxFramesPure(sig, sr, { fftSize, hop: o.hop || (fftSize >> 1) });
-    return _pickOnsetsPure(frames, o);
+    // hop = fftSize/2, NOT fftSize: adjacent frames must share half their samples or
+    // the flux curve is uncorrelated frame-to-frame and the parabolic sub-hop
+    // interpolation below interpolates noise (measured: ±17ms, vs ~4ms at 50%).
+    return _spectralFluxPlan(sig, sampleRate / factor, { fftSize, hop: o.hop || (fftSize >> 1) });
+}
+
+export function _spectralFluxOnsetsPure(samples, sampleRate, opts) {
+    if (!samples || !samples.length || !(sampleRate > 0)) return [];
+    const plan = _spectralFluxOnsetsPlan(samples, sampleRate, opts);
+    while (!_spectralFluxStep(plan, 1 << 24)) { /* all at once */ }
+    return _pickOnsetsPure(plan.res, opts || {});
 }
 /* @pure:onset-flux:end */

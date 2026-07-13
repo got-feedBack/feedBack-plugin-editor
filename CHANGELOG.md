@@ -93,6 +93,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registers even when another is louder, and each attack is placed to a couple of
   milliseconds by sub-frame interpolation. It's pure in-app analysis (no server,
   no new dependencies), computed once per song and cached; the old detector stays
+  as an automatic fallback. The analysis runs **in the background** (in small
+  chunks between frames) and the old detector's result shows instantly meanwhile,
+  so turning the onset strip on never stutters even on a long recording. Every
+  attack now also carries its per-band strength, which the upcoming automatic
+  tempo-mapping uses to find the beat.
   as an automatic fallback. Every attack now also carries its per-band strength,
   which the upcoming automatic tempo-mapping uses to find the beat.
 - **Resolving positions now shapes chords as one coherent grip.** When you run

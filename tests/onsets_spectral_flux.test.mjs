@@ -206,13 +206,23 @@ function fakeBuffer(clickTimes, sr = 44100, dur = 4) {
     return { getChannelData: () => x, sampleRate: sr, duration: dur, numberOfChannels: 1 };
 }
 
-t('onset cache is keyed on the audio buffer — a new song never inherits the old onsets', () => {
+// The flux upgrade is a BACKGROUND job now (it used to run synchronously inside
+// _ensureOnsets), so drain the setTimeout chain before asserting on the cache.
+const drainOnsetJob = async () => { for (let i = 0; i < 500; i++) await new Promise((r) => setTimeout(r, 0)); };
+async function ta(name, fn) {
+    try { await fn(); pass++; console.log('  ok   ' + name); }
+    catch (e) { fail++; console.error('  FAIL ' + name + ': ' + e.message); }
+}
+
+await ta('onset cache is keyed on the audio buffer — a new song never inherits the old onsets', async () => {
     S.audioBuffer = fakeBuffer([0.5, 1.5, 2.5]);
     S.duration = 4;
     S.waveformPeaks = null;
+    _ensureOnsets();                       // seeds RMS, kicks off the flux job
+    await drainOnsetJob();
     const a = _ensureOnsets();
     assert.ok(a && a.length, 'song A detected');
-    assert.strictEqual(_onsetDetectorLabel(), 'spectral-flux');
+    assert.strictEqual(_onsetDetectorLabel(), 'spectral-flux', 'the background job upgraded the cache');
     assert.strictEqual(_ensureOnsets(), a, 'same buffer → memoised, not recomputed');
 
     // What loadCDLC / the create import actually do: drop the buffer, never call
@@ -224,6 +234,8 @@ t('onset cache is keyed on the audio buffer — a new song never inherits the ol
     // A different song must produce its own onsets, not song A's.
     S.audioBuffer = fakeBuffer([1.0, 2.0, 3.0]);
     S.duration = 4;
+    _ensureOnsets();
+    await drainOnsetJob();
     const b = _ensureOnsets();
     assert.ok(b && b.length && b !== a, 'song B recomputed');
     assert.ok(Math.abs(b[0].t - 1.0) < 0.01, `song B's first onset is B's (got ${b[0].t.toFixed(3)})`);
