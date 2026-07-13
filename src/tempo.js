@@ -20,7 +20,8 @@
 // Browser surface: `ctx` (the shared 2D context) plus the sync-inspector and
 // time-signature controls it builds into the toolbar.
 // ════════════════════════════════════════════════════════════════════
-import { _ensureOnsets, _nearestOnsetTimePure } from './audio.js';
+import { _ensureOnsets, _ensureOnsetsShifted, _nearestOnsetTimePure } from './audio.js';
+import { _localTempoSeriesPure, _segmentTempoPure } from './tempo-segment.js';
 import { beatOf, timeOf } from './beats.js';
 import { DPR, canvas, ctx } from './canvas.js';
 import { _drumLaneIdxForPiece, _drumPieceCount } from './drum.js';
@@ -680,6 +681,31 @@ function _ensureTempoSignatureControl() {
     return wrap;
 }
 // ── Tempo Map toolbar toggle ────────────────────────────────────────
+
+// Segment-first tempo scan (P2-3, PREVIEW). Runs the pure detection engine over
+// the recording's onsets and reports the tempo-intent zones it finds — a
+// non-committing rough map ("3 tempo zones detected: …"). The confirm bar +
+// Apply (one TempoGridCmd from _segmentSeedGridPure) are the follow-up; this
+// surfaces the analysis so it can be seen and trusted first. Never mutates.
+export function editorScanTempoZones() {
+    const onsets = _ensureOnsetsShifted();
+    if (!onsets || onsets.length < 8) {
+        setStatus('Scan for tempo zones needs the recording’s onset analysis — load audio first.');
+        return true;
+    }
+    const segs = _segmentTempoPure(_localTempoSeriesPure(onsets));
+    if (!segs.length) {
+        setStatus('Scan for tempo zones: no clear pulse found (sparse or unmapped audio).');
+        return true;
+    }
+    const label = (s) => s.kind === 'ramp'
+        ? `${s.bpmStart > s.bpmEnd ? 'rit' : 'accel'} ${Math.round(s.bpmStart)}→${Math.round(s.bpmEnd)}`
+        : `${Math.round(s.bpmStart)} bpm`;
+    setStatus(`${segs.length} tempo zone${segs.length === 1 ? '' : 's'} detected: `
+        + segs.map(label).join(' · ')
+        + ' — preview (segment-first Confirm & Apply is coming).');
+    return true;
+}
 
 export function _editorToggleTempoMapMode() {
     const hasGrid = !!(S.beats && S.beats.length >= 2);

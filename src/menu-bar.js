@@ -226,6 +226,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'tempoRebuildGrid' },
         { sep: true },
         { label: 'Sync tempo to audio', fn: 'editorSyncTempo', audioOnly: true },
+        { label: 'Scan for tempo zones (preview)', fn: 'editorScanTempoZones', audioOnly: true },
         { sep: true },
         { hdr: 'Snap' },
         { cmd: 'toggleSnap' },
