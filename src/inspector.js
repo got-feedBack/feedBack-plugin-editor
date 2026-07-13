@@ -5,16 +5,15 @@
 // techniques, bend intent, teaching marks) and, when the selection is a chord,
 // its name / voicing / fingering / function.
 //
-// MOST edits commit through a command in src/commands.js and are undoable:
+// EVERY edit commits through a command in src/commands.js and is undoable:
 // time/sustain (MoveNoteCmd, ResizeSustainGroupCmd), bend intent, the chord
-// patches, and everything routed through _applyTeachingMark — fret finger,
-// scale degree, strum grouping.
-//
-// The technique toggles (editorInspectorSetTech) and the boolean flags
-// (editorInspectorSetFlag) are the exception: they still mutate n.techniques in
-// place and are NOT undoable, a deliberate scope limit from PR3b. Both DO honour
-// the read-only-roll lock, so they cannot silently write a chart the roll is
-// showing read-only.
+// patches, everything routed through _applyTeachingMark (fret finger, scale
+// degree, strum grouping), the scalar technique inputs (editorInspectorSetTech
+// → SetTechScalarCmd), and the boolean flags (editorInspectorSetFlag →
+// ToggleTechniqueCmd, the same command the keyboard toggles use). The last two
+// used to mutate n.techniques in place with no undo — a documented PR3b trap,
+// now closed. All still honour the read-only-roll lock, so they cannot write a
+// chart the roll is showing read-only.
 //
 // It renders innerHTML and reads back through the window.editorInspector* and
 // window.editorChord* handlers that markup calls. Those are exported as plain
@@ -29,13 +28,13 @@ import {
 } from './chords.js';
 import {
     EditChordFnCmd, MoveNoteCmd, ResizeSustainGroupCmd, SetBendIntentCmd, SetTeachingMarkCmd,
+    SetTechScalarCmd, ToggleTechniqueCmd,
 } from './commands.js';
 import { host } from './host.js';
 import { _rollLockNotice, _rollReadOnly } from './keys.js';
 import { lanes } from './lanes.js';
 import {
-    BEND_INTENTS, FRET_FINGER_OPTIONS, nextUnusedStrumGroup, notes, rescaleBendCurveToPeak,
-    sanitizeBendCurve,
+    BEND_INTENTS, FRET_FINGER_OPTIONS, nextUnusedStrumGroup, notes,
 } from './notes.js';
 import { S } from './state.js';
 
@@ -279,12 +278,13 @@ export function _renderInspector() {
 // Inspector mutators. All operate on the full S.sel so a multi-select edit
 // applies bulk-style.
 //
-// The TECHNIQUE toggles below (editorInspectorSetTech, editorInspectorSetFlag)
-// skip the undo history — PR3b kept that scope tight, and a TechBulkCmd lands
-// when the inspector grows to need richer per-edit undo. Everything else in this
-// file commits through a command: setField, setBendIntent, the chord patches,
-// and _applyTeachingMark's SetTeachingMarkCmd. (This comment used to say "edits"
-// without qualification, which stopped being true once those landed.)
+// The TECHNIQUE edits below now commit through the undo history like everything
+// else in this file: editorInspectorSetTech via SetTechScalarCmd (bend peak /
+// slide targets, carrying the authored bend curve through the rescale) and
+// editorInspectorSetFlag via ToggleTechniqueCmd (the boolean flags, sharing the
+// command the keyboard toggles use). They used to mutate n.techniques in place
+// with no undo — the PR3b scope limit, closed here so a technique tweak is one
+// Ctrl+Z like a fret or time edit.
 
 // Bounds for the inspector's numeric inputs. Mirrors the limits the
 // prompt-based editors (`promptFret`, `promptSlide`, `promptBend`)
@@ -370,11 +370,10 @@ export function editorInspectorSetField(field, raw) {
 }
 
 export function editorInspectorSetTech(key, raw) {
-    const sel = _selectedNotes();
-    if (sel.length === 0) return;
-    // Read-only roll (V4): scalar technique edits mutate n.techniques in
-    // place (no EditHistory command), so the exec lock never sees them.
-    // Refuse and bounce the input back to the model value.
+    const idxs = [...(S.sel || [])];
+    if (!idxs.length) return;
+    // Read-only roll (V4): a scalar technique edit would write n.techniques on a
+    // chart the roll is showing read-only. Refuse and bounce the input back.
     if (_rollReadOnly()) { _rollLockNotice(); _renderInspector(); return; }
     const bounds = _INSPECTOR_BOUNDS[key];
     if (!bounds) return;
@@ -386,22 +385,10 @@ export function editorInspectorSetTech(key, raw) {
         _renderInspector();
         return;
     }
-    for (const n of sel) {
-        if (!n.techniques) n.techniques = {};
-        n.techniques[key] = v;
-        // Editing the scalar peak must keep any authored curve consistent
-        // (renderers/graders read bnv as authoritative): rescale the curve to
-        // the new peak, or drop it when the peak is 0 / the curve is unscalable.
-        if (key === 'bend' && sanitizeBendCurve(n.techniques.bend_values)) {
-            const scaled = v > 0
-                ? rescaleBendCurveToPeak(n.techniques.bend_values, v)
-                : null;
-            n.techniques.bend_values = scaled;
-            // bnv rounds points to 0.1, so a non-0.1 `v` (e.g. 0.25) would leave
-            // bn disagreeing with the curve's real peak. Snap bn to the curve.
-            if (scaled) n.techniques.bend = scaled.reduce((m, p) => Math.max(m, p.v), 0);
-        }
-    }
+    // One undoable command for the whole selection (the "set all" semantic);
+    // SetTechScalarCmd carries the bend-curve rescale, so a bend peak edit is a
+    // single Ctrl+Z that also restores any authored curve.
+    S.history.exec(new SetTechScalarCmd(idxs, key, v));
     host.draw();
     host.updateStatus();
 }
@@ -424,17 +411,18 @@ export function editorOpenBendCurve() {
 }
 
 export function editorInspectorSetFlag(key, on) {
-    const sel = _selectedNotes();
-    if (sel.length === 0) return;
-    // Read-only roll (V4): flag toggles mutate n.techniques directly — same
-    // bypass as editorInspectorSetTech. Refuse and re-render to reset the box.
+    const idxs = [...(S.sel || [])];
+    if (!idxs.length) return;
+    // Read-only roll (V4): a flag toggle would write n.techniques on a chart the
+    // roll is showing read-only. Refuse and re-render to reset the checkbox.
     if (_rollReadOnly()) { _rollLockNotice(); _renderInspector(); return; }
-    for (const n of sel) {
-        if (!n.techniques) n.techniques = {};
-        n.techniques[key] = !!on;
-    }
+    // Route through the same command the keyboard technique toggles use, so an
+    // inspector checkbox is one undoable step across the whole selection.
+    S.history.exec(new ToggleTechniqueCmd(idxs, key, !!on));
     host.draw();
     host.updateStatus();
+    // Reflect the committed value (a mixed selection becomes all-on/all-off).
+    _renderInspector();
 }
 
 // ─── Teaching marks (§6.2.2) ────────────────────────────────────────

@@ -9,11 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Inspector technique edits are undoable now.** Toggling a technique flag
+  (Palm Mute, Hammer-On, Tap, …) or setting a bend/slide value from the
+  inspector panel used to mutate the note in place with no undo — so Ctrl+Z
+  couldn't take it back, even though the same toggle from the keyboard could.
+  Both paths now commit through the editor's undo history (the flags via the
+  same command the keyboard toggles use; bend/slide via a new command that also
+  carries any authored bend curve through the edit), so a technique tweak is one
+  Ctrl+Z like a fret or time change. They still refuse on a read-only piano roll.
 - **Author credits now match the feedpak spec.** The manifest `authors:` array
   was written as plain strings; the spec (§5.4) requires objects with a `name`
   (plus optional `role`), so string credits failed schema validation and the
   host's in-player credits overlay silently skipped them. Built packs now
   carry `{name, role: "charter"}` objects.
+- **The playhead now sits on what you *hear*, not what's scheduled.** The moving
+  playhead was drawn from the audio clock's *scheduled* time, which runs ahead of
+  the sound actually leaving your speakers by the output latency — a few
+  milliseconds on wired output, but **100–300 ms on Bluetooth headphones**, where
+  the line visibly led the music. The playhead is now drawn at the
+  latency-compensated position, so it lines up with what you hear at every speed
+  (the reference, the metronome and the guide claps all share that latency, so
+  one correction re-aligns the line to all of them). It's a **display-only**
+  adjustment: note placement, snapping and edits still resolve from the exact
+  transport position, and a stopped/scrubbing playhead still sits precisely on the
+  waveform.
 
 ### Added
 
@@ -27,6 +46,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Under the hood it locates the pulse by autocorrelating the detected onsets with
   an octave guard + tempo prior (so it doesn't read double-time or half-time),
   and it gets sharper once the banded onset detection lands.
+- **Map Health — see where the grid drifts from the recording.** A new **Map
+  Health** toggle (Tempo/Grid menu) paints a thin colour strip under the ruler,
+  one span per bar, showing how well the beat grid agrees with the notes the
+  recording actually plays: **green** where they line up, **amber** where the
+  grid is drifting, **red** where it clearly disagrees with the audio — and,
+  crucially, **grey where there's nothing to judge** (a silent, held or pedaled
+  bar is never marked wrong). Drift is measured as a *fraction of the beat*, so a
+  little slack at a slow tempo reads calm while the same slack on fast notes reads
+  hot, and a bar's colour is the *median* of its beats so one expressive off-beat
+  note can't flag an otherwise-solid bar. It's a review lens only — it never
+  changes the chart, and it's off by default. Wherever you chart, you can see at a
+  glance whether the automatic tempo map can be trusted. **Click a drifting
+  (amber/red) bar** in the strip and it takes you straight to the fix — Tempo
+  Map opens, the bar scrolls into view, and Suggest is anchored on it so pressing
+  **G** proposes a barline fit to the recording from that bar on. (Green and grey
+  bars aren't actionable, so clicking them just scrubs as usual.)
+  glance whether the automatic tempo map can be trusted.
+- **Audition speed — slow the recording down for practice, pitch preserved.** A
+  new speed control in the transport bar (**100% / 75% / 50%**) plays the
+  reference slower without dropping its pitch, so you can hear a fast run or a
+  bend clearly and chart against it. It's **playback only** — the chart, the
+  tempo map, the exported audio and the saved file never change — and one click
+  back to 100%. It resets to full speed when you load another song. Under the
+  hood the sample-accurate engine is untouched at 100%; only when slowed does the
+  reference ride a pitch-preserving path, kept in lock-step with the transport
+  clock. (Slow-only, ≤100% — this is a practice slow-downer, not a varispeed; the
+  recording itself is never stretched or warped.)
+- **Playability lint now catches finger conflicts.** Once notes carry fret-hand
+  fingers (from Suggest Fingers, or by hand), the advisory lint flags a chord
+  that asks **one finger to hold two different frets at the same time** — a shape
+  no hand can play. The **thumb** (`T`) counts as a fretting digit and obeys the
+  same physics. A **barre** (the same finger across strings at the *same* fret)
+  is fine and never flagged — as is a **thumb-over** grip. Like every lint rule
+  it only names the problem — a yellow underline, a count on the chip, and a
+  popover row that seeks and selects the notes — never blocking or auto-fixing.
+  Pairs with the auto-fingering and coherent-grip chord resolve.
+- **Export a track to Guitar Pro (.gp5).** A new **File ▸ Export ▸ Guitar Pro
+  (.gp5)** item downloads the current fretted track as a `.gp5` file you can open
+  in Guitar Pro (or any tab tool that reads GP5) — real interop *out* of the
+  editor for the first time. It converts the saved pack through the Tab View
+  plugin, the same conversion the read-only Tab preview already engraves, and
+  hands you the bytes as a download named after the song and track. Because the
+  converter reads what's on disk, exporting mid-edit offers the usual Save /
+  Don't Save / Cancel prompt first — the file you take away is never silently a
+  stale pack. Fretted tracks only (keys/drums have no tab); if the Tab View
+  plugin isn't installed or the song isn't saved yet, the status line says so.
+- **Techniques now show in the Piano-roll view.** Switching from String view to
+  the roll used to hide every technique — bends, slides, mutes, hammer-ons and
+  the rest were all invisible on roll notes. They're drawn now: a slide gets its
+  diagonal and a tie its legato hook (the two overlays that fit a thin lane),
+  and everything else reads as a compact badge string right-aligned on the note
+  (`H`, `PM`, `/7`, `x`, plus roll-only `b2`/`v` glyphs for bend and vibrato,
+  which are too tall to draw as curves in a 4–14px lane). On lanes too short for
+  text, a small corner dot still marks that a note carries techniques, so none
+  are ever fully invisible. String view and the roll now build their shared
+  badges from one source, so the two views can't drift apart.
 - **Chart provenance.** Built packs carry an `origin: {tool: "feedback-editor",
   version}` extension key (ignored-but-preserved per feedpak §4), so
   editor-built charts stay distinguishable from bundled/imported packs —
@@ -34,6 +109,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Onset detection now hears frequency, not just loudness.** The little amber
+  attack markers (the onset strip, and what note-drags snap to) used to come from
+  a broadband "the recording got louder" test, which went blind on the events
+  that matter most for charting: a new note inside a sustained or pedaled chord
+  (no jump in total loudness), a low bass note whose attack has no pitch, and it
+  couldn't tell a kick from a snare from a hi-hat. Detection is now **banded
+  spectral flux** — it looks for energy *arriving* in three frequency bands (low
+  ≲150 Hz for kick/bass, mid for snare, high for cymbals/hats), so each of those
+  registers even when another is louder, and each attack is placed to a couple of
+  milliseconds by sub-frame interpolation. It's pure in-app analysis (no server,
+  no new dependencies), computed once per song and cached; the old detector stays
+  as an automatic fallback. The analysis runs **in the background** (in small
+  chunks between frames) and the old detector's result shows instantly meanwhile,
+  so turning the onset strip on never stutters even on a long recording. Every
+  attack now also carries its per-band strength, which the upcoming automatic
+  tempo-mapping uses to find the beat.
+  as an automatic fallback. Every attack now also carries its per-band strength,
+  which the upcoming automatic tempo-mapping uses to find the beat.
+- **Resolving positions now shapes chords as one coherent grip.** When you run
+  "Resolve positions" over an anchor window, simultaneous notes (a chord) used
+  to be placed one at a time, each grabbing its own lowest free fret — which
+  could spread a chord across the neck into a stretch no hand can play (and that
+  the playability lint then flags). The resolver now places a chord's notes
+  **together**, choosing the tightest fret-hand shape (smallest fret span,
+  distinct strings, open strings free) that fits the hand, pulled toward the
+  anchor / previous note. A cluster with no playable grip falls back to the old
+  per-note behaviour, so nothing that resolved before stops resolving — and the
+  refusals stay honest: a note that could be played open **or** fretted is still
+  refused for you to decide, never quietly voiced open to tighten the shape.
 - **Flattening a variable tempo map now names both directions** instead of a
   bare confirm. Typing a BPM for a song with multiple tempos opens a small in-app
   dialog: **Conform notes to the new tempo** (notes keep their bar:beat positions

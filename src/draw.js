@@ -526,6 +526,51 @@ export function _vibratoPointsPure(x0, w, yMid, amp, cycleW) {
 }
 /* @pure:technique-overlays:end */
 
+/* @pure:tech-badges:start */
+// Compact text badges for the techniques that have NO graphical overlay.
+// Shared by String view (_drawNote) and the piano roll (_drawPianoNote) so the
+// two views speak one technique vocabulary. Bend / vibrato / tie are excluded:
+// String view draws them as graphics, and the roll appends its own compact
+// glyphs (see _rollTechBadgesPure) for the two that can't fit a thin lane.
+export function _techBadgesPure(techs) {
+    const t = techs || {};
+    const badges = [];
+    if (t.hammer_on) badges.push('H');
+    if (t.pull_off) badges.push('P');
+    // Number.isFinite, not a bare `>= 0`: `null >= 0` and `false >= 0` are BOTH
+    // true, so a cleared / imported-as-null slide field would badge as '/null'.
+    // Same guard _slideDirPure uses, so the badge and the diagonal agree.
+    if (Number.isFinite(t.slide_to) && t.slide_to >= 0) badges.push('/' + t.slide_to);
+    if (Number.isFinite(t.slide_unpitch_to) && t.slide_unpitch_to >= 0) badges.push('↓' + t.slide_unpitch_to);
+    if (t.harmonic) badges.push('*');
+    if (t.harmonic_pinch) badges.push('*P');
+    if (t.accent) badges.push('>');
+    if (t.palm_mute) badges.push('PM');
+    if (t.fret_hand_mute) badges.push('FM');
+    if (t.tap) badges.push('T');
+    if (t.slap) badges.push('S');
+    if (t.pluck) badges.push('P!');
+    if (t.tremolo) badges.push('~');
+    if (t.mute) badges.push('x');
+    if (t.ignore) badges.push('I');
+    return badges;
+}
+
+// Roll-view technique markers: the shared badges, plus compact glyphs for the
+// two overlay techniques a 4–14px lane can't draw as graphics (a bend curve or
+// vibrato squiggle needs vertical room the roll hasn't got). Slide and tie DO
+// fit a thin box, so the roll draws those as graphics like String view — slide
+// keeps its '/N' badge (as in _drawNote), tie stays graphical-only.
+export function _rollTechBadgesPure(techs) {
+    const t = techs || {};
+    const extra = [];
+    const bend = Number(t.bend) || 0;
+    if (bend > 0) extra.push('b' + bend);
+    if (t.vibrato) extra.push('v');
+    return extra.concat(_techBadgesPure(t));
+}
+/* @pure:tech-badges:end */
+
 function _drawNote(n, selected, ghl, linted) {
     const x = timeToX(n.time);
     const y = strToY(n.string) + NOTE_PAD;
@@ -660,21 +705,7 @@ function _drawNote(n, selected, ghl, linted) {
     }
 
     // Technique badges (for the techniques with no graphical overlay above).
-    const badges = [];
-    if (techs.hammer_on) badges.push('H');
-    if (techs.pull_off) badges.push('P');
-    if (techs.slide_to >= 0) badges.push('/' + techs.slide_to);
-    if (techs.slide_unpitch_to >= 0) badges.push('↓' + techs.slide_unpitch_to);
-    if (techs.harmonic) badges.push('*');
-    if (techs.harmonic_pinch) badges.push('*P');
-    if (techs.palm_mute) badges.push('PM');
-    if (techs.fret_hand_mute) badges.push('FM');
-    if (techs.tap) badges.push('T');
-    if (techs.slap) badges.push('S');
-    if (techs.pluck) badges.push('P!');
-    if (techs.tremolo) badges.push('~');
-    if (techs.mute) badges.push('x');
-    if (techs.ignore) badges.push('I');
+    const badges = _techBadgesPure(techs);
     if (badges.length) {
         ctx.fillStyle = '#ffffffbb';
         ctx.font = '7px monospace';
@@ -752,7 +783,8 @@ function _drawPianoNote(n, selected, hl, midi, fretted, linted) {
     // note name is redundant with the Y axis there; string·fret is the
     // one fact the roll would otherwise hide). Raw string index, matching
     // the Strings modal's "String N" labels.
-    if (sw >= 20 && h >= 8) {
+    const labelled = sw >= 20 && h >= 8;
+    if (labelled) {
         ctx.fillStyle = '#000';
         ctx.font = `bold ${Math.min(9, h - 1)}px monospace`;
         ctx.textAlign = 'center';
@@ -760,10 +792,66 @@ function _drawPianoNote(n, selected, hl, midi, fretted, linted) {
         const label = fretted ? (n.string + '·' + n.fret) : midiToNote(midi, editorKeyNoteNames());
         ctx.fillText(label, x + Math.min(sw, 24) / 2, y + h / 2);
     }
+
+    // ── Technique indication (roll view) ──────────────────────────────────
+    // The dense roll (4–14px lanes) can't fit String view's tall bend curve or
+    // above-note vibrato squiggle, so techniques read as a compact badge string
+    // — set just past the centred name/position label — plus the
+    // two overlays that DO fit a thin box: the slide diagonal and the legato
+    // tie hook. On a lane too short for text, a 2px corner dot still marks that
+    // the note carries techniques, so nothing is ever fully invisible.
+    const techs = n.techniques || {};
+
+    // Slide: a diagonal across the note toward the target fret.
+    const _sdir = _slideDirPure(n.fret, techs.slide_to);
+    if (_sdir !== 0) {
+        ctx.strokeStyle = '#93c5fd';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x + 1, _sdir > 0 ? y + h - 1 : y + 1);
+        ctx.lineTo(x + sw - 1, _sdir > 0 ? y + 1 : y + h - 1);
+        ctx.stroke();
+    }
+    // Tie (link_next): a small legato hook off the trailing edge.
+    if (techs.link_next) {
+        ctx.strokeStyle = '#a7f3d0';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(x + sw, y + h / 2, Math.min(4, h), -Math.PI / 2, Math.PI / 2);
+        ctx.stroke();
+    }
+    // Badges (every remaining technique, incl. compact bend / vibrato glyphs).
+    const badges = _rollTechBadgesPure(techs);
+    if (badges.length) {
+        if (h >= 7) {
+            // Anchored to the note HEAD, just past the centred label when one is
+            // drawn — NOT to the note's right edge. A note is culled by its
+            // START, so a long sustain's right edge sits arbitrarily far off
+            // screen: a right-edge anchor would hide the badges on exactly the
+            // notes the roll draws widest, and float them seconds away from the
+            // onset the technique belongs to.
+            ctx.fillStyle = '#ffffffdd';
+            ctx.font = '7px monospace';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(badges.join(' '), labelled ? x + Math.min(sw, 24) + 2 : x + 2, y + h / 2);
+        } else {
+            // Too short for text — a presence dot in the top-left corner.
+            ctx.fillStyle = '#fde68a';
+            ctx.fillRect(x + 1, y + 1, 2, 2);
+        }
+    }
 }
 
 export function drawCursor(w, h) {
-    const x = timeToX(S.cursorTime);
+    // While playing, paint the playhead at the OUTPUT-latency-compensated time
+    // (S.cursorDrawTime) so the line sits on the audio actually leaving the
+    // speaker, not the buffered-ahead schedule — the marker matches what's heard
+    // (crucial on Bluetooth). Stopped/scrubbing falls back to S.cursorTime, which
+    // is exact on the waveform for note placement. Render-only: every logic path
+    // (snap, edit, seek, follow-scroll) reads S.cursorTime, never this.
+    const ct = (S.playing && Number.isFinite(S.cursorDrawTime)) ? S.cursorDrawTime : S.cursorTime;
+    const x = timeToX(ct);
     if (x < LABEL_W || x > w) return;
     ctx.strokeStyle = '#ff4444';
     ctx.lineWidth = 1.5;
