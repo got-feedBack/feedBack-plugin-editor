@@ -23,6 +23,11 @@ def test_dict_entries_pass_through_and_blank_names_drop():
     ]
 
 
+def test_non_string_junk_is_dropped_not_stringified():
+    # None must not become the author "None"; numbers/lists/None-names drop.
+    assert _manifest_authors([None, 42, ["x"], {"name": None}, {"name": 7}]) == []
+
+
 def test_non_list_yields_empty():
     assert _manifest_authors(None) == []
     assert _manifest_authors("me, you") == []

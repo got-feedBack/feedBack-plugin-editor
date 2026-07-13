@@ -41,10 +41,11 @@ def _manifest_authors(raw):
     out = []
     for a in raw:
         if isinstance(a, dict):
-            if str(a.get("name", "")).strip():
+            name = a.get("name")
+            if isinstance(name, str) and name.strip():
                 out.append(a)
-        elif str(a).strip():
-            out.append({"name": str(a).strip(), "role": "charter"})
+        elif isinstance(a, str) and a.strip():
+            out.append({"name": a.strip(), "role": "charter"})
     return out
 
 
@@ -52,6 +53,8 @@ def _plugin_version() -> str:
     try:
         manifest = json.loads(
             (Path(__file__).resolve().parent / "plugin.json").read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            return ""
         return str(manifest.get("version") or "")
     except (OSError, ValueError):
         return ""
