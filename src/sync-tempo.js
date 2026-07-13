@@ -3,7 +3,7 @@
 // locked sync points). The window.editor* entry points are re-attached by
 // main.js; repaint goes through host.
 
-import { _ensureOnsets } from './audio.js';
+import { _ensureOnsetsShifted } from './audio.js';
 import { S } from './state.js';
 import { TempoMapCmd, _respaceWithLocksPure, _tempoPivotTimePure } from './tempo.js';
 import { setStatus } from './ui.js';
@@ -203,7 +203,7 @@ export function editorSyncTempo() {
     // votes with strengths, and proposes the downbeat PHASE. The raw-buffer
     // autocorrelation stays as the fallback for songs with no strip yet.
     const onsetGuess = _detectTempoFromOnsetsPure(
-        typeof _ensureOnsets === 'function' ? _ensureOnsets() : null);
+        typeof _ensureOnsetsShifted === 'function' ? _ensureOnsetsShifted() : null);
     let hint = '';
     if (onsetGuess && onsetGuess.confidence >= 0.15) {
         syncState.audioBPM = onsetGuess.bpm;

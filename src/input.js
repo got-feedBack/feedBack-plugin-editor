@@ -5,7 +5,7 @@
 // the commands refresh in the composition root goes through host.
 
 import { AddAnchorCmd, AddHandshapeCmd, AddToneChangeCmd, RemoveAnchorCmd, RemoveHandshapeCmd, RemoveToneChangeCmd, _anchorLaneTopY, _currentAnchorArr, _currentToneArr, _ensureTones, _handshapeLaneTopY, _readAnchorSnapshot, onAnchorLaneContextMenu, onHandshapeLaneContextMenu, onToneLaneContextMenu } from './annotation-lanes.js';
-import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsets, startPlayback, stopPlayback } from './audio.js';
+import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsetsShifted, startPlayback, stopPlayback } from './audio.js';
 import { editorSuggestFingers } from './anchor-resolve.js';
 import { _suggestActive, _suggestCompute, _suggestDismiss } from './tempo-suggest.js';
 import { editorToggleMixerPanel } from './mixer-panel.js';
@@ -626,7 +626,7 @@ function _editorTempoSuggestFit() {
         setStatus('Enter Tempo Map (T) first — Suggest fits the barlines to the recording.');
         return true;
     }
-    const onsets = _ensureOnsets();
+    const onsets = _ensureOnsetsShifted();
     if (!onsets || !onsets.length) {
         setStatus('Suggest needs the recording’s onset analysis — load audio first.');
         return true;

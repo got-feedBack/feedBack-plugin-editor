@@ -53,7 +53,7 @@ const S = { snapEnabled: true, snapMode: 'grid', snapIdx: 0, beats: [{ time: 0 }
 let onsets = [];
 const snapTime = new Function(
     'S', '_editorEffectiveSnapValuePure', 'SNAP_VALUES', '_editorSnapSubdivisionsPure',
-    'timeOf', 'beatOf', '_ensureOnsets', '_nearestOnsetTimePure', 'ONSET_SNAP_TOL',
+    'timeOf', 'beatOf', '_ensureOnsetsShifted', '_nearestOnsetTimePure', 'ONSET_SNAP_TOL',
     '_swingQuantizeBeatPure',
     '"use strict";' + extractFn('snapTime') + '\nreturn snapTime;'
 )(
