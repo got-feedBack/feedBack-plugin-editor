@@ -231,14 +231,23 @@ export function _pickOnsetsPure(frames, opts) {
 // Returns [{t, s, bands:{lo,mid,hi}}] sorted by time. `opts.downsampleTo` caps
 // the working sample rate (default 22050 — quarters the STFT cost vs 44.1 kHz
 // while keeping hats). All timing is reported in ORIGINAL-signal seconds.
-export function _spectralFluxOnsetsPure(samples, sampleRate, opts) {
-    if (!samples || !samples.length || !(sampleRate > 0)) return [];
+// The downsample + STFT setup of _spectralFluxOnsetsPure, on its own, so the
+// CHUNKED caller (src/audio.js's background job) drives the very same pipeline
+// — same working rate, same fftSize/hop — instead of a second copy of it that
+// would silently keep the old numbers the day these are retuned. Step the
+// returned plan to completion, then _pickOnsetsPure(plan.res, opts).
+export function _spectralFluxOnsetsPlan(samples, sampleRate, opts) {
     const o = opts || {};
     const target = o.downsampleTo || 22050;
     const factor = target > 0 ? Math.max(1, Math.floor(sampleRate / target)) : 1;
     const sig = _downsamplePure(samples, factor);
-    const sr = sampleRate / factor;
-    const frames = _spectralFluxFramesPure(sig, sr, { fftSize: o.fftSize || 512, hop: o.hop || 512 });
-    return _pickOnsetsPure(frames, o);
+    return _spectralFluxPlan(sig, sampleRate / factor, { fftSize: o.fftSize || 512, hop: o.hop || 512 });
+}
+
+export function _spectralFluxOnsetsPure(samples, sampleRate, opts) {
+    if (!samples || !samples.length || !(sampleRate > 0)) return [];
+    const plan = _spectralFluxOnsetsPlan(samples, sampleRate, opts);
+    while (!_spectralFluxStep(plan, 1 << 24)) { /* all at once */ }
+    return _pickOnsetsPure(plan.res, opts || {});
 }
 /* @pure:onset-flux:end */

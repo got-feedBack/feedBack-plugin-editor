@@ -27,7 +27,7 @@ import {
     _gmVoiceDurationPure, editorGmVoiceFor, ensureGmPreset, gmPresetReady, gmVoiceAt,
 } from './gm-guide.js';
 import { host } from './host.js';
-import { _downsamplePure, _pickOnsetsPure, _spectralFluxPlan, _spectralFluxStep } from './onsets.js';
+import { _pickOnsetsPure, _spectralFluxOnsetsPlan, _spectralFluxStep } from './onsets.js';
 import { _tourNoteAction } from './tour.js';
 import { _rollMidiForNote, _rollPitchCtx, midiToFreq } from './keys.js';
 import { _recState } from './midi-record.js';
@@ -256,12 +256,10 @@ function _startOnsetFluxJob() {
     const buf = S.audioBuffer;
     if (!buf) return;
     let plan;
-    try {
-        const sr = buf.sampleRate;
-        const factor = Math.max(1, Math.floor(sr / 22050));
-        const sig = _downsamplePure(buf.getChannelData(0), factor);
-        plan = _spectralFluxPlan(sig, sr / factor, { fftSize: 512, hop: 512 });
-    } catch (_) { return; }               // stay on RMS if setup fails
+    // Same plan _spectralFluxOnsetsPure() builds — the chunked driver below is the
+    // ONLY thing that differs between the sync and background paths.
+    try { plan = _spectralFluxOnsetsPlan(buf.getChannelData(0), buf.sampleRate); }
+    catch (_) { return; }                 // stay on RMS if setup fails
     const job = { cancelled: false };
     _onsetJob = job;
     const FRAMES_PER_TICK = 1500;         // a few ms of FFT work per tick

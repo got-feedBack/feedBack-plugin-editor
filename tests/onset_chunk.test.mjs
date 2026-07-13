@@ -12,6 +12,7 @@
 import assert from 'node:assert';
 import {
     _spectralFluxPlan, _spectralFluxStep, _spectralFluxFramesPure, _pickOnsetsPure,
+    _spectralFluxOnsetsPlan, _spectralFluxOnsetsPure,
 } from '../src/onsets.js';
 
 let pass = 0, fail = 0;
@@ -65,6 +66,21 @@ t('chunked onsets equal one-shot onsets (same peaks, same times)', () => {
     while (!_spectralFluxStep(plan, 4)) { /* chunk by 4 */ }
     const chunked = _pickOnsetsPure(plan.res, {});
     assert.deepStrictEqual(chunked, oneShot, 'identical onset events');
+});
+
+// The background job (src/audio.js) drives _spectralFluxOnsetsPlan, NOT its own
+// copy of the downsample/fftSize/hop choices — so the onsets the editor actually
+// ships stay identical to the synchronous _spectralFluxOnsetsPure the rest of the
+// suite pins, INCLUDING the internal 44.1k→22.05k downsample. If someone retunes
+// one path and not the other, this is what catches it.
+t('the chunked plan pipeline == _spectralFluxOnsetsPure (downsample and all)', () => {
+    const sr = 44100;                        // real-world rate ⇒ factor-2 downsample
+    const x = clickTrain(sr, 0.8, [0.12, 0.3, 0.55]);
+    const sync = _spectralFluxOnsetsPure(x, sr);
+    assert.ok(sync.length, 'the synchronous path finds onsets to compare against');
+    const plan = _spectralFluxOnsetsPlan(x, sr);
+    while (!_spectralFluxStep(plan, 32)) { /* as the background job does */ }
+    assert.deepStrictEqual(_pickOnsetsPure(plan.res, {}), sync, 'same onsets, same times, same bands');
 });
 
 t('a zero-frame plan is done immediately with empty output', () => {
