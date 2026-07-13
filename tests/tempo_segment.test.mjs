@@ -11,8 +11,7 @@
  */
 import assert from 'node:assert';
 import {
-    _localTempoSeriesPure, _segmentTempoPure, _downbeatPhasePure, _segmentSeedGridPure,
-    _segmentRoughMapPure,
+    _localTempoSeriesPure, _segmentTempoPure, _downbeatPhasePure, _segmentSeedGridPure, _segmentRoughMapPure,
 } from '../src/tempo-segment.js';
 
 let pass = 0, fail = 0;
@@ -86,6 +85,24 @@ t('phase seed picks beat 1 on the KICK, not the loud snare backbeat', () => {
     assert.ok(modBeat < 0.12 || modBeat > beat - 0.12, `downbeat on a kick, not the snare (phase ${phase.toFixed(3)})`);
 });
 
+// The phase search filtered `t >= tStart` with NO upper bound, so it scored every
+// onset to the END OF THE SONG. On a multi-zone map the next zone's pulse (a
+// different bar period) votes on this zone's phase and drags bar 1 off its beat.
+t('phase is scored only inside its own segment, not to the end of the song', () => {
+    const beat = 0.5, bar = 2.0, onsets = [];
+    // Zone A (t < 16): 8 bars, downbeat exactly on phase 0, modest strength.
+    for (let m = 0; m < 8; m++) onsets.push({ t: m * bar, s: 0.5 });
+    // Zone B (t >= 16): bar-periodic too, but OFFSET a half-beat and louder/longer.
+    // Every one of its onsets votes for phase 0.25, so unbounded scoring hands
+    // zone A a downbeat that sits off the beat its own audio actually lands on.
+    for (let m = 0; m < 40; m++) onsets.push({ t: 16 + 0.25 + m * bar, s: 1 });
+    const bounded = _downbeatPhasePure(onsets, beat, 0, { beatsPerBar: 4, tEnd: 16 });
+    const unbounded = _downbeatPhasePure(onsets, beat, 0, { beatsPerBar: 4 });
+    const off = (p) => Math.min(((p % bar) + bar) % bar, bar - (((p % bar) + bar) % bar));
+    assert.ok(off(bounded.phase) < 1e-6, `windowed phase locks on zone A (got ${bounded.phase.toFixed(3)})`);
+    assert.ok(off(unbounded.phase) > 1e-6, 'unbounded scoring is dragged off by the later zone (pins the bug)');
+});
+
 t('seed grid lays a uniform 4/4 skeleton at the segment bpm, downbeats flagged', () => {
     const grid = _segmentSeedGridPure([{ tStart: 0, tEnd: 4, kind: 'constant', bpmStart: 120, bpmEnd: 120, downbeatTime: 0 }]);
     assert.ok(grid.length >= 7, 'about 8 beats in 4s at 120bpm');
@@ -93,6 +110,65 @@ t('seed grid lays a uniform 4/4 skeleton at the segment bpm, downbeats flagged',
     assert.strictEqual(grid[4].measure, 2, 'beat 5 opens bar 2');
     assert.ok(grid.slice(1, 4).every(b => b.measure === 0), 'beats 2-4 are not downbeats');
     assert.ok(Math.abs((grid[1].time - grid[0].time) - 0.5) < 1e-6, '0.5s beat period at 120bpm');
+});
+
+t('degenerate input degrades cleanly', () => {
+    assert.deepStrictEqual(_localTempoSeriesPure([]), []);
+    assert.deepStrictEqual(_localTempoSeriesPure([{ t: 0, s: 1 }]), []);
+    assert.deepStrictEqual(_segmentTempoPure([]), []);
+    assert.deepStrictEqual(_segmentSeedGridPure([]), []);
+    assert.deepStrictEqual(_downbeatPhasePure([], 0.5, 0), { downbeatTime: 0, phase: 0 });
+});
+
+// A negative S.audioShift slides the recording EARLIER, so _ensureOnsetsShifted()
+// can hand us onsets entirely at t < 0. tEnd then goes negative and the impulse
+// buffer was sized `new Float64Array(ceil(tEnd*binHz) + 1)` → RangeError: Invalid
+// typed array length, thrown straight out of the Scan menu handler.
+t('onsets entirely before t=0 (negative audio shift) return [] instead of throwing', () => {
+    const shifted = [-5, -4.5, -4, -3.5, -3, -2.5].map(t0 => ({ t: t0, s: 1 }));
+    assert.deepStrictEqual(_localTempoSeriesPure(shifted), []);
+});
+
+// beatOf()/timeOf() binary-search S.beats, so a grid that is not strictly
+// increasing silently corrupts every note in the song. _segmentSeedGridPure is
+// what #253 lifts into a TempoGridCmd, so the contract is enforced HERE.
+t('seed grid stays strictly increasing in time even when segments overlap', () => {
+    const grid = _segmentSeedGridPure([
+        { tStart: 0, tEnd: 8, kind: 'constant', bpmStart: 120, bpmEnd: 120 },
+        { tStart: 4, tEnd: 12, kind: 'constant', bpmStart: 90, bpmEnd: 90 },   // overlaps the first
+    ]);
+    for (let i = 1; i < grid.length; i++)
+        assert.ok(grid[i].time > grid[i - 1].time,
+            `beat ${i} (${grid[i].time}) must be strictly after beat ${i - 1} (${grid[i - 1].time})`);
+});
+
+// A confirmed segment is user-editable (#253), so a typed 0/negative bpm is a live
+// input. Any of these made `period <= 0`, so `t += period` never reached seg.tEnd:
+// the while-loop spun forever pushing beats until the tab died.
+t('seed grid refuses degenerate BPM instead of looping forever', () => {
+    for (const [bpmStart, bpmEnd] of [[0, 0], [-60, -60], [Infinity, Infinity], [120, -120]]) {
+        const grid = _segmentSeedGridPure([{ tStart: 0, tEnd: 10, kind: 'ramp', bpmStart, bpmEnd }]);
+        assert.ok(grid.length < 1000, `bpm ${bpmStart}→${bpmEnd} must not run away (got ${grid.length} beats)`);
+        for (const b of grid) assert.ok(Number.isFinite(b.time), `bpm ${bpmStart}→${bpmEnd} emitted a non-finite beat time`);
+    }
+});
+
+// The maxSegments cap merged the closest-at-the-join pair and hard-coded the result
+// to kind:'constant' — flattening a real rit/accel into a single fake steady tempo,
+// which is exactly the pair the "closest at the join" search likes to pick.
+t('cap-merge does not flatten a ramp into a constant', () => {
+    const pts = [];
+    let tt = 0;
+    for (let i = 0; i < 8; i++) pts.push({ t: tt++, bpm: 100, conf: 0.9 });          // plateau
+    for (let i = 0; i < 8; i++) pts.push({ t: tt++, bpm: 140, conf: 0.9 });          // plateau
+    for (let i = 0; i < 12; i++) pts.push({ t: tt++, bpm: 140 - i * 4, conf: 0.9 }); // rit 140→96
+    const raw = _segmentTempoPure(pts, { minSegSec: 0, maxSegments: 99 });
+    assert.strictEqual(raw.filter(s => s.kind === 'ramp').length, 1, 'fixture has exactly one ramp');
+    const capped = _segmentTempoPure(pts, { minSegSec: 0, maxSegments: 2 });
+    assert.strictEqual(capped.length, 2, 'cap is still honoured');
+    assert.ok(capped.some(s => s.kind === 'ramp'), `the rit must survive the cap (got ${capped.map(s => s.kind).join(', ')})`);
+    const ramp = capped.find(s => s.kind === 'ramp');
+    assert.ok(ramp.bpmStart > ramp.bpmEnd, 'and it must still slow down');
 });
 
 t('rough map builds a committable grid in the editor beat shape (downbeats carry den, interior = -1)', () => {
@@ -112,14 +188,6 @@ t('rough map builds a committable grid in the editor beat shape (downbeats carry
     // ~0.5s beat period in the 120 zone
     assert.ok(Math.abs((rough.beats[1].time - rough.beats[0].time) - 0.5) < 0.02, '120bpm → ~0.5s beats');
     assert.strictEqual(_segmentRoughMapPure([]), null, 'no onsets → null');
-});
-
-t('degenerate input degrades cleanly', () => {
-    assert.deepStrictEqual(_localTempoSeriesPure([]), []);
-    assert.deepStrictEqual(_localTempoSeriesPure([{ t: 0, s: 1 }]), []);
-    assert.deepStrictEqual(_segmentTempoPure([]), []);
-    assert.deepStrictEqual(_segmentSeedGridPure([]), []);
-    assert.deepStrictEqual(_downbeatPhasePure([], 0.5, 0), { downbeatTime: 0, phase: 0 });
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

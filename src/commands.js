@@ -31,7 +31,7 @@ import { _flattenArrChords, _mergeChordFn } from './chords.js';
 import { host } from './host.js';
 import { PIANO_LANE_H, _rollPitchCtx, isKeysArr } from './keys.js';
 import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js';
-import { _clearSuggested, _isSuggested, _markSuggested, notes } from './notes.js';
+import { _clearSuggested, _isSuggested, _markSuggested, notes, rescaleBendCurveToPeak, sanitizeBendCurve } from './notes.js';
 import {
     _absolutePitch, _cyclePositionCandidatesPure, _cycleStepPure, _suggestPositionPure,
 } from './position.js';
@@ -260,6 +260,55 @@ export class ToggleTechniqueCmd {
             if (!n.techniques) n.techniques = {};
             n.techniques[this.key] = this.old[k].tech;
             n.fret = this.old[k].fret;
+        });
+    }
+}
+
+// Set a SCALAR technique (`bend` peak, `slide_to`, `slide_unpitch_to`) to an
+// absolute value across a selection as one undoable edit — the inspector's
+// numeric technique inputs, which used to mutate n.techniques in place with no
+// undo (the documented PR3b trap). Snapshots the prior scalar per note; for
+// `bend` it also carries the authored curve (bend_values) through the same
+// rescale-to-new-peak the in-place path did, and snapshots it so undo restores
+// the exact prior shape. Applies to every selected note (the inspector's
+// "set all" semantics) as a single Ctrl+Z.
+export class SetTechScalarCmd {
+    constructor(indices, key, value) {
+        this.indices = indices.slice();
+        this.key = key;
+        this.value = value;
+        this.old = this.indices.map(i => {
+            const t = notes()[i].techniques || {};
+            // bend_values is only touched for `bend`; snapshot it defensively so
+            // undo restores the exact curve even when the rescale nulls it.
+            return { v: t[key], bnv: t.bend_values };
+        });
+    }
+    exec() {
+        for (const i of this.indices) {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.value;
+            // Editing the scalar peak must keep any authored curve consistent
+            // (renderers/graders read bnv as authoritative): rescale the curve to
+            // the new peak, or drop it when the peak is 0 / the curve is unscalable.
+            if (this.key === 'bend' && sanitizeBendCurve(n.techniques.bend_values)) {
+                const scaled = this.value > 0
+                    ? rescaleBendCurveToPeak(n.techniques.bend_values, this.value)
+                    : null;
+                n.techniques.bend_values = scaled;
+                // bnv rounds points to 0.1, so a non-0.1 `value` (e.g. 0.25) would
+                // leave bn disagreeing with the curve's real peak. Snap bn to it.
+                if (scaled) n.techniques.bend = scaled.reduce((m, p) => Math.max(m, p.v), 0);
+            }
+        }
+    }
+    rollback() {
+        this.indices.forEach((i, k) => {
+            const n = notes()[i];
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.old[k].v;
+            if (this.key === 'bend') n.techniques.bend_values = this.old[k].bnv;
         });
     }
 }

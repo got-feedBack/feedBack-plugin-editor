@@ -39,6 +39,7 @@ export function _localTempoSeriesPure(onsets, opts) {
         .filter(x => x && Number.isFinite(x.t)).sort((a, b) => a.t - b.t);
     if (on.length < 4) return [];
     const tEnd = on[on.length - 1].t;
+    if (!(tEnd > 0)) return [];                     // audio slid fully before t=0 → no bins to fill
     const nBins = Math.ceil(tEnd * binHz) + 1;
     const impulse = new Float64Array(nBins);
     for (const x of on) {
@@ -193,7 +194,10 @@ export function _segmentTempoPure(series, opts) {
     }
     segs.length = 0; segs.push(...coalesced);
 
-    // Cap: merge the most-similar adjacent constant pair until within budget.
+    // Cap: merge the most-similar adjacent pair (closest at the join) until within
+    // budget. The merged span is described by its OWN endpoints a.bpmStart→b.bpmEnd:
+    // forcing 'constant' here flattened a real rit/accel into a lie, and since the
+    // pair is picked for continuity at the join those endpoints are the honest read.
     while (segs.length > maxSegments) {
         let bi = 0, bd = Infinity;
         for (let i = 0; i + 1 < segs.length; i++) {
@@ -201,8 +205,11 @@ export function _segmentTempoPure(series, opts) {
             if (d < bd) { bd = d; bi = i; }
         }
         const a = segs[bi], b = segs[bi + 1];
-        segs.splice(bi, 2, { tStart: a.tStart, tEnd: b.tEnd, kind: 'constant',
-            bpmStart: (a.bpmStart + b.bpmEnd) / 2, bpmEnd: (a.bpmStart + b.bpmEnd) / 2,
+        const med = (a.bpmStart + b.bpmEnd) / 2;
+        const isRamp = Math.abs(b.bpmEnd - a.bpmStart) > med * rampFrac;
+        segs.splice(bi, 2, { tStart: a.tStart, tEnd: b.tEnd,
+            kind: isRamp ? 'ramp' : 'constant',
+            bpmStart: isRamp ? a.bpmStart : med, bpmEnd: isRamp ? b.bpmEnd : med,
             conf: Math.min(a.conf, b.conf), _from: a._from, _to: b._to });
     }
     // Min-duration merge: a real tempo INTENT lasts several bars — a segment
@@ -241,7 +248,11 @@ export function _downbeatPhasePure(onsets, beatPeriod, tStart, opts) {
     const bpb = o.beatsPerBar || 4;
     const barPeriod = beatPeriod * bpb;
     const steps = o.steps || 48;                       // phase resolution across the bar
-    const on = (Array.isArray(onsets) ? onsets : []).filter(x => x && Number.isFinite(x.t) && x.t >= tStart - 1e-6);
+    // Window to THIS segment: scoring past tEnd lets a later zone's pulse vote on
+    // this zone's phase (its own bar grid is a different period), which on a
+    // multi-zone song drags bar 1 off the beat it actually lands on.
+    const tEnd = Number.isFinite(o.tEnd) ? o.tEnd : Infinity;
+    const on = (Array.isArray(onsets) ? onsets : []).filter(x => x && Number.isFinite(x.t) && x.t >= tStart - 1e-6 && x.t < tEnd);
     if (!on.length || !(beatPeriod > 0)) return { downbeatTime: tStart, phase: 0 };
     const kick = (x) => {
         if (x.bands && Number.isFinite(x.bands.lo)) return x.bands.lo;   // low band = kick/bass
@@ -270,19 +281,28 @@ export function _downbeatPhasePure(onsets, beatPeriod, tStart, opts) {
 // default 4/4 (meter is a separate axis set afterward). unmapped gaps seed
 // nothing (a held bridge is not the end of the song). Returns [{time, measure}]
 // (measure>0 = downbeat), the topology Apply lifts into a TempoGridCmd.
+//
+// The output is CONTRACTUALLY strictly-increasing in time. beatOf()/timeOf()
+// binary-search the beats array, so a non-monotonic grid silently corrupts every
+// note in the song — and the segments arriving here are user-confirmable, so a
+// hand-edited 0/negative bpm or an overlapping zone is a live input, not a
+// theoretical one. Hence the two guards below: a non-positive/non-finite beat
+// period would also spin `while (t < tEnd)` forever, hanging the editor.
 export function _segmentSeedGridPure(segments, opts) {
     const o = opts || {};
     const bpb = o.beatsPerBar || 4;
     const beats = [];
-    let measure = 1;
+    let measure = 1, last = -Infinity;
     for (const seg of (Array.isArray(segments) ? segments : [])) {
         if (!seg || seg.kind === 'unmapped' || !(seg.tStart < seg.tEnd)) continue;
         const p0 = 60 / (seg.bpmStart || seg.bpmEnd || 120);
         const p1 = 60 / (seg.bpmEnd || seg.bpmStart || 120);
+        if (!(p0 > 0) || !(p1 > 0) || !Number.isFinite(p0) || !Number.isFinite(p1)) continue;
         let t = Number.isFinite(seg.downbeatTime) ? seg.downbeatTime : seg.tStart;
         let bi = 0;
         while (t < seg.tEnd - 1e-6) {
-            beats.push({ time: Math.round(t * 1e6) / 1e6, measure: bi % bpb === 0 ? measure++ : 0 });
+            const time = Math.round(t * 1e6) / 1e6;
+            if (time > last) { beats.push({ time, measure: bi % bpb === 0 ? measure++ : 0 }); last = time; }
             // interpolate the beat period across a ramp by progress through the span
             const frac = (t - seg.tStart) / (seg.tEnd - seg.tStart);
             const period = seg.kind === 'ramp' ? p0 + (p1 - p0) * Math.max(0, Math.min(1, frac)) : p0;
@@ -291,18 +311,18 @@ export function _segmentSeedGridPure(segments, opts) {
     }
     return beats;
 }
-
 // End-to-end rough map: detect segments → seed each downbeat's PHASE → build the
 // grid in the editor's beat shape (downbeats {time, measure, den}; interior
 // {time, measure: -1}). Pure over `onsets`; the topology sits at observed
 // positions so a TempoGridCmd re-lifts notes' beats from their unchanged seconds
 // (notes ride). Returns { beats, segments } or null.
 //
-// NB the phase seed is only as good as the onsets it is handed: _downbeatPhasePure
-// prefers a LOW band (bands.lo = kick/bass) but falls back to overall strength,
-// and today's `_ensureOnsets` emits {t, s} only — no bands — so phase currently
-// seeds off broadband strength and CAN still land on a snare backbeat. Banded
-// onsets are the fix; until then the confirm bar (drag the boundary) is the out.
+// The phase seed is only as good as the onsets it is handed. _downbeatPhasePure
+// prefers a LOW band (bands.lo = kick/bass) and falls back to overall strength —
+// and the banded spectral-flux detector now carries bands through the audio shift,
+// so on a decoded recording the kick really does drive the phase. The RMS fallback
+// detector still emits {t, s} only; there phase seeds off broadband strength and
+// CAN land on a snare backbeat, and the confirm bar (drag the boundary) is the out.
 export function _segmentRoughMapPure(onsets, opts) {
     const o = opts || {};
     const bpb = o.beatsPerBar || 4;
@@ -310,7 +330,10 @@ export function _segmentRoughMapPure(onsets, opts) {
     if (!segments.length) return null;
     for (const seg of segments) {
         const period = 60 / (seg.bpmStart || seg.bpmEnd || 120);
-        seg.downbeatTime = _downbeatPhasePure(onsets, period, seg.tStart, { beatsPerBar: bpb }).downbeatTime;
+        // Window the phase search to the segment: scoring to the end of the song
+        // lets a later zone's pulse drag this zone's bar 1 off its own beat.
+        seg.downbeatTime = _downbeatPhasePure(onsets, period, seg.tStart,
+            { beatsPerBar: bpb, tEnd: seg.tEnd }).downbeatTime;
     }
     const skeleton = _segmentSeedGridPure(segments, { beatsPerBar: bpb });
     if (skeleton.length < 2) return null;
@@ -320,3 +343,4 @@ export function _segmentRoughMapPure(onsets, opts) {
     return { beats, segments };
 }
 /* @pure:tempo-segment:end */
+

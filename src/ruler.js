@@ -31,8 +31,9 @@
  * 'barsel' drag). No DOM, no listeners of its own — nothing to tear down.
  */
 
-import { startPlayback, stopPlayback } from './audio.js';
+import { _ensureOnsets, _ensureOnsetsShifted, startPlayback, stopPlayback } from './audio.js';
 import { ctx } from './canvas.js';
+import { _mapHealthPure, MAP_HEALTH_COLORS } from './map-health.js';
 import {
     LABEL_W, MINIMAP_H, RULER_H, TIMELINE_TOP, timeToX, xToTime,
 } from './geometry.js';
@@ -42,8 +43,94 @@ import {
     _fmtLoopTime, _loopEdgeAdjustPure, _loopLiveMode, _loopRegionForDragPure,
     _regionMeasureLabel, _setBarSel, snapTime,
 } from './loop.js';
-import { S } from './state.js';
-import { _tempoMarkers } from './tempo.js';
+import { S, editGen } from './state.js';
+import { _editorCommandById, editorShortcutProfile } from './shortcuts.js';
+import { _editorToggleTempoMapMode, _tempoMarkers } from './tempo.js';
+import { setStatus } from './ui.js';
+
+// ── Map Health lens (P2-4): per-bar grid-vs-onset drift, three-state ──────────
+// Off by default; a view flag (no history). The metric is pure (src/map-health.js);
+// this memoizes it on the edit generation + the onset-cache identity so the draw
+// path never recomputes per frame, and paints a thin wash under the ruler ticks.
+let _mapHealthOn = null;                 // cached toggle, null until first read
+let _mhMemo = { gen: -1, onsetsRef: undefined, shift: NaN, beatsRef: undefined, result: null };
+
+export function _mapHealthEnabled() {
+    if (_mapHealthOn === null) {
+        try { _mapHealthOn = localStorage.getItem('editorMapHealth') === '1'; }
+        catch (_) { _mapHealthOn = false; }
+    }
+    return _mapHealthOn;
+}
+
+export function _mapHealthResults() {
+    const beats = Array.isArray(S.beats) ? S.beats : null;
+    // The metric compares onsets to BEAT TIMES, so it needs onsets in CHART time
+    // (audio.js) — the raw cache is buffer-time and reads as whole-map drift the
+    // moment the recording is slid. Memo on the RAW cache identity + the live
+    // shift, though: _ensureOnsetsShifted() reallocates on every call when the
+    // shift is non-zero, so keying on IT would miss every frame and put the
+    // O(bars × beats) scan straight back on the draw path.
+    const raw = (typeof _ensureOnsets === 'function') ? _ensureOnsets() : null;
+    const shift = Number(S.audioShift) || 0;
+    const gen = typeof editGen === 'number' ? editGen : 0;
+    if (_mhMemo.gen === gen && _mhMemo.onsetsRef === raw && _mhMemo.shift === shift
+            && _mhMemo.beatsRef === beats && _mhMemo.result) {
+        return _mhMemo.result;
+    }
+    const onsets = (typeof _ensureOnsetsShifted === 'function') ? _ensureOnsetsShifted() : null;
+    const result = _mapHealthPure(beats, onsets);
+    _mhMemo = { gen, onsetsRef: raw, shift, beatsRef: beats, result };
+    return result;
+}
+
+export function editorToggleMapHealth(force) {
+    const next = typeof force === 'boolean' ? force : !_mapHealthEnabled();
+    _mapHealthOn = next;
+    try { localStorage.setItem('editorMapHealth', next ? '1' : '0'); } catch (_) { /* private mode */ }
+    if (host && typeof host.draw === 'function') host.draw();
+    if (host && typeof host.updateStatus === 'function') host.updateStatus();
+    // An all-grey strip is the honest render of "no transients to judge against",
+    // but silently. Say so — otherwise the lens looks broken rather than blank.
+    if (next) {
+        const cov = _mapHealthResults().overall.coverage;
+        setStatus(cov > 0
+            ? 'Map Health on — per-bar grid-vs-recording drift under the ruler (green agrees, red disagrees, grey = nothing to judge; review only)'
+            : 'Map Health on — no transients detected in the recording yet, so every bar reads grey (nothing to judge)');
+    } else {
+        setStatus('Map Health off');
+    }
+    return next;
+}
+
+// Paint the three-state health wash: a ~5px strip along the bottom of the ruler,
+// one span per measure. Grey/amber read soft; red is the only alarm. Sits below
+// the beat ticks + playhead by drawing early in drawRuler.
+// The wash strip's height. ONE constant: the paint and the click target are the
+// same rectangle, or the click-through sends you to a bar you never pointed at.
+const MAP_HEALTH_BAND_H = 5;
+
+function _drawMapHealthBand(w, top) {
+    // Same gate as the `audioOnly` menu row: the flag persists, so an audio-less
+    // chart would otherwise inherit it and paint an all-grey strip nobody can
+    // switch off (the menu item that toggles it is hidden without a recording).
+    if (!_mapHealthEnabled() || !S.audioBuffer) return;
+    const res = _mapHealthResults();
+    if (!res || !res.measures.length) return;
+    const y = top + RULER_H - MAP_HEALTH_BAND_H;
+    for (const m of res.measures) {
+        const x0 = Math.max(LABEL_W, timeToX(m.startTime));
+        const x1 = Math.min(w, timeToX(m.endTime));
+        if (x1 <= x0) continue;
+        // Grey (no evidence) is barely-there so it never reads as an alarm; the
+        // measured states carry more opacity, red the most.
+        const alpha = m.band === 'red' ? 0.85 : m.band === 'amber' ? 0.6 : m.band === 'green' ? 0.45 : 0.22;
+        ctx.fillStyle = MAP_HEALTH_COLORS[m.band] || MAP_HEALTH_COLORS.grey;
+        ctx.globalAlpha = alpha;
+        ctx.fillRect(x0, y, x1 - x0, MAP_HEALTH_BAND_H);
+    }
+    ctx.globalAlpha = 1;
+}
 
 /* @pure:ruler:start */
 // Which interactive zone a canvas y lands in. The loop lane is the ruler's
@@ -215,6 +302,10 @@ export function drawRuler(w) {
         }
     }
 
+    // Map Health wash (P2-4): under the ticks, above nothing — a thin per-bar
+    // drift heat so grid-vs-recording disagreement is visible while charting.
+    _drawMapHealthBand(w, top);
+
     // Beat ticks + measure numbers (the old beat bar, upgraded with
     // sub-beat ticks and collision-free labels).
     const downs = _downbeatTimes();
@@ -330,6 +421,47 @@ function minimapPan(x, w) {
 
 // Returns true when the event was consumed (every y < TIMELINE_TOP is —
 // the header is chrome, never a note-surface fall-through).
+// The Map Health measure under time `t`, or null. Pure lookup over the memoized
+// results — used by both the click-through and any hover affordance.
+export function _mapHealthBarAt(t) {
+    if (!_mapHealthEnabled() || !Number.isFinite(t)) return null;
+    const res = _mapHealthResults();
+    if (!res || !res.measures) return null;
+    return res.measures.find(m => t >= m.startTime - 1e-6 && t < m.endTime - 1e-6) || null;
+}
+
+// Click-through: clicking a DRIFTING bar (amber/red) in the wash is "take me to
+// the fix" — enter Tempo Map, scroll the bar into view, anchor Suggest on its
+// downbeat, and tell the user which key is waiting. Green/grey bars are not
+// actionable, so they fall through to the normal scrub. True if it handled it.
+export function _mapHealthClickThrough(t) {
+    const m = _mapHealthBarAt(t);
+    if (!m || (m.band !== 'red' && m.band !== 'amber')) return false;
+    // Enter Tempo Map FIRST (it clears the selection), THEN anchor Suggest on
+    // this bar's downbeat so the fit marches from exactly the bar that's drifting.
+    if (!S.tempoMapMode) _editorToggleTempoMapMode();
+    if (Number.isInteger(m.beatIdx)) S.tempoSel = m.beatIdx;
+    // A live multi-selection OUTRANKS tempoSel in _editorTempoSuggestFit (it
+    // re-anchors on the range's first downbeat), so a click-through arriving
+    // while ALREADY in Tempo Map must drop it — same as a plain pole click does.
+    // Without this the status line promises a fit for a bar Suggest won't touch.
+    if (S.tempoSelMulti) S.tempoSelMulti.clear();
+    // Lead-in, bounded by the viewport: zoom caps at 2000 px/s, so a viewport can
+    // be shorter than 0.5 s — a flat 0.5 s lead would scroll the very downbeat we
+    // are pointing at off the RIGHT edge.
+    S.scrollX = _editorClampScrollX(m.startTime - Math.min(0.5, _editorViewportDuration() / 4));
+    if (host && typeof host.editorSeekToTime === 'function') host.editorSeekToTime(m.startTime);
+    host.draw();
+    if (host && typeof host.updateStatus === 'function') host.updateStatus();
+    const pct = m.driftFrac !== null ? Math.round(m.driftFrac * 100) : '?';
+    // Never hardcode a key in UI copy — two shortcut profiles exist and the
+    // registry is the only thing that knows which one is live.
+    const cmd = _editorCommandById('tempoSuggestFit');
+    const key = ((cmd && cmd.keys && cmd.keys[editorShortcutProfile]) || 'G').split(' (')[0];
+    setStatus(`Bar ${m.measure} drifts ${pct}% from the recording — Tempo Map opened; press ${key} to fit the barlines from here.`);
+    return true;
+}
+
 export function rulerOnMouseDown(e, x, y, w) {
     const zone = _rulerZonePure(y, MINIMAP_H, TIMELINE_TOP);
     if (!zone) return false;
@@ -355,6 +487,15 @@ export function rulerOnMouseDown(e, x, y, w) {
         _setBarSel(_loopRegionForDragPure(mode, t, t, _downbeatTimes(), S.duration || t, snapTime));
         host.draw();
         return true;
+    }
+    // Map Health click-through: a click ON the painted health wash — the bottom
+    // MAP_HEALTH_BAND_H px of the ruler, right of the label gutter, which is
+    // exactly the rect _drawMapHealthBand fills — over a drifting (amber/red) bar
+    // jumps to its fix instead of scrubbing. The gutter (x < LABEL_W) shows no
+    // wash, so a click there must never claim a bar. Green/grey bars, and the rest
+    // of the scrub half, fall through to scrub.
+    if (zone === 'scrub' && x >= LABEL_W && y >= TIMELINE_TOP - MAP_HEALTH_BAND_H && _mapHealthEnabled()) {
+        if (_mapHealthClickThrough(xToTime(x))) return true;
     }
     // Scrub: seek immediately and keep tracking while the button is down.
     const resume = S.playing;

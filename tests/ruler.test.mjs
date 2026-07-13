@@ -16,17 +16,25 @@
 import assert from 'node:assert';
 
 globalThis.window = globalThis.window || globalThis;
+// The status line is a real (fake) element so the Map Health click-through's copy
+// can be read back — everything else still resolves to null, as before.
+let statusText = '';
 globalThis.document = globalThis.document || {
-    getElementById: () => null, addEventListener: () => {}, activeElement: null,
+    getElementById: (id) => (id === 'editor-status'
+        ? { set textContent(v) { statusText = v; }, get textContent() { return statusText; } }
+        : null),
+    addEventListener: () => {}, activeElement: null,
 };
 globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setItem: () => {} };
 
 const {
-    _minimapTimePure, _minimapXPure, _rulerBarLabelSkipPure, _rulerLoopEdgeHitPure,
-    _rulerMappedEndPure,
-    _rulerZonePure, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp,
+    _mapHealthClickThrough, _minimapTimePure, _minimapXPure, _rulerBarLabelSkipPure,
+    _rulerLoopEdgeHitPure, _rulerMappedEndPure,
+    _rulerZonePure, editorToggleMapHealth, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp,
 } = await import('../src/ruler.js');
 const { MINIMAP_H, RULER_H, TIMELINE_TOP, LABEL_W } = await import('../src/geometry.js');
+const { _editorViewportDuration } = await import('../src/loop.js');
+const { _editorCommandById } = await import('../src/shortcuts.js');
 const { S } = await import('../src/state.js');
 
 let pass = 0, fail = 0;
@@ -209,6 +217,95 @@ t('a Shift loop-drag goes free-mode (no bar snapping)', () => {
     // pure the mouse.js move path calls.
     assert.strictEqual(S.barSel, null);
     S.drag = null;
+});
+
+// ── Map Health click-through (a hot bar takes you to the fix) ─────────
+//
+// Kept LAST: the lens is a sticky module flag, and _ensureOnsets caches the first
+// peaks it sees for the process — so everything above runs with the lens off, as
+// it ships.
+
+// Drive the REAL onset detector: a flat RMS floor with a spike 0.2 s after every
+// beat. 20 % of a 1 s beat is past redMin (0.12), so every measured bar reads RED.
+function seedDriftingGrid() {
+    seedGrid();
+    const bins = 1600;                                  // 16 s / 1600 = 10 ms a bin
+    const rms = new Float32Array(bins).fill(0.01);
+    for (let b = 0; b < 16; b++) rms[Math.round((b + 0.2) * 100)] = 1;
+    S.waveformPeaks = { bins, rms };
+    Object.assign(S, { tempoMapMode: false, tempoSel: -1, tempoSelMulti: new Set() });
+    statusText = '';
+    editorToggleMapHealth(true);
+}
+
+t('map health: a drifting bar takes you to Tempo Map, anchored on its downbeat', () => {
+    seedDriftingGrid();
+    assert.ok(_mapHealthClickThrough(5.5), 'bar 2 (4–8 s) is drifting → handled');
+    assert.strictEqual(S.tempoMapMode, true);
+    assert.strictEqual(S.tempoSel, 4, 'Suggest is anchored on bar 2 = S.beats index 4');
+    S.tempoMapMode = false;
+});
+
+t('map health: a click-through already in Tempo Map drops the stale multi-selection', () => {
+    seedDriftingGrid();
+    S.tempoMapMode = true;                              // already mapping…
+    S.tempoSelMulti = new Set([0, 12]);                 // …with a barline RANGE live
+    assert.ok(_mapHealthClickThrough(5.5));
+    assert.strictEqual(S.tempoSel, 4);
+    // _editorTempoSuggestFit re-anchors on a live multi-range's FIRST downbeat,
+    // which outranks tempoSel — leave it set and Suggest fits from bar 1, not the
+    // bar the user clicked, while the status line promises otherwise.
+    assert.strictEqual(S.tempoSelMulti.size, 0, 'the range is cleared, like a plain pole click');
+    S.tempoMapMode = false;
+});
+
+t('map health: the lead-in scroll keeps the clicked downbeat on screen at max zoom', () => {
+    seedDriftingGrid();
+    S.zoom = 2000;                                      // the zoom ceiling
+    const view = _editorViewportDuration();
+    assert.ok(view < 0.5, 'precondition: the viewport is shorter than a flat 0.5 s lead');
+    assert.ok(_mapHealthClickThrough(8.5), 'bar 3 (8–12 s)');
+    assert.ok(S.scrollX <= 8 && 8 <= S.scrollX + view,
+        `bar 3's downbeat (8 s) stays inside the viewport [${S.scrollX}, ${S.scrollX + view}]`);
+    S.tempoMapMode = false;
+});
+
+t('map health: the status copy resolves the Suggest key from the command registry', () => {
+    seedDriftingGrid();
+    const def = _editorCommandById('tempoSuggestFit');
+    const saved = def.keys.feedback;
+    def.keys.feedback = 'Y (Tempo Map)';                // rebind under the live profile
+    try {
+        assert.ok(_mapHealthClickThrough(5.5));
+        assert.match(statusText, /press Y to fit/, `copy follows the registry: ${statusText}`);
+    } finally {
+        def.keys.feedback = saved;
+        S.tempoMapMode = false;
+    }
+});
+
+t('map health: the label gutter shows no wash, so a click there never claims a bar', () => {
+    seedDriftingGrid();
+    S.scrollX = 4.5;                                    // gutter x now maps INTO bar 2…
+    // …but _drawMapHealthBand clamps every span to x >= LABEL_W, so the gutter is
+    // bare. A click on unpainted pixels must scrub, not teleport into Tempo Map.
+    rulerOnMouseDown(evt(), LABEL_W - 10, TIMELINE_TOP - 2, 800);
+    assert.strictEqual(S.tempoMapMode, false, 'no click-through from unpainted pixels');
+    assert.ok(S.drag && S.drag.type === 'scrub', 'it scrubs, like the rest of the lane');
+    S.drag = null;
+});
+
+t('map health: the click target is exactly the painted wash, not a pixel taller', () => {
+    seedDriftingGrid();
+    const x = xAt(5.5);                                 // over drifting bar 2
+    rulerOnMouseDown(evt(), x, TIMELINE_TOP - 6, 800);  // one px ABOVE the wash
+    assert.strictEqual(S.tempoMapMode, false, 'above the wash is plain scrub lane');
+    assert.ok(S.drag && S.drag.type === 'scrub');
+    S.drag = null;
+    rulerOnMouseDown(evt(), x, TIMELINE_TOP - 5, 800);  // the wash's top row
+    assert.strictEqual(S.tempoMapMode, true, 'the top row of the wash clicks through');
+    assert.strictEqual(S.drag, null, 'a click-through starts no scrub drag');
+    S.tempoMapMode = false;
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
