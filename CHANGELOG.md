@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Playability lint now catches finger conflicts.** Once notes carry fret-hand
+  fingers (from Suggest Fingers, or by hand), the advisory lint flags a chord
+  that asks **one finger to hold two different frets at the same time** — a shape
+  no hand can play. The **thumb** (`T`) counts as a fretting digit and obeys the
+  same physics. A **barre** (the same finger across strings at the *same* fret)
+  is fine and never flagged — as is a **thumb-over** grip. Like every lint rule
+  it only names the problem — a yellow underline, a count on the chip, and a
+  popover row that seeks and selects the notes — never blocking or auto-fixing.
+  Pairs with the auto-fingering and coherent-grip chord resolve.
 - **Export a track to Guitar Pro (.gp5).** A new **File ▸ Export ▸ Guitar Pro
   (.gp5)** item downloads the current fretted track as a `.gp5` file you can open
   in Guitar Pro (or any tab tool that reads GP5) — real interop *out* of the
