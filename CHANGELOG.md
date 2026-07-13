@@ -35,10 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registers even when another is louder, and each attack is placed to a couple of
   milliseconds by sub-frame interpolation. It's pure in-app analysis (no server,
   no new dependencies), computed once per song and cached; the old detector stays
-  as an automatic fallback. The analysis runs **in the background** (spread across
-  animation frames) and the old detector's result shows instantly meanwhile, so
-  turning the onset strip on never stutters even on a long recording. Every attack now also carries its per-band strength,
-  which the upcoming automatic tempo-mapping uses to find the beat.
+  as an automatic fallback. The analysis runs **in the background** (in small
+  chunks between frames) and the old detector's result shows instantly meanwhile,
+  so turning the onset strip on never stutters even on a long recording. Every
+  attack now also carries its per-band strength, which the upcoming automatic
+  tempo-mapping uses to find the beat.
 - **Flattening a variable tempo map now names both directions** instead of a
   bare confirm. Typing a BPM for a song with multiple tempos opens a small in-app
   dialog: **Conform notes to the new tempo** (notes keep their bar:beat positions

@@ -227,8 +227,8 @@ export function _onsetStripEnabled() {
 let _onsetDetector = null;
 export function _onsetDetectorLabel() { return _onsetDetector; }
 
-// The in-flight banded-onset analysis (chunked across rAF), or null. Cancelled on
-// a new load / teardown via its `cancelled` flag.
+// The in-flight banded-onset analysis (chunked across timer ticks), or null.
+// Cancelled on a new load / teardown via its `cancelled` flag.
 let _onsetJob = null;
 
 export function _ensureOnsets() {
@@ -237,8 +237,8 @@ export function _ensureOnsets() {
     if (dur <= 0) return null;
     // Return the cheap RMS-envelope onsets IMMEDIATELY (zero delay for the strip /
     // snap), and upgrade to banded spectral-flux (P2-2) in the BACKGROUND — the
-    // few-hundred-ms STFT is chunked across rAF so it never freezes a frame, then
-    // replaces the cache and repaints. No decoded buffer ⇒ RMS is the final answer.
+    // few-hundred-ms STFT is chunked across timer ticks so it never freezes a
+    // frame, then replaces the cache and repaints. No buffer ⇒ RMS is the answer.
     const pk = S.waveformPeaks;
     _onsetCache = (pk && pk.bins && pk.rms) ? _onsetTimesFromPeaksPure(pk.rms, dur / pk.bins) : [];
     _onsetDetector = 'rms';
@@ -246,9 +246,12 @@ export function _ensureOnsets() {
     return _onsetCache;
 }
 
-// Kick off the banded spectral-flux analysis, chunked across animation frames.
+// Kick off the banded spectral-flux analysis, chunked across timer ticks.
 // Downsamples once (cheap O(N)), then steps the STFT a bounded number of frames
 // per tick; on completion swaps in the sharper onsets and redraws.
+// setTimeout, not rAF: rAF is frozen in a backgrounded window (the job would
+// stall until the editor is looked at again) and doesn't exist under node, and
+// a chunk that runs BETWEEN frames costs the paint less than one that runs in it.
 function _startOnsetFluxJob() {
     const buf = S.audioBuffer;
     if (!buf) return;
@@ -261,14 +264,20 @@ function _startOnsetFluxJob() {
     } catch (_) { return; }               // stay on RMS if setup fails
     const job = { cancelled: false };
     _onsetJob = job;
-    const FRAMES_PER_TICK = 1500;         // a few ms of FFT work per frame
+    const FRAMES_PER_TICK = 1500;         // a few ms of FFT work per tick
     const step = () => {
-        if (job.cancelled) return;
+        // Precondition re-check on every resume: the session can swap the audio out
+        // WITHOUT going through computeWaveform/teardownAudio — loading an
+        // audio-less song just nulls S.audioBuffer (file-ops.js, create.js) — so the
+        // cancelled flag alone doesn't catch it. Onsets for a buffer that is no
+        // longer the session's must never land in the session's cache.
+        // (…and only ever clear the handle if it is still OURS — a cancelled job's
+        // last tick must not null out the replacement job that took its place.)
+        if (job.cancelled || S.audioBuffer !== buf) { if (_onsetJob === job) _onsetJob = null; return; }
         let done = false;
         try { done = _spectralFluxStep(plan, FRAMES_PER_TICK); }
         catch (_) { _onsetJob = null; return; }   // keep the RMS cache on error
-        if (!done) { requestAnimationFrame(step); return; }
-        if (job.cancelled) return;
+        if (!done) { setTimeout(step, 0); return; }
         _onsetJob = null;
         let onsets = null;
         try { onsets = _pickOnsetsPure(plan.res, {}); } catch (_) { onsets = null; }
@@ -278,7 +287,7 @@ function _startOnsetFluxJob() {
             if (host && typeof host.draw === 'function') host.draw();   // repaint with the sharper onsets
         }
     };
-    requestAnimationFrame(step);
+    setTimeout(step, 0);
 }
 
 // Cancel any in-flight analysis (new audio / teardown) — the next step bails.
