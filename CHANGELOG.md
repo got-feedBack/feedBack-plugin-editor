@@ -106,6 +106,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Nudge notes in time with ←/→.** Selected notes now move one snap step
+  earlier/later with the **Left/Right** arrows — one grouped, undoable move —
+  instead of needing a mouse drag for the most-repeated timing tweak (the group
+  is clamped so the earliest note can't cross the start). With **nothing
+  selected**, ←/→ move the playhead a step instead, which also positions the
+  keyboard-entry caret. (Alt+←/→ still jump note-to-note.)
 - **Song Fit — one place to line the chart up with the recording.** A **Song
   Fit…** button in the Tempo Map inspector opens a small menu with the three
   ways to fit a chart to audio, each labelled with what it does to your notes:
