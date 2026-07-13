@@ -14,7 +14,7 @@
 import assert from 'node:assert';
 import { S } from '../src/state.js';
 import { EditHistory } from '../src/history.js';
-import { _audioBufferStartPure, AudioShiftCmd, editorSetAudioShift } from '../src/audio.js';
+import { _audioBufferStartPure, _audioTimelineDurationPure, AudioShiftCmd, editorSetAudioShift } from '../src/audio.js';
 import { seedState, trackHooks, lastStatus } from './_history_env.mjs';
 
 let pass = 0, fail = 0;
@@ -49,6 +49,13 @@ t('past the (shifted) end → no source, transport still runs', () => {
 });
 t('unknown/zero buffer duration never reports past-the-end', () => {
     assert.strictEqual(_audioBufferStartPure(999, 0, 0).play, true);
+});
+
+t('_audioTimelineDurationPure extends positive shifts so delayed tails are reachable', () => {
+    assert.strictEqual(_audioTimelineDurationPure(10, 2, 10), 12, 'positive shift extends the timeline');
+    assert.strictEqual(_audioTimelineDurationPure(15, 2, 10), 15, 'existing longer chart still wins');
+    assert.strictEqual(_audioTimelineDurationPure(10, -2, 10), 10, 'negative shift never shrinks the chart');
+    assert.strictEqual(_audioTimelineDurationPure(8, 2, 0), 8, 'no buffer falls back to chart duration');
 });
 
 // ── 2. AudioShiftCmd / editorSetAudioShift ───────────────────────────────────

@@ -19,7 +19,8 @@
 // Browser surface: the loop strip and its controls.
 // ════════════════════════════════════════════════════════════════════
 import {
-    _abApplyRefGain, _abDisarm, _abOn, _ensureOnsetsShifted, _nearestOnsetTimePure, _refreshLoopABBtn,
+    _abApplyRefGain, _abDisarm, _abOn, _audioTimelineDurationPure,
+    _ensureOnsetsShifted, _nearestOnsetTimePure, _refreshLoopABBtn,
 } from './audio.js';
 import { beatOf, timeOf } from './beats.js';
 import { DPR, canvas } from './canvas.js';
@@ -38,7 +39,8 @@ export function _editorViewportDuration() {
 }
 
 export function _editorClampScrollX(scrollX) {
-    return _editorClampScrollXPure(scrollX, S.duration, _editorViewportDuration(), EDITOR_SCROLL_TAIL_SECONDS);
+    const duration = _audioTimelineDurationPure(S.duration, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
+    return _editorClampScrollXPure(scrollX, duration, _editorViewportDuration(), EDITOR_SCROLL_TAIL_SECONDS);
 }
 
 export function _editorApplyScrollBounds() {

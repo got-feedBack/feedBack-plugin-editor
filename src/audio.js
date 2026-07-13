@@ -312,7 +312,22 @@ export function _audioBufferStartPure(cursorTime, audioShift, bufferDuration) {
     if (bufOff < 0) return { play: true, offset: 0, delay: -bufOff };
     return { play: true, offset: bufOff, delay: 0 };
 }
+
+// Effective timeline length for shifted audio. A positive shift delays the
+// recording, so its tail ends after the raw buffer duration; negative shifts
+// crop the front but do not shrink the chart the user already has.
+export function _audioTimelineDurationPure(timelineDuration, audioShift, bufferDuration) {
+    const base = Math.max(0, Number(timelineDuration) || 0);
+    const dur = Math.max(0, Number(bufferDuration) || 0);
+    const sh = Number(audioShift) || 0;
+    const shiftedEnd = dur > 0 ? dur + Math.max(0, sh) : 0;
+    return Math.max(base, shiftedEnd);
+}
 /* @pure:audio-shift:end */
+
+function _audioTimelineDuration() {
+    return _audioTimelineDurationPure(S.duration, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
+}
 
 export function _startAudioSourceAtCursor(preRoll = 0) {
     // Slide the recording by S.audioShift (the chart clock, anchored below, is
@@ -356,6 +371,7 @@ function _afterAudioShiftChange() {
     // If playing, restart the source at the cursor so the buffer offset updates
     // mid-playback (the transport clock/cursor are untouched — only the audio moves).
     if (S.playing) _restartPlaybackAt(S.cursorTime);
+    if (host && typeof host.editorApplyScrollBounds === 'function') host.editorApplyScrollBounds();
     if (host && typeof host.draw === 'function') host.draw();
 }
 
@@ -408,7 +424,7 @@ export function _restartPlaybackAt(t) {
         try { S.audioSource.stop(); } catch (_) {}
         S.audioSource = null;
     }
-    S.cursorTime = Math.max(0, Math.min(S.duration || Infinity, t));
+    S.cursorTime = Math.max(0, Math.min(_audioTimelineDuration() || Infinity, t));
     // Compose mode re-anchors the clock without a BufferSource — the guide/
     // click scheduler is the only sound (charrette §1.7).
     if (S.audioBuffer) _startAudioSourceAtCursor();
@@ -494,9 +510,10 @@ export function playbackTick() {
     // anchor sits in the future, so the raw chart time would read negative).
     S.cursorTime = Math.max(S.playStartTime,
         _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime));
+    const timelineEnd = _audioTimelineDuration();
     const loopRestart = _recState === 'recording'
         ? null
-        : _loopPlaybackRestartTimePure(S.cursorTime, S.barSel, S.loopEnabled, S.duration);
+        : _loopPlaybackRestartTimePure(S.cursorTime, S.barSel, S.loopEnabled, timelineEnd);
     if (loopRestart !== null) {
         // A/B compare flips its pass BEFORE the restart so the ramped
         // reference mute/unmute lands with the wrap, not a frame late.
@@ -509,7 +526,7 @@ export function playbackTick() {
         rafId = requestAnimationFrame(playbackTick);
         return;
     }
-    if (S.cursorTime >= S.duration) {
+    if (S.cursorTime >= timelineEnd) {
         // If a live MIDI recording is active, finalize it at the song end
         // before resetting the cursor — otherwise chartTimeNow() keeps
         // advancing past S.duration and emits notes beyond the chart.
