@@ -92,6 +92,7 @@ export const EDITOR_MENUS = Object.freeze([
     ] },
     { title: 'Note', items: [
         { cmd: 'editFret' },
+        { cmd: 'suggestFingers' },
         { cmd: 'fretUp' },
         { cmd: 'fretDown' },
         { cmd: 'noteMenu' },

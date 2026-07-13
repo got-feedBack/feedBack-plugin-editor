@@ -51,7 +51,7 @@ import {
     lanes,
     strToLane,
 } from './lanes.js';
-import { _isSuggested, notes } from './notes.js';
+import { _isSuggested, notes, sanitizeBendCurve } from './notes.js';
 import { _lintFlaggedSet } from './playability-lint.js';
 import { _maybeFireFirstCovered } from './signposts.js';
 import {
@@ -490,6 +490,42 @@ export function drawNotes(w) {
     }
 }
 
+/* @pure:technique-overlays:start */
+// Screen points for a bend curve over a note. `pts` = bend_values [{t,v}] (t in
+// 0..1 of the note span, v = semitones ≥ 0). Maps t across [x0, x0+w] and v
+// UPWARD from yBase by up to `rise` px at the curve's max semitone. Returns
+// [{x,y}] (≥2), or [] when there's nothing to draw.
+export function _bendCurvePointsPure(pts, x0, w, yBase, rise) {
+    const c = (Array.isArray(pts) ? pts : []).filter(p => p && Number.isFinite(p.t) && Number.isFinite(p.v));
+    if (c.length < 2) return [];
+    const maxV = Math.max(0.0001, ...c.map(p => Math.max(0, p.v)));
+    return c.map(p => ({
+        x: x0 + Math.max(0, Math.min(1, p.t)) * w,
+        y: yBase - (Math.max(0, p.v) / maxV) * rise,
+    }));
+}
+
+// Slide direction from a note at `fret` to `slideTo`: +1 up, -1 down, 0 none.
+export function _slideDirPure(fret, slideTo) {
+    if (!Number.isFinite(slideTo) || slideTo < 0 || !Number.isFinite(fret)) return 0;
+    return slideTo > fret ? 1 : (slideTo < fret ? -1 : 0);
+}
+
+// Vibrato squiggle across [x0, x0+w] around yMid, amplitude `amp`, ~one cycle
+// per `cycleW` px (min 2 cycles). Returns [{x,y}].
+export function _vibratoPointsPure(x0, w, yMid, amp, cycleW) {
+    if (!(w > 0)) return [];
+    const cycles = Math.max(2, Math.round(w / Math.max(4, cycleW || 8)));
+    const steps = cycles * 6;
+    const out = [];
+    for (let i = 0; i <= steps; i++) {
+        const f = i / steps;
+        out.push({ x: x0 + f * w, y: yMid + Math.sin(f * cycles * 2 * Math.PI) * amp });
+    }
+    return out;
+}
+/* @pure:technique-overlays:end */
+
 function _drawNote(n, selected, ghl, linted) {
     const x = timeToX(n.time);
     const y = strToY(n.string) + NOTE_PAD;
@@ -566,14 +602,69 @@ function _drawNote(n, selected, ghl, linted) {
         }
     }
 
-    // Technique badges
     const techs = n.techniques || {};
+
+    // ── Graphical technique overlays (draw the technique, not just a letter) ──
+    const _ovW = Math.max(sw, MIN_NOTE_W);
+    // Bend: the authored curve (bend_values), or a synthesized 0→bend→hold when
+    // only the semitone amount is set. Rises in amber from the note's baseline
+    // with an arrowhead at the peak — the tab-notation bend read at a glance.
+    const _bendSemis = Number(techs.bend) || 0;
+    if (_bendSemis > 0) {
+        let bnv = sanitizeBendCurve(techs.bend_values);
+        if (!bnv || bnv.length < 2) bnv = [{ t: 0, v: 0 }, { t: 0.35, v: _bendSemis }, { t: 1, v: _bendSemis }];
+        const cp = _bendCurvePointsPure(bnv, x, _ovW, y + h, Math.min(h * 1.3, LANE_H * 0.7));
+        if (cp.length >= 2) {
+            ctx.strokeStyle = '#fbbf24';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(cp[0].x, cp[0].y);
+            for (let i = 1; i < cp.length; i++) ctx.lineTo(cp[i].x, cp[i].y);
+            ctx.stroke();
+            const pk = cp[cp.length - 1];
+            ctx.fillStyle = '#fbbf24';
+            ctx.beginPath();
+            ctx.moveTo(pk.x, pk.y - 3); ctx.lineTo(pk.x - 3, pk.y + 2); ctx.lineTo(pk.x + 3, pk.y + 2);
+            ctx.closePath(); ctx.fill();
+        }
+    }
+    // Slide: a diagonal line across the note, sloping up or down toward the target.
+    const _sdir = _slideDirPure(n.fret, techs.slide_to);
+    if (_sdir !== 0) {
+        ctx.strokeStyle = '#93c5fd';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x + 1, _sdir > 0 ? y + h - 1 : y + 1);
+        ctx.lineTo(x + _ovW - 1, _sdir > 0 ? y + 1 : y + h - 1);
+        ctx.stroke();
+    }
+    // Vibrato: a small squiggle just above the note.
+    if (techs.vibrato) {
+        const vp = _vibratoPointsPure(x, _ovW, y - 2, 2, 8);
+        if (vp.length) {
+            ctx.strokeStyle = '#c4b5fd';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(vp[0].x, vp[0].y);
+            for (let i = 1; i < vp.length; i++) ctx.lineTo(vp[i].x, vp[i].y);
+            ctx.stroke();
+        }
+    }
+    // Tie (link_next): a small legato hook off the trailing edge.
+    if (techs.link_next) {
+        ctx.strokeStyle = '#a7f3d0';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(x + _ovW, y + h / 2, 4, -Math.PI / 2, Math.PI / 2);
+        ctx.stroke();
+    }
+
+    // Technique badges (for the techniques with no graphical overlay above).
     const badges = [];
     if (techs.hammer_on) badges.push('H');
     if (techs.pull_off) badges.push('P');
     if (techs.slide_to >= 0) badges.push('/' + techs.slide_to);
     if (techs.slide_unpitch_to >= 0) badges.push('↓' + techs.slide_unpitch_to);
-    if (techs.bend > 0) badges.push('b');
     if (techs.harmonic) badges.push('*');
     if (techs.harmonic_pinch) badges.push('*P');
     if (techs.palm_mute) badges.push('PM');
@@ -582,9 +673,7 @@ function _drawNote(n, selected, ghl, linted) {
     if (techs.slap) badges.push('S');
     if (techs.pluck) badges.push('P!');
     if (techs.tremolo) badges.push('~');
-    if (techs.vibrato) badges.push('V');
     if (techs.mute) badges.push('x');
-    if (techs.link_next) badges.push('→');
     if (techs.ignore) badges.push('I');
     if (badges.length) {
         ctx.fillStyle = '#ffffffbb';

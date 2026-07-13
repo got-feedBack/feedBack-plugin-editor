@@ -30,7 +30,7 @@ import { KEYS_PATTERN, isKeysMode, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
 import { S, markSessionDirty } from './state.js';
 import { disposeBackendSession, stopSessionProcesses } from './session-lifecycle.js';
-import { _ensureOnsets } from './audio.js';
+import { _ensureOnsetsShifted } from './audio.js';
 import { _firstDownbeatTimePure, _importBar1NudgePure, _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
 import { seedSurfacePreset, surfacePersistFor } from './toolbars.js';
 import { _editorMaybeStartTour } from './tour.js';
@@ -2058,7 +2058,7 @@ export async function editorDoCreate() {
         // editorApplyCreateResult above decoded the audio into S.waveformPeaks.
         if (data.sync_applied !== 'warp') {
             let _firstOnset = null;
-            try { const _on = _ensureOnsets(); if (_on && _on.length) _firstOnset = _on[0].t; } catch (_) {}
+            try { const _on = _ensureOnsetsShifted(); if (_on && _on.length) _firstOnset = _on[0].t; } catch (_) {}
             const _nudge = _importBar1NudgePure(_firstDownbeatTimePure(S.beats), _firstOnset);
             if (_nudge) _msg = _msg ? (_msg + ' ' + _nudge) : _nudge;
         }
@@ -2192,6 +2192,7 @@ export async function editorApplyCreateResult(data) {
     S.sections = data.sections || [];
     S.duration = data.duration || 0;
     S.offset = data.offset || 0;
+    S.audioShift = data.audio_shift || 0;
     S.currentArr = 0;
     S.sel.clear();
     S.toneSel = null;
@@ -2243,6 +2244,7 @@ export async function editorApplyCreateResult(data) {
     document.getElementById('editor-play-btn').disabled = !data.audio_url;
     document.getElementById('editor-sync-btn').classList.toggle('hidden', !data.audio_url);
     document.getElementById('editor-replace-audio-btn').classList.remove('hidden');
+    document.getElementById('editor-shift-audio-btn')?.classList.remove('hidden');
     _updateTonesButtonVisibility();
     host.updateArrangementSelector();
     host.updateStatus();
