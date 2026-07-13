@@ -129,7 +129,6 @@ import {
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
     _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
     _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones
-    _tempoSetMeasureBpmPure, editorScanTempoZones
 } from './tempo.js';
 import {
     drawAnchorLane,
