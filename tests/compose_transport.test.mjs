@@ -65,11 +65,14 @@ function makeComposeDuration(S, guideTimes) {
     )(S, timeOf, () => (guideTimes || []).slice(), _composeSongDurationPure);
 }
 
-// _anchorTransportAtCursor with an injected _guideResetSchedule spy.
+// _anchorTransportAtCursor with an injected _guideResetSchedule spy. It now also
+// samples the output latency into a module-scope hold (audition marker
+// compensation) — declare the hold and stub the reader in the sliced env.
 function makeAnchor(S, onReset) {
-    return new Function('S', '_guideResetSchedule',
-        extractFn('_anchorTransportAtCursor') + '\nreturn _anchorTransportAtCursor;'
-    )(S, onReset);
+    return new Function('S', '_guideResetSchedule', '_readOutputLatency',
+        'let _heldOutputLatency = 0;\n'
+        + extractFn('_anchorTransportAtCursor') + '\nreturn _anchorTransportAtCursor;'
+    )(S, onReset, () => 0);
 }
 
 // _guideResetSchedule run against a stub, returning the module lets it sets.
