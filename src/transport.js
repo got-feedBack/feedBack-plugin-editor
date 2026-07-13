@@ -26,6 +26,19 @@ export function _transportChartTimePure(playStartTime, playStartWall, ctxNow, ra
     return playStartTime + (ctxNow - playStartWall) * r;
 }
 
+// The PAINT-ONLY playhead: the chart time of the audio LEAVING THE SPEAKER right
+// now (ctxNow − output latency), so the drawn line sits on what's heard. Clamped
+// at the start position exactly like the logical cursor in playbackTick — without
+// that clamp a count-in pre-roll (anchor in the future) drags the marker
+// backwards by preRoll·rate and sweeps it in while nothing is sounding yet.
+// Latency is sanitized here too: 0/undefined/NaN (Firefox has no outputLatency)
+// collapses to no compensation rather than an NaN marker.
+export function _cursorDrawTimePure(playStartTime, playStartWall, ctxNow, outputLatency, rate = 1) {
+    const lat = Number.isFinite(outputLatency) && outputLatency > 0 ? outputLatency : 0;
+    return Math.max(playStartTime,
+        _transportChartTimePure(playStartTime, playStartWall, ctxNow - lat, rate));
+}
+
 // Compose-mode song length (charrette §1.7): with no recording, the GRID — not
 // an audio buffer — bounds the song. Prefer an explicit user length; else the
 // time of the last grid beat (timeOf(lastBeat)), extended if authored content

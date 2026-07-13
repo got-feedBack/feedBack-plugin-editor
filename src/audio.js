@@ -33,8 +33,8 @@ import { _recState } from './midi-record.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
 import {
-    _composeSongDurationPure, _loopPlaybackRestartTimePure, _normalizeLoopRegionPure,
-    _countInPlanPure, _transportChartTimePure,
+    _composeSongDurationPure, _cursorDrawTimePure, _loopPlaybackRestartTimePure,
+    _normalizeLoopRegionPure, _countInPlanPure, _transportChartTimePure,
 } from './transport.js';
 import { setStatus } from './ui.js';
 
@@ -373,14 +373,20 @@ function _auditionActive() { return _auditionRate() < 1 && !!S.audioUrl && !!S.a
 // both are memoised for the session's context).
 let _refMediaEl = null;
 let _refMediaNode = null;
+// The src we last ASSIGNED. Never compare against el.src: the getter returns the
+// RESOLVED absolute URL, so a relative audio_url (the server's normal form)
+// would mismatch on every call and re-assign src — reloading the element and
+// stalling playback on every seek/loop-wrap. Compare what we set, not what it echoes.
+let _refMediaSrc = null;
+let _refMediaPlayTimer = null;   // the deferred play() (count-in / +ve audio shift)
 function _ensureRefMedia() {
-    if (!S.audioCtx || !S.audioUrl) return null;
+    if (!S.audioCtx || !S.audioUrl || typeof Audio !== 'function') return null;
     if (!_refMediaEl) {
         _refMediaEl = new Audio();
         _refMediaEl.crossOrigin = 'anonymous';
         _refMediaEl.preload = 'auto';
     }
-    if (_refMediaEl.src !== S.audioUrl) _refMediaEl.src = S.audioUrl;
+    if (_refMediaSrc !== S.audioUrl) { _refMediaEl.src = S.audioUrl; _refMediaSrc = S.audioUrl; }
     if (!_refMediaNode) {
         try { _refMediaNode = S.audioCtx.createMediaElementSource(_refMediaEl); }
         catch (_) { _refMediaNode = null; return null; }
@@ -390,6 +396,10 @@ function _ensureRefMedia() {
     return _refMediaEl;
 }
 function _stopRefMedia() {
+    // Kill the deferred play() FIRST — pausing an element whose start is still
+    // queued would otherwise let the timer resume audio after an explicit stop /
+    // teardown / song change (CodeRabbit).
+    if (_refMediaPlayTimer) { clearTimeout(_refMediaPlayTimer); _refMediaPlayTimer = null; }
     if (_refMediaEl) { try { _refMediaEl.pause(); } catch (_) {} }
 }
 // Slave the media element to the authoritative ctx/chart clock: seek it to the
@@ -398,6 +408,7 @@ function _stopRefMedia() {
 function _startRefMediaAt(st, preRoll = 0) {
     const el = _ensureRefMedia();
     if (!el) return false;
+    if (_refMediaPlayTimer) { clearTimeout(_refMediaPlayTimer); _refMediaPlayTimer = null; }
     const r = _auditionRate();
     el.preservesPitch = true;
     el.mozPreservesPitch = true;
@@ -406,7 +417,7 @@ function _startRefMediaAt(st, preRoll = 0) {
     try { el.currentTime = Math.max(0, st.offset); } catch (_) { /* not seekable yet */ }
     const go = () => { const p = el.play(); if (p && p.catch) p.catch(() => {}); };
     const wait = (Number(preRoll) || 0) + (st.delay > 0 ? st.delay : 0);
-    if (wait > 0) setTimeout(go, wait * 1000);
+    if (wait > 0) _refMediaPlayTimer = setTimeout(() => { _refMediaPlayTimer = null; go(); }, wait * 1000);
     else go();
     return true;
 }
@@ -434,8 +445,12 @@ export function editorSetAuditionRate(rate) {
     S.auditionRate = next;
     if (S.playing) _restartPlaybackAt(S.cursorTime);   // swap engine path live
     _auditionRefreshUi();
-    const pct = Math.round(next * 100);
-    setStatus(next < 1
+    // The restart can DEMOTE the rate (no slow path for this recording) — it has
+    // already said so; don't overwrite that with a cheery "50%" it isn't playing.
+    const eff = _auditionRate();
+    if (eff !== next) return;
+    const pct = Math.round(eff * 100);
+    setStatus(eff < 1
         ? `Audition ${pct}% — slowed for practice, pitch preserved (playback only; the chart is unchanged).`
         : 'Audition 100% — full speed.');
 }
@@ -462,14 +477,25 @@ export function _startAudioSourceAtCursor(preRoll = 0) {
     // buffer entirely (no source; the transport still runs so the cursor and
     // guide advance over the trailing silence).
     const st = _audioBufferStartPure(S.cursorTime, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
-    if (_auditionActive()) {
+    let slow = _auditionActive();
+    if (slow && st.play) {
         // Pitch-preserving slow path: the reference rides the MediaElement, so
         // the sample-accurate BufferSource is silenced. Both feed the SAME
         // _refGain, so the mixer fader / A-B mute / first-play fade still apply.
         if (S.audioSource) { try { S.audioSource.stop(); } catch (_) {} S.audioSource = null; }
-        if (st.play) { _mixApplyFirstPlayFade(); _startRefMediaAt(st, preRoll); }
-        else _stopRefMedia();
-    } else if (st.play) {
+        _mixApplyFirstPlayFade();
+        if (!_startRefMediaAt(st, preRoll)) {
+            // Slow path unavailable (no <audio> ctor, or the context refused a
+            // MediaElementSource — CORS-tainted media). DEMOTE to 100% and fall
+            // through to the BufferSource: silence under a half-speed clock is the
+            // one failure mode this must never ship.
+            slow = false;
+            S.auditionRate = 1;
+            _auditionRefreshUi();
+            setStatus('Audition speed is unavailable for this recording — playing at 100%.');
+        }
+    }
+    if (!slow && st.play) {
         _stopRefMedia();   // rate 1 → the slow-path element must be silent
         S.audioSource = S.audioCtx.createBufferSource();
         S.audioSource.buffer = S.audioBuffer;
@@ -483,7 +509,7 @@ export function _startAudioSourceAtCursor(preRoll = 0) {
         _mixApplyFirstPlayFade();
         const when = (preRoll > 0 || st.delay > 0) ? S.audioCtx.currentTime + preRoll + st.delay : 0;
         S.audioSource.start(when, st.offset);
-    } else {
+    } else if (!st.play) {
         _stopRefMedia();
         S.audioSource = null;
     }
@@ -540,6 +566,10 @@ export function _anchorTransportAtCursor(preRoll = 0) {
     // Sample the output latency once per (re)start and hold it for the pass, so
     // the compensated marker doesn't shimmer as the estimate settles frame to frame.
     _heldOutputLatency = _readOutputLatency();
+    // Re-seat the PAINT clock with the logical one. A loop wrap paints
+    // synchronously (host.drawNow) before the next tick recomputes it, so a stale
+    // cursorDrawTime would flash the marker at the old position for one frame.
+    S.cursorDrawTime = S.cursorTime;
     _guideResetSchedule();
 }
 
@@ -651,8 +681,8 @@ export function playbackTick() {
         _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _auditionRate()));
     // Paint-only: where the audio LEAVING THE SPEAKER now sits (ctxNow − latency),
     // so the drawn line matches what's heard. Logic still uses S.cursorTime.
-    S.cursorDrawTime = Math.max(0, _transportChartTimePure(
-        S.playStartTime, S.playStartWall, S.audioCtx.currentTime - _heldOutputLatency, _auditionRate()));
+    S.cursorDrawTime = _cursorDrawTimePure(
+        S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _heldOutputLatency, _auditionRate());
     _auditionResyncMedia();
     const timelineEnd = _audioTimelineDuration();
     const loopRestart = _recState === 'recording'
@@ -1247,9 +1277,13 @@ function _guideTick() {
                 _guideLastFiredKey = gp.key;
                 const when = _guideChartToCtxPure(gp.t, S.playStartWall, S.playStartTime, _auditionRate());
                 for (const v of gp.voices) {
+                    // The sustain is in CHART seconds; gmVoiceAt schedules in WALL
+                    // seconds. At 0.5x a note must ring twice as long to still cover
+                    // its note in the slowed audio — divide by the rate, same as the
+                    // chart→ctx mapping above.
                     const voice = bus && gmVoiceAt(
                         S.audioCtx, bus.guideGain, gm, when, v.midi,
-                        _gmVoiceDurationPure(v.sus));
+                        _gmVoiceDurationPure(v.sus) / _auditionRate());
                     if (voice) { _guideVoices.push(voice); continue; }
                     // Race: preset dropped mid-tick — ONE clap for the whole
                     // bucket (never a stacked clap per chord note), then on.

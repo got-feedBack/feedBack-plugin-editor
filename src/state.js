@@ -122,6 +122,10 @@ export const S = {
     cursorTime: 0,
     audioCtx: null, audioBuffer: null, audioSource: null,
     playStartWall: 0, playStartTime: 0,
+    // Audition speed (playback-only, editor pref — never pack data) and the
+    // output-latency-compensated PAINT playhead (drawCursor only; every logic
+    // path reads cursorTime).
+    audioUrl: null, auditionRate: 1, cursorDrawTime: 0,
 
     // Waveform cache
     waveformPeaks: null,

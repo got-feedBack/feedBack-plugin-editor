@@ -4,7 +4,7 @@
 // triggers stay in main.js and are reached through host.
 
 import { _anchorsAreDirty, _stripToneInternals, _tonesAreDirty, _updateTonesButtonVisibility } from './annotation-lanes.js';
-import { _abDisarm, loadAudio } from './audio.js';
+import { _abDisarm, _resetAuditionForNewSong, loadAudio } from './audio.js';
 import { _handshapesAreDirty, _normalizeHandshape, flattenChords, reconstructChords } from './chords.js';
 import { _normalizeTuningToLanes } from './commands.js';
 import { EditHistory } from './history.js';
@@ -118,8 +118,8 @@ export async function loadCDLC(filename, options = {}) {
         // accidentally make the old recording playable again.
         S.audioBuffer = null;
         S.waveformPeaks = null;
-        S.audioUrl = null;         // no recording ⇒ no audition source
-        S.auditionRate = 1;
+        S.audioUrl = null;             // no recording ⇒ no audition source
+        _resetAuditionForNewSong();    // ...and the SELECT must follow the reset, not just S
 
         S.title = data.title || '';
         S.artist = data.artist || '';
