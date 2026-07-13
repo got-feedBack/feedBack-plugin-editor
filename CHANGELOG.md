@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Export a track to Guitar Pro (.gp5).** A new **File ▸ Export ▸ Guitar Pro
+  (.gp5)** item downloads the current fretted track as a `.gp5` file you can open
+  in Guitar Pro (or any tab tool that reads GP5) — real interop *out* of the
+  editor for the first time. It converts the last-saved pack (so Save/Build
+  first) through the Tab View plugin, the same conversion the read-only Tab
+  preview already engraves, and hands you the bytes as a download named after the
+  song and track. Fretted tracks only (keys/drums have no tab); if the Tab View
+  plugin isn't installed or the song isn't saved yet, the status line says so.
 - **Chart provenance.** Built packs carry an `origin: {tool: "feedback-editor",
   version}` extension key (ignored-but-preserved per feedpak §4), so
   editor-built charts stay distinguishable from bundled/imported packs —

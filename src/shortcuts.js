@@ -51,6 +51,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
     { id: 'importXml', label: 'Import XML source', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F7' } },
     { id: 'importGp', label: 'Import Guitar Pro source', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F12' } },
+    { id: 'exportGp5', label: 'Export track as Guitar Pro (.gp5)', group: 'File', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'prevBeat', label: 'Jump to previous beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Up', eof: 'Page Up' } },
     { id: 'nextBeat', label: 'Jump to next beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Down', eof: 'Page Down' } },
     { id: 'prevNote', label: 'Jump to previous note', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+Left', eof: 'Shift+Page Up' } },
