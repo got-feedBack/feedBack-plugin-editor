@@ -20,6 +20,7 @@
 // Browser surface: `ctx` (the shared 2D context) plus the sync-inspector and
 // time-signature controls it builds into the toolbar.
 // ════════════════════════════════════════════════════════════════════
+import { _ensureOnsets, _nearestOnsetTimePure } from './audio.js';
 import { beatOf, timeOf } from './beats.js';
 import { DPR, canvas, ctx } from './canvas.js';
 import { _drumLaneIdxForPiece, _drumPieceCount } from './drum.js';
@@ -2270,6 +2271,34 @@ export function _tapTempoHandleKey(e) {
     return false;
 }
 
+/* @pure:tempo-onset-snap:start */
+// Light onset-snap for a dragged barline (PR 11) — the manual complement to
+// Suggest-fit's automatic pass. Only engages when Snap = Onset.
+
+// A few pixels' worth of grab, so the pull feels the same at every zoom.
+const ONSET_SNAP_PX = 6;
+// …but capped in SECONDS so a zoomed-OUT view can't reach a distant attack.
+const ONSET_SNAP_MAX_S = 0.05;
+
+// The snap window in seconds: min(pixel window, hard cap). Zero/negative inputs
+// collapse to 0 (no snap), never NaN.
+export function _tempoOnsetSnapTolPure(secPerPx, pxWindow, maxSec) {
+    const px = Math.max(0, (Number(secPerPx) || 0) * (Number(pxWindow) || 0));
+    const cap = Math.max(0, Number(maxSec) || 0);
+    return Math.min(px, cap);
+}
+
+// Snap a raw dragged barline time to the nearest detected onset within `tol`,
+// re-clamped into [loBound, hiBound] so a snap can never cross a neighbour.
+// Returns { t, snapped }: the raw time unchanged (snapped:false) when nothing is
+// close, so a normal grid-drag feel is preserved away from attacks. Pure.
+export function _tempoOnsetSnapPure(rawT, onsets, tol, loBound, hiBound) {
+    const near = _nearestOnsetTimePure(onsets, rawT, tol);
+    if (near === null) return { t: rawT, snapped: false };
+    return { t: Math.max(loBound, Math.min(hiBound, near)), snapped: true };
+}
+/* @pure:tempo-onset-snap:end */
+
 export function _tempoMapOnDragMove(x) {
     const dg = S.drag;
     if (!dg || dg.type !== 'tempo-sync') return;
@@ -2285,7 +2314,19 @@ export function _tempoMapOnDragMove(x) {
     const hiBound = ndb >= 0
         ? orig[ndb].time - MIN_MEASURE
         : (S.duration || orig[orig.length - 1].time);
-    const newT = Math.max(loBound, Math.min(hiBound, xToTime(x)));
+    const rawT = Math.max(loBound, Math.min(hiBound, xToTime(x)));
+    // Light onset snap: with Snap = Onset, a dragged barline gently pulls to the
+    // nearest detected attack within a few px, so downbeats land on real hits.
+    // Locked poles never snap (they defend their time). Away from Snap = Onset
+    // it is an ordinary continuous grid drag.
+    let newT = rawT;
+    dg.snappedT = null;
+    if (S.snapMode === 'onset' && !(orig[d] && orig[d].locked)) {
+        const tol = _tempoOnsetSnapTolPure(xToTime(1) - xToTime(0), ONSET_SNAP_PX, ONSET_SNAP_MAX_S);
+        const res = _tempoOnsetSnapPure(rawT, _ensureOnsets(), tol, loBound, hiBound);
+        newT = res.t;
+        if (res.snapped) dg.snappedT = newT;
+    }
     // Rebuild from the original grid each move so re-drags don't compound.
     S.beats = orig.map(b => ({ ...b }));
     _tempoApplyDrag(S.beats, d, newT);
@@ -2313,6 +2354,9 @@ export function _tempoMapOnDragEnd() {
         return;
     }
     S.history.exec(new TempoMapCmd(dg.origBeats, newBeats, 'drag'));
+    // Confirm an onset snap so the user knows the barline landed on a real attack
+    // (only set on a tempo-sync drag under Snap = Onset; silent otherwise).
+    if (dg.snappedT != null) setStatus(`Barline snapped to a detected attack at ${dg.snappedT.toFixed(2)}s.`);
     host.draw();
 }
 

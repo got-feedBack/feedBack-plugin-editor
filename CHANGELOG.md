@@ -106,6 +106,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dragged barlines snap to the beat (Snap = Onset).** In Tempo Map mode, with
+  the snap target set to **Onset**, dragging a barline now gently pulls to the
+  nearest detected audio attack within a few pixels — so downbeats land on real
+  hits instead of by eye. It's the manual companion to Suggest (G): the pull is
+  light (a few px, capped at 50ms, so it never fights a deliberate drag) and
+  never crosses a neighbouring barline. **Locked barlines never snap**, and with
+  Snap = Grid the drag stays a plain continuous move. A status line confirms
+  when a barline lands on an attack.
 - **Shift Audio — slide the recording in time, keeping the chart fixed.** A
   **Shift Audio…** button (next to Replace Audio) slides the whole recording
   earlier or later against the chart — the inverse of the chart-side Offset. Use
