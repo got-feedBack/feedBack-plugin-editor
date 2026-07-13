@@ -11,7 +11,7 @@
  */
 import assert from 'node:assert';
 import {
-    _localTempoSeriesPure, _segmentTempoPure, _downbeatPhasePure, _segmentSeedGridPure,
+    _localTempoSeriesPure, _segmentTempoPure, _downbeatPhasePure, _segmentSeedGridPure, _segmentRoughMapPure,
 } from '../src/tempo-segment.js';
 
 let pass = 0, fail = 0;
@@ -169,6 +169,25 @@ t('cap-merge does not flatten a ramp into a constant', () => {
     assert.ok(capped.some(s => s.kind === 'ramp'), `the rit must survive the cap (got ${capped.map(s => s.kind).join(', ')})`);
     const ramp = capped.find(s => s.kind === 'ramp');
     assert.ok(ramp.bpmStart > ramp.bpmEnd, 'and it must still slow down');
+});
+
+t('rough map builds a committable grid in the editor beat shape (downbeats carry den, interior = -1)', () => {
+    const a = constSpan(120, 64, 0);
+    const b = constSpan(140, 64, a.tEnd);
+    const rough = _segmentRoughMapPure([...a.onsets, ...b.onsets]);
+    assert.ok(rough && rough.beats.length > 100, 'a full grid');
+    assert.strictEqual(rough.segments.length, 2, 'two zones');
+    const downs = rough.beats.filter(x => x.measure > 0);
+    const interior = rough.beats.filter(x => x.measure <= 0);
+    assert.ok(downs.length > 20, 'has downbeats');
+    assert.ok(downs.every(x => x.den === 4), 'downbeats carry the 4/4 denominator');
+    assert.ok(interior.every(x => x.measure === -1), 'interior beats are measure -1');
+    // downbeats every 4 beats (4/4), times monotonically increasing
+    assert.ok(rough.beats.every((x, i) => i === 0 || x.time > rough.beats[i - 1].time), 'times sorted');
+    assert.strictEqual(rough.beats[0].measure, 1, 'starts on bar 1');
+    // ~0.5s beat period in the 120 zone
+    assert.ok(Math.abs((rough.beats[1].time - rough.beats[0].time) - 0.5) < 0.02, '120bpm → ~0.5s beats');
+    assert.strictEqual(_segmentRoughMapPure([]), null, 'no onsets → null');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

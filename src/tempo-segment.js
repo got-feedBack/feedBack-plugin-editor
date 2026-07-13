@@ -311,4 +311,36 @@ export function _segmentSeedGridPure(segments, opts) {
     }
     return beats;
 }
+// End-to-end rough map: detect segments → seed each downbeat's PHASE → build the
+// grid in the editor's beat shape (downbeats {time, measure, den}; interior
+// {time, measure: -1}). Pure over `onsets`; the topology sits at observed
+// positions so a TempoGridCmd re-lifts notes' beats from their unchanged seconds
+// (notes ride). Returns { beats, segments } or null.
+//
+// The phase seed is only as good as the onsets it is handed. _downbeatPhasePure
+// prefers a LOW band (bands.lo = kick/bass) and falls back to overall strength —
+// and the banded spectral-flux detector now carries bands through the audio shift,
+// so on a decoded recording the kick really does drive the phase. The RMS fallback
+// detector still emits {t, s} only; there phase seeds off broadband strength and
+// CAN land on a snare backbeat, and the confirm bar (drag the boundary) is the out.
+export function _segmentRoughMapPure(onsets, opts) {
+    const o = opts || {};
+    const bpb = o.beatsPerBar || 4;
+    const segments = _segmentTempoPure(_localTempoSeriesPure(onsets, o), o);
+    if (!segments.length) return null;
+    for (const seg of segments) {
+        const period = 60 / (seg.bpmStart || seg.bpmEnd || 120);
+        // Window the phase search to the segment: scoring to the end of the song
+        // lets a later zone's pulse drag this zone's bar 1 off its own beat.
+        seg.downbeatTime = _downbeatPhasePure(onsets, period, seg.tStart,
+            { beatsPerBar: bpb, tEnd: seg.tEnd }).downbeatTime;
+    }
+    const skeleton = _segmentSeedGridPure(segments, { beatsPerBar: bpb });
+    if (skeleton.length < 2) return null;
+    const beats = skeleton.map(b => b.measure > 0
+        ? { time: b.time, measure: b.measure, den: 4 }
+        : { time: b.time, measure: -1 });
+    return { beats, segments };
+}
 /* @pure:tempo-segment:end */
+

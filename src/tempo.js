@@ -21,7 +21,7 @@
 // time-signature controls it builds into the toolbar.
 // ════════════════════════════════════════════════════════════════════
 import { _ensureOnsets, _ensureOnsetsShifted, _nearestOnsetTimePure } from './audio.js';
-import { _localTempoSeriesPure, _segmentTempoPure } from './tempo-segment.js';
+import { _localTempoSeriesPure, _segmentRoughMapPure, _segmentTempoPure } from './tempo-segment.js';
 import { beatOf, timeOf } from './beats.js';
 import { DPR, canvas, ctx } from './canvas.js';
 import { _drumLaneIdxForPiece, _drumPieceCount } from './drum.js';
@@ -711,6 +711,43 @@ export function editorScanTempoZones() {
         + segs.map(label).join(' · ')
         + (weakest < 0.35 ? ' — LOW CONFIDENCE, the pulse is unsteady; check each zone' : '')
         + ' — preview (segment-first Confirm & Apply is coming).');
+    return true;
+}
+
+// Apply the segment-first ROUGH MAP (P2-3): the committing half of Scan. Builds a
+// grid at the detected tempo zones + onset-seeded downbeat phase and installs it
+// as ONE undoable TempoGridCmd — notes keep their seconds and ride, Ctrl+Z
+// restores the previous grid exactly. This is a deliberate, reviewed step (run
+// Scan first to see the zones); the drag/split/merge confirm bar is the follow-up.
+export function editorApplyTempoZones() {
+    // The menu row is gated `audioOnly` (S.audioBuffer) — which does NOT imply a
+    // song is open, so audio-without-a-session reaches here with S.history still
+    // null. Scan can afford to skip this (it never writes); Apply cannot.
+    if (!S.sessionId || !S.history) {
+        setStatus('Rough map needs a song open — create or open one first.');
+        return true;
+    }
+    const onsets = _ensureOnsetsShifted();
+    if (!onsets || onsets.length < 8) {
+        setStatus('Rough map needs the recording’s onset analysis — load audio first.');
+        return true;
+    }
+    const rough = _segmentRoughMapPure(onsets);
+    if (!rough || rough.beats.length < 2) {
+        setStatus('Rough map: no clear pulse to build a grid from (sparse or unmapped audio).');
+        return true;
+    }
+    const firstDown = rough.beats.findIndex(b => b.measure > 0);
+    S.history.exec(new TempoGridCmd(S.beats || [], rough.beats, 'segment-first rough map',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    host.draw();
+    host.updateStatus();
+    const n = rough.segments.length;
+    // Name the COMMAND, never its key: the two shortcut profiles bind their own
+    // accelerators (the menu resolves them from the registry), so a key in status
+    // copy is a lie waiting to happen.
+    setStatus(`Applied a rough map from ${n} tempo zone${n === 1 ? '' : 's'} — notes kept their timing; `
+        + 'Undo restores the old grid. Open Tempo Map and run Suggest barline fit per zone to refine.');
     return true;
 }
 

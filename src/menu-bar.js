@@ -230,6 +230,7 @@ export const EDITOR_MENUS = Object.freeze([
         { sep: true },
         { label: 'Sync tempo to audio', fn: 'editorSyncTempo', audioOnly: true },
         { label: 'Scan for tempo zones (preview)', fn: 'editorScanTempoZones', audioOnly: true },
+        { label: 'Apply rough map from tempo zones', fn: 'editorApplyTempoZones', audioOnly: true },
         { label: 'Map Health (grid-vs-recording drift)', fn: 'editorToggleMapHealth', audioOnly: true },
         { sep: true },
         { hdr: 'Snap' },
