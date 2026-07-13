@@ -106,6 +106,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dragged barlines snap to the beat (Snap = Onset).** In Tempo Map mode, with
+  the snap target set to **Onset**, dragging a barline now gently pulls to the
+  nearest detected audio attack within a few pixels — so downbeats land on real
+  hits instead of by eye. It's the manual companion to Suggest (G): the pull is
+  light (a few px, capped at 50ms, so it never fights a deliberate drag) and
+  never crosses a neighbouring barline. **Locked barlines never snap**, and with
+  Snap = Grid the drag stays a plain continuous move. A status line confirms
+  when a barline lands on an attack.
 - **Song Fit — one place to line the chart up with the recording.** A **Song
   Fit…** button in the Tempo Map inspector opens a small menu with the three
   ways to fit a chart to audio, each labelled with what it does to your notes:
