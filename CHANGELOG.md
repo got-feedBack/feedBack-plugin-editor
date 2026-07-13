@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Inspector technique edits are undoable now.** Toggling a technique flag
+  (Palm Mute, Hammer-On, Tap, …) or setting a bend/slide value from the
+  inspector panel used to mutate the note in place with no undo — so Ctrl+Z
+  couldn't take it back, even though the same toggle from the keyboard could.
+  Both paths now commit through the editor's undo history (the flags via the
+  same command the keyboard toggles use; bend/slide via a new command that also
+  carries any authored bend curve through the edit), so a technique tweak is one
+  Ctrl+Z like a fret or time change. They still refuse on a read-only piano roll.
 - **Author credits now match the feedpak spec.** The manifest `authors:` array
   was written as plain strings; the spec (§5.4) requires objects with a `name`
   (plus optional `role`), so string credits failed schema validation and the
