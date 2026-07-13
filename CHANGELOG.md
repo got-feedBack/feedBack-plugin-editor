@@ -106,6 +106,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Techniques are drawn on the chart, not just lettered.** Bends now render as
+  the actual **bend curve** (from the authored `bend_values` shape, or a
+  synthesized rise when only the amount is set) — an amber curve rising over the
+  note with an arrowhead — instead of a bare `b`. **Slides** draw a diagonal line
+  sloping toward the target (up or down), **vibrato** draws a small squiggle, and
+  a **tie** (link-to-next) draws a legato hook off the note's trailing edge. The
+  data always existed; now the chart *shows* it, so a fretted part reads much more
+  like real tab. The remaining techniques (H/P, mutes, harmonics, tap/slap, etc.)
+  keep their compact letter badges.
 - **Song Fit — one place to line the chart up with the recording.** A **Song
   Fit…** button in the Tempo Map inspector opens a small menu with the three
   ways to fit a chart to audio, each labelled with what it does to your notes:
