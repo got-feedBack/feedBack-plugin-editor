@@ -55,7 +55,7 @@ import {
     _setLoopRegionEnabled, editorSetLoopSnapMode,
     editorToggleLoopRegion, snapTime
 } from './loop.js';
-import { drawMinimap, drawRuler } from './ruler.js';
+import { drawMinimap, drawRuler, editorToggleMapHealth } from './ruler.js';
 import {
     editorAddEmptyKeys,
     editorDoAddKeys, editorDoImportGuitar, editorHideAddKeysModal,
@@ -553,6 +553,7 @@ window.editorApplyReplaceAudio = editorApplyReplaceAudio;
 
 // Sync-tempo dialog (sync-tempo.js owns the logic; HTML calls these by name).
 window.editorSyncTempo = editorSyncTempo;
+window.editorToggleMapHealth = (force) => editorToggleMapHealth(force);
 window.editorSyncUpdateFactor = editorSyncUpdateFactor;
 window.editorHideSyncDialog = editorHideSyncDialog;
 window.editorApplySync = editorApplySync;

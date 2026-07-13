@@ -31,8 +31,9 @@
  * 'barsel' drag). No DOM, no listeners of its own — nothing to tear down.
  */
 
-import { startPlayback, stopPlayback } from './audio.js';
+import { _ensureOnsets, startPlayback, stopPlayback } from './audio.js';
 import { ctx } from './canvas.js';
+import { _mapHealthPure, MAP_HEALTH_COLORS } from './map-health.js';
 import {
     LABEL_W, MINIMAP_H, RULER_H, TIMELINE_TOP, timeToX, xToTime,
 } from './geometry.js';
@@ -42,8 +43,67 @@ import {
     _fmtLoopTime, _loopEdgeAdjustPure, _loopLiveMode, _loopRegionForDragPure,
     _regionMeasureLabel, _setBarSel, snapTime,
 } from './loop.js';
-import { S } from './state.js';
+import { S, editGen } from './state.js';
 import { _tempoMarkers } from './tempo.js';
+
+// ── Map Health lens (P2-4): per-bar grid-vs-onset drift, three-state ──────────
+// Off by default; a view flag (no history). The metric is pure (src/map-health.js);
+// this memoizes it on the edit generation + the onset-cache identity so the draw
+// path never recomputes per frame, and paints a thin wash under the ruler ticks.
+let _mapHealthOn = null;                 // cached toggle, null until first read
+let _mhMemo = { gen: -1, onsetsRef: undefined, beatsRef: undefined, result: null };
+
+export function _mapHealthEnabled() {
+    if (_mapHealthOn === null) {
+        try { _mapHealthOn = localStorage.getItem('editorMapHealth') === '1'; }
+        catch (_) { _mapHealthOn = false; }
+    }
+    return _mapHealthOn;
+}
+
+export function _mapHealthResults() {
+    const beats = Array.isArray(S.beats) ? S.beats : null;
+    const onsets = _ensureOnsets();
+    const gen = typeof editGen === 'number' ? editGen : 0;
+    if (_mhMemo.gen === gen && _mhMemo.onsetsRef === onsets && _mhMemo.beatsRef === beats && _mhMemo.result) {
+        return _mhMemo.result;
+    }
+    const result = _mapHealthPure(beats, onsets);
+    _mhMemo = { gen, onsetsRef: onsets, beatsRef: beats, result };
+    return result;
+}
+
+export function editorToggleMapHealth(force) {
+    const next = typeof force === 'boolean' ? force : !_mapHealthEnabled();
+    _mapHealthOn = next;
+    try { localStorage.setItem('editorMapHealth', next ? '1' : '0'); } catch (_) { /* private mode */ }
+    if (host && typeof host.draw === 'function') host.draw();
+    if (host && typeof host.updateStatus === 'function') host.updateStatus();
+    return next;
+}
+
+// Paint the three-state health wash: a ~5px strip along the bottom of the ruler,
+// one span per measure. Grey/amber read soft; red is the only alarm. Sits below
+// the beat ticks + playhead by drawing early in drawRuler.
+function _drawMapHealthBand(w, top) {
+    if (!_mapHealthEnabled()) return;
+    const res = _mapHealthResults();
+    if (!res || !res.measures.length) return;
+    const bandH = 5;
+    const y = top + RULER_H - bandH;
+    for (const m of res.measures) {
+        const x0 = Math.max(LABEL_W, timeToX(m.startTime));
+        const x1 = Math.min(w, timeToX(m.endTime));
+        if (x1 <= x0) continue;
+        // Grey (no evidence) is barely-there so it never reads as an alarm; the
+        // measured states carry more opacity, red the most.
+        const alpha = m.band === 'red' ? 0.85 : m.band === 'amber' ? 0.6 : m.band === 'green' ? 0.45 : 0.22;
+        ctx.fillStyle = MAP_HEALTH_COLORS[m.band] || MAP_HEALTH_COLORS.grey;
+        ctx.globalAlpha = alpha;
+        ctx.fillRect(x0, y, x1 - x0, bandH);
+    }
+    ctx.globalAlpha = 1;
+}
 
 /* @pure:ruler:start */
 // Which interactive zone a canvas y lands in. The loop lane is the ruler's
@@ -214,6 +274,10 @@ export function drawRuler(w) {
             ctx.restore();
         }
     }
+
+    // Map Health wash (P2-4): under the ticks, above nothing — a thin per-bar
+    // drift heat so grid-vs-recording disagreement is visible while charting.
+    _drawMapHealthBand(w, top);
 
     // Beat ticks + measure numbers (the old beat bar, upgraded with
     // sub-beat ticks and collision-free labels).
