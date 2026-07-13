@@ -104,50 +104,68 @@ export function _downsamplePure(samples, factor) {
     return out;
 }
 
-// STFT → per-frame half-wave-rectified spectral flux, total and per band.
-// Returns { total, lo, mid, hi } (Float32Array per frame) plus hopSec/frames.
-// Flux[f] = Σ max(0, |X_f[k]| − |X_{f-1}[k]|): energy that AROSE this frame, so a
-// new voice entering a sustained texture registers even with no total-energy rise.
-export function _spectralFluxFramesPure(samples, sampleRate, opts) {
+// Set up a RESUMABLE STFT-flux computation: pre-allocates the output + scratch
+// buffers and returns a `plan`. Drive it with _spectralFluxStep() until done,
+// then _pickOnsetsPure(plan.res). Splitting the frame loop this way lets a caller
+// chunk the (few-hundred-ms) analysis across rAF ticks so it never blocks a frame
+// — the synchronous path below just steps it all at once.
+export function _spectralFluxPlan(samples, sampleRate, opts) {
     const o = opts || {};
     const fftSize = o.fftSize || 512;
     const hop = o.hop || fftSize;
     const n = samples ? samples.length : 0;
     const frames = n >= fftSize ? 1 + Math.floor((n - fftSize) / hop) : 0;
-    const res = {
-        total: new Float32Array(Math.max(0, frames)),
-        lo: new Float32Array(Math.max(0, frames)),
-        mid: new Float32Array(Math.max(0, frames)),
-        hi: new Float32Array(Math.max(0, frames)),
-        hopSec: hop / sampleRate,
-        frames,
-    };
-    if (frames <= 0) return res;
     const { loHi, midHi, nyq } = _bandBinsPure(sampleRate, fftSize);
-    const win = _hannWindowPure(fftSize);
-    const re = new Float64Array(fftSize);
-    const im = new Float64Array(fftSize);
-    let prevMag = new Float64Array(nyq + 1);
-    let curMag = new Float64Array(nyq + 1);
-    for (let f = 0; f < frames; f++) {
+    return {
+        samples, fftSize, hop, frames, loHi, midHi, nyq,
+        win: _hannWindowPure(fftSize),
+        re: new Float64Array(fftSize), im: new Float64Array(fftSize),
+        prevMag: new Float64Array(nyq + 1), curMag: new Float64Array(nyq + 1),
+        next: 0,
+        res: {
+            total: new Float32Array(Math.max(0, frames)),
+            lo: new Float32Array(Math.max(0, frames)),
+            mid: new Float32Array(Math.max(0, frames)),
+            hi: new Float32Array(Math.max(0, frames)),
+            hopSec: hop / sampleRate, frames,
+        },
+    };
+}
+
+// Compute up to `budget` more frames of a plan; returns true once every frame is
+// done. Bit-identical to the one-shot loop regardless of how the budget is split.
+export function _spectralFluxStep(plan, budget) {
+    const { samples, fftSize, hop, frames, loHi, midHi, nyq, win, re, im, res } = plan;
+    const end = Math.min(frames, plan.next + Math.max(1, budget | 0));
+    for (let f = plan.next; f < end; f++) {
         const start = f * hop;
         for (let i = 0; i < fftSize; i++) { re[i] = samples[start + i] * win[i]; im[i] = 0; }
         _fftRadix2(re, im);
+        const curMag = plan.curMag;
         for (let b = 0; b <= nyq; b++) curMag[b] = Math.hypot(re[b], im[b]);
         if (f > 0) {
             let tot = 0, lo = 0, mid = 0, hi = 0;
+            const prevMag = plan.prevMag;
             for (let b = 1; b <= nyq; b++) {
                 const d = curMag[b] - prevMag[b];
-                if (d > 0) {
-                    tot += d;
-                    if (b <= loHi) lo += d; else if (b <= midHi) mid += d; else hi += d;
-                }
+                if (d > 0) { tot += d; if (b <= loHi) lo += d; else if (b <= midHi) mid += d; else hi += d; }
             }
             res.total[f] = tot; res.lo[f] = lo; res.mid[f] = mid; res.hi[f] = hi;
         }
-        const t = prevMag; prevMag = curMag; curMag = t;   // swap scratch
+        const t = plan.prevMag; plan.prevMag = plan.curMag; plan.curMag = t;   // swap scratch
     }
-    return res;
+    plan.next = end;
+    return plan.next >= frames;
+}
+
+// STFT → per-frame half-wave-rectified spectral flux, total and per band (the
+// one-shot synchronous form). Flux[f] = Σ max(0, |X_f[k]| − |X_{f-1}[k]|): energy
+// that AROSE this frame, so a new voice entering a sustained texture registers
+// even with no total-energy rise. Returns { total, lo, mid, hi, hopSec, frames }.
+export function _spectralFluxFramesPure(samples, sampleRate, opts) {
+    const plan = _spectralFluxPlan(samples, sampleRate, opts);
+    while (!_spectralFluxStep(plan, 1 << 24)) { /* all at once */ }
+    return plan.res;
 }
 
 // Peak-pick an onset-detection function into onset events. A frame is an onset

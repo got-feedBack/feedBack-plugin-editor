@@ -27,7 +27,7 @@ import {
     _gmVoiceDurationPure, editorGmVoiceFor, ensureGmPreset, gmPresetReady, gmVoiceAt,
 } from './gm-guide.js';
 import { host } from './host.js';
-import { _spectralFluxOnsetsPure } from './onsets.js';
+import { _downsamplePure, _pickOnsetsPure, _spectralFluxPlan, _spectralFluxStep } from './onsets.js';
 import { _tourNoteAction } from './tour.js';
 import { _rollMidiForNote, _rollPitchCtx, midiToFreq } from './keys.js';
 import { _recState } from './midi-record.js';
@@ -130,7 +130,9 @@ export function computeWaveform() {
     // zoom, yet bounded (≈1 MB of typed arrays for a 5-minute song).
     const binSamples = Math.max(64, Math.round(S.audioBuffer.sampleRate * 0.003));
     S.waveformPeaks = _buildWaveformPeaks(data, binSamples);
-    // New audio ⇒ any cached onset analysis is stale.
+    // New audio ⇒ any cached onset analysis is stale, and an in-flight one is
+    // now analysing the wrong buffer.
+    _cancelOnsetJob();
     _onsetCache = null;
     _onsetDetector = null;
 }
@@ -225,27 +227,63 @@ export function _onsetStripEnabled() {
 let _onsetDetector = null;
 export function _onsetDetectorLabel() { return _onsetDetector; }
 
+// The in-flight banded-onset analysis (chunked across rAF), or null. Cancelled on
+// a new load / teardown via its `cancelled` flag.
+let _onsetJob = null;
+
 export function _ensureOnsets() {
     if (_onsetCache) return _onsetCache;
     const dur = S.duration || 0;
     if (dur <= 0) return null;
-    // Banded spectral-flux from the decoded PCM (P2-2): it sees a note entering a
-    // sustained/pedaled chord, a low bass attack with no pitch, and kick / snare /
-    // hat separately — the failure classes broadband RMS-rise is blind to. Computed
-    // once per load and cached (memoised on the peaks reset in computeWaveform).
-    if (S.audioBuffer) {
-        try {
-            const flux = _spectralFluxOnsetsPure(S.audioBuffer.getChannelData(0), S.audioBuffer.sampleRate);
-            if (flux && flux.length) { _onsetCache = flux; _onsetDetector = 'spectral-flux'; return _onsetCache; }
-        } catch (_) { /* fall through to the RMS envelope detector */ }
-    }
-    // Fallback: the pass-1 RMS-envelope detector (no decoded buffer, or flux found
-    // nothing). Same [{t, s}] shape, minus the per-band strengths.
+    // Return the cheap RMS-envelope onsets IMMEDIATELY (zero delay for the strip /
+    // snap), and upgrade to banded spectral-flux (P2-2) in the BACKGROUND — the
+    // few-hundred-ms STFT is chunked across rAF so it never freezes a frame, then
+    // replaces the cache and repaints. No decoded buffer ⇒ RMS is the final answer.
     const pk = S.waveformPeaks;
-    if (!pk || !pk.bins || !pk.rms) return null;
-    _onsetCache = _onsetTimesFromPeaksPure(pk.rms, dur / pk.bins);
+    _onsetCache = (pk && pk.bins && pk.rms) ? _onsetTimesFromPeaksPure(pk.rms, dur / pk.bins) : [];
     _onsetDetector = 'rms';
+    if (S.audioBuffer && !_onsetJob) _startOnsetFluxJob();
     return _onsetCache;
+}
+
+// Kick off the banded spectral-flux analysis, chunked across animation frames.
+// Downsamples once (cheap O(N)), then steps the STFT a bounded number of frames
+// per tick; on completion swaps in the sharper onsets and redraws.
+function _startOnsetFluxJob() {
+    const buf = S.audioBuffer;
+    if (!buf) return;
+    let plan;
+    try {
+        const sr = buf.sampleRate;
+        const factor = Math.max(1, Math.floor(sr / 22050));
+        const sig = _downsamplePure(buf.getChannelData(0), factor);
+        plan = _spectralFluxPlan(sig, sr / factor, { fftSize: 512, hop: 512 });
+    } catch (_) { return; }               // stay on RMS if setup fails
+    const job = { cancelled: false };
+    _onsetJob = job;
+    const FRAMES_PER_TICK = 1500;         // a few ms of FFT work per frame
+    const step = () => {
+        if (job.cancelled) return;
+        let done = false;
+        try { done = _spectralFluxStep(plan, FRAMES_PER_TICK); }
+        catch (_) { _onsetJob = null; return; }   // keep the RMS cache on error
+        if (!done) { requestAnimationFrame(step); return; }
+        if (job.cancelled) return;
+        _onsetJob = null;
+        let onsets = null;
+        try { onsets = _pickOnsetsPure(plan.res, {}); } catch (_) { onsets = null; }
+        if (onsets && onsets.length) {
+            _onsetCache = onsets;
+            _onsetDetector = 'spectral-flux';
+            if (host && typeof host.draw === 'function') host.draw();   // repaint with the sharper onsets
+        }
+    };
+    requestAnimationFrame(step);
+}
+
+// Cancel any in-flight analysis (new audio / teardown) — the next step bails.
+function _cancelOnsetJob() {
+    if (_onsetJob) { _onsetJob.cancelled = true; _onsetJob = null; }
 }
 
 // Onsets in CHART/timeline time — buffer-time onsets plus the audio placement
@@ -1369,6 +1407,7 @@ export function initAudio() {
 // wants it — and _guideCancelVoices silences any queued oscillators (Codex).
 export function teardownAudio() {
     cancelAudioLoad();
+    _cancelOnsetJob();
     try { if (S.audioSource) { S.audioSource.stop(); S.audioSource = null; } } catch (_) { /* already stopped */ }
     try { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } } catch (_) { /* no frame queued */ }
     S.playing = false;
