@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Techniques now show in the Piano-roll view.** Switching from String view to
+  the roll used to hide every technique — bends, slides, mutes, hammer-ons and
+  the rest were all invisible on roll notes. They're drawn now: a slide gets its
+  diagonal and a tie its legato hook (the two overlays that fit a thin lane),
+  and everything else reads as a compact badge string right-aligned on the note
+  (`H`, `PM`, `/7`, `x`, plus roll-only `b2`/`v` glyphs for bend and vibrato,
+  which are too tall to draw as curves in a 4–14px lane). On lanes too short for
+  text, a small corner dot still marks that a note carries techniques, so none
+  are ever fully invisible. String view and the roll now build their shared
+  badges from one source, so the two views can't drift apart.
 - **Chart provenance.** Built packs carry an `origin: {tool: "feedback-editor",
   version}` extension key (ignored-but-preserved per feedpak §4), so
   editor-built charts stay distinguishable from bundled/imported packs —
