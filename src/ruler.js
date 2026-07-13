@@ -44,6 +44,7 @@ import {
     _regionMeasureLabel, _setBarSel, snapTime,
 } from './loop.js';
 import { S, editGen } from './state.js';
+import { _editorCommandById, editorShortcutProfile } from './shortcuts.js';
 import { _editorToggleTempoMapMode, _tempoMarkers } from './tempo.js';
 import { setStatus } from './ui.js';
 
@@ -53,6 +54,9 @@ import { setStatus } from './ui.js';
 // path never recomputes per frame, and paints a thin wash under the ruler ticks.
 let _mapHealthOn = null;                 // cached toggle, null until first read
 let _mhMemo = { gen: -1, onsetsRef: undefined, beatsRef: undefined, result: null };
+// The wash strip's height. ONE constant: the paint and the click target are the
+// same rectangle, or the click-through sends you to a bar you never pointed at.
+const MAP_HEALTH_BAND_H = 5;
 
 export function _mapHealthEnabled() {
     if (_mapHealthOn === null) {
@@ -93,21 +97,33 @@ export function _mapHealthBarAt(t) {
 
 // Click-through: clicking a DRIFTING bar (amber/red) in the wash is "take me to
 // the fix" — enter Tempo Map, scroll the bar into view, anchor Suggest on its
-// downbeat, and tell the user G is waiting. Green/grey bars are not actionable,
-// so they fall through to the normal scrub. Returns true if it handled the click.
+// downbeat, and tell the user which key is waiting. Green/grey bars are not
+// actionable, so they fall through to the normal scrub. True if it handled it.
 export function _mapHealthClickThrough(t) {
     const m = _mapHealthBarAt(t);
     if (!m || (m.band !== 'red' && m.band !== 'amber')) return false;
     // Enter Tempo Map FIRST (it clears the selection), THEN anchor Suggest on
-    // this bar's downbeat so G fits exactly the span the user clicked.
+    // this bar's downbeat so the fit marches from exactly the bar that's drifting.
     if (!S.tempoMapMode) _editorToggleTempoMapMode();
     if (Number.isInteger(m.beatIdx)) S.tempoSel = m.beatIdx;
-    S.scrollX = _editorClampScrollX(m.startTime - 0.5);
+    // A live multi-selection OUTRANKS tempoSel in _editorTempoSuggestFit (it
+    // re-anchors on the range's first downbeat), so a click-through arriving
+    // while ALREADY in Tempo Map must drop it — same as a plain pole click does.
+    // Without this the status line promises a fit for a bar Suggest won't touch.
+    if (S.tempoSelMulti) S.tempoSelMulti.clear();
+    // Lead-in, bounded by the viewport: zoom caps at 2000 px/s, so a viewport can
+    // be shorter than 0.5 s — a flat 0.5 s lead would scroll the very downbeat we
+    // are pointing at off the RIGHT edge.
+    S.scrollX = _editorClampScrollX(m.startTime - Math.min(0.5, _editorViewportDuration() / 4));
     if (host && typeof host.editorSeekToTime === 'function') host.editorSeekToTime(m.startTime);
     host.draw();
     if (host && typeof host.updateStatus === 'function') host.updateStatus();
     const pct = m.driftFrac !== null ? Math.round(m.driftFrac * 100) : '?';
-    setStatus(`Bar ${m.measure} drifts ${pct}% from the recording — Tempo Map opened; press G to suggest a fit here.`);
+    // Never hardcode a key in UI copy — two shortcut profiles exist and the
+    // registry is the only thing that knows which one is live.
+    const cmd = _editorCommandById('tempoSuggestFit');
+    const key = ((cmd && cmd.keys && cmd.keys[editorShortcutProfile]) || 'G').split(' (')[0];
+    setStatus(`Bar ${m.measure} drifts ${pct}% from the recording — Tempo Map opened; press ${key} to fit the barlines from here.`);
     return true;
 }
 
@@ -118,8 +134,7 @@ function _drawMapHealthBand(w, top) {
     if (!_mapHealthEnabled()) return;
     const res = _mapHealthResults();
     if (!res || !res.measures.length) return;
-    const bandH = 5;
-    const y = top + RULER_H - bandH;
+    const y = top + RULER_H - MAP_HEALTH_BAND_H;
     for (const m of res.measures) {
         const x0 = Math.max(LABEL_W, timeToX(m.startTime));
         const x1 = Math.min(w, timeToX(m.endTime));
@@ -129,7 +144,7 @@ function _drawMapHealthBand(w, top) {
         const alpha = m.band === 'red' ? 0.85 : m.band === 'amber' ? 0.6 : m.band === 'green' ? 0.45 : 0.22;
         ctx.fillStyle = MAP_HEALTH_COLORS[m.band] || MAP_HEALTH_COLORS.grey;
         ctx.globalAlpha = alpha;
-        ctx.fillRect(x0, y, x1 - x0, bandH);
+        ctx.fillRect(x0, y, x1 - x0, MAP_HEALTH_BAND_H);
     }
     ctx.globalAlpha = 1;
 }
@@ -449,10 +464,13 @@ export function rulerOnMouseDown(e, x, y, w) {
         host.draw();
         return true;
     }
-    // Map Health click-through: a click on the thin health wash at the ruler's
-    // bottom edge, over a drifting (amber/red) bar, jumps to its fix instead of
-    // scrubbing. Non-actionable bars (green/grey) fall through to scrub.
-    if (zone === 'scrub' && y >= TIMELINE_TOP - 6 && _mapHealthEnabled()) {
+    // Map Health click-through: a click ON the painted health wash — the bottom
+    // MAP_HEALTH_BAND_H px of the ruler, right of the label gutter, which is
+    // exactly the rect _drawMapHealthBand fills — over a drifting (amber/red) bar
+    // jumps to its fix instead of scrubbing. The gutter (x < LABEL_W) shows no
+    // wash, so a click there must never claim a bar. Green/grey bars, and the rest
+    // of the scrub half, fall through to scrub.
+    if (zone === 'scrub' && x >= LABEL_W && y >= TIMELINE_TOP - MAP_HEALTH_BAND_H && _mapHealthEnabled()) {
         if (_mapHealthClickThrough(xToTime(x))) return true;
     }
     // Scrub: seek immediately and keep tracking while the button is down.

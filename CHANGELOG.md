@@ -31,8 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   glance whether the automatic tempo map can be trusted. **Click a drifting
   (amber/red) bar** in the strip and it takes you straight to the fix — Tempo
   Map opens, the bar scrolls into view, and Suggest is anchored on it so pressing
-  **G** fits that bar's barlines to the recording. (Green and grey bars aren't
-  actionable, so clicking them just scrubs as usual.)
+  **G** proposes a barline fit to the recording from that bar on. (Green and grey
+  bars aren't actionable, so clicking them just scrubs as usual.)
 - **Chart provenance.** Built packs carry an `origin: {tool: "feedback-editor",
   version}` extension key (ignored-but-preserved per feedpak §4), so
   editor-built charts stay distinguishable from bundled/imported packs —
