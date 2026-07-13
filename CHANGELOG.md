@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scan for tempo zones (preview).** A new **Tempo/Grid ▸ Scan for tempo zones**
+  action reads the recording and reports the handful of *tempo intents* it finds
+  — e.g. "3 tempo zones detected: 120 bpm · 140 bpm · rit 140→90". It's the first
+  step of segment-first mapping: instead of guessing one tempo for the whole song
+  or laying a shaky barline on every beat, it proposes a few constant/ramp zones
+  the way a musician would describe the arrangement. This preview only *reports*
+  what it finds — turning the zones into a grid (Confirm & Apply) is coming next.
+  Under the hood it locates the pulse by autocorrelating the detected onsets with
+  an octave guard + tempo prior (so it doesn't read double-time or half-time),
+  and it gets sharper once the banded onset detection lands.
 - **Map Health — see where the grid drifts from the recording.** A new **Map
   Health** toggle (Tempo/Grid menu) paints a thin colour strip under the ruler,
   one span per bar, showing how well the beat grid agrees with the notes the

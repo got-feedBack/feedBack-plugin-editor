@@ -128,7 +128,7 @@ import {
     _tempoHasMultipleMeasureBpmsPure, _tempoMapDraw, _tempoMapOnDragEnd, _tempoMeasureBeatCount,
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
     _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
-    _tempoSetMeasureBpmPure
+    _tempoSetMeasureBpmPure, editorScanTempoZones
 } from './tempo.js';
 import {
     drawAnchorLane,
@@ -555,6 +555,7 @@ window.editorApplyReplaceAudio = editorApplyReplaceAudio;
 
 // Sync-tempo dialog (sync-tempo.js owns the logic; HTML calls these by name).
 window.editorSyncTempo = editorSyncTempo;
+window.editorScanTempoZones = () => editorScanTempoZones();
 window.editorToggleMapHealth = (force) => editorToggleMapHealth(force);
 window.editorSyncUpdateFactor = editorSyncUpdateFactor;
 window.editorHideSyncDialog = editorHideSyncDialog;
