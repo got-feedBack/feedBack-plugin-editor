@@ -3,8 +3,9 @@
 // the read-only Tab preview engraves (src/tab-preview.js). The conversion
 // endpoint (_tabPreviewUrlPure) lives in tab-preview.js and is reused here, so
 // the tabview contract is written once; export adds only the browser download,
-// plus a fretted/saved guard and status messages worded for a "save it out"
-// action rather than the preview lens.
+// plus a fretted/saved guard, the session's own dirty prompt (the preview is a
+// lens labelled "as last saved" — an export is a FILE you take away, so it may
+// not silently be stale) and status messages worded for a "save it out" action.
 //
 // Pure, decision-shaped helpers stay inside the @pure:gp5-export block (the JS
 // test suite slices that block into a `new Function`); the download seam and the
@@ -12,6 +13,7 @@
 
 import { S } from './state.js';
 import { setStatus } from './ui.js';
+import { guardSessionTransition } from './session-lifecycle.js';
 import { _tabPreviewUrlPure } from './tab-preview.js';
 
 /* @pure:gp5-export:start */
@@ -75,8 +77,22 @@ function _downloadBytes(bytes, name) {
 }
 
 export async function editorExportGp5() {
-    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
-    const guard = _gp5ExportGuardPure(S.filename, arr && arr.name, !!S.arrangements.length);
+    const cur = () => (S.arrangements.length ? S.arrangements[S.currentArr] : null);
+    let arr = cur();
+    let guard = _gp5ExportGuardPure(S.filename, arr && arr.name, !!S.arrangements.length);
+    if (!guard.ok) { setStatus(guard.reason); return; }
+    // The converter reads the SAVED pack and indexes it by S.currentArr — and
+    // it CLAMPS that index into the saved track list. So an unsaved session
+    // doesn't just export stale notes: add or reorder a track and the clamp
+    // hands you a DIFFERENT track's bytes under the requested track's name.
+    // Offer the session's own Save / Don't Save / Cancel prompt first.
+    if (!(await guardSessionTransition('exporting to Guitar Pro'))) {
+        setStatus('Export cancelled.');
+        return;
+    }
+    // The prompt awaited: the song (and the current part) may have moved.
+    arr = cur();
+    guard = _gp5ExportGuardPure(S.filename, arr && arr.name, !!S.arrangements.length);
     if (!guard.ok) { setStatus(guard.reason); return; }
     const name = _gp5ExportNamePure(S.filename, arr && arr.name);
     setStatus('Exporting ' + name + '…');
