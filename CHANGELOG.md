@@ -20,11 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Playability lint now catches finger conflicts.** Once notes carry fret-hand
   fingers (from Suggest Fingers, or by hand), the advisory lint flags a chord
   that asks **one finger to hold two different frets at the same time** — a shape
-  no hand can play. A **barre** (the same finger across strings at the *same*
-  fret) is fine and never flagged. Like every lint rule it only names the
-  problem — a yellow underline, a count on the chip, and a popover row that
-  seeks and selects the notes — never blocking or auto-fixing. Pairs with the
-  auto-fingering and coherent-grip chord resolve.
+  no hand can play. The **thumb** (`T`) counts as a fretting digit and obeys the
+  same physics. A **barre** (the same finger across strings at the *same* fret)
+  is fine and never flagged — as is a **thumb-over** grip. Like every lint rule
+  it only names the problem — a yellow underline, a count on the chip, and a
+  popover row that seeks and selects the notes — never blocking or auto-fixing.
+  Pairs with the auto-fingering and coherent-grip chord resolve.
 - **Chart provenance.** Built packs carry an `origin: {tool: "feedback-editor",
   version}` extension key (ignored-but-preserved per feedpak §4), so
   editor-built charts stay distinguishable from bundled/imported packs —

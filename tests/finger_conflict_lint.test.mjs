@@ -50,15 +50,39 @@ t('same finger, different frets but NOT simultaneous → no conflict', () => {
 });
 
 t('open strings and the unset sentinel carry no finger → ignored', () => {
-    const nn = [N(1, 2, 0, -1), N(1, 3, 6, -1), N(1, 4, 8, 0)];   // -1 unset, 0 not a finger
+    const nn = [N(1, 2, 0, -1), N(1, 3, 6, -1), N(1, 4, 8, 0)];   // -1 unset; the lone thumb can't conflict
     assert.deepStrictEqual(_lintFingerConflictPure(nn), []);
     // fret 0 (open) with a bogus finger value is still not a fretting conflict
     assert.deepStrictEqual(_lintFingerConflictPure([N(1, 2, 0, 1), N(1, 3, 5, 1)]), [],
         'the open note has no fretting finger, so finger 1 is used only once');
 });
 
-t('fingers outside 1–4 are ignored (thumb/garbage never conflict here)', () => {
-    const nn = [N(1, 2, 3, 5), N(1, 3, 6, 5)];   // "finger 5" — not a real fret-hand finger
+t('fingers outside 0–4 are ignored (garbage never conflicts here)', () => {
+    const nn = [N(1, 2, 3, 5), N(1, 3, 6, 5)];   // "finger 5" — outside the spec's 0–4 range
+    assert.deepStrictEqual(_lintFingerConflictPure(nn), []);
+});
+
+// The THUMB (fret_finger 0 — spec §6.2.2 fg 0–4, the strip's "T") frets too:
+// thumb-over on the low E is a real grip. It is one thumb, so it obeys the same
+// physics as fingers 1–4 — same fret across strings is fine, two frets at once
+// is not. Guarding on `fg < 1` dropped it entirely and the rule went blind here.
+t('THUMB on two different frets at once → conflict', () => {
+    const nn = [N(1, 0, 2, 0), N(1, 1, 5, 0)];   // T at fret 2 AND fret 5
+    const iss = _lintFingerConflictPure(nn);
+    assert.strictEqual(iss.length, 1, 'the thumb cannot hold two frets either');
+    assert.strictEqual(iss[0].rule, 'finger-conflict');
+    assert.deepStrictEqual(iss[0].indices.sort(), [0, 1]);
+    assert.match(iss[0].detail, /finger T on frets 2 & 5/);
+});
+
+t('thumb-over: one thumb + fingered notes at other frets → no flag', () => {
+    // The classic thumb-over grip: T frets the low E, 1/3/4 take the rest.
+    const nn = [N(1, 0, 2, 0), N(1, 2, 4, 1), N(1, 3, 5, 3), N(1, 4, 5, 4)];
+    assert.deepStrictEqual(_lintFingerConflictPure(nn), []);
+});
+
+t('thumb on the SAME fret across two strings → a thumb barre, no flag', () => {
+    const nn = [N(1, 0, 3, 0), N(1, 1, 3, 0)];   // T wrapping E+A at fret 3
     assert.deepStrictEqual(_lintFingerConflictPure(nn), []);
 });
 
