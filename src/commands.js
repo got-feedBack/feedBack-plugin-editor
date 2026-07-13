@@ -363,6 +363,36 @@ export class SetTeachingMarkCmd {
     }
 }
 
+// Per-note teaching-mark assignment (auto-fingering): each note gets its OWN
+// value in one undoable step — SetTeachingMarkCmd sets a single value across
+// notes; this sets a distinct value per note. `assignments`: [{ idx, value }].
+export class SetTeachingMarksCmd {
+    constructor(key, assignments) {
+        this.key = key;
+        this.items = (assignments || []).map(a => ({
+            idx: a.idx,
+            value: Number.isInteger(a.value) ? a.value : -1,
+            old: (notes()[a.idx] && notes()[a.idx].techniques || {})[key],
+        }));
+    }
+    exec() {
+        for (const it of this.items) {
+            const n = notes()[it.idx];
+            if (!n) continue;
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = it.value;
+        }
+    }
+    rollback() {
+        for (const it of this.items) {
+            const n = notes()[it.idx];
+            if (!n) continue;
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = it.old;
+        }
+    }
+}
+
 export class SetPitchedSlideTargetsCmd {
     constructor(indices, delta) {
         this.indices = indices.slice();
