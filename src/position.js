@@ -147,3 +147,33 @@ export function _suggestPositionPure(pitch, time, prevNote, anchorList, occupied
     })[0];
     return { resolved: best, reason: null, candidates };
 }
+
+/* @pure:suggest-fingers:start */
+// The fret-hand finger for a note at `fret`, hand anchored at `anchorFret` with a
+// `width`-fret span (default 4). Open string (fret 0) → -1 (none — no fretting
+// finger). Inside the window [anchorFret, anchorFret+width) → one finger per
+// fret, index (1) at the anchor fret, clamped to 1..4. Outside the reachable
+// window, or with no hand position → null (refuse: a different hand position owns it).
+export function _suggestFingerForFretPure(fret, anchorFret, width) {
+    if (!Number.isFinite(fret)) return null;
+    if (fret <= 0) return -1;                                   // open string → none
+    if (!Number.isFinite(anchorFret)) return null;              // no hand position → refuse
+    const span = Number.isFinite(width) && width > 0 ? width : 4;
+    const off = fret - anchorFret;
+    if (off < 0 || off >= span) return null;                    // outside the hand → refuse
+    return Math.min(4, off + 1);                                // 1..4
+}
+
+// Map notes → suggested fret_finger. `items`: [{ idx, fret, anchorFret, width }].
+// Returns [{ idx, value }] for every note the rule can finger (open strings → -1
+// none, in-window frets → 1..4); notes it refuses (outside the hand span, or no
+// anchor) are OMITTED so their existing marks are left untouched. Pure.
+export function _suggestFingersPure(items) {
+    const out = [];
+    for (const it of (Array.isArray(items) ? items : [])) {
+        const v = _suggestFingerForFretPure(it.fret, it.anchorFret, it.width);
+        if (v !== null) out.push({ idx: it.idx, value: v });
+    }
+    return out;
+}
+/* @pure:suggest-fingers:end */

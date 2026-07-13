@@ -22,9 +22,10 @@ import { S } from './state.js';
 import { host } from './host.js';
 import { setStatus } from './ui.js';
 import { _isSuggested, notes } from './notes.js';
-import { _suggestPositionPure } from './position.js';
+import { _activeAnchorAtPure, _suggestFingersPure, _suggestPositionPure } from './position.js';
 import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js';
-import { AcceptPositionsCmd, _prevNoteBefore } from './commands.js';
+import { AcceptPositionsCmd, SetTeachingMarksCmd, _prevNoteBefore } from './commands.js';
+import { isKeysMode } from './keys.js';
 
 /* @pure:anchor-resolve:start */
 
@@ -246,6 +247,43 @@ export function editorResolveAnchorWindow(anchor) {
     const refused = new Set(r.refused.map((x) => nn[x.index]).filter(Boolean));
     sweep = { refs: r.targets.map((i) => nn[i]).filter(Boolean), refused, cur: 0 };
     sweepFocus();
+}
+
+// Auto-fingering: propose a fret-hand finger (1-4, or none for open strings) for
+// every fretted note in the selection (or the whole arrangement when nothing is
+// selected), from each note's fret relative to the hand anchor covering its time.
+// All the plumbing already existed — the fret_finger teaching mark, its XML
+// round-trip, the fretboard-strip display — but nothing ever PROPOSED a finger.
+// One undoable SetTeachingMarksCmd; notes outside a reachable hand span are left
+// untouched (a different position owns them).
+export function editorSuggestFingers() {
+    if (isKeysMode()) { setStatus('Fret-hand fingering is for fretted (guitar/bass) parts.'); return; }
+    const arr = S.arrangements && S.arrangements[S.currentArr];
+    if (!arr) return;
+    const anchors = _resolveAnchorsPure(arr);
+    const nn = notes();
+    const idxs = (S.sel && S.sel.size) ? [...S.sel] : nn.map((_, i) => i);
+    const items = [];
+    for (const i of idxs) {
+        const n = nn[i];
+        if (!n || !Number.isFinite(n.fret)) continue;
+        const a = _activeAnchorAtPure(anchors, n.time);
+        items.push({
+            idx: i,
+            fret: n.fret,
+            anchorFret: a && Number.isFinite(a.fret) ? a.fret : null,
+            width: a && Number.isFinite(a.width) ? a.width : 4,
+        });
+    }
+    const assigns = _suggestFingersPure(items);
+    if (!assigns.length) {
+        setStatus('No fingers to suggest — set an anchor (Shift+F) so notes sit in a hand position, then try again.');
+        return;
+    }
+    S.history.exec(new SetTeachingMarksCmd('fret_finger', assigns));
+    host.draw();
+    const scope = (S.sel && S.sel.size) ? 'the selection' : 'the arrangement';
+    setStatus(`Suggested fret-hand fingers for ${assigns.length} note${assigns.length === 1 ? '' : 's'} in ${scope}.`);
 }
 
 export function initAnchorResolve() {

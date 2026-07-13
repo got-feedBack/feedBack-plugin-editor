@@ -142,6 +142,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they arrive in the editor) will move together. *(Persisting the shift into the
   built pack is a follow-up — the value is wired onto the save/load path and
   honored on load, pending the pack field.)*
+- **Suggest fret-hand fingers.** **Note ▸ Suggest fret-hand fingers** now
+  proposes a fingering (1–4, or none for open strings) for every fretted note —
+  from each note's fret relative to the hand anchor covering its time: the index
+  finger sits at the anchor fret, one finger per fret across the four-fret span.
+  It fingers the selection when you have one, otherwise the whole track, in a
+  single undoable step. Notes that don't sit in a reachable hand position are
+  left untouched (a different anchor owns them), and open strings are marked as
+  no-finger. All the plumbing already existed — the `fret_finger` teaching mark,
+  its Guitar-Pro/XML round-trip, and the fretboard strip that *shows* fingers —
+  but until now nothing ever *proposed* one; this closes that gap.
 - **Song Fit — one place to line the chart up with the recording.** A **Song
   Fit…** button in the Tempo Map inspector opens a small menu with the three
   ways to fit a chart to audio, each labelled with what it does to your notes:
