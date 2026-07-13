@@ -47,7 +47,7 @@ import { S } from './state.js';
 import { host } from './host.js';
 import { setStatus } from './ui.js';
 import {
-    _editorToggleFollow, editorCountInBars, editorFollowEnabled, editorSetCountIn,
+    _editorToggleFollow, editorAuditionRate, editorCountInBars, editorFollowEnabled, editorSetCountIn,
     stopPlayback,
 } from './audio.js';
 import { PIANO_NOTE_NAMES, SCALE_LABELS } from './theory.js';
@@ -334,6 +334,9 @@ function buildBar() {
         + tbtn('editor-tp-ab', 'A/B', 'Loop A/B compare — alternates recording and guide per pass', ' aria-pressed="false"')
         + tbtn('editor-tp-count', 'Count', 'Count-in: arm/disarm the pre-roll clicks (arming restores the last bar count)', ' aria-pressed="false"')
         + `<select id="editor-tp-snap" class="editor-transport-snap" title="Snap grid"></select>`
+        + `<select id="editor-audition-speed" class="editor-transport-snap" aria-label="Audition speed"`
+        + ` title="Audition speed — slow the recording for practice, pitch preserved. Playback only; the chart, map and export are unchanged.">`
+        + `<option value="1">100%</option><option value="0.75">75%</option><option value="0.5">50%</option></select>`
         + `</div>` : '';
     bar.innerHTML = util
         + `<div class="editor-transport-group" data-group="core">`
@@ -482,6 +485,16 @@ function wireBar(bar) {
         snap.selectedIndex = S.snapIdx;
         snap.addEventListener('change', () => {
             if (typeof window.editorSetSnap === 'function') window.editorSetSnap(snap.selectedIndex);
+        });
+    }
+
+    // Audition speed — pitch-preserving slow practice (playback only). Mirrors
+    // the current rate on build; delegates to the audio verb on change.
+    const speed = document.getElementById('editor-audition-speed');
+    if (speed) {
+        speed.value = String(editorAuditionRate());
+        speed.addEventListener('change', () => {
+            if (typeof window.editorSetAuditionRate === 'function') window.editorSetAuditionRate(Number(speed.value));
         });
     }
 

@@ -14,7 +14,16 @@
  * Run: node --test tests/map_health.test.mjs
  */
 import assert from 'node:assert';
-import { _mapHealthPure, MAP_HEALTH_COLORS } from '../src/map-health.js';
+
+globalThis.window = globalThis.window || globalThis;
+globalThis.document = globalThis.document || {
+    getElementById: () => null, addEventListener: () => {}, activeElement: null,
+};
+globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setItem: () => {} };
+
+const { _mapHealthPure, MAP_HEALTH_COLORS } = await import('../src/map-health.js');
+const { _mapHealthResults } = await import('../src/ruler.js');
+const { S } = await import('../src/state.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -117,16 +126,77 @@ t('degenerate input degrades to an empty grey result', () => {
     assert.deepStrictEqual(_mapHealthPure([{ time: 0, measure: 0 }, { time: 1, measure: 0 }], []), empty);
 });
 
+t('the wash vocabulary exposes exactly the four bands', () => {
+    assert.deepStrictEqual(Object.keys(MAP_HEALTH_COLORS).sort(), ['amber', 'green', 'grey', 'red']);
+});
+
+// The last measure has NO closing downbeat, so its span has to be extrapolated a
+// beat past the final beat. Ending it AT the final beat clipped the last bar's
+// wash one beat short — and collapsed a grid that ends on a downbeat to zero width.
+t('the unclosed final measure spans a full bar, not up-to-the-last-beat', () => {
+    const beats = grid(120, 2, 4);   // dt=0.5; beats 0..3.5, bar 2 starts at 2.0
+    const h = _mapHealthPure(beats, []);
+    assert.strictEqual(h.measures.length, 2);
+    assert.ok(near(h.measures[1].startTime, 2.0), 'bar 2 starts on its downbeat');
+    assert.ok(near(h.measures[1].endTime, 4.0),
+        `bar 2 runs a full 4 beats to 4.0, not to the last beat at 3.5 (got ${h.measures[1].endTime})`);
+});
+
+t('a grid ending ON a closing downbeat still yields a non-degenerate final measure', () => {
+    const beats = grid(120, 2, 4);
+    beats.push({ time: 4.0, measure: 3 });   // closing downbeat, no beats after it
+    const h = _mapHealthPure(beats, []);
+    const last = h.measures[h.measures.length - 1];
+    assert.strictEqual(h.measures.length, 3, 'every downbeat starts a measure (the _tempoMeasures rule)');
+    assert.ok(last.endTime > last.startTime,
+        `a terminal downbeat must not collapse to zero width (${last.startTime}..${last.endTime})`);
+});
+
+// ── ruler.js seam: the memo + the onset TIME BASE ─────────────────────────────
+// Onsets are cached in BUFFER time; the beat grid is CHART time. Comparing the two
+// directly reads the whole map as drifted the moment the recording is slid, so the
+// lens must consume _ensureOnsetsShifted(). That reallocates whenever the shift is
+// non-zero, so the memo must key on the RAW cache + the shift scalar — keying on
+// the shifted array misses every frame and puts the O(bars × beats) scan back on
+// the draw path.
+function seedPeaks() {
+    // 4 s of audio in 10 ms bins; a transient every 0.5 s from t=0.20.
+    const bins = 400, rms = new Array(bins).fill(0.05);
+    for (let i = 20; i < bins; i += 50) rms[i] = 1.0;
+    S.duration = 4;
+    S.waveformPeaks = { bins, rms };
+}
+
+t('the lens compares onsets to beats in CHART time (a slid recording is not drift)', () => {
+    seedPeaks();
+    S.audioShift = 0.2;                       // onsets land at chart 0.40, 0.90, 1.40, …
+    S.beats = [];
+    for (let i = 0; i < 8; i++) S.beats.push({ time: 0.4 + i * 0.5, measure: i % 4 === 0 ? (i / 4) + 1 : 0 });
+    const h = _mapHealthResults();
+    assert.strictEqual(h.measures.length, 2);
+    assert.ok(h.measures.every(m => m.band === 'green'),
+        `a grid that matches the SHIFTED onsets is healthy (got ${h.measures.map(m => m.band).join(',')})`);
+});
+
+t('the memo survives a non-zero audio shift (no per-frame recompute on the draw path)', () => {
+    seedPeaks();
+    S.audioShift = 0.2;
+    const a = _mapHealthResults();
+    const b = _mapHealthResults();
+    assert.strictEqual(a, b, 'same identity — _ensureOnsetsShifted() reallocates, the memo must not key on it');
+    S.beats = S.beats.map(x => ({ ...x }));   // a fresh grid array invalidates it
+    const c = _mapHealthResults();
+    assert.notStrictEqual(c, a, 'a rebuilt grid recomputes');
+    S.audioShift = 0.35;                      // so does sliding the recording
+    assert.notStrictEqual(_mapHealthResults(), c, 'a new audio shift recomputes');
+});
+
 t('each measure carries the S.beats index of its downbeat (the Suggest anchor)', () => {
     const beats = grid(120, 3, 4);   // downbeats at beats index 0, 4, 8
     const h = _mapHealthPure(beats, onsetsAtBeats(beats, 0));
     assert.deepStrictEqual(h.measures.map(m => m.beatIdx), [0, 4, 8]);
     // the beatIdx really points at a downbeat in the grid
     assert.ok(h.measures.every(m => beats[m.beatIdx].measure > 0), 'beatIdx lands on a downbeat');
-});
-
-t('the wash vocabulary exposes exactly the four bands', () => {
-    assert.deepStrictEqual(Object.keys(MAP_HEALTH_COLORS).sort(), ['amber', 'green', 'grey', 'red']);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
