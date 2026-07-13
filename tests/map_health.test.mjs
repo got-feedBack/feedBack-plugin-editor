@@ -117,6 +117,14 @@ t('degenerate input degrades to an empty grey result', () => {
     assert.deepStrictEqual(_mapHealthPure([{ time: 0, measure: 0 }, { time: 1, measure: 0 }], []), empty);
 });
 
+t('each measure carries the S.beats index of its downbeat (the Suggest anchor)', () => {
+    const beats = grid(120, 3, 4);   // downbeats at beats index 0, 4, 8
+    const h = _mapHealthPure(beats, onsetsAtBeats(beats, 0));
+    assert.deepStrictEqual(h.measures.map(m => m.beatIdx), [0, 4, 8]);
+    // the beatIdx really points at a downbeat in the grid
+    assert.ok(h.measures.every(m => beats[m.beatIdx].measure > 0), 'beatIdx lands on a downbeat');
+});
+
 t('the wash vocabulary exposes exactly the four bands', () => {
     assert.deepStrictEqual(Object.keys(MAP_HEALTH_COLORS).sort(), ['amber', 'green', 'grey', 'red']);
 });

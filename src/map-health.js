@@ -107,6 +107,7 @@ export function _mapHealthPure(beats, onsets, opts) {
         measures.push({
             i: measures.length,
             measure: beats[start].measure,
+            beatIdx: start,                         // S.beats index of this bar's downbeat (Suggest anchor)
             startTime: beats[start].time,
             endTime: (end < beats.length ? beats[end].time : beats[beats.length - 1].time),
             driftFrac,

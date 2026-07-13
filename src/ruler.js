@@ -44,7 +44,8 @@ import {
     _regionMeasureLabel, _setBarSel, snapTime,
 } from './loop.js';
 import { S, editGen } from './state.js';
-import { _tempoMarkers } from './tempo.js';
+import { _editorToggleTempoMapMode, _tempoMarkers } from './tempo.js';
+import { setStatus } from './ui.js';
 
 // ── Map Health lens (P2-4): per-bar grid-vs-onset drift, three-state ──────────
 // Off by default; a view flag (no history). The metric is pure (src/map-health.js);
@@ -80,6 +81,34 @@ export function editorToggleMapHealth(force) {
     if (host && typeof host.draw === 'function') host.draw();
     if (host && typeof host.updateStatus === 'function') host.updateStatus();
     return next;
+}
+
+// The Map Health measure under time `t`, or null. Pure lookup over the memoized
+// results — used by both the click-through and any hover affordance.
+export function _mapHealthBarAt(t) {
+    if (!_mapHealthEnabled() || !Number.isFinite(t)) return null;
+    const res = _mapHealthResults();
+    return res.measures.find(m => t >= m.startTime - 1e-6 && t < m.endTime - 1e-6) || null;
+}
+
+// Click-through: clicking a DRIFTING bar (amber/red) in the wash is "take me to
+// the fix" — enter Tempo Map, scroll the bar into view, anchor Suggest on its
+// downbeat, and tell the user G is waiting. Green/grey bars are not actionable,
+// so they fall through to the normal scrub. Returns true if it handled the click.
+export function _mapHealthClickThrough(t) {
+    const m = _mapHealthBarAt(t);
+    if (!m || (m.band !== 'red' && m.band !== 'amber')) return false;
+    // Enter Tempo Map FIRST (it clears the selection), THEN anchor Suggest on
+    // this bar's downbeat so G fits exactly the span the user clicked.
+    if (!S.tempoMapMode) _editorToggleTempoMapMode();
+    if (Number.isInteger(m.beatIdx)) S.tempoSel = m.beatIdx;
+    S.scrollX = _editorClampScrollX(m.startTime - 0.5);
+    if (host && typeof host.editorSeekToTime === 'function') host.editorSeekToTime(m.startTime);
+    host.draw();
+    if (host && typeof host.updateStatus === 'function') host.updateStatus();
+    const pct = m.driftFrac !== null ? Math.round(m.driftFrac * 100) : '?';
+    setStatus(`Bar ${m.measure} drifts ${pct}% from the recording — Tempo Map opened; press G to suggest a fit here.`);
+    return true;
 }
 
 // Paint the three-state health wash: a ~5px strip along the bottom of the ruler,
@@ -419,6 +448,12 @@ export function rulerOnMouseDown(e, x, y, w) {
         _setBarSel(_loopRegionForDragPure(mode, t, t, _downbeatTimes(), S.duration || t, snapTime));
         host.draw();
         return true;
+    }
+    // Map Health click-through: a click on the thin health wash at the ruler's
+    // bottom edge, over a drifting (amber/red) bar, jumps to its fix instead of
+    // scrubbing. Non-actionable bars (green/grey) fall through to scrub.
+    if (zone === 'scrub' && y >= TIMELINE_TOP - 6 && _mapHealthEnabled()) {
+        if (_mapHealthClickThrough(xToTime(x))) return true;
     }
     // Scrub: seek immediately and keep tracking while the button is down.
     const resume = S.playing;
