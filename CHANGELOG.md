@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Under the hood it locates the pulse by autocorrelating the detected onsets with
   an octave guard + tempo prior (so it doesn't read double-time or half-time),
   and it gets sharper once the banded onset detection lands.
+- **Apply a rough map from the detected tempo zones.** After Scan shows the
+  zones, **Tempo/Grid ▸ Apply rough map** turns them into an actual beat grid —
+  a barline grid at each zone's tempo, its downbeat phase locked to the kick so
+  bar 1 doesn't land on the backbeat. Your notes keep their exact timing against
+  the recording (they ride the audio), and it's a single **Undo** away, so it's
+  safe to try. From there, open Tempo Map and press **G** on a zone to snap its
+  barlines tight to the recording. (The drag-to-adjust confirm bar — nudge a
+  boundary, split/merge a zone — is coming; for now it's Scan to review, Apply
+  to commit.)
 - **Chart provenance.** Built packs carry an `origin: {tool: "feedback-editor",
   version}` extension key (ignored-but-preserved per feedpak §4), so
   editor-built charts stay distinguishable from bundled/imported packs —

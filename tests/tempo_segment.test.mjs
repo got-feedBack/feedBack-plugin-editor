@@ -12,6 +12,7 @@
 import assert from 'node:assert';
 import {
     _localTempoSeriesPure, _segmentTempoPure, _downbeatPhasePure, _segmentSeedGridPure,
+    _segmentRoughMapPure,
 } from '../src/tempo-segment.js';
 
 let pass = 0, fail = 0;
@@ -92,6 +93,25 @@ t('seed grid lays a uniform 4/4 skeleton at the segment bpm, downbeats flagged',
     assert.strictEqual(grid[4].measure, 2, 'beat 5 opens bar 2');
     assert.ok(grid.slice(1, 4).every(b => b.measure === 0), 'beats 2-4 are not downbeats');
     assert.ok(Math.abs((grid[1].time - grid[0].time) - 0.5) < 1e-6, '0.5s beat period at 120bpm');
+});
+
+t('rough map builds a committable grid in the editor beat shape (downbeats carry den, interior = -1)', () => {
+    const a = constSpan(120, 64, 0);
+    const b = constSpan(140, 64, a.tEnd);
+    const rough = _segmentRoughMapPure([...a.onsets, ...b.onsets]);
+    assert.ok(rough && rough.beats.length > 100, 'a full grid');
+    assert.strictEqual(rough.segments.length, 2, 'two zones');
+    const downs = rough.beats.filter(x => x.measure > 0);
+    const interior = rough.beats.filter(x => x.measure <= 0);
+    assert.ok(downs.length > 20, 'has downbeats');
+    assert.ok(downs.every(x => x.den === 4), 'downbeats carry the 4/4 denominator');
+    assert.ok(interior.every(x => x.measure === -1), 'interior beats are measure -1');
+    // downbeats every 4 beats (4/4), times monotonically increasing
+    assert.ok(rough.beats.every((x, i) => i === 0 || x.time > rough.beats[i - 1].time), 'times sorted');
+    assert.strictEqual(rough.beats[0].measure, 1, 'starts on bar 1');
+    // ~0.5s beat period in the 120 zone
+    assert.ok(Math.abs((rough.beats[1].time - rough.beats[0].time) - 0.5) < 0.02, '120bpm → ~0.5s beats');
+    assert.strictEqual(_segmentRoughMapPure([]), null, 'no onsets → null');
 });
 
 t('degenerate input degrades cleanly', () => {

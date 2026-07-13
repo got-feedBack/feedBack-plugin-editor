@@ -291,4 +291,26 @@ export function _segmentSeedGridPure(segments, opts) {
     }
     return beats;
 }
+
+// End-to-end rough map: detect segments → seed each downbeat's PHASE from the
+// kick onsets → build the grid in the editor's beat shape (downbeats
+// {time, measure, den}; interior {time, measure: -1}). Pure over `onsets`; the
+// topology sits at observed positions so a TempoGridCmd re-lifts notes' beats
+// from their unchanged seconds (notes ride). Returns { beats, segments } or null.
+export function _segmentRoughMapPure(onsets, opts) {
+    const o = opts || {};
+    const bpb = o.beatsPerBar || 4;
+    const segments = _segmentTempoPure(_localTempoSeriesPure(onsets, o), o);
+    if (!segments.length) return null;
+    for (const seg of segments) {
+        const period = 60 / (seg.bpmStart || seg.bpmEnd || 120);
+        seg.downbeatTime = _downbeatPhasePure(onsets, period, seg.tStart, { beatsPerBar: bpb }).downbeatTime;
+    }
+    const skeleton = _segmentSeedGridPure(segments, { beatsPerBar: bpb });
+    if (skeleton.length < 2) return null;
+    const beats = skeleton.map(b => b.measure > 0
+        ? { time: b.time, measure: b.measure, den: 4 }
+        : { time: b.time, measure: -1 });
+    return { beats, segments };
+}
 /* @pure:tempo-segment:end */
