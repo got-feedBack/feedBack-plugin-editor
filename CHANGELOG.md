@@ -82,6 +82,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Onset detection now hears frequency, not just loudness.** The little amber
+  attack markers (the onset strip, and what note-drags snap to) used to come from
+  a broadband "the recording got louder" test, which went blind on the events
+  that matter most for charting: a new note inside a sustained or pedaled chord
+  (no jump in total loudness), a low bass note whose attack has no pitch, and it
+  couldn't tell a kick from a snare from a hi-hat. Detection is now **banded
+  spectral flux** — it looks for energy *arriving* in three frequency bands (low
+  ≲150 Hz for kick/bass, mid for snare, high for cymbals/hats), so each of those
+  registers even when another is louder, and each attack is placed to a couple of
+  milliseconds by sub-frame interpolation. It's pure in-app analysis (no server,
+  no new dependencies), computed once per song and cached; the old detector stays
+  as an automatic fallback. Every attack now also carries its per-band strength,
+  which the upcoming automatic tempo-mapping uses to find the beat.
 - **Resolving positions now shapes chords as one coherent grip.** When you run
   "Resolve positions" over an anchor window, simultaneous notes (a chord) used
   to be placed one at a time, each grabbing its own lowest free fret — which

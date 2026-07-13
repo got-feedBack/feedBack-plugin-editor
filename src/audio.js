@@ -27,6 +27,7 @@ import {
     _gmVoiceDurationPure, editorGmVoiceFor, ensureGmPreset, gmPresetReady, gmVoiceAt,
 } from './gm-guide.js';
 import { host } from './host.js';
+import { _spectralFluxOnsetsPure } from './onsets.js';
 import { _tourNoteAction } from './tour.js';
 import { _rollMidiForNote, _rollPitchCtx, midiToFreq } from './keys.js';
 import { _recState } from './midi-record.js';
@@ -133,8 +134,9 @@ export function computeWaveform() {
     // zoom, yet bounded (≈1 MB of typed arrays for a 5-minute song).
     const binSamples = Math.max(64, Math.round(S.audioBuffer.sampleRate * 0.003));
     S.waveformPeaks = _buildWaveformPeaks(data, binSamples);
-    // New audio ⇒ any cached onset analysis is stale.
-    _onsetCache = null;
+    // New audio ⇒ the cached onset analysis is stale, but _ensureOnsets() keys its
+    // cache on the S.audioBuffer identity, so it invalidates itself here AND on the
+    // paths that never reach computeWaveform (loadCDLC, create import, audio clear).
 }
 
 /* @pure:onset-strip:start */
@@ -208,8 +210,9 @@ export function _nearestOnsetTimePure(onsets, t, tol) {
 /* @pure:onset-snap:end */
 
 // ── Onset strip toggle + lazy cache ──────────────────────────────────
-let _onsetCache = null;   // [{t, s}] for the CURRENT waveformPeaks
-let _onsetStripOn = null; // cached enabled flag; null until first read
+let _onsetCache = null;    // [{t, s, bands?}] for the source in _onsetCacheKey
+let _onsetCacheKey = null; // the S.audioBuffer (or peaks) the cache was computed from
+let _onsetStripOn = null;  // cached enabled flag; null until first read
 
 export function _onsetStripEnabled() {
     // Cache the flag so the draw path (every frame during playback) doesn't
@@ -222,12 +225,48 @@ export function _onsetStripEnabled() {
     return _onsetStripOn;
 }
 
+// Which detector produced the current cache — 'spectral-flux' (banded, PCM) or
+// 'rms' (the pass-1 envelope fallback). Read for the status/debug surface.
+let _onsetDetector = null;
+export function _onsetDetectorLabel() { return _onsetDetector; }
+
 export function _ensureOnsets() {
-    if (_onsetCache) return _onsetCache;
-    const pk = S.waveformPeaks;
+    // Key the cache on the analysed source itself, not on a hand-maintained
+    // invalidation. computeWaveform() is NOT the only way the audio changes:
+    // loadCDLC (file-ops.js) and the create-mode import (create.js) both drop
+    // S.audioBuffer/S.waveformPeaks directly, and computeWaveform() early-returns
+    // when there is no buffer — so a plain `if (_onsetCache) return _onsetCache`
+    // hands the PREVIOUS song's onsets to the onset strip, onset-snap, tempo-snap
+    // and Sync phase. Identity check here fixes every caller at once.
+    const key = S.audioBuffer || S.waveformPeaks || null;
+    if (_onsetCache && _onsetCacheKey === key) return _onsetCache;
+    _onsetCache = null; _onsetCacheKey = null; _onsetDetector = null;
     const dur = S.duration || 0;
-    if (!pk || !pk.bins || !pk.rms || dur <= 0) return null;
+    if (!key || dur <= 0) return null;
+    // Banded spectral-flux from the decoded PCM (P2-2): it sees a note entering a
+    // sustained/pedaled chord, a low bass attack with no pitch, and kick / snare /
+    // hat separately — the failure classes broadband RMS-rise is blind to. Computed
+    // once per load and cached (memoised on the source identity above).
+    if (S.audioBuffer) {
+        try {
+            const flux = _spectralFluxOnsetsPure(S.audioBuffer.getChannelData(0), S.audioBuffer.sampleRate);
+            if (flux && flux.length) {
+                _onsetCache = flux; _onsetCacheKey = key; _onsetDetector = 'spectral-flux';
+                return _onsetCache;
+            }
+        } catch (err) {
+            // Never silent: a regression in the flux path would otherwise downgrade
+            // every load to the coarser RMS detector with no trace at all.
+            console.warn('[editor] spectral-flux onset detection failed, falling back to RMS:', err);
+        }
+    }
+    // Fallback: the pass-1 RMS-envelope detector (no decoded buffer, or flux found
+    // nothing). Same [{t, s}] shape, minus the per-band strengths.
+    const pk = S.waveformPeaks;
+    if (!pk || !pk.bins || !pk.rms) return null;
     _onsetCache = _onsetTimesFromPeaksPure(pk.rms, dur / pk.bins);
+    _onsetCacheKey = key;
+    _onsetDetector = 'rms';
     return _onsetCache;
 }
 
@@ -242,7 +281,7 @@ export function _ensureOnsetsShifted() {
     const raw = _ensureOnsets();
     const sh = Number(S.audioShift) || 0;
     if (!raw || !sh) return raw;
-    return raw.map(o => ({ t: o.t + sh, s: o.s }));
+    return raw.map(o => ({ ...o, t: o.t + sh }));   // carry s + per-band strengths
 }
 
 export function _refreshOnsetBtn() {
