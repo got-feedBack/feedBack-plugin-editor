@@ -106,6 +106,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Place notes from the keyboard — no mouse needed.** With nothing selected in
+  String view, an **entry caret** appears (a dashed cell at the playhead on the
+  current string); **↑/↓** move it between strings and typing a **fret digit
+  (0-9)** places a note there, then advances the caret one step so you can type a
+  run. It reuses the normal add path, so it's undoable and identical to a
+  mouse-placed note. When a note *is* selected the same keys keep their existing
+  meaning — a digit sets the selected note's fret, ↑/↓ move its string — so
+  nothing changes for editing; the keyboard-entry behaviour only kicks in when
+  the selection is empty.
 - **Song Fit — one place to line the chart up with the recording.** A **Song
   Fit…** button in the Tempo Map inspector opens a small menu with the three
   ways to fit a chart to audio, each labelled with what it does to your notes:

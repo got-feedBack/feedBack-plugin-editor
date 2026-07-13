@@ -102,6 +102,12 @@ export const S = {
     // Drag state
     drag: null, // { type, startX, startY, startTime, startString, noteIdx, origTimes, origStrings }
 
+    // Keyboard note-entry caret: which string lane a typed fret places onto when
+    // nothing is selected (String view only). ↑/↓ move it; a fret digit places a
+    // note at (caretString, snapped cursorTime). Drawn as a caret cell in that
+    // state so it reads as an entry position.
+    caretString: 0,
+
     // Playback
     playing: false,
     cursorTime: 0,

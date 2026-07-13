@@ -472,6 +472,22 @@ export function drawNotes(w) {
             _drawNote(n, S.sel.has(i), ghl, lintFlags.has(i));
         }
     }
+
+    // Keyboard-entry caret: in String view with nothing selected, show where a
+    // typed fret will land (caret string × playhead) so entry has a visible
+    // target. A dashed cyan cell; ↑/↓ move it, 0-9 place a note there.
+    if (!keysMode && S.sel.size === 0) {
+        const cx = timeToX(S.cursorTime || 0);
+        const cy = strToY(S.caretString || 0) + NOTE_PAD;
+        const ch = LANE_H - NOTE_PAD * 2;
+        ctx.save();
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 2]);
+        ctx.strokeRect(cx, cy, MIN_NOTE_W, ch);
+        ctx.setLineDash([]);
+        ctx.restore();
+    }
 }
 
 function _drawNote(n, selected, ghl, linted) {
