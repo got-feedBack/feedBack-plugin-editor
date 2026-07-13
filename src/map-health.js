@@ -59,7 +59,7 @@ function _bandFor(driftFrac, coverage, greenMax, redMin, minCoverage) {
 }
 
 // Per-measure map health. Returns
-//   { measures: [{ i, measure, startTime, endTime, driftFrac, coverage, band }],
+//   { measures: [{ i, measure, beatIdx, startTime, endTime, driftFrac, coverage, band }],
 //     overall: { band, driftFrac, coverage, measures } }
 // `beats` is the full beat grid (S.beats), downbeats flagged by measure>0.
 export function _mapHealthPure(beats, onsets, opts) {
@@ -111,6 +111,7 @@ export function _mapHealthPure(beats, onsets, opts) {
         measures.push({
             i: measures.length,
             measure: beats[start].measure,
+            beatIdx: start,                         // S.beats index of this bar's downbeat (Suggest anchor)
             startTime: beats[start].time,
             endTime: (end < beats.length
                 ? beats[end].time

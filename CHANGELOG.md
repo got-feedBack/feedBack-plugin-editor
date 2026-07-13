@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hot, and a bar's colour is the *median* of its beats so one expressive off-beat
   note can't flag an otherwise-solid bar. It's a review lens only — it never
   changes the chart, and it's off by default. Wherever you chart, you can see at a
+  glance whether the automatic tempo map can be trusted. **Click a drifting
+  (amber/red) bar** in the strip and it takes you straight to the fix — Tempo
+  Map opens, the bar scrolls into view, and Suggest is anchored on it so pressing
+  **G** proposes a barline fit to the recording from that bar on. (Green and grey
+  bars aren't actionable, so clicking them just scrubs as usual.)
   glance whether the automatic tempo map can be trusted.
 - **Audition speed — slow the recording down for practice, pitch preserved.** A
   new speed control in the transport bar (**100% / 75% / 50%**) plays the
