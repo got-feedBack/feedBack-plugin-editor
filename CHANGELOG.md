@@ -18,6 +18,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every part rides to the new constant tempo (no hand-scaled seconds); "Rebuild"
   is the existing `TempoGridCmd` flatten. Both anchor at bar 1 and are undoable
   ("Undo restores the map").
+- **Assisted tempo mapping (Suggest ▸ G) reads music more musically.** The
+  onset-fit engine was hardened so it stops guessing where a human would:
+  - the snap window is now a fraction of the **beat**, not the bar, so a
+    syncopation half a beat off the downbeat is no longer grabbed as the barline
+    (the old ±12%-of-the-bar window was ±0.48 beat in 4/4 and far wider in long
+    bars);
+  - a candidate downbeat is scored by **one-bar comb corroboration** — the onset
+    support of the whole bar's pulse, not a single hit — and confidence is a
+    **product** of that corroboration, run continuity, and tempo consistency, so
+    a bare or off-tempo bar reads as less certain;
+  - the drift tracker is a **median of recent bars** (tap-tempo style) and a
+    single correction bigger than 25% of a bar **stops** instead of snapping the
+    whole grid onto one bad onset;
+  - the march now **names why it stopped** in the HUD — *silence*, a
+    *half/double-time* phase ambiguity, a *sudden tempo change*, or an
+    *out-of-range tempo* (outside 40–300 BPM) — and a sustained/held bar (onsets
+    present but off the downbeat) keeps marching where a truly silent bar stops.
+  Suggestions remain proposal-only (ghost poles); nothing commits without an
+  accept. `_suggestFitPure`'s signature is unchanged.
 - **The first Save of a session now opens the file explorer** (the same native
   picker as Save As), so you choose where the `.feedpak` lands instead of it
   going somewhere implicit. Once you've picked a location, later saves (Ctrl+S /
@@ -95,6 +114,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never crosses a neighbouring barline. **Locked barlines never snap**, and with
   Snap = Grid the drag stays a plain continuous move. A status line confirms
   when a barline lands on an attack.
+- **Song Fit — one place to line the chart up with the recording.** A **Song
+  Fit…** button in the Tempo Map inspector opens a small menu with the three
+  ways to fit a chart to audio, each labelled with what it does to your notes:
+  **Shift everything…** (nudge the whole chart earlier/later — keeps the ±10ms
+  arrows), **Fit tempo to recording…** (auto-match the tempo), and **Set
+  constant tempo…** (flatten to one steady BPM, choosing whether notes ride or
+  hold). The audio never moves in any of them. Everything routes through the
+  existing undoable verbs, and the individual **Offset / Sync / BPM** controls
+  are unchanged — Song Fit is just a friendlier front door. (The flatten flow
+  was factored into a shared helper so "Set constant tempo" also works from
+  inside Tempo Map mode, where the inline BPM box doesn't offer it.)
+- **"Bar 1 here" — re-anchor the whole song to the playhead.** In Tempo Map
+  mode, an inspector button and a right-click item on the bar-1 pole shift the
+  grid, every part's notes, and the sections so bar 1's downbeat lands at the
+  playhead — the recording never moves. It rides the undoable offset command, so
+  Ctrl+Z restores the previous placement exactly. The space before bar 1 now
+  draws as a labelled **Lead-in** region (a hatched wash mirroring the Unmapped
+  tail), and the pickup right-click item is relabelled "(partial first bar — for
+  music that starts before beat 1)" so the two are easy to tell apart. On import,
+  when the grid puts bar 1 at 0:00 but the recording clearly starts later, the
+  status line **suggests** opening Tempo Map and using "Bar 1 here" — it never
+  auto-shifts.
 - **User Guide** — a task-oriented, end-user guide to charting in the editor
   (start a project, the workspace, play/navigate, edit notes & techniques,
   parts, tempo mapping, drums, structure, save/build, shortcut essentials).
