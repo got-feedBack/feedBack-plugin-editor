@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Inspector technique edits are undoable now.** Toggling a technique flag
+  (Palm Mute, Hammer-On, Tap, …) or setting a bend/slide value from the
+  inspector panel used to mutate the note in place with no undo — so Ctrl+Z
+  couldn't take it back, even though the same toggle from the keyboard could.
+  Both paths now commit through the editor's undo history (the flags via the
+  same command the keyboard toggles use; bend/slide via a new command that also
+  carries any authored bend curve through the edit), so a technique tweak is one
+  Ctrl+Z like a fret or time change. They still refuse on a read-only piano roll.
 - **Author credits now match the feedpak spec.** The manifest `authors:` array
   was written as plain strings; the spec (§5.4) requires objects with a `name`
   (plus optional `role`), so string credits failed schema validation and the
@@ -38,6 +46,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference ride a pitch-preserving path, kept in lock-step with the transport
   clock. (Slow-only, ≤100% — this is a practice slow-downer, not a varispeed; the
   recording itself is never stretched or warped.)
+- **Playability lint now catches finger conflicts.** Once notes carry fret-hand
+  fingers (from Suggest Fingers, or by hand), the advisory lint flags a chord
+  that asks **one finger to hold two different frets at the same time** — a shape
+  no hand can play. The **thumb** (`T`) counts as a fretting digit and obeys the
+  same physics. A **barre** (the same finger across strings at the *same* fret)
+  is fine and never flagged — as is a **thumb-over** grip. Like every lint rule
+  it only names the problem — a yellow underline, a count on the chip, and a
+  popover row that seeks and selects the notes — never blocking or auto-fixing.
+  Pairs with the auto-fingering and coherent-grip chord resolve.
+- **Export a track to Guitar Pro (.gp5).** A new **File ▸ Export ▸ Guitar Pro
+  (.gp5)** item downloads the current fretted track as a `.gp5` file you can open
+  in Guitar Pro (or any tab tool that reads GP5) — real interop *out* of the
+  editor for the first time. It converts the saved pack through the Tab View
+  plugin, the same conversion the read-only Tab preview already engraves, and
+  hands you the bytes as a download named after the song and track. Because the
+  converter reads what's on disk, exporting mid-edit offers the usual Save /
+  Don't Save / Cancel prompt first — the file you take away is never silently a
+  stale pack. Fretted tracks only (keys/drums have no tab); if the Tab View
+  plugin isn't installed or the song isn't saved yet, the status line says so.
+- **Techniques now show in the Piano-roll view.** Switching from String view to
+  the roll used to hide every technique — bends, slides, mutes, hammer-ons and
+  the rest were all invisible on roll notes. They're drawn now: a slide gets its
+  diagonal and a tie its legato hook (the two overlays that fit a thin lane),
+  and everything else reads as a compact badge string right-aligned on the note
+  (`H`, `PM`, `/7`, `x`, plus roll-only `b2`/`v` glyphs for bend and vibrato,
+  which are too tall to draw as curves in a 4–14px lane). On lanes too short for
+  text, a small corner dot still marks that a note carries techniques, so none
+  are ever fully invisible. String view and the roll now build their shared
+  badges from one source, so the two views can't drift apart.
 - **Chart provenance.** Built packs carry an `origin: {tool: "feedback-editor",
   version}` extension key (ignored-but-preserved per feedpak §4), so
   editor-built charts stay distinguishable from bundled/imported packs —
@@ -45,6 +82,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Resolving positions now shapes chords as one coherent grip.** When you run
+  "Resolve positions" over an anchor window, simultaneous notes (a chord) used
+  to be placed one at a time, each grabbing its own lowest free fret — which
+  could spread a chord across the neck into a stretch no hand can play (and that
+  the playability lint then flags). The resolver now places a chord's notes
+  **together**, choosing the tightest fret-hand shape (smallest fret span,
+  distinct strings, open strings free) that fits the hand, pulled toward the
+  anchor / previous note. A cluster with no playable grip falls back to the old
+  per-note behaviour, so nothing that resolved before stops resolving — and the
+  refusals stay honest: a note that could be played open **or** fretted is still
+  refused for you to decide, never quietly voiced open to tighten the shape.
 - **Flattening a variable tempo map now names both directions** instead of a
   bare confirm. Typing a BPM for a song with multiple tempos opens a small in-app
   dialog: **Conform notes to the new tempo** (notes keep their bar:beat positions

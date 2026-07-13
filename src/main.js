@@ -88,6 +88,7 @@ import {
     _editorShowTabPreview, editorHideTabPreview,
     editorRefreshTabPreview
 } from './tab-preview.js';
+import { editorExportGp5 } from './gp5-export.js';
 import {
     _editorCurrentNoteIndices, _editorSeekToTime, _editorSnapStepSeconds,
     editorRunShortcutCommand, editorToggleShortcutPanel, onContextMenu, onKeyDown
@@ -561,6 +562,9 @@ window.editorApplySync = editorApplySync;
 // Tab preview (tab-preview.js owns the logic; HTML calls these by name).
 window.editorShowTabPreview = _editorShowTabPreview;
 window.editorRefreshTabPreview = editorRefreshTabPreview;
+// Guitar Pro export (gp5-export.js) — the File ▸ Export menu cmd dispatches
+// through the command runner; expose on window too for parity/scripted access.
+window.editorExportGp5 = editorExportGp5;
 
 // Input layer (input.js owns the keyboard/command/shortcut-panel logic).
 // Entry tours (workspace-shell C3): Help ▸ Editor tour + the card's buttons.

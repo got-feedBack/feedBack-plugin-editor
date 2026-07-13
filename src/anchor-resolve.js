@@ -22,7 +22,8 @@ import { S } from './state.js';
 import { host } from './host.js';
 import { setStatus } from './ui.js';
 import { _isSuggested, notes } from './notes.js';
-import { _activeAnchorAtPure, _suggestFingersPure, _suggestPositionPure } from './position.js';
+import { _activeAnchorAtPure, _resolveChordGripPure, _suggestFingersPure, _suggestPositionPure } from './position.js';
+import { LINT_CLUSTER_EPSILON, LINT_DEFAULT_WINDOW, LINT_STRETCH_TOLERANCE } from './playability-lint.js';
 import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js';
 import { AcceptPositionsCmd, SetTeachingMarksCmd, _prevNoteBefore } from './commands.js';
 import { isKeysMode } from './keys.js';
@@ -59,6 +60,12 @@ export function _anchorWindowPure(anchors, anchor) {
 // Occupancy mirrors the roll writer: a note can't share a string with any
 // other note sounding at its instant; earlier repicks in this same pass
 // claim their new strings for later ones.
+//
+// Simultaneous notes (a CHORD) are resolved JOINTLY as one coherent grip
+// (_resolveChordGripPure) — minimum fretted span within the hand — instead of
+// each note greedily picking its own lowest fret and spreading the chord until
+// the stretch lint scolds it. A cluster with no coherent grip (or a single
+// note) falls back to the per-note resolver, so behaviour never regresses.
 export function _resolveWindowPure(nn, win, anchors, ctx, isSuggestedFn) {
     const out = { moves: [], refused: [], targets: [] };
     if (!Array.isArray(nn) || !win || !ctx) return out;
@@ -77,38 +84,93 @@ export function _resolveWindowPure(nn, win, anchors, ctx, isSuggestedFn) {
     const fretOf = new Map();
     nn.forEach((n, i) => { if (n) { strOf.set(i, n.string); fretOf.set(i, n.fret); } });
 
-    for (const { n, i } of targets) {
-        const pitch = _soundingPitchPure(ctx.openMidi, ctx.tuning, ctx.capo, n.string, n.fret);
-        if (pitch === null) { out.refused.push({ index: i, reason: 'out-of-range' }); continue; }
+    // Strings occupied at `n`'s instant by notes OUTSIDE `exceptIdxs` (a Set of
+    // this cluster's indices), using the in-pass working positions.
+    const occupiedFor = (n, exceptIdxs) => {
         const nEnd = n.time + (Number(n.sustain) || 0);
         const occ = new Set();
         nn.forEach((o, j) => {
-            if (j === i || !o || !Number.isFinite(o.time)) return;
+            if (exceptIdxs.has(j) || !o || !Number.isFinite(o.time)) return;
             const oEnd = o.time + (Number(o.sustain) || 0);
             if (n.time <= oEnd + 1e-6 && nEnd >= o.time - 1e-6) occ.add(strOf.get(j));
         });
-        // ctx.prevFretAt returns { idx, fret } (or null): the fret comes from
-        // the arrangement, so override it with this pass's repick when the
-        // previous note was one of ours.
-        let prev = null;
-        if (ctx.prevFretAt) {
-            const p = ctx.prevFretAt(n.time, i);
-            if (p && Number.isFinite(p.fret)) {
-                prev = { fret: fretOf.has(p.idx) ? fretOf.get(p.idx) : p.fret };
-            }
+        return occ;
+    };
+    // The prior hand fret before `time` (excluding `exceptIdx`), read through the
+    // in-pass repicks so a cluster sees the hand its predecessors just moved to.
+    const prevFretAt = (time, exceptIdx) => {
+        if (!ctx.prevFretAt) return null;
+        const p = ctx.prevFretAt(time, exceptIdx);
+        if (!p || !Number.isFinite(p.fret)) return null;
+        return fretOf.has(p.idx) ? fretOf.get(p.idx) : p.fret;
+    };
+    const recordMove = (i, n, newString, newFret) => {
+        if (newString === n.string && newFret === n.fret) {
+            // already where the resolver wants it — still claim the string
+            strOf.set(i, newString); fretOf.set(i, newFret);
+            return;
         }
+        out.moves.push({ index: i, oldString: n.string, oldFret: n.fret, newString, newFret });
+        strOf.set(i, newString); fretOf.set(i, newFret);
+    };
+    // Per-note greedy resolve (the pre-existing policy; the fallback path). It
+    // excludes only the note ITSELF from occupancy, so a cluster's siblings still
+    // block each other's strings through their in-pass working positions —
+    // exactly the original per-note behaviour.
+    const resolveOne = (n, i) => {
+        const pitch = _soundingPitchPure(ctx.openMidi, ctx.tuning, ctx.capo, n.string, n.fret);
+        if (pitch === null) { out.refused.push({ index: i, reason: 'out-of-range' }); return; }
+        const occ = occupiedFor(n, new Set([i]));
+        const pf = prevFretAt(n.time, i);
+        const prev = pf !== null ? { fret: pf } : null;
         const res = _suggestPositionPure(pitch, n.time, prev, anchors, occ, ctx);
-        if (!res.resolved) { out.refused.push({ index: i, reason: res.reason }); continue; }
-        if (res.resolved.string === n.string && res.resolved.fret === n.fret) {
-            continue;   // already where the resolver wants it
+        if (!res.resolved) { out.refused.push({ index: i, reason: res.reason }); return; }
+        recordMove(i, n, res.resolved.string, res.resolved.fret);
+    };
+
+    // Walk in time order, grouping simultaneous notes into chord clusters.
+    let gi = 0;
+    while (gi < targets.length) {
+        const t0 = targets[gi].n.time;
+        const group = [];
+        while (gi < targets.length && targets[gi].n.time <= t0 + LINT_CLUSTER_EPSILON) { group.push(targets[gi]); gi++; }
+        const groupIdx = new Set(group.map(g => g.i));
+
+        if (group.length >= 2) {
+            // Try one coherent grip for the whole cluster.
+            const clusterPitches = [];
+            let allSound = true;
+            for (const { n, i } of group) {
+                const pitch = _soundingPitchPure(ctx.openMidi, ctx.tuning, ctx.capo, n.string, n.fret);
+                if (pitch === null) { allSound = false; break; }
+                clusterPitches.push({ idx: i, pitch });
+            }
+            if (allSound) {
+                const anchor = _activeAnchorAtPure(anchors, t0);
+                // `hand`, not `window` — a local named `window` shadows the browser
+                // global for the whole block, which is a trap waiting for the next edit.
+                const hand = anchor && Number.isFinite(anchor.width) && anchor.width > 0 ? anchor.width : LINT_DEFAULT_WINDOW;
+                const cfg = {
+                    anchorFret: anchor && Number.isFinite(anchor.fret) ? anchor.fret : null,
+                    window: hand,
+                    maxSpan: hand + LINT_STRETCH_TOLERANCE,
+                };
+                // Occupancy from non-cluster notes overlapping the cluster; the
+                // grip enforces distinct strings among the cluster itself.
+                const occ = occupiedFor(group[0].n, groupIdx);
+                for (let j = 1; j < group.length; j++) for (const s of occupiedFor(group[j].n, groupIdx)) occ.add(s);
+                const grip = _resolveChordGripPure(clusterPitches, ctx, cfg, prevFretAt(t0, group[0].i), occ);
+                if (grip) {
+                    for (const a of grip.assignments) recordMove(a.idx, nn[a.idx], a.string, a.fret);
+                    continue;   // cluster handled jointly
+                }
+            }
+            // No coherent grip → fall back to per-note greedy for each cluster note.
+            for (const { n, i } of group) resolveOne(n, i);
+            continue;
         }
-        out.moves.push({
-            index: i,
-            oldString: n.string, oldFret: n.fret,
-            newString: res.resolved.string, newFret: res.resolved.fret,
-        });
-        strOf.set(i, res.resolved.string);
-        fretOf.set(i, res.resolved.fret);
+        // Singleton.
+        resolveOne(group[0].n, group[0].i);
     }
     return out;
 }
