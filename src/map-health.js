@@ -54,7 +54,7 @@ function _median(arr) {
 function _bandFor(driftFrac, coverage, greenMax, redMin, minCoverage) {
     if (!(coverage >= minCoverage) || driftFrac === null) return 'grey';
     if (driftFrac > redMin) return 'red';
-    if (driftFrac > greenMax) return 'amber';
+    if (driftFrac >= greenMax) return 'amber';   // green is strictly UNDER greenMax
     return 'green';
 }
 
@@ -75,7 +75,11 @@ export function _mapHealthPure(beats, onsets, opts) {
         .filter(x => x && Number.isFinite(x.t)).map(x => x.t).sort((a, b) => a - b);
 
     // Downbeat indices (measure > 0) delimit measures; a measure runs to the next
-    // downbeat (or the grid end for the last).
+    // downbeat. The LAST measure has no closing downbeat (the canonical
+    // `_tempoMeasures` rule in tempo.js — every downbeat starts a measure,
+    // including a terminal one), so its end is EXTRAPOLATED one beat past the last
+    // beat. Ending it AT the last beat would clip the final bar's wash a beat
+    // short, and collapse a grid that happens to end on a downbeat to zero width.
     const downs = [];
     for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) downs.push(i);
     if (!downs.length) return empty;
@@ -108,7 +112,9 @@ export function _mapHealthPure(beats, onsets, opts) {
             i: measures.length,
             measure: beats[start].measure,
             startTime: beats[start].time,
-            endTime: (end < beats.length ? beats[end].time : beats[beats.length - 1].time),
+            endTime: (end < beats.length
+                ? beats[end].time
+                : beats[beats.length - 1].time + Math.max(0, intervalAt(beats.length - 1))),
             driftFrac,
             coverage,
             band: _bandFor(driftFrac, coverage, greenMax, redMin, minCoverage),

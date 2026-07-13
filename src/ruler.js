@@ -31,7 +31,7 @@
  * 'barsel' drag). No DOM, no listeners of its own — nothing to tear down.
  */
 
-import { _ensureOnsets, startPlayback, stopPlayback } from './audio.js';
+import { _ensureOnsets, _ensureOnsetsShifted, startPlayback, stopPlayback } from './audio.js';
 import { ctx } from './canvas.js';
 import { _mapHealthPure, MAP_HEALTH_COLORS } from './map-health.js';
 import {
@@ -45,13 +45,14 @@ import {
 } from './loop.js';
 import { S, editGen } from './state.js';
 import { _tempoMarkers } from './tempo.js';
+import { setStatus } from './ui.js';
 
 // ── Map Health lens (P2-4): per-bar grid-vs-onset drift, three-state ──────────
 // Off by default; a view flag (no history). The metric is pure (src/map-health.js);
 // this memoizes it on the edit generation + the onset-cache identity so the draw
 // path never recomputes per frame, and paints a thin wash under the ruler ticks.
 let _mapHealthOn = null;                 // cached toggle, null until first read
-let _mhMemo = { gen: -1, onsetsRef: undefined, beatsRef: undefined, result: null };
+let _mhMemo = { gen: -1, onsetsRef: undefined, shift: NaN, beatsRef: undefined, result: null };
 
 export function _mapHealthEnabled() {
     if (_mapHealthOn === null) {
@@ -63,13 +64,22 @@ export function _mapHealthEnabled() {
 
 export function _mapHealthResults() {
     const beats = Array.isArray(S.beats) ? S.beats : null;
-    const onsets = _ensureOnsets();
+    // The metric compares onsets to BEAT TIMES, so it needs onsets in CHART time
+    // (audio.js) — the raw cache is buffer-time and reads as whole-map drift the
+    // moment the recording is slid. Memo on the RAW cache identity + the live
+    // shift, though: _ensureOnsetsShifted() reallocates on every call when the
+    // shift is non-zero, so keying on IT would miss every frame and put the
+    // O(bars × beats) scan straight back on the draw path.
+    const raw = (typeof _ensureOnsets === 'function') ? _ensureOnsets() : null;
+    const shift = Number(S.audioShift) || 0;
     const gen = typeof editGen === 'number' ? editGen : 0;
-    if (_mhMemo.gen === gen && _mhMemo.onsetsRef === onsets && _mhMemo.beatsRef === beats && _mhMemo.result) {
+    if (_mhMemo.gen === gen && _mhMemo.onsetsRef === raw && _mhMemo.shift === shift
+            && _mhMemo.beatsRef === beats && _mhMemo.result) {
         return _mhMemo.result;
     }
+    const onsets = (typeof _ensureOnsetsShifted === 'function') ? _ensureOnsetsShifted() : null;
     const result = _mapHealthPure(beats, onsets);
-    _mhMemo = { gen, onsetsRef: onsets, beatsRef: beats, result };
+    _mhMemo = { gen, onsetsRef: raw, shift, beatsRef: beats, result };
     return result;
 }
 
@@ -79,6 +89,16 @@ export function editorToggleMapHealth(force) {
     try { localStorage.setItem('editorMapHealth', next ? '1' : '0'); } catch (_) { /* private mode */ }
     if (host && typeof host.draw === 'function') host.draw();
     if (host && typeof host.updateStatus === 'function') host.updateStatus();
+    // An all-grey strip is the honest render of "no transients to judge against",
+    // but silently. Say so — otherwise the lens looks broken rather than blank.
+    if (next) {
+        const cov = _mapHealthResults().overall.coverage;
+        setStatus(cov > 0
+            ? 'Map Health on — per-bar grid-vs-recording drift under the ruler (green agrees, red disagrees, grey = nothing to judge; review only)'
+            : 'Map Health on — no transients detected in the recording yet, so every bar reads grey (nothing to judge)');
+    } else {
+        setStatus('Map Health off');
+    }
     return next;
 }
 
@@ -86,7 +106,10 @@ export function editorToggleMapHealth(force) {
 // one span per measure. Grey/amber read soft; red is the only alarm. Sits below
 // the beat ticks + playhead by drawing early in drawRuler.
 function _drawMapHealthBand(w, top) {
-    if (!_mapHealthEnabled()) return;
+    // Same gate as the `audioOnly` menu row: the flag persists, so an audio-less
+    // chart would otherwise inherit it and paint an all-grey strip nobody can
+    // switch off (the menu item that toggles it is hidden without a recording).
+    if (!_mapHealthEnabled() || !S.audioBuffer) return;
     const res = _mapHealthResults();
     if (!res || !res.measures.length) return;
     const bandH = 5;
