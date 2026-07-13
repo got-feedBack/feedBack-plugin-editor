@@ -537,10 +537,14 @@ export function _techBadgesPure(techs) {
     const badges = [];
     if (t.hammer_on) badges.push('H');
     if (t.pull_off) badges.push('P');
-    if (t.slide_to >= 0) badges.push('/' + t.slide_to);
-    if (t.slide_unpitch_to >= 0) badges.push('↓' + t.slide_unpitch_to);
+    // Number.isFinite, not a bare `>= 0`: `null >= 0` and `false >= 0` are BOTH
+    // true, so a cleared / imported-as-null slide field would badge as '/null'.
+    // Same guard _slideDirPure uses, so the badge and the diagonal agree.
+    if (Number.isFinite(t.slide_to) && t.slide_to >= 0) badges.push('/' + t.slide_to);
+    if (Number.isFinite(t.slide_unpitch_to) && t.slide_unpitch_to >= 0) badges.push('↓' + t.slide_unpitch_to);
     if (t.harmonic) badges.push('*');
     if (t.harmonic_pinch) badges.push('*P');
+    if (t.accent) badges.push('>');
     if (t.palm_mute) badges.push('PM');
     if (t.fret_hand_mute) badges.push('FM');
     if (t.tap) badges.push('T');
@@ -779,7 +783,8 @@ function _drawPianoNote(n, selected, hl, midi, fretted, linted) {
     // note name is redundant with the Y axis there; string·fret is the
     // one fact the roll would otherwise hide). Raw string index, matching
     // the Strings modal's "String N" labels.
-    if (sw >= 20 && h >= 8) {
+    const labelled = sw >= 20 && h >= 8;
+    if (labelled) {
         ctx.fillStyle = '#000';
         ctx.font = `bold ${Math.min(9, h - 1)}px monospace`;
         ctx.textAlign = 'center';
@@ -791,7 +796,7 @@ function _drawPianoNote(n, selected, hl, midi, fretted, linted) {
     // ── Technique indication (roll view) ──────────────────────────────────
     // The dense roll (4–14px lanes) can't fit String view's tall bend curve or
     // above-note vibrato squiggle, so techniques read as a compact badge string
-    // — right-aligned so it clears the centred name/position label — plus the
+    // — set just past the centred name/position label — plus the
     // two overlays that DO fit a thin box: the slide diagonal and the legato
     // tie hook. On a lane too short for text, a 2px corner dot still marks that
     // the note carries techniques, so nothing is ever fully invisible.
@@ -819,11 +824,17 @@ function _drawPianoNote(n, selected, hl, midi, fretted, linted) {
     const badges = _rollTechBadgesPure(techs);
     if (badges.length) {
         if (h >= 7) {
+            // Anchored to the note HEAD, just past the centred label when one is
+            // drawn — NOT to the note's right edge. A note is culled by its
+            // START, so a long sustain's right edge sits arbitrarily far off
+            // screen: a right-edge anchor would hide the badges on exactly the
+            // notes the roll draws widest, and float them seconds away from the
+            // onset the technique belongs to.
             ctx.fillStyle = '#ffffffdd';
             ctx.font = '7px monospace';
-            ctx.textAlign = 'right';
+            ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillText(badges.join(' '), x + sw - 2, y + h / 2);
+            ctx.fillText(badges.join(' '), labelled ? x + Math.min(sw, 24) + 2 : x + 2, y + h / 2);
         } else {
             // Too short for text — a presence dot in the top-left corner.
             ctx.fillStyle = '#fde68a';
