@@ -32,7 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **together**, choosing the tightest fret-hand shape (smallest fret span,
   distinct strings, open strings free) that fits the hand, pulled toward the
   anchor / previous note. A cluster with no playable grip falls back to the old
-  per-note behaviour, so nothing that resolved before stops resolving.
+  per-note behaviour, so nothing that resolved before stops resolving — and the
+  refusals stay honest: a note that could be played open **or** fretted is still
+  refused for you to decide, never quietly voiced open to tighten the shape.
 - **Flattening a variable tempo map now names both directions** instead of a
   bare confirm. Typing a BPM for a song with multiple tempos opens a small in-app
   dialog: **Conform notes to the new tempo** (notes keep their bar:beat positions

@@ -167,17 +167,21 @@ export function _suggestPositionPure(pitch, time, prevNote, anchorList, occupied
 //   occByOthers  strings already sounding from NON-cluster notes at this instant
 //
 // Returns { assignments: [{ idx, string, fret }], span } (assignments in the
-// input cluster order) or null. Deterministic: the search order and every
-// tie-break are pinned, so the same cluster always resolves to the same grip.
+// input cluster order) or null. ALL-OR-NOTHING: every cluster note is placed or
+// none is — a partial grip would leave a note neither moved nor refused, and the
+// sweep's "Accept all" would then bulk-confirm a position nobody ever picked.
+// Deterministic: the search order and every tie-break are pinned, so the same
+// cluster always resolves to the same grip.
 export function _resolveChordGripPure(cluster, ctx, cfg, prevFret, occByOthers) {
-    const items = (Array.isArray(cluster) ? cluster : []).filter(c => c && Number.isFinite(c.pitch));
-    if (!items.length) return null;
+    const items = Array.isArray(cluster) ? cluster : [];
+    // A malformed member is NOT quietly dropped (see all-or-nothing above).
+    if (!items.length || items.some(c => !c || !Number.isFinite(c.pitch))) return null;
     const c = ctx || {};
     const cf = cfg || {};
     const occ = occByOthers instanceof Set ? occByOthers : new Set(occByOthers || []);
     const anchorFret = Number.isFinite(cf.anchorFret) ? cf.anchorFret : null;
-    const window = Number.isFinite(cf.window) && cf.window > 0 ? cf.window : 4;
-    const maxSpan = Number.isFinite(cf.maxSpan) && cf.maxSpan >= 0 ? cf.maxSpan : window + 1;
+    const hand = Number.isFinite(cf.window) && cf.window > 0 ? cf.window : 4;
+    const maxSpan = Number.isFinite(cf.maxSpan) && cf.maxSpan >= 0 ? cf.maxSpan : hand + 1;
 
     // Per-note eligible candidates: a free string, inside the hand window (open
     // string fret 0 is always allowed — it needs no hand position). Bail if any
@@ -186,8 +190,15 @@ export function _resolveChordGripPure(cluster, ctx, cfg, prevFret, occByOthers) 
     for (const it of items) {
         const cands = _enumerateFrettedPositionsPure(it.pitch, c.openMidi, c.tuning, c.capo)
             .filter(p => !occ.has(p.string))
-            .filter(p => anchorFret === null || p.fret === 0 || (p.fret >= anchorFret && p.fret < anchorFret + window));
+            .filter(p => anchorFret === null || p.fret === 0 || (p.fret >= anchorFret && p.fret < anchorFret + hand));
         if (!cands.length) return null;
+        // Open vs fretted, both playable → a real articulation choice, and
+        // _suggestPositionPure REFUSES it rather than guess. The grip must not
+        // quietly decide it either — worse, open frets are free in the span
+        // metric, so the search actively PREFERS voicing a note open (a D+G
+        // dyad would collapse to two open strings, span 0). Bail: the caller's
+        // per-note path then refuses this note, honestly, as it always did.
+        if (cands.some(p => p.fret === 0) && cands.some(p => p.fret > 0)) return null;
         perNote.push({ idx: it.idx, cands });
     }
     // Assign the fewest-choice notes first (fail fast, and pins the walk order).

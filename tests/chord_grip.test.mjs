@@ -45,17 +45,20 @@ t('picks the minimum-span distinct-string grip (60+62 → span 2, not 6)', () =>
     assert.deepStrictEqual(grip(r), [{ i: 0, s: 3, f: 5 }, { i: 1, s: 4, f: 3 }]);
 });
 
-t('three-note chord uses an open string for free (not counted in the span)', () => {
-    // 60,62,64 → 60:s3f5, 62:s4f3, 64:s5f0 (open E). Fretted span {5,3} = 2.
-    const r = _resolveChordGripPure(
-        [{ idx: 0, pitch: 60 }, { idx: 1, pitch: 62 }, { idx: 2, pitch: 64 }], CTX, NOANCHOR, null, new Set());
-    assert.strictEqual(r.span, 2, 'the open string is free');
-    assert.deepStrictEqual(grip(r), [{ i: 0, s: 3, f: 5 }, { i: 1, s: 4, f: 3 }, { i: 2, s: 5, f: 0 }]);
+// Anchor at fret 10, window 4 → [10,14). 60 fits only s2f10, 57 only s1f12, and
+// 64 fits NOWHERE fretted — its open string (s5f0) is its ONE position, so it is
+// not an articulation choice, just the only way to sound it.
+const ANCH10 = { anchorFret: 10, window: 4, maxSpan: 5 };
+const OPENCHORD = [{ idx: 0, pitch: 60 }, { idx: 1, pitch: 57 }, { idx: 2, pitch: 64 }];
+
+t('an unambiguous open string is free (not counted in the span)', () => {
+    const r = _resolveChordGripPure(OPENCHORD, CTX, ANCH10, null, new Set());
+    assert.strictEqual(r.span, 2, 'fretted {10,12} = 2 — the open string is free');
+    assert.deepStrictEqual(grip(r), [{ i: 0, s: 2, f: 10 }, { i: 1, s: 1, f: 12 }, { i: 2, s: 5, f: 0 }]);
 });
 
 t('every note lands on a distinct string', () => {
-    const r = _resolveChordGripPure(
-        [{ idx: 0, pitch: 60 }, { idx: 1, pitch: 62 }, { idx: 2, pitch: 64 }], CTX, NOANCHOR, null, new Set());
+    const r = _resolveChordGripPure(OPENCHORD, CTX, ANCH10, null, new Set());
     const strings = r.assignments.map(a => a.string);
     assert.strictEqual(new Set(strings).size, strings.length, 'no two notes share a string');
 });
@@ -89,6 +92,32 @@ t('refuses when a note has no eligible position (fully occupied / out of window)
     assert.strictEqual(r, null);
 });
 
+t('never voices a note open when a fretted position is also playable', () => {
+    // 64 can be s5f0 (open E) OR s4f5 / s3f9 / … — the open-vs-fretted articulation
+    // choice _suggestPositionPure refuses. Open frets are FREE in the span metric, so
+    // an unguarded search actively prefers the open voicing: the grip must bail and
+    // let the per-note path refuse, not silently re-voice the chart.
+    const r = _resolveChordGripPure(
+        [{ idx: 0, pitch: 60 }, { idx: 1, pitch: 62 }, { idx: 2, pitch: 64 }], CTX, NOANCHOR, null, new Set());
+    assert.strictEqual(r, null, 'ambiguous open-vs-fretted → no grip, never a guess');
+});
+
+t('a D+G dyad is not collapsed to two open strings', () => {
+    // 50 = s1f5 / s2f0(open D); 55 = s2f5 / s3f0(open G). Both ambiguous. The span
+    // metric would score the all-open grip 0 — the tightest possible — and write it.
+    const r = _resolveChordGripPure([{ idx: 0, pitch: 50 }, { idx: 1, pitch: 55 }],
+        CTX, NOANCHOR, null, new Set());
+    assert.strictEqual(r, null);
+});
+
+t('a malformed cluster member is never quietly dropped', () => {
+    // A partial grip leaves the bad note neither moved nor refused — and the sweep's
+    // "Accept all" would then confirm a position nobody picked. All-or-nothing.
+    const r = _resolveChordGripPure([{ idx: 0, pitch: 60 }, { idx: 1, pitch: NaN }],
+        CTX, NOANCHOR, null, new Set());
+    assert.strictEqual(r, null);
+});
+
 t('deterministic: identical clusters always resolve to the same grip', () => {
     const a = _resolveChordGripPure([{ idx: 0, pitch: 60 }, { idx: 1, pitch: 62 }], CTX, NOANCHOR, null, new Set());
     const b = _resolveChordGripPure([{ idx: 0, pitch: 60 }, { idx: 1, pitch: 62 }], CTX, NOANCHOR, null, new Set());
@@ -110,6 +139,19 @@ t('bulk resolve lands a chord as one grip, not a greedy spread', () => {
     assert.deepStrictEqual({ s: m1.newString, f: m1.newFret }, { s: 4, f: 3 });
     const frets = [m0.newFret, m1.newFret];
     assert.ok(Math.max(...frets) - Math.min(...frets) <= 4, 'the chord fits one hand');
+});
+
+t('an open-vs-fretted note in a chord is REFUSED, not silently voiced open', () => {
+    // Three simultaneous notes sounding 60, 62, 64 (all parked on s2). 64 can be
+    // played open (s5f0) or fretted — main REFUSES it (open-vs-fretted) and so must
+    // the grip path: it bails, the per-note fallback places 60 and 62 and refuses 64.
+    // Pre-fix the grip voiced 64 open and "Accept all" would have confirmed it.
+    const nn = [N(1, 2, 10), N(1, 2, 12), N(1, 2, 14)];
+    const ctx = { ...CTX, prevFretAt: () => null };
+    const r = _resolveWindowPure(nn, { start: 0, end: Infinity }, [], ctx, () => true);
+    assert.deepStrictEqual(r.refused, [{ index: 2, reason: 'open-vs-fretted' }]);
+    assert.ok(!r.moves.some(m => m.index === 2), 'the ambiguous note is left exactly as-is');
+    assert.strictEqual(r.moves.length, 2, 'its unambiguous siblings still resolve');
 });
 
 t('a singleton note still resolves through the per-note path unchanged', () => {

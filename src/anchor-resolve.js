@@ -147,11 +147,13 @@ export function _resolveWindowPure(nn, win, anchors, ctx, isSuggestedFn) {
             }
             if (allSound) {
                 const anchor = _activeAnchorAtPure(anchors, t0);
-                const window = anchor && Number.isFinite(anchor.width) && anchor.width > 0 ? anchor.width : LINT_DEFAULT_WINDOW;
+                // `hand`, not `window` — a local named `window` shadows the browser
+                // global for the whole block, which is a trap waiting for the next edit.
+                const hand = anchor && Number.isFinite(anchor.width) && anchor.width > 0 ? anchor.width : LINT_DEFAULT_WINDOW;
                 const cfg = {
                     anchorFret: anchor && Number.isFinite(anchor.fret) ? anchor.fret : null,
-                    window,
-                    maxSpan: window + LINT_STRETCH_TOLERANCE,
+                    window: hand,
+                    maxSpan: hand + LINT_STRETCH_TOLERANCE,
                 };
                 // Occupancy from non-cluster notes overlapping the cluster; the
                 // grip enforces distinct strings among the cluster itself.
