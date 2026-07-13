@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Author credits now match the feedpak spec.** The manifest `authors:` array
+  was written as plain strings; the spec (§5.4) requires objects with a `name`
+  (plus optional `role`), so string credits failed schema validation and the
+  host's in-player credits overlay silently skipped them. Built packs now
+  carry `{name, role: "charter"}` objects.
+
+### Added
+
+- **Chart provenance.** Built packs carry an `origin: {tool: "feedback-editor",
+  version}` extension key (ignored-but-preserved per feedpak §4), so
+  editor-built charts stay distinguishable from bundled/imported packs —
+  groundwork for career mode's trusted-chart policy. Nothing consumes it yet.
+
 ### Changed
 
 - **Flattening a variable tempo map now names both directions** instead of a
@@ -106,6 +121,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dragged barlines snap to the beat (Snap = Onset).** In Tempo Map mode, with
+  the snap target set to **Onset**, dragging a barline now gently pulls to the
+  nearest detected audio attack within a few pixels — so downbeats land on real
+  hits instead of by eye. It's the manual companion to Suggest (G): the pull is
+  light (a few px, capped at 50ms, so it never fights a deliberate drag) and
+  never crosses a neighbouring barline. **Locked barlines never snap**, and with
+  Snap = Grid the drag stays a plain continuous move. A status line confirms
+  when a barline lands on an attack.
+- **Shift Audio — slide the recording in time, keeping the chart fixed.** A
+  **Shift Audio…** button (next to Replace Audio) slides the whole recording
+  earlier or later against the chart — the inverse of the chart-side Offset. Use
+  it when a recording starts late, has leading silence, or you swapped it via
+  Replace Audio and it no longer lines up with the chart you already built:
+  move the *audio* instead of re-timing every note. It's **non-destructive**
+  (the samples are never stretched — playback just reads the buffer from a
+  shifted position) and **undoable**; the waveform and onset strip slide with it
+  so what you see matches what you hear, and onset snap / Suggest / Sync follow
+  the shifted audio. One shift applies to the whole audio group, so stems (when
+  they arrive in the editor) will move together. *(Persisting the shift into the
+  built pack is a follow-up — the value is wired onto the save/load path and
+  honored on load, pending the pack field.)*
+- **Suggest fret-hand fingers.** **Note ▸ Suggest fret-hand fingers** now
+  proposes a fingering (1–4, or none for open strings) for every fretted note —
+  from each note's fret relative to the hand anchor covering its time: the index
+  finger sits at the anchor fret, one finger per fret across the four-fret span.
+  It fingers the selection when you have one, otherwise the whole track, in a
+  single undoable step. Notes that don't sit in a reachable hand position are
+  left untouched (a different anchor owns them), and open strings are marked as
+  no-finger. All the plumbing already existed — the `fret_finger` teaching mark,
+  its Guitar-Pro/XML round-trip, and the fretboard strip that *shows* fingers —
+  but until now nothing ever *proposed* one; this closes that gap.
+- **Techniques are drawn on the chart, not just lettered.** Bends now render as
+  the actual **bend curve** (from the authored `bend_values` shape, or a
+  synthesized rise when only the amount is set) — an amber curve rising over the
+  note with an arrowhead — instead of a bare `b`. **Slides** draw a diagonal line
+  sloping toward the target (up or down), **vibrato** draws a small squiggle, and
+  a **tie** (link-to-next) draws a legato hook off the note's trailing edge. The
+  data always existed; now the chart *shows* it, so a fretted part reads much more
+  like real tab. The remaining techniques (H/P, mutes, harmonics, tap/slap, etc.)
+  keep their compact letter badges.
+- **Place notes from the keyboard — no mouse needed.** With nothing selected in
+  String view, an **entry caret** appears (a dashed cell at the playhead on the
+  current string); **↑/↓** move it between strings and typing a **fret digit
+  (0-9)** places a note there, then advances the caret one step so you can type a
+  run. It reuses the normal add path, so it's undoable and identical to a
+  mouse-placed note. When a note *is* selected the same keys keep their existing
+  meaning — a digit sets the selected note's fret, ↑/↓ move its string — so
+  nothing changes for editing; the keyboard-entry behaviour only kicks in when
+  the selection is empty.
 - **Nudge notes in time with ←/→.** Selected notes now move one snap step
   earlier/later with the **Left/Right** arrows — one grouped, undoable move —
   instead of needing a mouse drag for the most-repeated timing tweak (the group

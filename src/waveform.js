@@ -31,17 +31,20 @@ export function drawWaveform(w) {
     const N = pk.bins;
     const mid = TIMELINE_TOP + WAVEFORM_H / 2;
     const amp = WAVEFORM_H / 2 - 4;
-    // Visible pixel span of the audio (clamped to the waveform lane).
-    const xLo = Math.max(LABEL_W, Math.floor(timeToX(0)));
-    const xHi = Math.min(w, Math.ceil(timeToX(dur)));
+    // Audio placement shift: buffer-time B renders at timeToX(B + sh), so the
+    // waveform slides with the recording while the grid/notes stay put.
+    const sh = Number(S.audioShift) || 0;
+    // Visible pixel span of the (shifted) audio, clamped to the waveform lane.
+    const xLo = Math.max(LABEL_W, Math.floor(timeToX(sh)));
+    const xHi = Math.min(w, Math.ceil(timeToX(dur + sh)));
     if (xHi <= xLo) return;
 
-    // Per-column bin range for the pixel [px, px+1). Each column aggregates
-    // every bin it spans, so the shape stays correct from full-song zoom-out
-    // down to a single bin per pixel.
+    // Per-column bin range for the pixel [px, px+1). Buffer-time at a pixel is
+    // (xToTime(px) - sh). Each column aggregates every bin it spans, so the
+    // shape stays correct from full-song zoom-out down to one bin per pixel.
     const binRange = (px) => {
-        let i0 = Math.floor(xToTime(px) / dur * N);
-        let i1 = Math.floor(xToTime(px + 1) / dur * N);
+        let i0 = Math.floor((xToTime(px) - sh) / dur * N);
+        let i1 = Math.floor((xToTime(px + 1) - sh) / dur * N);
         if (i0 < 0) i0 = 0;
         if (i1 >= N) i1 = N - 1;
         if (i1 < i0) i1 = i0;
@@ -92,20 +95,22 @@ function _drawOnsetStrip(w) {
     if (!onsets || !onsets.length) return;
     const dur = S.duration || 0;
     if (dur <= 0) return;
-    const xLo = Math.max(LABEL_W, Math.floor(timeToX(0)));
-    const xHi = Math.min(w, Math.ceil(timeToX(dur)));
+    // Onsets are buffer-time; they render shifted with the audio (timeToX(t+sh)).
+    const sh = Number(S.audioShift) || 0;
+    const xLo = Math.max(LABEL_W, Math.floor(timeToX(sh)));
+    const xHi = Math.min(w, Math.ceil(timeToX(dur + sh)));
     // onsets are time-sorted and timeToX is monotonic, so the on-screen pixel
     // is non-decreasing across the array. Binary-search the first visible
     // onset (px >= xLo) and stop at the first past xHi — no full-array scan.
     let lo = 0, hi = onsets.length;
     while (lo < hi) {
         const mid = (lo + hi) >> 1;
-        if (Math.round(timeToX(onsets[mid].t)) < xLo) lo = mid + 1;
+        if (Math.round(timeToX(onsets[mid].t + sh)) < xLo) lo = mid + 1;
         else hi = mid;
     }
     for (let i = lo; i < onsets.length; i++) {
         const o = onsets[i];
-        const px = Math.round(timeToX(o.t));
+        const px = Math.round(timeToX(o.t + sh));
         if (px > xHi) break;
         // Stronger attacks read brighter and taller — quiet ghost hits stay
         // visible but understated.

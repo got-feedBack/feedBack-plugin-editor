@@ -10,7 +10,7 @@ import { DPR, canvas, ctx, setCanvas } from './canvas.js';
 import {
 } from './position.js';
 
-import { _editorPromptChoice, _installModalKeyboard, setStatus } from './ui.js';
+import { _editorPromptChoice, _editorPromptText, _installModalKeyboard, setStatus } from './ui.js';
 import { EditHistory } from './history.js';
 import {
     _ROLL_REFUSE_REASONS,
@@ -44,7 +44,7 @@ import {
     _editBlipAt, _editorToggleGuideClap,
     _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip,
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
-    editorSetEditBlip, editorSetMixLevel, initAudio, loadAudio,
+    editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn,
 } from './audio.js';
 import { _mixerClapState, _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
@@ -531,6 +531,21 @@ window.editorSaveAsSloppakConfirm = editorSaveAsSloppakConfirm;
 window.editorSaveAs = editorSaveAs;
 
 // Replace-audio modal (replace-audio.js owns the logic; HTML calls these by name).
+window.editorSetAudioShift = editorSetAudioShift;
+window.editorNudgeAudioShift = editorNudgeAudioShift;
+// Slide the recording in time to line it up with the chart (audio moves, chart
+// stays). Prompt is prefilled with the current shift in seconds; +ve = later.
+window.editorPromptAudioShift = async () => {
+    const cur = Number(S.audioShift) || 0;
+    const raw = await _editorPromptText({
+        title: 'Shift audio',
+        label: 'Slide the recording in time (seconds; + = later, − = earlier). The chart stays put.',
+        value: cur ? String(cur) : '',
+        placeholder: 'e.g. 0.20 or -0.05',
+    });
+    if (raw === null) return;
+    editorSetAudioShift(raw);
+};
 window.editorShowReplaceAudioModal = editorShowReplaceAudioModal;
 window.editorHideReplaceAudioModal = editorHideReplaceAudioModal;
 window.editorSetReplaceAudioMode = editorSetReplaceAudioMode;

@@ -18,6 +18,15 @@ export const S = {
     // already realigned. TempoOffsetCmd is the only writer (so undo restores it);
     // _resetOffsetUI clears it on load. Never written to the pack.
     appliedOffset: 0,
+    // Audio placement shift (seconds): slides the RECORDING in time while the
+    // chart/grid/notes stay fixed — the inverse of the chart-side `offset`
+    // above, and non-destructive (the samples are never stretched). At playhead
+    // chart-time T the audio plays buffer-time (T - audioShift); the waveform
+    // and onset strip render shifted to match. One value for the whole audio
+    // group (stems, when added, ride it together). AudioShiftCmd is the writer;
+    // persisted to the pack as `audio_shift` so a Replace-Audio realignment
+    // survives reload.
+    audioShift: 0,
     // Selected tone-change marker — stored as a direct ref into the
     // active arrangement's `arr.tones.changes` array (not an index)
     // so commands that sort/splice that array don't invalidate the
@@ -101,6 +110,12 @@ export const S = {
     returnToHighway: false,
     // Drag state
     drag: null, // { type, startX, startY, startTime, startString, noteIdx, origTimes, origStrings }
+
+    // Keyboard note-entry caret: which string lane a typed fret places onto when
+    // nothing is selected (String view only). ↑/↓ move it; a fret digit places a
+    // note at (caretString, snapped cursorTime). Drawn as a caret cell in that
+    // state so it reads as an entry position.
+    caretString: 0,
 
     // Playback
     playing: false,
