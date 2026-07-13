@@ -58,7 +58,10 @@ function _tabPreviewHttpMessagePure(status, bodyText) {
     return 'Preview failed (' + status + ')' + (body ? ': ' + body : '');
 }
 /* @pure:tab-preview:end */
-export { _tabPreviewKeyPolicyPure };
+// _tabPreviewUrlPure is the tabview-plugin GP5 conversion endpoint — the shared
+// contract. File ▸ Export ▸ Guitar Pro (src/gp5-export.js) downloads the bytes
+// from the same URL, so the endpoint format lives here only, never duplicated.
+export { _tabPreviewKeyPolicyPure, _tabPreviewUrlPure };
 
 // Same pinned version + memoized loader idiom as the Tab View plugin —
 // pinning insulates the preview from CDN latest-tag churn (V12: alphaTab

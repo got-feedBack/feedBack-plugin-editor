@@ -45,7 +45,7 @@ import {
     _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip,
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
     editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio,
-    startPlayback, stopPlayback, teardownAudio, editorSetCountIn,
+    startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
 } from './audio.js';
 import { _mixerClapState, _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import {
@@ -88,6 +88,7 @@ import {
     _editorShowTabPreview, editorHideTabPreview,
     editorRefreshTabPreview
 } from './tab-preview.js';
+import { editorExportGp5 } from './gp5-export.js';
 import {
     _editorCurrentNoteIndices, _editorSeekToTime, _editorSnapStepSeconds,
     editorRunShortcutCommand, editorToggleShortcutPanel, onContextMenu, onKeyDown
@@ -533,6 +534,7 @@ window.editorSaveAs = editorSaveAs;
 // Replace-audio modal (replace-audio.js owns the logic; HTML calls these by name).
 window.editorSetAudioShift = editorSetAudioShift;
 window.editorNudgeAudioShift = editorNudgeAudioShift;
+window.editorSetAuditionRate = editorSetAuditionRate;
 // Slide the recording in time to line it up with the chart (audio moves, chart
 // stays). Prompt is prefilled with the current shift in seconds; +ve = later.
 window.editorPromptAudioShift = async () => {
@@ -561,6 +563,9 @@ window.editorApplySync = editorApplySync;
 // Tab preview (tab-preview.js owns the logic; HTML calls these by name).
 window.editorShowTabPreview = _editorShowTabPreview;
 window.editorRefreshTabPreview = editorRefreshTabPreview;
+// Guitar Pro export (gp5-export.js) — the File ▸ Export menu cmd dispatches
+// through the command runner; expose on window too for parity/scripted access.
+window.editorExportGp5 = editorExportGp5;
 
 // Input layer (input.js owns the keyboard/command/shortcut-panel logic).
 // Entry tours (workspace-shell C3): Help ▸ Editor tour + the card's buttons.

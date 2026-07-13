@@ -13,6 +13,7 @@
  */
 import assert from 'node:assert';
 import { EditHistory } from '../src/history.js';
+import { ToggleTechniqueCmd } from '../src/commands.js';
 import { lockNotices, seedState, setRollView, trackHooks } from './_history_env.mjs';
 import fs from 'node:fs';
 import * as keys from '../src/keys.js';
@@ -322,23 +323,31 @@ t('read-only roll: context-menu editorToggleTech does not mutate the fretted cha
 });
 
 t('read-only roll: inspector editorInspectorSetFlag does not mutate the fretted chart', () => {
+    // Now routes through ToggleTechniqueCmd (gap-audit #3), so the command
+    // resolves its target through the REAL notes() — seed one arrangement holding
+    // the note, and drive the handler's own S stub (sel + history).
     const note = { string: 0, fret: 3, techniques: {} };
+    seedState({ arrangements: [{ id: 'a1', name: 'Lead', notes: [note] }], currentArr: 0 });
     const locked = { value: true };
     let notices = 0, renders = 0;
+    const history = new EditHistory();
     const setFlag = extractInspectorFn('editorInspectorSetFlag', {
-        _selectedNotes: () => [note],
+        S: { sel: new Set([0]), history },
         _rollReadOnly: () => locked.value,
         _rollLockNotice: () => { notices++; },
         _renderInspector: () => { renders++; },
         host: { draw() {}, updateStatus() {} },
+        ToggleTechniqueCmd,
     });
     setFlag('accent', true);
     assert.strictEqual(note.techniques.accent, undefined, 'no write while read-only');
     assert.strictEqual(notices, 1, 'the user is told why');
     assert.ok(renders >= 1, 'the checkbox is bounced back to the model');
+    assert.strictEqual(history.undo.length, 0, 'no commit under the lock');
     locked.value = false;
     setFlag('accent', true);
     assert.strictEqual(note.techniques.accent, true, 'writes once editable');
+    assert.strictEqual(history.undo.length, 1, 'and now it is one undoable commit');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
