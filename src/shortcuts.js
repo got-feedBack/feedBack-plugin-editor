@@ -55,6 +55,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'nextBeat', label: 'Jump to next beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Down', eof: 'Page Down' } },
     { id: 'prevNote', label: 'Jump to previous note', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+Left', eof: 'Shift+Page Up' } },
     { id: 'nextNote', label: 'Jump to next note', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+Right', eof: 'Shift+Page Down' } },
+    { id: 'nudgeTimeLeft', label: 'Nudge selection earlier one step (playhead when nothing selected)', group: 'Timeline', status: 'ready', keys: { feedback: 'Left', eof: 'Left' } },
+    { id: 'nudgeTimeRight', label: 'Nudge selection later one step (playhead when nothing selected)', group: 'Timeline', status: 'ready', keys: { feedback: 'Right', eof: 'Right' } },
     { id: 'prevGrid', label: 'Jump to previous grid line', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Page Up', eof: 'Ctrl+Shift+Page Up' } },
     { id: 'nextGrid', label: 'Jump to next grid line', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Page Down', eof: 'Ctrl+Shift+Page Down' } },
     { id: 'prevAnchor', label: 'Jump to previous anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Left', eof: 'Alt+Page Up' } },
@@ -234,6 +236,8 @@ export function _editorEofCommandForKeyPure(e, mode) {
     if (ctrlShift && e.key === 'ArrowDown') return 'slideDown';
     if (plain && e.key === 'ArrowUp') return 'moveStringUp';
     if (plain && e.key === 'ArrowDown') return 'moveStringDown';
+    if (plain && e.key === 'ArrowLeft') return 'nudgeTimeLeft';
+    if (plain && e.key === 'ArrowRight') return 'nudgeTimeRight';
     if (shift && e.key === 'ArrowUp') return 'transposeStringUp';
     if (shift && e.key === 'ArrowDown') return 'transposeStringDown';
     if (ctrl && e.key === 'ArrowUp') return 'slideUp';
@@ -307,6 +311,8 @@ export function _editorFeedbackCommandForKeyPure(e, mode) {
     if (sig === 'Ctrl+PageDown') return 'nextGrid';
     if (ctrlAlt && e.key === 'ArrowLeft') return 'prevAnchor';
     if (ctrlAlt && e.key === 'ArrowRight') return 'nextAnchor';
+    if (plain && e.key === 'ArrowLeft') return 'nudgeTimeLeft';
+    if (plain && e.key === 'ArrowRight') return 'nudgeTimeRight';
     if (plain && key === 'g') return 'toggleSnap';
     if (plain && key === ',') return 'snapDown';
     if (plain && key === '.') return 'snapUp';

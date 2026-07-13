@@ -445,6 +445,32 @@ function _editorSelectLike() {
     return true;
 }
 
+// Keyboard time-nudge (←/→): move the selected notes earlier/later by one snap
+// step in time, as one grouped MoveNoteCmd (mirrors _editorResnapSelection's
+// pattern). With NOTHING selected, ←/→ seek the playhead by a step instead — and
+// since the keyboard-entry caret sits at the playhead, that doubles as caret-time
+// navigation. Clamped so the earliest note can't cross 0.
+function _editorNudgeSelectionTime(dir) {
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) {
+        _editorSeekToTime((S.cursorTime || 0) + dir * _editorSnapStepSeconds());
+        return true;
+    }
+    const nn = notes();
+    let delta = dir * _editorSnapStepSeconds();
+    const minT = Math.min(...idxs.map(i => nn[i].time));
+    if (minT + delta < 0) delta = -minT;                 // don't push before 0
+    if (Math.abs(delta) < 1e-9) return false;
+    const dtimes = idxs.map(() => delta);
+    const dstrings = idxs.map(() => 0);
+    S.history.exec(new MoveNoteCmd(idxs, dtimes, dstrings, null));
+    _editBlipAt();
+    host.draw();
+    host.updateStatus();
+    setStatus(`Nudged ${idxs.length} note${idxs.length === 1 ? '' : 's'} ${dir > 0 ? 'later' : 'earlier'} by one step`);
+    return true;
+}
+
 function _editorResnapSelection() {
     const idxs = _editorCurrentNoteIndices();
     if (!idxs.length) { setStatus('Select notes first'); return false; }
@@ -811,6 +837,8 @@ export function _editorRunEofCommand(cmd) {
     case 'nextBeat': _editorJumpBeat(+1); return true;
     case 'prevNote': _editorJumpNote(-1); return true;
     case 'nextNote': _editorJumpNote(+1); return true;
+    case 'nudgeTimeLeft': return _editorNudgeSelectionTime(-1);
+    case 'nudgeTimeRight': return _editorNudgeSelectionTime(+1);
     case 'prevGrid': _editorJumpGrid(-1); return true;
     case 'nextGrid': _editorJumpGrid(+1); return true;
     case 'prevAnchor': _editorJumpAnchor(-1); return true;
