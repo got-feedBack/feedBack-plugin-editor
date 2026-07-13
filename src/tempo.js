@@ -689,11 +689,13 @@ function _ensureTempoSignatureControl() {
 // surfaces the analysis so it can be seen and trusted first. Never mutates.
 export function editorScanTempoZones() {
     const onsets = _ensureOnsetsShifted();
-    if (!onsets || onsets.length < 8) {
+    if (!onsets) {
         setStatus('Scan for tempo zones needs the recording’s onset analysis — load audio first.');
         return true;
     }
-    const segs = _segmentTempoPure(_localTempoSeriesPure(onsets));
+    // A handful of onsets can't carry a pulse — that is SPARSE audio, not missing
+    // audio, so it lands on the "no clear pulse" message rather than "load audio".
+    const segs = onsets.length >= 8 ? _segmentTempoPure(_localTempoSeriesPure(onsets)) : [];
     if (!segs.length) {
         setStatus('Scan for tempo zones: no clear pulse found (sparse or unmapped audio).');
         return true;
@@ -701,8 +703,13 @@ export function editorScanTempoZones() {
     const label = (s) => s.kind === 'ramp'
         ? `${s.bpmStart > s.bpmEnd ? 'rit' : 'accel'} ${Math.round(s.bpmStart)}→${Math.round(s.bpmEnd)}`
         : `${Math.round(s.bpmStart)} bpm`;
+    // Say so when the pulse is weak. Rubato/ambient audio still yields a tidy-looking
+    // row of zones with garbage BPMs; without this the preview reads as confident and
+    // the human confirms a bad map. (Clean loop ≈0.8, jittered ≈0.3, no pulse ≈0.2.)
+    const weakest = Math.min(...segs.map(s => (Number.isFinite(s.conf) ? s.conf : 0)));
     setStatus(`${segs.length} tempo zone${segs.length === 1 ? '' : 's'} detected: `
         + segs.map(label).join(' · ')
+        + (weakest < 0.35 ? ' — LOW CONFIDENCE, the pulse is unsteady; check each zone' : '')
         + ' — preview (segment-first Confirm & Apply is coming).');
     return true;
 }
