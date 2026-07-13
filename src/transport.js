@@ -17,8 +17,26 @@
 // at play/seek start. ONE formula, read by playbackTick, the guide scheduler,
 // and the record clock — buffered and buffer-less alike (a recording rides
 // this clock; it is not the source of time).
-export function _transportChartTimePure(playStartTime, playStartWall, ctxNow) {
-    return playStartTime + (ctxNow - playStartWall);
+// `rate` (audition speed, default 1 = normal) scales how fast chart time
+// advances against the wall clock: at 0.5 the cursor moves at half speed, so a
+// pitch-preserving slow-down stays sample-synced with the reference. rate=1 is
+// bit-identical to the pre-audition formula (the 4th arg simply defaults away).
+export function _transportChartTimePure(playStartTime, playStartWall, ctxNow, rate = 1) {
+    const r = Number.isFinite(rate) && rate > 0 ? rate : 1;
+    return playStartTime + (ctxNow - playStartWall) * r;
+}
+
+// The PAINT-ONLY playhead: the chart time of the audio LEAVING THE SPEAKER right
+// now (ctxNow − output latency), so the drawn line sits on what's heard. Clamped
+// at the start position exactly like the logical cursor in playbackTick — without
+// that clamp a count-in pre-roll (anchor in the future) drags the marker
+// backwards by preRoll·rate and sweeps it in while nothing is sounding yet.
+// Latency is sanitized here too: 0/undefined/NaN (Firefox has no outputLatency)
+// collapses to no compensation rather than an NaN marker.
+export function _cursorDrawTimePure(playStartTime, playStartWall, ctxNow, outputLatency, rate = 1) {
+    const lat = Number.isFinite(outputLatency) && outputLatency > 0 ? outputLatency : 0;
+    return Math.max(playStartTime,
+        _transportChartTimePure(playStartTime, playStartWall, ctxNow - lat, rate));
 }
 
 // Compose-mode song length (charrette §1.7): with no recording, the GRID — not

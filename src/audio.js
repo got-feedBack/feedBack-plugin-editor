@@ -34,8 +34,8 @@ import { _recState } from './midi-record.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
 import {
-    _composeSongDurationPure, _loopPlaybackRestartTimePure, _normalizeLoopRegionPure,
-    _countInPlanPure, _transportChartTimePure,
+    _composeSongDurationPure, _cursorDrawTimePure, _loopPlaybackRestartTimePure,
+    _normalizeLoopRegionPure, _countInPlanPure, _transportChartTimePure,
 } from './transport.js';
 import { setStatus } from './ui.js';
 
@@ -72,6 +72,10 @@ export async function loadAudio(url) {
         if (generation !== audioLoadGeneration) return false;
         S.audioBuffer = decoded;
         S.duration = S.audioBuffer.duration;
+        // Keep the playable URL for the pitch-preserving audition path (the
+        // MediaElement needs a src; the decoded buffer feeds waveform + onsets).
+        S.audioUrl = url;
+        _resetAuditionForNewSong();   // a per-song pref never carries across loads
         // A new recording is loaded — re-arm the hearing-safety fade so it
         // applies to this recording too, not just the session's first one.
         _mixResetFirstPlay();
@@ -368,6 +372,143 @@ function _audioTimelineDuration() {
     return _audioTimelineDurationPure(S.duration, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
 }
 
+// ── Audition speed (design slice 5): pitch-preserving slow practice ──────────
+// Playback-only, ≤100%, one toggle back to 100%. Never touches source time, the
+// tempo map, exported audio, or dirty state — it is an editor pref, not pack
+// data. The clock (_transportChartTimePure / _guideChartToCtxPure) carries the
+// rate; the reference audio reroutes onto a MediaElement (preservesPitch) only
+// when slowed — the sample-accurate AudioBufferSource path stays the rate-1
+// default (zero regression).
+export const AUDITION_PRESETS = [1, 0.75, 0.5];
+
+// ── Output-latency compensation for the VISUAL playhead ──────────────────────
+// audioCtx.currentTime is when samples are HANDED TO the output; the sound is
+// HEARD one output buffer later (~10-30ms wired, 100-300ms on Bluetooth). The
+// marker is drawn from the ctx clock, so it leads the ear by that latency. We
+// compensate the PAINT ONLY: S.cursorDrawTime (drawn line) subtracts the held
+// latency; S.cursorTime (placement / snap / edit / scheduling truth) is never
+// touched. All heard audio — reference, claps, metronome — shares this latency,
+// so one offset re-aligns the marker to everything at once. Sampled-and-held per
+// play pass (a raw per-frame read shimmers); baseLatency fallback, NaN-guarded.
+let _heldOutputLatency = 0;
+function _readOutputLatency() {
+    const ctx = S.audioCtx;
+    if (!ctx) return 0;
+    const ol = Number(ctx.outputLatency);
+    if (Number.isFinite(ol) && ol > 0) return ol;
+    const bl = Number(ctx.baseLatency);
+    return Number.isFinite(bl) && bl > 0 ? bl : 0;
+}
+
+export function _auditionRate() {
+    const r = Number(S.auditionRate);
+    // Clamp to (0, 1]: a practice slow-downer never speeds up, and never to 0.
+    return Number.isFinite(r) && r > 0 && r <= 1 ? r : 1;
+}
+function _auditionActive() { return _auditionRate() < 1 && !!S.audioUrl && !!S.audioBuffer; }
+
+// The hidden <audio> the reference rides for pitch-preserving slowdown, and its
+// one MediaElementSourceNode (a node can be made from an element only once, so
+// both are memoised for the session's context).
+let _refMediaEl = null;
+let _refMediaNode = null;
+// The src we last ASSIGNED. Never compare against el.src: the getter returns the
+// RESOLVED absolute URL, so a relative audio_url (the server's normal form)
+// would mismatch on every call and re-assign src — reloading the element and
+// stalling playback on every seek/loop-wrap. Compare what we set, not what it echoes.
+let _refMediaSrc = null;
+let _refMediaPlayTimer = null;   // the deferred play() (count-in / +ve audio shift)
+function _ensureRefMedia() {
+    if (!S.audioCtx || !S.audioUrl || typeof Audio !== 'function') return null;
+    if (!_refMediaEl) {
+        _refMediaEl = new Audio();
+        _refMediaEl.crossOrigin = 'anonymous';
+        _refMediaEl.preload = 'auto';
+    }
+    if (_refMediaSrc !== S.audioUrl) { _refMediaEl.src = S.audioUrl; _refMediaSrc = S.audioUrl; }
+    if (!_refMediaNode) {
+        try { _refMediaNode = S.audioCtx.createMediaElementSource(_refMediaEl); }
+        catch (_) { _refMediaNode = null; return null; }
+        const refGain = _ensureRefGain();
+        _refMediaNode.connect(refGain || S.audioCtx.destination);
+    }
+    return _refMediaEl;
+}
+function _stopRefMedia() {
+    // Kill the deferred play() FIRST — pausing an element whose start is still
+    // queued would otherwise let the timer resume audio after an explicit stop /
+    // teardown / song change (CodeRabbit).
+    if (_refMediaPlayTimer) { clearTimeout(_refMediaPlayTimer); _refMediaPlayTimer = null; }
+    if (_refMediaEl) { try { _refMediaEl.pause(); } catch (_) {} }
+}
+// Slave the media element to the authoritative ctx/chart clock: seek it to the
+// SOURCE offset for the current cursor, set preservesPitch + playbackRate, play
+// (honouring a positive audio-shift delay). Returns true if it took the source.
+function _startRefMediaAt(st, preRoll = 0) {
+    const el = _ensureRefMedia();
+    if (!el) return false;
+    if (_refMediaPlayTimer) { clearTimeout(_refMediaPlayTimer); _refMediaPlayTimer = null; }
+    const r = _auditionRate();
+    el.preservesPitch = true;
+    el.mozPreservesPitch = true;
+    el.webkitPreservesPitch = true;
+    el.playbackRate = r;
+    try { el.currentTime = Math.max(0, st.offset); } catch (_) { /* not seekable yet */ }
+    const go = () => { const p = el.play(); if (p && p.catch) p.catch(() => {}); };
+    const wait = (Number(preRoll) || 0) + (st.delay > 0 ? st.delay : 0);
+    if (wait > 0) _refMediaPlayTimer = setTimeout(() => { _refMediaPlayTimer = null; go(); }, wait * 1000);
+    else go();
+    return true;
+}
+// The ctx/chart clock is authoritative; the element is slaved. Each tick, if the
+// element has drifted from the SOURCE offset for the current cursor by more than
+// ~30 ms (a hidden-tab stall, a ratechange settling), re-seat it — bounded and
+// inaudible. Placement/snapping is always resolved from the source clock, never
+// from where the ear lands in the stretched signal.
+function _auditionResyncMedia() {
+    if (!_auditionActive() || !_refMediaEl || _refMediaEl.paused) return;
+    const st = _audioBufferStartPure(S.cursorTime, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
+    if (!st.play) return;
+    if (Math.abs(_refMediaEl.currentTime - st.offset) > 0.03) {
+        try { _refMediaEl.currentTime = Math.max(0, st.offset); } catch (_) { /* seeking */ }
+    }
+}
+
+// Verb: set the audition speed (≤1). An editor pref — never stored in the pack,
+// never marks dirty. Re-seats a live playback onto the right engine path so the
+// change is heard immediately.
+export function editorSetAuditionRate(rate) {
+    const r = Number(rate);
+    const next = Number.isFinite(r) && r > 0 && r <= 1 ? r : 1;
+    if (next === _auditionRate()) { _auditionRefreshUi(); return; }
+    S.auditionRate = next;
+    if (S.playing) _restartPlaybackAt(S.cursorTime);   // swap engine path live
+    _auditionRefreshUi();
+    // The restart can DEMOTE the rate (no slow path for this recording) — it has
+    // already said so; don't overwrite that with a cheery "50%" it isn't playing.
+    const eff = _auditionRate();
+    if (eff !== next) return;
+    const pct = Math.round(eff * 100);
+    setStatus(eff < 1
+        ? `Audition ${pct}% — slowed for practice, pitch preserved (playback only; the chart is unchanged).`
+        : 'Audition 100% — full speed.');
+}
+export function editorAuditionRate() { return _auditionRate(); }
+// Reset to full speed when a new song loads (a per-song pref never persists).
+export function _resetAuditionForNewSong() {
+    S.auditionRate = 1;
+    _stopRefMedia();
+    _auditionRefreshUi();
+}
+function _auditionRefreshUi() {
+    const sel = document.getElementById('editor-audition-speed');
+    if (sel) {
+        const v = String(_auditionRate());
+        if (sel.value !== v) sel.value = v;
+    }
+    if (host && typeof host.updateTimeDisplay === 'function') host.updateTimeDisplay();
+}
+
 export function _startAudioSourceAtCursor(preRoll = 0) {
     // Slide the recording by S.audioShift (the chart clock, anchored below, is
     // untouched — only the buffer read position moves). A positive shift can
@@ -375,7 +516,26 @@ export function _startAudioSourceAtCursor(preRoll = 0) {
     // buffer entirely (no source; the transport still runs so the cursor and
     // guide advance over the trailing silence).
     const st = _audioBufferStartPure(S.cursorTime, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
-    if (st.play) {
+    let slow = _auditionActive();
+    if (slow && st.play) {
+        // Pitch-preserving slow path: the reference rides the MediaElement, so
+        // the sample-accurate BufferSource is silenced. Both feed the SAME
+        // _refGain, so the mixer fader / A-B mute / first-play fade still apply.
+        if (S.audioSource) { try { S.audioSource.stop(); } catch (_) {} S.audioSource = null; }
+        _mixApplyFirstPlayFade();
+        if (!_startRefMediaAt(st, preRoll)) {
+            // Slow path unavailable (no <audio> ctor, or the context refused a
+            // MediaElementSource — CORS-tainted media). DEMOTE to 100% and fall
+            // through to the BufferSource: silence under a half-speed clock is the
+            // one failure mode this must never ship.
+            slow = false;
+            S.auditionRate = 1;
+            _auditionRefreshUi();
+            setStatus('Audition speed is unavailable for this recording — playing at 100%.');
+        }
+    }
+    if (!slow && st.play) {
+        _stopRefMedia();   // rate 1 → the slow-path element must be silent
         S.audioSource = S.audioCtx.createBufferSource();
         S.audioSource.buffer = S.audioBuffer;
         // Reference recording stays on a transparent path to destination — its
@@ -388,7 +548,8 @@ export function _startAudioSourceAtCursor(preRoll = 0) {
         _mixApplyFirstPlayFade();
         const when = (preRoll > 0 || st.delay > 0) ? S.audioCtx.currentTime + preRoll + st.delay : 0;
         S.audioSource.start(when, st.offset);
-    } else {
+    } else if (!st.play) {
+        _stopRefMedia();
         S.audioSource = null;
     }
     _anchorTransportAtCursor(preRoll);
@@ -441,6 +602,13 @@ export function _anchorTransportAtCursor(preRoll = 0) {
     // playbackTick clamps the cursor at the start position.
     S.playStartWall = S.audioCtx.currentTime + preRoll;
     S.playStartTime = S.cursorTime;
+    // Sample the output latency once per (re)start and hold it for the pass, so
+    // the compensated marker doesn't shimmer as the estimate settles frame to frame.
+    _heldOutputLatency = _readOutputLatency();
+    // Re-seat the PAINT clock with the logical one. A loop wrap paints
+    // synchronously (host.drawNow) before the next tick recomputes it, so a stale
+    // cursorDrawTime would flash the marker at the old position for one frame.
+    S.cursorDrawTime = S.cursorTime;
     _guideResetSchedule();
 }
 
@@ -533,6 +701,7 @@ export function stopPlayback() {
         try { S.audioSource.stop(); } catch (_) {}
         S.audioSource = null;
     }
+    _stopRefMedia();
     S.playing = false;
     updatePlayIcon();
     if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
@@ -548,7 +717,12 @@ export function playbackTick() {
     // Clamped at the start position while a count-in pre-roll runs (the
     // anchor sits in the future, so the raw chart time would read negative).
     S.cursorTime = Math.max(S.playStartTime,
-        _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime));
+        _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _auditionRate()));
+    // Paint-only: where the audio LEAVING THE SPEAKER now sits (ctxNow − latency),
+    // so the drawn line matches what's heard. Logic still uses S.cursorTime.
+    S.cursorDrawTime = _cursorDrawTimePure(
+        S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _heldOutputLatency, _auditionRate());
+    _auditionResyncMedia();
     const timelineEnd = _audioTimelineDuration();
     const loopRestart = _recState === 'recording'
         ? null
@@ -667,8 +841,13 @@ function _guideClapTimesInWindowPure(times, from, to) {
 }
 // Map chart-seconds onto the AudioContext clock via the transport anchor
 // (_startAudioSourceAtCursor records wall/chart time as the audio starts).
-function _guideChartToCtxPure(chartT, playStartWall, playStartTime) {
-    return playStartWall + (chartT - playStartTime);
+// The inverse of _transportChartTimePure: `rate` (audition speed) STRETCHES the
+// chart→wall mapping, so a guide/metronome event at chart time `chartT` sounds
+// at the slowed wall position and stays aligned with the audition-rate audio.
+// rate=1 is bit-identical to the pre-audition formula.
+export function _guideChartToCtxPure(chartT, playStartWall, playStartTime, rate = 1) {
+    const r = Number.isFinite(rate) && rate > 0 ? rate : 1;
+    return playStartWall + (chartT - playStartTime) / r;
 }
 // Sanitize a raw event-time array before the window query, matching every
 // other time-array consumer in this file (_editorJumpNote / -Beat / -Anchor):
@@ -1105,7 +1284,7 @@ function _guideTick() {
     const claps = _abClapsEnabledPure(_abActive(), _abPhase, editorGuideClapEnabled());
     const metro = editorMetronomeEnabled();
     if (!S.playing || !S.audioCtx || (!claps && !metro)) return;
-    const nowChart = _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime);
+    const nowChart = _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _auditionRate());
     // Clamp the lookahead end to the loop-region end while looping, so no clap
     // is scheduled past the boundary before the rAF wrap cancels the window.
     const loopRegion = S.loopEnabled ? _normalizeLoopRegionPure(S.barSel, S.duration) : null;
@@ -1135,11 +1314,15 @@ function _guideTick() {
                 // window boundary must not re-fire).
                 if (gp.key === _guideLastFiredKey) continue;
                 _guideLastFiredKey = gp.key;
-                const when = _guideChartToCtxPure(gp.t, S.playStartWall, S.playStartTime);
+                const when = _guideChartToCtxPure(gp.t, S.playStartWall, S.playStartTime, _auditionRate());
                 for (const v of gp.voices) {
+                    // The sustain is in CHART seconds; gmVoiceAt schedules in WALL
+                    // seconds. At 0.5x a note must ring twice as long to still cover
+                    // its note in the slowed audio — divide by the rate, same as the
+                    // chart→ctx mapping above.
                     const voice = bus && gmVoiceAt(
                         S.audioCtx, bus.guideGain, gm, when, v.midi,
-                        _gmVoiceDurationPure(v.sus));
+                        _gmVoiceDurationPure(v.sus) / _auditionRate());
                     if (voice) { _guideVoices.push(voice); continue; }
                     // Race: preset dropped mid-tick — ONE clap for the whole
                     // bucket (never a stacked clap per chord note), then on.
@@ -1156,7 +1339,7 @@ function _guideTick() {
                 const key = Math.round(t * 1000);
                 if (key === _guideLastFiredKey) continue;
                 _guideLastFiredKey = key;
-                _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime));
+                _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime, _auditionRate()));
             }
         }
     }
@@ -1164,7 +1347,7 @@ function _guideTick() {
         const clicks = _metroClicksInWindowPure(S.beats || [], from, to);
         for (const c of clicks) {
             _metroClickVoiceAt(
-                _guideChartToCtxPure(c.t, S.playStartWall, S.playStartTime), c.accent);
+                _guideChartToCtxPure(c.t, S.playStartWall, S.playStartTime, _auditionRate()), c.accent);
         }
     }
     _guideScheduledUntil = to;
@@ -1284,7 +1467,7 @@ export function _guideTimerSync() {
         && (editorGuideClapEnabled() || editorMetronomeEnabled() || _abActive());
     if (want && !_guideTimer) {
         _guideScheduledUntil = _transportChartTimePure(
-            S.playStartTime, S.playStartWall, S.audioCtx.currentTime);
+            S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _auditionRate());
         _guideTimer = setInterval(_guideTick, GUIDE_TICK_MS);
         _guideTick(); // fill the first window now, not one tick late
     } else if (!want && _guideTimer) {
@@ -1388,6 +1571,7 @@ export function initAudio() {
 export function teardownAudio() {
     cancelAudioLoad();
     try { if (S.audioSource) { S.audioSource.stop(); S.audioSource = null; } } catch (_) { /* already stopped */ }
+    _stopRefMedia();
     try { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } } catch (_) { /* no frame queued */ }
     S.playing = false;
     _guideTimerSync();
