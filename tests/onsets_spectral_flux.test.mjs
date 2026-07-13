@@ -16,6 +16,8 @@ import {
     _fftRadix2, _hannWindowPure, _bandBinsPure, _downsamplePure,
     _spectralFluxFramesPure, _pickOnsetsPure, _spectralFluxOnsetsPure,
 } from '../src/onsets.js';
+import { S } from '../src/state.js';
+import { _ensureOnsets, _onsetDetectorLabel } from '../src/audio.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -150,6 +152,95 @@ t('pipeline degrades cleanly on junk input', () => {
     assert.deepStrictEqual(_spectralFluxOnsetsPure(null, 44100), []);
     assert.deepStrictEqual(_spectralFluxOnsetsPure(new Float32Array(0), 44100), []);
     assert.deepStrictEqual(_spectralFluxOnsetsPure(new Float32Array(1000), 0), []);
+});
+
+t('silence and NaN-filled audio yield [] — no NaN escapes into a consumer', () => {
+    const sr = 22050;
+    assert.deepStrictEqual(_spectralFluxOnsetsPure(new Float32Array(sr * 2), sr), [], 'silence → []');
+    const nan = new Float32Array(sr); nan.fill(NaN);
+    assert.deepStrictEqual(_spectralFluxOnsetsPure(nan, sr), [], 'NaN buffer → []');
+    const inf = new Float32Array(sr); inf.fill(Infinity);
+    for (const o of _spectralFluxOnsetsPure(inf, sr)) {
+        assert.ok(Number.isFinite(o.t) && Number.isFinite(o.s), 'no non-finite t/s ever emitted');
+    }
+});
+
+// REGRESSION: frame f spans samples [f·hop, f·hop+fftSize) and is NOT zero-padded,
+// so a frame timestamped at f·hopSec reports the window's START — every onset came
+// back systematically EARLY by ~half a window (mean bias -9.7 ms, worst -17 ms at
+// fftSize 512 / 22.05 kHz). Onsets feed tempo-snap, onset-snap and Sync phase, so a
+// constant -10 ms skew biases every one of them. Fixed by carrying `centreSec` and
+// by hopping at 50% overlap (adjacent frames now overlap, so the parabolic sub-hop
+// interpolation actually has a smooth curve to interpolate).
+t('click train: onsets are unbiased, not systematically early', () => {
+    const sr = 44100, n = sr * 4;
+    const x = new Float32Array(n);
+    const clicks = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5];
+    for (const ct of clicks) {
+        const s = Math.round(ct * sr);
+        for (let i = 0; i < 200; i++) x[s + i] = Math.sin((2 * Math.PI * 1500 * i) / sr) * (1 - i / 200);
+    }
+    const on = _spectralFluxOnsetsPure(x, sr);
+    const errs = clicks.map((ct) => {
+        const best = on.reduce((a, o) => (Math.abs(o.t - ct) < Math.abs(a - ct) ? o.t : a), -99);
+        assert.ok(Math.abs(best - ct) < 0.010, `click at ${ct}s detected within 10ms (got ${best.toFixed(4)})`);
+        return best - ct;
+    });
+    const bias = errs.reduce((a, b) => a + b, 0) / errs.length;
+    // Pre-fix this was -0.0097 (a hard fail). Half a 512-frame at 22.05k is 11.6ms.
+    assert.ok(Math.abs(bias) < 0.005, `mean timing bias under 5ms (got ${(bias * 1000).toFixed(1)}ms)`);
+});
+
+// ── _ensureOnsets cache ──────────────────────────────────────────────────────
+// REGRESSION: _onsetCache was only cleared in computeWaveform(), which early-returns
+// when there is no buffer — but loadCDLC (file-ops.js) and the create-mode import
+// (create.js) drop S.audioBuffer/S.waveformPeaks WITHOUT going through it. So after
+// loading a second song the cache still held song ONE's onsets, and the onset strip,
+// onset-snap, tempo-snap and Sync phase all silently aligned to the wrong recording.
+function fakeBuffer(clickTimes, sr = 44100, dur = 4) {
+    const x = new Float32Array(Math.round(sr * dur));
+    for (const ct of clickTimes) {
+        const s = Math.round(ct * sr);
+        for (let i = 0; i < 200; i++) x[s + i] = Math.sin((2 * Math.PI * 1500 * i) / sr) * (1 - i / 200);
+    }
+    return { getChannelData: () => x, sampleRate: sr, duration: dur, numberOfChannels: 1 };
+}
+
+// The flux upgrade is a BACKGROUND job now (it used to run synchronously inside
+// _ensureOnsets), so drain the setTimeout chain before asserting on the cache.
+const drainOnsetJob = async () => { for (let i = 0; i < 500; i++) await new Promise((r) => setTimeout(r, 0)); };
+async function ta(name, fn) {
+    try { await fn(); pass++; console.log('  ok   ' + name); }
+    catch (e) { fail++; console.error('  FAIL ' + name + ': ' + e.message); }
+}
+
+await ta('onset cache is keyed on the audio buffer — a new song never inherits the old onsets', async () => {
+    S.audioBuffer = fakeBuffer([0.5, 1.5, 2.5]);
+    S.duration = 4;
+    S.waveformPeaks = null;
+    _ensureOnsets();                       // seeds RMS, kicks off the flux job
+    await drainOnsetJob();
+    const a = _ensureOnsets();
+    assert.ok(a && a.length, 'song A detected');
+    assert.strictEqual(_onsetDetectorLabel(), 'spectral-flux', 'the background job upgraded the cache');
+    assert.strictEqual(_ensureOnsets(), a, 'same buffer → memoised, not recomputed');
+
+    // What loadCDLC / the create import actually do: drop the buffer, never call
+    // computeWaveform(). The cache must go with it.
+    S.audioBuffer = null;
+    S.waveformPeaks = null;
+    assert.strictEqual(_ensureOnsets(), null, 'audio cleared → no stale onsets');
+
+    // A different song must produce its own onsets, not song A's.
+    S.audioBuffer = fakeBuffer([1.0, 2.0, 3.0]);
+    S.duration = 4;
+    _ensureOnsets();
+    await drainOnsetJob();
+    const b = _ensureOnsets();
+    assert.ok(b && b.length && b !== a, 'song B recomputed');
+    assert.ok(Math.abs(b[0].t - 1.0) < 0.01, `song B's first onset is B's (got ${b[0].t.toFixed(3)})`);
+
+    S.audioBuffer = null; S.waveformPeaks = null; S.duration = 0;
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

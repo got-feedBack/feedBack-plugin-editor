@@ -112,8 +112,8 @@ export function _downsamplePure(samples, factor) {
 export function _spectralFluxPlan(samples, sampleRate, opts) {
     const o = opts || {};
     const fftSize = o.fftSize || 512;
-    const hop = o.hop || fftSize;
-    const n = samples ? samples.length : 0;
+    const hop = o.hop || (fftSize >> 1);   // 50% overlap: adjacent frames share half
+    const n = samples ? samples.length : 0;   // their samples, so the flux curve is smooth
     const frames = n >= fftSize ? 1 + Math.floor((n - fftSize) / hop) : 0;
     const { loHi, midHi, nyq } = _bandBinsPure(sampleRate, fftSize);
     return {
@@ -127,7 +127,9 @@ export function _spectralFluxPlan(samples, sampleRate, opts) {
             lo: new Float32Array(Math.max(0, frames)),
             mid: new Float32Array(Math.max(0, frames)),
             hi: new Float32Array(Math.max(0, frames)),
-            hopSec: hop / sampleRate, frames,
+            hopSec: hop / sampleRate,
+            centreSec: (fftSize / 2) / sampleRate,
+            frames,
         },
     };
 }
@@ -142,7 +144,9 @@ export function _spectralFluxStep(plan, budget) {
         for (let i = 0; i < fftSize; i++) { re[i] = samples[start + i] * win[i]; im[i] = 0; }
         _fftRadix2(re, im);
         const curMag = plan.curMag;
-        for (let b = 0; b <= nyq; b++) curMag[b] = Math.hypot(re[b], im[b]);
+        // sqrt(re²+im²), not Math.hypot — hypot's overflow-safe scaling is ~5x
+        // slower and this runs millions of times.
+        for (let b = 0; b <= nyq; b++) curMag[b] = Math.sqrt(re[b] * re[b] + im[b] * im[b]);
         if (f > 0) {
             let tot = 0, lo = 0, mid = 0, hi = 0;
             const prevMag = plan.prevMag;
@@ -178,6 +182,10 @@ export function _spectralFluxFramesPure(samples, sampleRate, opts) {
 export function _pickOnsetsPure(frames, opts) {
     const o = opts || {};
     const { total, lo, mid, hi, hopSec } = frames;
+    // A frame spans [f*hop, f*hop+fftSize) and is not zero-padded, so f*hopSec is
+    // the window's START, not the energy it measured. Without this the whole
+    // detector reads ~10 ms EARLY on every consumer.
+    const centreSec = frames.centreSec || 0;
     const out = [];
     const nF = total ? total.length : 0;
     if (nF < 3 || !(hopSec > 0)) return out;
@@ -214,7 +222,7 @@ export function _pickOnsetsPure(frames, opts) {
         let dlt = denom !== 0 ? 0.5 * (a - c) / denom : 0;
         if (!(dlt > -1 && dlt < 1)) dlt = 0;                          // guard degenerate
         out.push({
-            t: (f + dlt) * hopSec,
+            t: (f + dlt) * hopSec + centreSec,
             s: Math.max(0, Math.min(1, v / gMax)),
             bands: {
                 lo: loMax > 0 ? Math.min(1, lo[f] / loMax) : 0,
@@ -241,7 +249,11 @@ export function _spectralFluxOnsetsPlan(samples, sampleRate, opts) {
     const target = o.downsampleTo || 22050;
     const factor = target > 0 ? Math.max(1, Math.floor(sampleRate / target)) : 1;
     const sig = _downsamplePure(samples, factor);
-    return _spectralFluxPlan(sig, sampleRate / factor, { fftSize: o.fftSize || 512, hop: o.hop || 512 });
+    const fftSize = o.fftSize || 512;
+    // hop = fftSize/2, NOT fftSize: adjacent frames must share half their samples or
+    // the flux curve is uncorrelated frame-to-frame and the parabolic sub-hop
+    // interpolation below interpolates noise (measured: ±17ms, vs ~4ms at 50%).
+    return _spectralFluxPlan(sig, sampleRate / factor, { fftSize, hop: o.hop || (fftSize >> 1) });
 }
 
 export function _spectralFluxOnsetsPure(samples, sampleRate, opts) {

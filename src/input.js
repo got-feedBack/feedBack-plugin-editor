@@ -26,6 +26,7 @@ import { _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofC
 import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure } from './snap.js';
 import { S } from './state.js';
 import { _editorShowTabPreview, _tabPreviewKeyPolicyPure } from './tab-preview.js';
+import { editorExportGp5 } from './gp5-export.js';
 import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSelection, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup, _tempoSelRangePure } from './tempo.js';
 import { _tourNoteAction } from './tour.js';
 import { _signpostNote } from './signposts.js';
@@ -833,6 +834,7 @@ export function _editorRunEofCommand(cmd) {
     case 'importMidi': _editorOpenImportMidi(); return true;
     case 'importXml': _editorOpenImportXml(); return true;
     case 'importGp': _editorOpenImportGp(); return true;
+    case 'exportGp5': editorExportGp5(); return true;
     case 'prevBeat': _editorJumpBeat(-1); return true;
     case 'nextBeat': _editorJumpBeat(+1); return true;
     case 'prevNote': _editorJumpNote(-1); return true;
