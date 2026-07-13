@@ -292,11 +292,17 @@ export function _segmentSeedGridPure(segments, opts) {
     return beats;
 }
 
-// End-to-end rough map: detect segments → seed each downbeat's PHASE from the
-// kick onsets → build the grid in the editor's beat shape (downbeats
-// {time, measure, den}; interior {time, measure: -1}). Pure over `onsets`; the
-// topology sits at observed positions so a TempoGridCmd re-lifts notes' beats
-// from their unchanged seconds (notes ride). Returns { beats, segments } or null.
+// End-to-end rough map: detect segments → seed each downbeat's PHASE → build the
+// grid in the editor's beat shape (downbeats {time, measure, den}; interior
+// {time, measure: -1}). Pure over `onsets`; the topology sits at observed
+// positions so a TempoGridCmd re-lifts notes' beats from their unchanged seconds
+// (notes ride). Returns { beats, segments } or null.
+//
+// NB the phase seed is only as good as the onsets it is handed: _downbeatPhasePure
+// prefers a LOW band (bands.lo = kick/bass) but falls back to overall strength,
+// and today's `_ensureOnsets` emits {t, s} only — no bands — so phase currently
+// seeds off broadband strength and CAN still land on a snare backbeat. Banded
+// onsets are the fix; until then the confirm bar (drag the boundary) is the out.
 export function _segmentRoughMapPure(onsets, opts) {
     const o = opts || {};
     const bpb = o.beatsPerBar || 4;

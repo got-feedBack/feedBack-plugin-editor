@@ -708,11 +708,18 @@ export function editorScanTempoZones() {
 }
 
 // Apply the segment-first ROUGH MAP (P2-3): the committing half of Scan. Builds a
-// grid at the detected tempo zones + kick-seeded phase and installs it as ONE
-// undoable TempoGridCmd — notes keep their seconds and ride, Ctrl+Z restores the
-// previous grid exactly. This is a deliberate, reviewed step (run Scan first to
-// see the zones); the drag/split/merge confirm bar is the follow-up.
+// grid at the detected tempo zones + onset-seeded downbeat phase and installs it
+// as ONE undoable TempoGridCmd — notes keep their seconds and ride, Ctrl+Z
+// restores the previous grid exactly. This is a deliberate, reviewed step (run
+// Scan first to see the zones); the drag/split/merge confirm bar is the follow-up.
 export function editorApplyTempoZones() {
+    // The menu row is gated `audioOnly` (S.audioBuffer) — which does NOT imply a
+    // song is open, so audio-without-a-session reaches here with S.history still
+    // null. Scan can afford to skip this (it never writes); Apply cannot.
+    if (!S.sessionId || !S.history) {
+        setStatus('Rough map needs a song open — create or open one first.');
+        return true;
+    }
     const onsets = _ensureOnsetsShifted();
     if (!onsets || onsets.length < 8) {
         setStatus('Rough map needs the recording’s onset analysis — load audio first.');
@@ -729,8 +736,11 @@ export function editorApplyTempoZones() {
     host.draw();
     host.updateStatus();
     const n = rough.segments.length;
+    // Name the COMMAND, never its key: the two shortcut profiles bind their own
+    // accelerators (the menu resolves them from the registry), so a key in status
+    // copy is a lie waiting to happen.
     setStatus(`Applied a rough map from ${n} tempo zone${n === 1 ? '' : 's'} — notes kept their timing; `
-        + 'Undo restores the old grid. Open Tempo Map + press G per zone to refine the barlines.');
+        + 'Undo restores the old grid. Open Tempo Map and run Suggest barline fit per zone to refine.');
     return true;
 }
 
