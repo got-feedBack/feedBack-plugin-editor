@@ -248,7 +248,11 @@ export function _downbeatPhasePure(onsets, beatPeriod, tStart, opts) {
     const bpb = o.beatsPerBar || 4;
     const barPeriod = beatPeriod * bpb;
     const steps = o.steps || 48;                       // phase resolution across the bar
-    const on = (Array.isArray(onsets) ? onsets : []).filter(x => x && Number.isFinite(x.t) && x.t >= tStart - 1e-6);
+    // Window to THIS segment: scoring past tEnd lets a later zone's pulse vote on
+    // this zone's phase (its own bar grid is a different period), which on a
+    // multi-zone song drags bar 1 off the beat it actually lands on.
+    const tEnd = Number.isFinite(o.tEnd) ? o.tEnd : Infinity;
+    const on = (Array.isArray(onsets) ? onsets : []).filter(x => x && Number.isFinite(x.t) && x.t >= tStart - 1e-6 && x.t < tEnd);
     if (!on.length || !(beatPeriod > 0)) return { downbeatTime: tStart, phase: 0 };
     const kick = (x) => {
         if (x.bands && Number.isFinite(x.bands.lo)) return x.bands.lo;   // low band = kick/bass

@@ -85,6 +85,24 @@ t('phase seed picks beat 1 on the KICK, not the loud snare backbeat', () => {
     assert.ok(modBeat < 0.12 || modBeat > beat - 0.12, `downbeat on a kick, not the snare (phase ${phase.toFixed(3)})`);
 });
 
+// The phase search filtered `t >= tStart` with NO upper bound, so it scored every
+// onset to the END OF THE SONG. On a multi-zone map the next zone's pulse (a
+// different bar period) votes on this zone's phase and drags bar 1 off its beat.
+t('phase is scored only inside its own segment, not to the end of the song', () => {
+    const beat = 0.5, bar = 2.0, onsets = [];
+    // Zone A (t < 16): 8 bars, downbeat exactly on phase 0, modest strength.
+    for (let m = 0; m < 8; m++) onsets.push({ t: m * bar, s: 0.5 });
+    // Zone B (t >= 16): bar-periodic too, but OFFSET a half-beat and louder/longer.
+    // Every one of its onsets votes for phase 0.25, so unbounded scoring hands
+    // zone A a downbeat that sits off the beat its own audio actually lands on.
+    for (let m = 0; m < 40; m++) onsets.push({ t: 16 + 0.25 + m * bar, s: 1 });
+    const bounded = _downbeatPhasePure(onsets, beat, 0, { beatsPerBar: 4, tEnd: 16 });
+    const unbounded = _downbeatPhasePure(onsets, beat, 0, { beatsPerBar: 4 });
+    const off = (p) => Math.min(((p % bar) + bar) % bar, bar - (((p % bar) + bar) % bar));
+    assert.ok(off(bounded.phase) < 1e-6, `windowed phase locks on zone A (got ${bounded.phase.toFixed(3)})`);
+    assert.ok(off(unbounded.phase) > 1e-6, 'unbounded scoring is dragged off by the later zone (pins the bug)');
+});
+
 t('seed grid lays a uniform 4/4 skeleton at the segment bpm, downbeats flagged', () => {
     const grid = _segmentSeedGridPure([{ tStart: 0, tEnd: 4, kind: 'constant', bpmStart: 120, bpmEnd: 120, downbeatTime: 0 }]);
     assert.ok(grid.length >= 7, 'about 8 beats in 4s at 120bpm');
