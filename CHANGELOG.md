@@ -14,9 +14,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (plus optional `role`), so string credits failed schema validation and the
   host's in-player credits overlay silently skipped them. Built packs now
   carry `{name, role: "charter"}` objects.
+- **The playhead now sits on what you *hear*, not what's scheduled.** The moving
+  playhead was drawn from the audio clock's *scheduled* time, which runs ahead of
+  the sound actually leaving your speakers by the output latency — a few
+  milliseconds on wired output, but **100–300 ms on Bluetooth headphones**, where
+  the line visibly led the music. The playhead is now drawn at the
+  latency-compensated position, so it lines up with what you hear at every speed
+  (the reference, the metronome and the guide claps all share that latency, so
+  one correction re-aligns the line to all of them). It's a **display-only**
+  adjustment: note placement, snapping and edits still resolve from the exact
+  transport position, and a stopped/scrubbing playhead still sits precisely on the
+  waveform.
 
 ### Added
 
+- **Audition speed — slow the recording down for practice, pitch preserved.** A
+  new speed control in the transport bar (**100% / 75% / 50%**) plays the
+  reference slower without dropping its pitch, so you can hear a fast run or a
+  bend clearly and chart against it. It's **playback only** — the chart, the
+  tempo map, the exported audio and the saved file never change — and one click
+  back to 100%. It resets to full speed when you load another song. Under the
+  hood the sample-accurate engine is untouched at 100%; only when slowed does the
+  reference ride a pitch-preserving path, kept in lock-step with the transport
+  clock. (Slow-only, ≤100% — this is a practice slow-downer, not a varispeed; the
+  recording itself is never stretched or warped.)
 - **Chart provenance.** Built packs carry an `origin: {tool: "feedback-editor",
   version}` extension key (ignored-but-preserved per feedpak §4), so
   editor-built charts stay distinguishable from bundled/imported packs —

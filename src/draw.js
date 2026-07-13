@@ -763,7 +763,14 @@ function _drawPianoNote(n, selected, hl, midi, fretted, linted) {
 }
 
 export function drawCursor(w, h) {
-    const x = timeToX(S.cursorTime);
+    // While playing, paint the playhead at the OUTPUT-latency-compensated time
+    // (S.cursorDrawTime) so the line sits on the audio actually leaving the
+    // speaker, not the buffered-ahead schedule — the marker matches what's heard
+    // (crucial on Bluetooth). Stopped/scrubbing falls back to S.cursorTime, which
+    // is exact on the waveform for note placement. Render-only: every logic path
+    // (snap, edit, seek, follow-scroll) reads S.cursorTime, never this.
+    const ct = (S.playing && Number.isFinite(S.cursorDrawTime)) ? S.cursorDrawTime : S.cursorTime;
+    const x = timeToX(ct);
     if (x < LABEL_W || x > w) return;
     ctx.strokeStyle = '#ff4444';
     ctx.lineWidth = 1.5;

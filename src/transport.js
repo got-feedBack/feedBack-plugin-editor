@@ -17,8 +17,13 @@
 // at play/seek start. ONE formula, read by playbackTick, the guide scheduler,
 // and the record clock — buffered and buffer-less alike (a recording rides
 // this clock; it is not the source of time).
-export function _transportChartTimePure(playStartTime, playStartWall, ctxNow) {
-    return playStartTime + (ctxNow - playStartWall);
+// `rate` (audition speed, default 1 = normal) scales how fast chart time
+// advances against the wall clock: at 0.5 the cursor moves at half speed, so a
+// pitch-preserving slow-down stays sample-synced with the reference. rate=1 is
+// bit-identical to the pre-audition formula (the 4th arg simply defaults away).
+export function _transportChartTimePure(playStartTime, playStartWall, ctxNow, rate = 1) {
+    const r = Number.isFinite(rate) && rate > 0 ? rate : 1;
+    return playStartTime + (ctxNow - playStartWall) * r;
 }
 
 // Compose-mode song length (charrette §1.7): with no recording, the GRID — not

@@ -118,6 +118,8 @@ export async function loadCDLC(filename, options = {}) {
         // accidentally make the old recording playable again.
         S.audioBuffer = null;
         S.waveformPeaks = null;
+        S.audioUrl = null;         // no recording ⇒ no audition source
+        S.auditionRate = 1;
 
         S.title = data.title || '';
         S.artist = data.artist || '';
