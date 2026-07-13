@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Inspector technique edits are undoable now.** Toggling a technique flag
+  (Palm Mute, Hammer-On, Tap, …) or setting a bend/slide value from the
+  inspector panel used to mutate the note in place with no undo — so Ctrl+Z
+  couldn't take it back, even though the same toggle from the keyboard could.
+  Both paths now commit through the editor's undo history (the flags via the
+  same command the keyboard toggles use; bend/slide via a new command that also
+  carries any authored bend curve through the edit), so a technique tweak is one
+  Ctrl+Z like a fret or time change. They still refuse on a read-only piano roll.
 - **Author credits now match the feedpak spec.** The manifest `authors:` array
   was written as plain strings; the spec (§5.4) requires objects with a `name`
   (plus optional `role`), so string credits failed schema validation and the
@@ -27,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Don't Save / Cancel prompt first — the file you take away is never silently a
   stale pack. Fretted tracks only (keys/drums have no tab); if the Tab View
   plugin isn't installed or the song isn't saved yet, the status line says so.
+- **Techniques now show in the Piano-roll view.** Switching from String view to
+  the roll used to hide every technique — bends, slides, mutes, hammer-ons and
+  the rest were all invisible on roll notes. They're drawn now: a slide gets its
+  diagonal and a tie its legato hook (the two overlays that fit a thin lane),
+  and everything else reads as a compact badge string right-aligned on the note
+  (`H`, `PM`, `/7`, `x`, plus roll-only `b2`/`v` glyphs for bend and vibrato,
+  which are too tall to draw as curves in a 4–14px lane). On lanes too short for
+  text, a small corner dot still marks that a note carries techniques, so none
+  are ever fully invisible. String view and the roll now build their shared
+  badges from one source, so the two views can't drift apart.
 - **Chart provenance.** Built packs carry an `origin: {tool: "feedback-editor",
   version}` extension key (ignored-but-preserved per feedpak §4), so
   editor-built charts stay distinguishable from bundled/imported packs —
