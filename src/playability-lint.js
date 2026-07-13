@@ -24,6 +24,8 @@
  *   legato-jump  an HO/PO arrival (or a pitched-slide reach) whose fret
  *                gap exceeds the active anchor window — a position shift
  *                mid-legato.
+ *   finger-conflict  two simultaneous notes assigned the SAME fret-hand
+ *                finger on DIFFERENT frets (a barre — same fret — is fine).
  *
  * Perf: recomputed only when the edit generation / arrangement changes
  * (the draw-coalesce dirty path — drawNotes reads a memoized Set), never
@@ -191,6 +193,49 @@ export function _lintLegatoJumpPure(nn, anchors) {
     return issues;
 }
 
+// (e) One finger in two places at once. Within a simultaneous cluster, two
+// fretted notes assigned the SAME fret-hand finger (fret_finger 1–4) on
+// DIFFERENT frets are physically impossible — a finger can't hold two frets at
+// one instant. Same finger on the SAME fret across strings is a BARRE (allowed,
+// never flagged). Pairs with auto-fingering (#237) and the chord-grip resolve:
+// once fingers are assigned, this catches the grips that can't actually be held.
+export function _lintFingerConflictPure(nn) {
+    const issues = [];
+    if (!Array.isArray(nn) || !nn.length) return issues;
+    const order = nn.map((n, i) => ({ n, i }))
+        .filter((e) => e.n && Number.isFinite(e.n.time))
+        .sort((a, b) => a.n.time - b.n.time);
+    let k = 0;
+    while (k < order.length) {
+        const t0 = order[k].n.time;
+        const cluster = [];
+        while (k < order.length && order[k].n.time <= t0 + LINT_CLUSTER_EPSILON) {
+            cluster.push(order[k]); k++;
+        }
+        // Group fretted notes by assigned finger (1–4 only; open strings and the
+        // unset sentinel (-1) carry no fretting finger, so they never conflict).
+        const byFinger = new Map();
+        for (const e of cluster) {
+            const fg = (e.n.techniques || {}).fret_finger;
+            if (!Number.isInteger(e.n.fret) || e.n.fret <= 0) continue;
+            if (!Number.isInteger(fg) || fg < 1 || fg > 4) continue;
+            if (!byFinger.has(fg)) byFinger.set(fg, []);
+            byFinger.get(fg).push(e);
+        }
+        for (const [fg, list] of byFinger) {
+            const frets = [...new Set(list.map((e) => e.n.fret))].sort((a, b) => a - b);
+            if (list.length >= 2 && frets.length >= 2) {
+                issues.push({
+                    rule: 'finger-conflict', time: t0,
+                    indices: list.map((e) => e.i),
+                    detail: `finger ${fg} on frets ${frets.join(' & ')} at once (a barre is one fret)`,
+                });
+            }
+        }
+    }
+    return issues;
+}
+
 // The full pass. Empty/keys-less input degrades to no issues.
 export function _playabilityLintPure(nn, anchors) {
     return [
@@ -198,6 +243,7 @@ export function _playabilityLintPure(nn, anchors) {
         ..._lintOverlapPure(nn),
         ..._lintOpenPure(nn),
         ..._lintLegatoJumpPure(nn, anchors),
+        ..._lintFingerConflictPure(nn),
     ].sort((a, b) => a.time - b.time);
 }
 /* @pure:playability-lint:end */
@@ -230,6 +276,7 @@ export function _lintFlaggedSet() {
 const RULE_LABELS = {
     stretch: 'Stretch', overlap: 'String overlap', 'open-bend': 'Open-string bend',
     'bad-fret': 'Fret out of range', 'legato-jump': 'Legato jump',
+    'finger-conflict': 'Finger conflict',
 };
 
 export function _lintChipRefresh() {
