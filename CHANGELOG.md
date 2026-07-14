@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subdivision when snap is on (so the entry caret sits on a real note position),
   instead of seeking to the raw pixel time. Hold **Alt** while clicking for a
   free, un-snapped scrub.
+- **Song Fit ▸ Re-sync from this bar on…** The drift rescue, right where you'd
+  look for it. The classic trap: you set a constant tempo from a tab, but the
+  band actually plays a hair slower — the chart lines up perfectly at the
+  start and drifts further off the deeper you get. Now park the playhead
+  where things stop matching, open **Song Fit**, pick **Re-sync from this bar
+  on…**, and the editor jumps into the Tempo Map and immediately shows its
+  suggested barline corrections from that bar forward as ghost markers — you
+  click to accept as far as it looks right. Nothing commits until you accept,
+  Esc dismisses, and as always the audio never moves: barlines re-fit to the
+  recording and your notes ride along.
 
 ### Fixed
 
