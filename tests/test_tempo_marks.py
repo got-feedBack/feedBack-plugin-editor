@@ -35,6 +35,19 @@ def test_coerce_hold_factor_degrades_not_raises():
     assert m["factor"] == 3.5
 
 
+def test_coerce_feel_marks_round_trip():
+    marks = routes._coerce_tempo_marks([
+        {"measure": 8, "kind": "feel", "ratio": 0.5, "provenance": "confirmed"},
+        {"measure": 20, "kind": "feel", "ratio": 1},
+        {"measure": 30, "kind": "feel", "ratio": 3},      # not in the vocabulary
+        {"measure": 31, "kind": "feel"},                   # ratio required
+    ])
+    assert [(m["measure"], m["ratio"]) for m in marks] == [(8, 0.5), (20, 1.0)]
+    manifest = {}
+    routes._apply_tempo_marks(manifest, marks)
+    assert routes._coerce_tempo_marks(manifest["editor_tempo_marks"]) == marks
+
+
 def test_parse_absent_vs_empty_vs_garbage():
     assert routes._parse_tempo_marks({}) is routes._FIELD_ABSENT
     assert routes._parse_tempo_marks({"tempo_marks": "trash"}) is routes._FIELD_ABSENT

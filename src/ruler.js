@@ -46,7 +46,7 @@ import {
 import { S, editGen } from './state.js';
 import { _editorCommandById, editorShortcutProfile } from './shortcuts.js';
 import { _editorToggleTempoMapMode, _tempoMarkers } from './tempo.js';
-import { _groupingAccentsLive } from './tempo-marks.js';
+import { _feelRangesLive, _groupingAccentsLive } from './tempo-marks.js';
 import { setStatus } from './ui.js';
 
 // ── Map Health lens (P2-4): per-bar grid-vs-onset drift, three-state ──────────
@@ -80,7 +80,7 @@ export function _mapHealthResults() {
         return _mhMemo.result;
     }
     const onsets = (typeof _ensureOnsetsShifted === 'function') ? _ensureOnsetsShifted() : null;
-    const result = _mapHealthPure(beats, onsets);
+    const result = _mapHealthPure(beats, onsets, { feelRanges: _feelRangesLive() });
     _mhMemo = { gen, onsetsRef: raw, shift, beatsRef: beats, result };
     return result;
 }
@@ -400,21 +400,23 @@ export function drawRuler(w) {
         mkLastX = x; mkRow = row;
         const isTempo = mk.kind === 'tempo';
         const isHold = mk.kind === 'hold';
+        const isFeel = mk.kind === 'feel';
         const cy = top + 1 + row * 8.5;
         const tw = ctx.measureText(mk.label).width;
         ctx.fillStyle = isHold ? 'rgba(245,158,11,0.20)'
+            : isFeel ? 'rgba(52,211,153,0.18)'
             : isTempo ? 'rgba(56,189,248,0.16)' : 'rgba(167,139,250,0.16)';
         ctx.fillRect(x + 2, cy, tw + 5, 8);
         // AUTHORED chips (P2-5) read as deliberate: a solid outline derived
         // chips don't get. Confirmed provenance = solid; anything else dashed.
         if (mk.authored) {
-            ctx.strokeStyle = isHold ? '#f59e0b' : '#a78bfa';
+            ctx.strokeStyle = isHold ? '#f59e0b' : isFeel ? '#34d399' : '#a78bfa';
             ctx.lineWidth = 0.75;
             if (mk.provenance && mk.provenance !== 'confirmed') ctx.setLineDash([2, 2]);
             ctx.strokeRect(x + 2, cy, tw + 5, 8);
             ctx.setLineDash([]);
         }
-        ctx.fillStyle = isHold ? '#fbbf24' : isTempo ? '#7dd3fc' : '#c4b5fd';
+        ctx.fillStyle = isHold ? '#fbbf24' : isFeel ? '#6ee7b7' : isTempo ? '#7dd3fc' : '#c4b5fd';
         ctx.fillText(mk.label, x + 4, cy + 0.5);
     }
 

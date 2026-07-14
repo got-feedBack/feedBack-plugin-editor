@@ -107,7 +107,8 @@ def _coerce_audio_shift(value, invalid=0.0):
     return shift if math.isfinite(shift) else invalid
 
 
-_TEMPO_MARK_KINDS = {"meter", "hold"}
+_TEMPO_MARK_KINDS = {"meter", "hold", "feel"}
+_TEMPO_FEEL_RATIOS = (0.5, 1.0, 2.0)
 _TEMPO_MARK_PROVENANCE = {"confirmed", "detected", "suggested", "imported", "carried"}
 
 
@@ -169,7 +170,7 @@ def _coerce_tempo_marks(value):
                 if any(v is None or v < 1 for v in parts) or sum(parts) != num:
                     continue
                 entry["grouping"] = parts
-        else:  # hold
+        elif kind == "hold":
             try:
                 factor = float(m.get("factor", 2))
             except (TypeError, ValueError):
@@ -177,6 +178,14 @@ def _coerce_tempo_marks(value):
             if not (math.isfinite(factor) and 1 < factor <= 16):
                 factor = 2.0
             entry["factor"] = factor
+        else:  # feel (P2-8): the closed pulse-tier vocabulary
+            try:
+                ratio = float(m.get("ratio"))
+            except (TypeError, ValueError):
+                continue
+            if ratio not in _TEMPO_FEEL_RATIOS:
+                continue
+            entry["ratio"] = ratio
         if m.get("provenance") in _TEMPO_MARK_PROVENANCE:
             entry["provenance"] = m["provenance"]
         seen.add((measure, kind))

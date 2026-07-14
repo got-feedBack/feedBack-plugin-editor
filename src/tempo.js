@@ -38,8 +38,9 @@ import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S, editGen } from './state.js';
 import {
-    _groupingParsePure, _holdMeasuresPure, _marksAtPure, _marksMeterReconcilePure,
-    _marksRemapByTimePure, _marksRemapPure, editorSetMeterGrouping, editorToggleHoldBar,
+    _feelRangesLive, _groupingParsePure, _holdMeasuresPure, _marksAtPure,
+    _marksMeterReconcilePure, _marksRemapByTimePure, _marksRemapPure,
+    editorSetFeelFromBar, editorSetMeterGrouping, editorToggleHoldBar,
 } from './tempo-marks.js';
 import {
     _suggestActive, _suggestApplyPure, _suggestAvgConf, _suggestDismiss,
@@ -819,6 +820,25 @@ export function editorZonesOctaveFix(dir) {
     return true;
 }
 
+// P2-8: the FEEL resolution of Scan's 2:1 detection — the recording's pulse
+// reads double/half against the grid, and the DEFAULT reading is a feel
+// change over a constant tempo. Marks the feel from bar 1 (the detection is
+// whole-grid); the grid, audio, and notes all stay put. One undo restores.
+export function editorZonesFeelFix(dir) {
+    if (!S.sessionId || !S.history || !S.beats || S.beats.length < 2) return true;
+    let firstMeasure = -1;
+    for (const b of S.beats) if (b && b.measure > 0) { firstMeasure = b.measure; break; }
+    if (firstMeasure < 1) return true;
+    editorSetFeelFromBar(firstMeasure, dir === 'double' ? 2 : 0.5);
+    _zonesDismiss();
+    host.draw();
+    host.updateStatus();
+    setStatus(dir === 'double'
+        ? 'Marked as double-time FEEL from the top — tempo and grid unchanged. If the grid itself is octave-trapped, use "Actually 2× tempo" instead.'
+        : 'Marked as half-time FEEL from the top — tempo and grid unchanged. The click now accents the felt pulse and Map Health expects onsets on felt beats only.');
+    return true;
+}
+
 // Confirm & refine (P2-3 Apply, the real one): seed a grid from the ADJUSTED
 // zones, then snap each zone's barlines to the recording with the bounded,
 // tempo-clamped suggest march — ONE undoable TempoGridCmd (notes keep their
@@ -1409,7 +1429,21 @@ export function _tempoMapOnContextMenu(e) {
             _mMarks.some(mm => mm.kind === 'hold') ? 'Remove hold / fermata' : 'Hold / fermata this bar',
             '', 'A held bar: excluded from tempo stats and suggestions instead of reading as a huge tempo drop');
         html += mkBtn('grouping', 'Meter grouping…', '',
-            'How a compound bar is felt, e.g. 7/8 as 2+2+3 — drives the marker label (and the click, next slice)');
+            'How a compound bar is felt, e.g. 7/8 as 2+2+3 — drives the marker label, the click, and the detector');
+        // P2-8: the felt pulse tier — a marker over a CONSTANT tempo, never
+        // a 2x tempo change. Toggle semantics: re-picking the active one clears.
+        const _mFeel = _mMarks.find(mm => mm.kind === 'feel');
+        html += mkBtn('feelhalf',
+            (_mFeel && _mFeel.ratio === 0.5 ? '✓ ' : '') + 'Half-time feel from here', '',
+            'The felt pulse halves (tempo unchanged): click accents every other beat, Map Health expects onsets on the felt beats only');
+        html += mkBtn('feeldouble',
+            (_mFeel && _mFeel.ratio === 2 ? '✓ ' : '') + 'Double-time feel from here', '',
+            'The felt pulse doubles (tempo unchanged)');
+        if (_mFeel || _feelRangesLive().some(f => f.fromMeasure < _mMeasure)) {
+            html += mkBtn('feelstraight',
+                (_mFeel && _mFeel.ratio === 1 ? '✓ ' : '') + 'Straight time from here', '',
+                'Back to the written pulse');
+        }
         html += mkBtn('togglelock',
             (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
             '', LOCK_TOOLTIP);
@@ -1446,6 +1480,19 @@ export function _tempoMapOnContextMenu(e) {
                 return;
             }
             if (a === 'grouping') { _tempoPromptGrouping(onPole); return; }
+            if (a === 'feelhalf' || a === 'feeldouble' || a === 'feelstraight') {
+                const mm = S.beats[onPole] ? S.beats[onPole].measure : -1;
+                const ratio = a === 'feelhalf' ? 0.5 : a === 'feeldouble' ? 2 : 1;
+                if (editorSetFeelFromBar(mm, ratio)) {
+                    const nowFeel = (S.tempoMarks || []).some(k => k.kind === 'feel' && k.measure === mm);
+                    setStatus(!nowFeel ? `Bar ${mm}: feel mark cleared.`
+                        : ratio === 0.5 ? `Half-time feel from bar ${mm} — tempo unchanged, the felt pulse halves.`
+                        : ratio === 2 ? `Double-time feel from bar ${mm} — tempo unchanged, the felt pulse doubles.`
+                        : `Straight time from bar ${mm}.`);
+                    host.draw();
+                }
+                return;
+            }
             if (a === 'half-range') _tempoHalveRange();
             else if (a === 'double-range') _tempoDoubleRange();
             else if (a === 'flatten-range') _tempoFlattenRange();
@@ -2247,9 +2294,11 @@ export function _tempoMarkersPure(beats, tolerance, marks) {
     // emits nothing either); an authored grouping re-labels the meter chip.
     const holdByMeasure = new Map();
     const meterByMeasure = new Map();
+    const feelByMeasure = new Map();
     for (const mk of (marks || [])) {
         if (mk.kind === 'hold') holdByMeasure.set(mk.measure, mk);
         if (mk.kind === 'meter') meterByMeasure.set(mk.measure, mk);
+        if (mk.kind === 'feel') feelByMeasure.set(mk.measure, mk);
     }
     const db = [];
     for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) db.push(i);
@@ -2273,6 +2322,15 @@ export function _tempoMarkersPure(beats, tolerance, marks) {
         } else if (bpm !== null && (runBpm === null || Math.abs(bpm - runBpm) > tol)) {
             out.push({ i, time: beats[i].time, measure, kind: 'tempo', label: `${_tempoFmtBpm(bpm)} BPM` });
             runBpm = bpm;
+        }
+        const feelMk = feelByMeasure.get(measure);
+        if (feelMk) {
+            // P2-8: the feel chip — a declared pulse-tier change over a
+            // CONSTANT tempo (never a 2x tempo chip).
+            out.push({ i, time: beats[i].time, measure, kind: 'feel', authored: true,
+                provenance: feelMk.provenance,
+                label: feelMk.ratio === 0.5 ? 'half-time feel'
+                    : feelMk.ratio === 2 ? 'double-time feel' : 'straight time' });
         }
         const authoredMeter = meterByMeasure.get(measure);
         const meterChanged = runNum === null || num !== runNum || den !== runDen;
