@@ -95,6 +95,7 @@ import {
     _editorSnapStepSeconds, editorRunShortcutCommand, editorToggleEntryPreview,
     editorToggleShortcutPanel, onContextMenu, onKeyDown
 } from './input.js';
+import { editorCloseCommandPalette, initCommandPalette } from './command-palette.js';
 import {
     editorAddString, editorHideStringsModal, editorRemoveString,
     editorSetStringTuning, editorShowStringsModal
@@ -118,7 +119,7 @@ import { initAnchorResolve } from './anchor-resolve.js';
 import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from './playability-lint.js';
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
-import { initMenuBar } from './menu-bar.js';
+import { EDITOR_MENUS, initMenuBar } from './menu-bar.js';
 import { initToolbars } from './toolbars.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
 import { editorDismissSignpost } from './signposts.js';
@@ -752,6 +753,11 @@ _globalListeners.add(document, 'keydown', (e) => {
         hideAddNote();
         hideContextMenu();
         window.editorHideLoadModal();
+        // The palette's own Escape (on its input) stops propagation, so this
+        // only fires when focus has LEFT the palette — a click on the menu bar
+        // or a toolbar, both of which sit outside the canvas-wrap its backdrop
+        // covers. Without it that click strands the overlay open.
+        editorCloseCommandPalette();
         // The User Guide is NOT closed here: this listener registers at import
         // time, so it runs before input.js onKeyDown — closing the guide here
         // would blind onKeyDown's read-only-lens gate (it would read the modal
@@ -1979,6 +1985,17 @@ function init() {
     // handed over as hooks so tempo-zones.js never imports tempo.js (cycle).
     initTempoZones({ confirm: editorConfirmTempoZones, single: editorZonesSingleTempo,
         octave: editorZonesOctaveFix });
+    // Registry commands run through `editorRunShortcutCommand` — the SAME
+    // by-id dispatcher the shortcut panel's buttons use, which is what the
+    // palette is (a click on a command, not a keypress). Going straight to
+    // `_editorRunEofCommand` (the raw keyboard switch) would leave the three
+    // digit-RANGE rows — "Set selected fret 0-9", the two bookmark 1-9 rows —
+    // silently inert: that switch only knows the per-digit forms
+    // (`setFretDigit:<n>`), so the bare id falls to `default: return false`.
+    // This path already carries their explain-hint. The menu model rides along
+    // too; both are hooks so command-palette.js imports neither input.js nor
+    // menu-bar.js (each would close an import cycle).
+    initCommandPalette({ run: editorRunShortcutCommand, menus: EDITOR_MENUS });
     initPlayabilityLint();
     initDrumPadStrip();
     initFretboardStrip();

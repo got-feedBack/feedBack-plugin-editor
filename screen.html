@@ -221,6 +221,16 @@
                 <button id="editor-segment-apply" class="px-2 py-0.5 rounded bg-teal-700 text-white hover:bg-teal-600" title="Build the grid: seed each zone, then snap its barlines to the recording inside it">Confirm &amp; refine</button>
                 <button id="editor-segment-dismiss" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Dismiss (Esc)">&#10005;</button>
             </div>
+            <!-- Command palette (Ctrl+K) — a searchable front door over every
+                 registry command (with its live keybinding) and menu action.
+                 Type-to-filter; ↑/↓ select, Enter runs, Esc / backdrop closes. -->
+            <div id="editor-command-palette" class="hidden absolute inset-0 z-40 bg-black/40 backdrop-blur-[2px]">
+                <div class="mx-auto mt-16 w-[36rem] max-w-[calc(100%-2rem)] rounded-lg border border-gray-600 bg-dark-800/95 shadow-2xl text-sm" role="dialog" aria-label="Command palette">
+                    <input id="editor-palette-input" type="text" placeholder="Type a command… (Esc to close)" autocomplete="off" spellcheck="false"
+                           class="w-full bg-transparent px-3 py-2.5 text-gray-100 placeholder-gray-500 border-b border-gray-700 outline-none" />
+                    <ul id="editor-palette-list" class="max-h-80 overflow-y-auto p-1.5 text-xs"></ul>
+                </div>
+            </div>
             <!-- Playability-lint popover (P9) — anchored bottom-right of the timeline. -->
             <div id="editor-lint-pop" role="dialog" aria-label="Playability notes" class="hidden absolute right-3 bottom-2 z-30 editor-lint-pop"></div>
             <!-- Entry tour card (workspace-shell C3) — a non-modal, task-based
