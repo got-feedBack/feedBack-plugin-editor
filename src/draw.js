@@ -481,7 +481,11 @@ export function drawNotes(w) {
     // view pref (host.editorEntryPreviewEnabled) — off if the box distracts.
     if (!keysMode && S.sel.size === 0
             && (!host.editorEntryPreviewEnabled || host.editorEntryPreviewEnabled())) {
-        const cx = timeToX(S.cursorTime || 0);
+        // Draw on the grid the typed note will actually LAND on: _editorPlaceAtCaret
+        // places at snapTime(cursor), so after a free (Alt) scrub — or mid-playback —
+        // the raw cursor sits off-grid and a box drawn there would promise a position
+        // the note won't take. The cell must not lie about WHERE.
+        const cx = timeToX(host.snapTime ? host.snapTime(S.cursorTime || 0) : (S.cursorTime || 0));
         const cy = strToY(S.caretString || 0) + NOTE_PAD;
         const ch = LANE_H - NOTE_PAD * 2;
         const step = host.editorSnapStepSeconds ? host.editorSnapStepSeconds() : 0;
