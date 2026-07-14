@@ -43,6 +43,8 @@
  */
 
 import { beatOf, timeOf } from './beats.js';
+import { MAP_HEALTH_COLORS, _mapHealthPillPure, _mapHealthWorstPure } from './map-health.js';
+import { _mapHealthEnabled, _mapHealthGotoMeasure, _mapHealthResults } from './ruler.js';
 import { S } from './state.js';
 import { host } from './host.js';
 import { setStatus } from './ui.js';
@@ -209,7 +211,7 @@ export function _countRememberedPure(next, current) {
 // garbage into the DOM builders. Unknown keys are dropped. A pref blob saved
 // before a cell existed (e.g. `countin`) leaves that cell at its default —
 // visible — rather than dropping it.
-export const TRANSPORT_LCD_CELLS = ['position', 'time', 'tempo', 'meter', 'key', 'countin', 'sel', 'mode'];
+export const TRANSPORT_LCD_CELLS = ['position', 'time', 'tempo', 'meter', 'key', 'countin', 'grid', 'sel', 'mode'];
 export function _transportPrefsPure(raw) {
     const p = {
         primary: 'position',
@@ -307,6 +309,11 @@ function buildLcd(mode) {
             `<select id="editor-lcd-countin" class="editor-lcd-select" aria-label="Count-in bars">${copts}</select>`,
             'Count-in: bars of metronome clicks before playback (and recording) starts — writes through to the toolbar Count control'));
     }
+    if (c.grid) {
+        parts.push(lcdCell('grid', 'Grid',
+            `<button id="editor-lcd-grid" class="editor-lcd-badge" style="cursor:pointer"`
+            + ` title="How much of the beat grid agrees with the recording (Map Health). Click to jump to the worst bar with the fix armed.">—</button>`));
+    }
     if (c.sel) parts.push(lcdCell('sel', 'Sel', `<span id="editor-lcd-sel"></span>`, 'Selected notes'));
     if (c.mode) parts.push(lcdCell('mode', 'Mode',
         `<span id="editor-lcd-mode" class="editor-lcd-badge"></span>`, mode.title));
@@ -361,7 +368,7 @@ function buildMenu() {
     if (!menu) return;
     const row = (kind, key, label, checked) =>
         `<label class="editor-transport-menu-row"><input type="checkbox" data-kind="${kind}" data-key="${key}"${checked ? ' checked' : ''}> ${esc(label)}</label>`;
-    const cellLabels = { position: 'Position', time: 'Time', tempo: 'Tempo', meter: 'Meter', key: 'Key', countin: 'Count-in', sel: 'Selection', mode: 'Mode badge' };
+    const cellLabels = { position: 'Position', time: 'Time', tempo: 'Tempo', meter: 'Meter', key: 'Key', countin: 'Count-in', grid: 'Grid health', sel: 'Selection', mode: 'Mode badge' };
     menu.innerHTML = `<div class="editor-transport-menu-head">Customize Control Bar</div>`
         + row('group', 'util', 'Tracks / Mix / Follow group', prefs.groups.util)
         + row('group', 'modes', 'Click / Clap / A/B / Count / Snap group', prefs.groups.modes)
@@ -465,6 +472,20 @@ function wireBar(bar) {
     on('editor-tp-clap', () => { if (typeof window.editorToggleGuideClap === 'function') window.editorToggleGuideClap(); _transportBarTick(true); });
     on('editor-tp-ab', () => { if (typeof window.editorToggleLoopAB === 'function') window.editorToggleLoopAB(); _transportBarTick(true); });
     on('editor-tp-trainer', () => { if (typeof window.editorToggleAuditionTrainer === 'function') window.editorToggleAuditionTrainer(); _transportBarTick(true); });
+    // Grid-health pill: jump to the worst drifting bar with the fix armed
+    // (the same motion as clicking a hot bar in the Map Health wash — works
+    // even while the wash itself is toggled off). Nothing drifting? Say so.
+    on('editor-lcd-grid', () => {
+        if (!_mapHealthEnabled()) return;   // cell is hidden with the lens off; belt and braces
+        if (!S.audioBuffer) { setStatus('Grid health needs a recording to judge against.'); return; }
+        const res = _mapHealthResults();
+        const worst = _mapHealthWorstPure(res);
+        if (worst) _mapHealthGotoMeasure(worst);
+        // No worst bar has TWO causes, and the pill already tells them apart:
+        // a dash (no judgeable bar at all) must not claim the grid "agrees".
+        else if (!_mapHealthPillPure(res)) setStatus('Grid health: nothing judgeable in this recording yet — no bars to fix.');
+        else setStatus('Grid health: every judgeable bar agrees with the recording — nothing to fix.');
+    });
     on('editor-tp-count', () => {
         const cur = editorCountInBars();
         let last = null;
@@ -579,6 +600,35 @@ export function _transportBarTick(force) {
 
     const selN = S.drumEditMode ? S.drumSel.size : S.sel.size;
     _set(document.getElementById('editor-lcd-sel'), String(selN));
+
+    // Grid-health pill: percent of judgeable bars that agree with the
+    // recording, coloured by the worst state present. The pill RIDES the
+    // Tempo/Grid ▸ Map Health toggle (one switch = the whole lens: ruler wash
+    // + this pill) — its LCD cell hides entirely while the lens is off.
+    // _mapHealthResults() is memoized on editGen + the onset cache, so a
+    // visible pill costs a map lookup per tick — the O(bars × beats) scan
+    // only reruns after an actual edit. No audio (or nothing judgeable yet)
+    // shows a neutral dash, never a fake 100%.
+    const gridEl = document.getElementById('editor-lcd-grid');
+    if (gridEl) {
+        const lensOn = _mapHealthEnabled();
+        const cell = gridEl.closest('.editor-lcd-cell');
+        if (cell) cell.classList.toggle('hidden', !lensOn);
+        if (lensOn) {
+            const pill = S.audioBuffer ? _mapHealthPillPure(_mapHealthResults()) : null;
+            const txt = pill ? `${pill.pct}%` : '—';
+            if (gridEl.textContent !== txt) gridEl.textContent = txt;
+            // Guard the colour write on the BAND, not on style.color: the DOM
+            // normalizes an assigned '#ef4444' back to 'rgb(239, 68, 68)', so a
+            // hex compare NEVER matches and would re-write the inline style on
+            // every tick — exactly the per-frame churn the _set() guards avoid.
+            const band = pill ? pill.band : '';
+            if (gridEl.dataset.band !== band) {
+                gridEl.dataset.band = band;
+                gridEl.style.color = band ? MAP_HEALTH_COLORS[band] : '';
+            }
+        }
+    }
 
     const modeEl = document.getElementById('editor-lcd-mode');
     if (modeEl) { _set(modeEl, mode.short); if (modeEl.title !== mode.title) modeEl.title = mode.title; }

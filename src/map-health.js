@@ -147,4 +147,44 @@ export const MAP_HEALTH_COLORS = {
     red: '#ef4444',
     grey: '#64748b',
 };
+
+// The LCD pill verdict: what fraction of the JUDGEABLE measures agree with
+// the recording, coloured by the worst state present. Grey (nothing to judge)
+// measures don't count either way — a sustained bridge can't lower the score,
+// same no-crying-wolf rule as the wash. Null = no verdict (no judgeable bars
+// at all), so the pill shows a neutral dash instead of a fake 100%.
+export function _mapHealthPillPure(result) {
+    const ms = result && Array.isArray(result.measures) ? result.measures : [];
+    let green = 0, amber = 0, red = 0;
+    for (const m of ms) {
+        if (m.band === 'green') green++;
+        else if (m.band === 'amber') amber++;
+        else if (m.band === 'red') red++;
+    }
+    const judged = green + amber + red;
+    if (!judged) return null;
+    return {
+        pct: Math.round((100 * green) / judged),
+        band: red ? 'red' : amber ? 'amber' : 'green',
+        judged,
+    };
+}
+
+// The measure a "take me to the worst spot" click should land on: any red
+// beats any amber; within a band, the largest drift wins. Null when nothing
+// is drifting (the pill click then has nothing to fix — say so, don't jump).
+export function _mapHealthWorstPure(result) {
+    const ms = result && Array.isArray(result.measures) ? result.measures : [];
+    const rank = (b) => (b === 'red' ? 2 : b === 'amber' ? 1 : 0);
+    let worst = null;
+    for (const m of ms) {
+        if (!rank(m.band)) continue;
+        if (!worst
+                || rank(m.band) > rank(worst.band)
+                || (rank(m.band) === rank(worst.band) && (m.driftFrac || 0) > (worst.driftFrac || 0))) {
+            worst = m;
+        }
+    }
+    return worst;
+}
 /* @pure:map-health:end */
