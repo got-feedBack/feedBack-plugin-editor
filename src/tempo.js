@@ -20,7 +20,7 @@
 // Browser surface: `ctx` (the shared 2D context) plus the sync-inspector and
 // time-signature controls it builds into the toolbar.
 // ════════════════════════════════════════════════════════════════════
-import { _ensureOnsets, _ensureOnsetsShifted, _nearestOnsetTimePure } from './audio.js';
+import { _ensureOnsetsShifted, _nearestOnsetTimePure } from './audio.js';
 import { _localTempoSeriesPure, _segmentRoughMapPure, _segmentTempoPure } from './tempo-segment.js';
 import { beatOf, timeOf } from './beats.js';
 import { DPR, canvas, ctx } from './canvas.js';
@@ -2514,7 +2514,11 @@ export function _tempoMapOnDragMove(x) {
     dg.snappedT = null;
     if (S.snapMode === 'onset' && !(orig[d] && orig[d].locked)) {
         const tol = _tempoOnsetSnapTolPure(xToTime(1) - xToTime(0), ONSET_SNAP_PX, ONSET_SNAP_MAX_S);
-        const res = _tempoOnsetSnapPure(rawT, _ensureOnsets(), tol, loBound, hiBound);
+        // rawT and the barlines are CHART time, so the snap must compare against
+        // CHART-time onsets — _ensureOnsetsShifted() (matching Suggest-fit), not the
+        // buffer-time _ensureOnsets(): with the audio shifted the two diverge and the
+        // barline would snap to the un-shifted attack (issue #254).
+        const res = _tempoOnsetSnapPure(rawT, _ensureOnsetsShifted(), tol, loBound, hiBound);
         newT = res.t;
         if (res.snapped) dg.snappedT = newT;
     }
