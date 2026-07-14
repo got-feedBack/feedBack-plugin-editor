@@ -32,6 +32,10 @@ export function _paletteEntriesPure(rows, menus) {
     const out = [];
     for (const r of (rows || [])) {
         if (!r || r.status !== 'ready') continue;
+        // The palette never lists itself — it IS a ready registry row (and a
+        // View menu row), so without this "Open command palette" shows up as a
+        // hit that closes the palette and immediately reopens it.
+        if (r.id === 'openCommandPalette') continue;
         out.push({ kind: 'cmd', id: r.id, label: r.label, group: r.group, key: r.key || '',
             hay: (r.label + ' ' + (r.group || '')).toLowerCase() });
     }
@@ -81,6 +85,7 @@ export function _paletteFilterPure(entries, query, limit = 12) {
 let _open = false;
 let _results = [];
 let _sel = 0;
+let _prevFocus = null;
 let _hooks = { run: null, menus: null };
 
 const $pal = () => document.getElementById('editor-command-palette');
@@ -131,15 +136,27 @@ function _refresh() {
     _render();
 }
 
-function _close(refocusCanvas = true) {
+function _close() {
     if (!_open) return;
     _open = false;
     const pal = $pal();
     if (pal) pal.classList.add('hidden');
-    if (refocusCanvas && document.activeElement && document.activeElement.blur) {
-        document.activeElement.blur();   // hand the keyboard back to the canvas chain
-    }
+    // Hand the keyboard back to whoever had it before the palette stole focus.
+    // Blurring to <body> is a safe floor (the editor's shortcuts listen on
+    // `document`), but restoring the real element keeps a menu-opened palette
+    // from dropping the user out of the menu bar.
+    const prev = _prevFocus;
+    _prevFocus = null;
+    if (prev && prev.isConnected && prev.focus) prev.focus();
+    else if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
 }
+
+// Escape must close the palette from ANYWHERE, not just from its own input:
+// the backdrop only covers #editor-canvas-wrap, so a click on the menu bar or a
+// toolbar moves focus out while the overlay stays up — and the input's keydown
+// handler (the only Escape path) can no longer see the key. main.js's global
+// dialog listener calls this, exactly as it does for the other overlays.
+export function editorCloseCommandPalette() { _close(); }
 
 function _runSelected() {
     const e = _results[_sel];
@@ -154,14 +171,13 @@ function _runSelected() {
     else setStatus(`${e.label} is not available right now.`);
 }
 
-export function _paletteOpen() { return _open; }
-
 export function editorOpenCommandPalette() {
     const pal = $pal();
     const input = $input();
     if (!pal || !input) return true;
     _open = true;
     _sel = 0;
+    _prevFocus = document.activeElement;
     input.value = '';
     pal.classList.remove('hidden');
     _refresh();

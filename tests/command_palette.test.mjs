@@ -33,6 +33,8 @@ const ROWS = [
     { id: 'save', label: 'Save', group: 'File', status: 'ready', key: 'Ctrl+S' },
     { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', key: 'Shift+R' },
     { id: 'futureThing', label: 'Future thing', group: 'File', status: 'todo', key: '' },
+    // Ready, and a View menu row — but the palette must never list itself.
+    { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', key: 'Ctrl+K' },
 ];
 const MENUS = [
     { title: 'Tempo/Grid', items: [
@@ -53,6 +55,7 @@ t('entries: ready registry rows with live keys + menu window-fns, no dupes or ch
     assert.strictEqual(e[2].kind, 'fn');
     assert.strictEqual(e[2].group, 'Tempo/Grid', 'menu actions carry their menu title');
     assert.ok(!e.some(x => x.label === 'Future thing'), 'non-ready rows are hidden');
+    assert.ok(!e.some(x => x.id === 'openCommandPalette'), 'the palette never lists itself');
 });
 
 t('ranking: word-start beats mid-substring beats subsequence', () => {
