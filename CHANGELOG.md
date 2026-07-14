@@ -97,7 +97,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Map opens, the bar scrolls into view, and Suggest is anchored on it so pressing
   **G** proposes a barline fit to the recording from that bar on. (Green and grey
   bars aren't actionable, so clicking them just scrubs as usual.)
-  glance whether the automatic tempo map can be trusted.
 - **Audition speed — slow the recording down for practice, pitch preserved.** A
   new speed control in the transport bar (**100% / 75% / 50%**) plays the
   reference slower without dropping its pitch, so you can hear a fast run or a
@@ -160,8 +159,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so turning the onset strip on never stutters even on a long recording. Every
   attack now also carries its per-band strength, which the upcoming automatic
   tempo-mapping uses to find the beat.
-  as an automatic fallback. Every attack now also carries its per-band strength,
-  which the upcoming automatic tempo-mapping uses to find the beat.
 - **Resolving positions now shapes chords as one coherent grip.** When you run
   "Resolve positions" over an anchor window, simultaneous notes (a chord) used
   to be placed one at a time, each grabbing its own lowest free fret — which
@@ -170,9 +167,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **together**, choosing the tightest fret-hand shape (smallest fret span,
   distinct strings, open strings free) that fits the hand, pulled toward the
   anchor / previous note. A cluster with no playable grip falls back to the old
-  per-note behaviour, so nothing that resolved before stops resolving — and the
-  refusals stay honest: a note that could be played open **or** fretted is still
-  refused for you to decide, never quietly voiced open to tighten the shape.
+  per-note behaviour, so nothing that resolved before stops resolving.
+- **Chord grips may now use open strings — each one flagged for your review.**
+  When a chord note could be played open **or** fretted, the grip resolver used
+  to refuse the whole chord rather than choose for you. It now takes the open
+  when that makes the tightest hand shape — opens are how real chord voicings
+  use the neck — but the choice is never confirmed behind your back: the status
+  line counts the flagged opens ("2 open voicings to review"), the confirm sweep
+  walks you to each one, and **Accept all deliberately skips them** (exactly
+  like refused notes), so an open the machine picked only becomes part of your
+  chart after you've looked at it. A lone note that could go either way is still
+  refused outright — outside a chord shape there's nothing to justify the
+  machine deciding.
 - **Flattening a variable tempo map now names both directions** instead of a
   bare confirm. Typing a BPM for a song with multiple tempos opens a small in-app
   dialog: **Conform notes to the new tempo** (notes keep their bar:beat positions
