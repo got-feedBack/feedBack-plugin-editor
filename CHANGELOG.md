@@ -154,6 +154,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Map opens, the bar scrolls into view, and Suggest is anchored on it so pressing
   **G** proposes a barline fit to the recording from that bar on. (Green and grey
   bars aren't actionable, so clicking them just scrubs as usual.)
+  glance whether the automatic tempo map can be trusted.
+- **Grid-health readout in the transport display.** While Map Health is on
+  (the same Tempo/Grid toggle), the transport LCD gains a small **Grid** cell
+  showing what percent of the song's judgeable bars agree with the recording —
+  green when everything lines up, amber or red when bars are drifting, and a
+  neutral dash when there's nothing to judge yet (it never fakes a 100%).
+  Bars with nothing to measure — silent or sustained — don't count for or
+  against the score, same as the strip. **Click the percent** and the editor
+  jumps straight to the worst drifting bar with the fix armed, exactly like
+  clicking that bar in the strip — handy when the strip itself is scrolled out
+  of view. Turn Map Health off and the cell tucks itself away; the transport's
+  Customize row can also hide it independently.
 - **Audition speed — slow the recording down for practice, pitch preserved.** A
   new speed control in the transport bar (**100% / 75% / 50%**) plays the
   reference slower without dropping its pitch, so you can hear a fast run or a
