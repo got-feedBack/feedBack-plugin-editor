@@ -48,6 +48,21 @@ def test_coerce_feel_marks_round_trip():
     assert routes._coerce_tempo_marks(manifest["editor_tempo_marks"]) == marks
 
 
+def test_coerce_ramp_marks_round_trip():
+    marks = routes._coerce_tempo_marks([
+        {"measure": 12, "kind": "ramp", "measureEnd": 16,
+         "bpmStart": 120, "bpmEnd": 140, "curve": "ease-out", "provenance": "confirmed"},
+        {"measure": 20, "kind": "ramp", "measureEnd": 20, "bpmStart": 120, "bpmEnd": 140},  # empty span
+        {"measure": 30, "kind": "ramp", "measureEnd": 34, "bpmStart": 0, "bpmEnd": 140},    # bad bpm
+        {"measure": 40, "kind": "ramp", "measureEnd": 44,
+         "bpmStart": 100, "bpmEnd": 90, "curve": "wiggly"},                                  # curve degrades
+    ])
+    assert [(m["measure"], m.get("curve")) for m in marks] == [(12, "ease-out"), (40, "linear")]
+    manifest = {}
+    routes._apply_tempo_marks(manifest, marks)
+    assert routes._coerce_tempo_marks(manifest["editor_tempo_marks"]) == marks
+
+
 def test_parse_absent_vs_empty_vs_garbage():
     assert routes._parse_tempo_marks({}) is routes._FIELD_ABSENT
     assert routes._parse_tempo_marks({"tempo_marks": "trash"}) is routes._FIELD_ABSENT

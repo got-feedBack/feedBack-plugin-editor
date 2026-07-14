@@ -398,7 +398,7 @@ export function drawRuler(w) {
         if (x < LABEL_W || x > w) continue;
         const row = (Math.abs(x - mkLastX) < 44) ? Math.min(mkRow + 1, 2) : 0;
         mkLastX = x; mkRow = row;
-        const isTempo = mk.kind === 'tempo';
+        const isTempo = mk.kind === 'tempo' || mk.kind === 'ramp';
         const isHold = mk.kind === 'hold';
         const isFeel = mk.kind === 'feel';
         const cy = top + 1 + row * 8.5;

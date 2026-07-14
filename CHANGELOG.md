@@ -29,6 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the editor never draws a connection the music doesn't have.
 ### Added
 
+- **Tempo ramps — a ritardando is ONE thing now.** Select a run of barlines
+  in the Tempo Map, right-click ▸ **Ramp the range (accel/rit)…**, give it
+  "start → end" BPM, and the whole gesture becomes one authored object: the
+  bars re-space smoothly along a curve (a rit eases out, the natural
+  release), notes ride, locked barlines hold their exact times, and one
+  undo restores everything. The marker lane shows a single `rit. 140→120`
+  chip instead of a spray of per-bar tempo chips. **Fit ramp to the
+  recording** goes one better: it reads the onset drift across your
+  selection and proposes the ramp that flattens it — the drifting-red bar
+  in Map Health resolves to authored-green instead of nagging forever.
+- **Tempo List (Tempo/Grid menu)** — every authored mark as text: one row
+  per ramp / meter grouping / hold / feel with its bar, value, and source
+  (human-confirmed vs detected vs imported). Click a row to jump to its
+  bar. The chips are paint; this is the ledger.
+
 - **Half-time / double-time is a FEEL now, not a fake tempo change.** A
   half-time chorus or double-time bridge never meant the band changed tempo
   — the *pulse tier* changed. Right-click a barline: **Half-time feel /

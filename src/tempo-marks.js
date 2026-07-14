@@ -27,7 +27,11 @@ import { host } from './host.js';
 //   imported  — carried from the source file (GP/MIDI), unchecked vs audio
 //   carried   — interpolated across a silent/sustained zone
 const TEMPO_MARK_PROVENANCE = ['confirmed', 'detected', 'suggested', 'imported', 'carried'];
-const TEMPO_MARK_KINDS = ['meter', 'hold', 'feel'];
+const TEMPO_MARK_KINDS = ['meter', 'hold', 'feel', 'ramp'];
+// Ramp curve presets (P2-7) — the Logic curve-node analogue, but PRESETS so
+// the author never hand-tunes béziers: a rit defaults to ease-out (it
+// releases), an accel to linear.
+const TEMPO_RAMP_CURVES = ['linear', 'ease-in', 'ease-out'];
 // The feel vocabulary (P2-8): a half-/double-time section is a FEEL change
 // over a constant tempo, never a 2x tempo change. Ratio applies FROM its
 // measure until the next feel mark; 1 = back to straight time.
@@ -59,10 +63,21 @@ function _markNormPure(mark) {
         const factor = Number(mark.factor);
         // How much longer than metric the bar is held; 2 = "about twice".
         out.factor = (Number.isFinite(factor) && factor > 1 && factor <= 16) ? factor : 2;
-    } else {   // feel
+    } else if (kind === 'feel') {
         const ratio = Number(mark.ratio);
         if (!TEMPO_FEEL_RATIOS.includes(ratio)) return null;
         out.ratio = ratio;
+    } else {   // ramp (P2-7): ONE authored accel/rit over [measure, measureEnd]
+        const measureEnd = Number(mark.measureEnd);
+        const bpmStart = Number(mark.bpmStart);
+        const bpmEnd = Number(mark.bpmEnd);
+        if (!Number.isInteger(measureEnd) || measureEnd <= measure) return null;
+        if (!(Number.isFinite(bpmStart) && bpmStart > 0 && bpmStart <= 1000)) return null;
+        if (!(Number.isFinite(bpmEnd) && bpmEnd > 0 && bpmEnd <= 1000)) return null;
+        out.measureEnd = measureEnd;
+        out.bpmStart = Math.round(bpmStart * 1000) / 1000;
+        out.bpmEnd = Math.round(bpmEnd * 1000) / 1000;
+        out.curve = TEMPO_RAMP_CURVES.includes(mark.curve) ? mark.curve : 'linear';
     }
     if (TEMPO_MARK_PROVENANCE.includes(mark.provenance)) out.provenance = mark.provenance;
     return out;
@@ -267,7 +282,7 @@ function _groupingAccentsByMeasurePure(marks) {
 /* @pure:tempo-marks:end */
 
 export {
-    TEMPO_FEEL_RATIOS, TEMPO_MARK_PROVENANCE, _feelAtPure, _feelRangesPure,
+    TEMPO_FEEL_RATIOS, TEMPO_MARK_PROVENANCE, TEMPO_RAMP_CURVES, _feelAtPure, _feelRangesPure,
     _groupingAccentMapPure, _groupingAccentsByMeasurePure,
     _groupingLabelPure, _groupingParsePure, _holdMeasuresPure,
     _markNormPure, _marksAtPure, _marksMeterReconcilePure, _marksRemapByTimePure,
