@@ -111,9 +111,14 @@ function _editorPlaceAtCaret(fret) {
     if (!nStr) { setStatus('Select notes first'); return false; }
     const string = Math.max(0, Math.min(nStr - 1, Number(S.caretString) || 0));
     const time = snapTime(S.cursorTime || 0);
-    const note = { time, string, fret: Math.max(0, Math.min(24, Number(fret) || 0)), sustain: 0, techniques: {} };
+    // Length = the note value (the snap step), so a typed note fills the preview
+    // cell and consecutive notes tile the grid instead of stacking zero-length.
+    const step = _editorSnapStepSeconds();
+    const f = Math.max(0, Math.min(24, Number(fret) || 0));
+    const note = { time, string, fret: f, sustain: step > 0 ? step : 0, techniques: {} };
     const cmd = new AddNoteCmd(note);
     S.history.exec(cmd);
+    S.caretFret = f;                       // remember for the preview's fret ghost
     _tourNoteAction('placeNote');
     _editBlipAt();
     // Entry flow: leave NO selection (so the next digit places again) and advance
@@ -138,6 +143,28 @@ function _editorMoveCaretString(dir) {
     host.draw();
     setStatus(`Entry caret on string ${S.caretString + 1} — type 0-9 to place a note`);
     return true;
+}
+
+// Note-entry preview toggle (default ON): the dashed caret cell that previews a
+// typed note's string, length, and fret. A view pref — off if the box distracts
+// (e.g. a mouse-only charter). Cached like the other view flags.
+let _entryPreviewOn = null;
+export function _editorEntryPreviewEnabled() {
+    if (_entryPreviewOn === null) {
+        try { _entryPreviewOn = localStorage.getItem('editorEntryPreview') !== '0'; }
+        catch (_) { _entryPreviewOn = true; }
+    }
+    return _entryPreviewOn;
+}
+export function editorToggleEntryPreview(force) {
+    const next = typeof force === 'boolean' ? force : !_editorEntryPreviewEnabled();
+    _entryPreviewOn = next;
+    try { localStorage.setItem('editorEntryPreview', next ? '1' : '0'); } catch (_) { /* private mode */ }
+    if (host && typeof host.draw === 'function') host.draw();
+    setStatus(next
+        ? 'Note-entry preview on — the dashed cell shows where a typed note lands (string · length · fret)'
+        : 'Note-entry preview off');
+    return next;
 }
 
 function _editorSetSelectedFret(fret) {

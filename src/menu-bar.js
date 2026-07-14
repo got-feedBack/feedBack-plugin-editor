@@ -240,6 +240,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleSnapMode' },
         { cmd: 'customGridSnap' },
         { cmd: 'toggleGridDisplay' },
+        { label: 'Note-entry preview', fn: 'editorToggleEntryPreview' },
     ] },
     { title: 'Help', items: [
         { label: 'User Guide', fn: 'editorToggleUserGuide' },
