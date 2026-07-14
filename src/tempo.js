@@ -1035,8 +1035,13 @@ export function _gridHealScanPure(beats, opts) {
         const a = dbs[s], b = dbs[s + 1];
         if (b - a < 2) continue;                       // no interior beats to judge
         const span = beats[b].time - beats[a].time;
-        if (!(span > 0)) continue;
         const even = span / (b - a);
+        // Below the grid's millisecond resolution a re-space cannot land its
+        // beats on DISTINCT times (_r3 collapses them), so healing such a
+        // measure would emit a duplicate-time grid — worse than the sickness.
+        // That is corruption past what an even re-space can fix: leave it.
+        // NaN/zero/negative spans fall out here too.
+        if (!(even > 0.001)) continue;
         for (let k = a; k < b; k++) {
             const gap = beats[k + 1].time - beats[k].time;
             if (gap < even * minFrac || gap > even * maxFrac) {
@@ -1075,25 +1080,32 @@ export function _gridHealPure(beats, opts) {
 // their exact seconds (they were synced to the recording — the grid was the
 // sick part); Undo restores the old spacing bit-exact.
 export function editorHealGrid() {
-    if (!S.beats || S.beats.length < 2) {
-        setStatus('No beat grid on this song — nothing to heal.');
-        return true;
-    }
+    // Session before grid — the menu row is ungated (healing needs no recording),
+    // so "no song open" must say so rather than blame a grid that cannot exist yet.
     if (!S.sessionId || !S.history) {
         setStatus('Healing the grid needs a song open — create or open one first.');
         return true;
     }
-    const healed = _gridHealPure(S.beats);
-    if (!healed) {
+    if (!S.beats || S.beats.length < 2) {
+        setStatus('No beat grid on this song — nothing to heal.');
+        return true;
+    }
+    const sick = _gridHealScanPure(S.beats);
+    if (!sick.length) {
         setStatus('Beat spacing looks healthy — nothing to heal.');
         return true;
     }
-    const n = _gridHealScanPure(S.beats).length;
+    const healed = _gridHealPure(S.beats);
     S.history.exec(new TempoGridCmd(S.beats, healed, 'heal uneven beats', S.tempoSel, S.tempoSel));
     host.draw();
     host.updateStatus();
-    setStatus(`Healed uneven beat spacing in ${n} measure${n === 1 ? '' : 's'} — barlines untouched, `
-        + 'notes kept their timing; Undo restores.');
+    // NAME the measures, don't just count them. The scan cannot tell a corrupt
+    // pile-up from a deliberate grand pause held ~9× its neighbours (both are a
+    // wildly uneven interior gap), and this flattens either. Undo restores, but
+    // only if the charter can SEE which bars moved — so list them.
+    const shown = sick.slice(0, 8).join(', ') + (sick.length > 8 ? `, +${sick.length - 8} more` : '');
+    setStatus(`Healed uneven beat spacing in ${sick.length} measure${sick.length === 1 ? '' : 's'} `
+        + `(${shown}) — barlines untouched, notes kept their timing; Undo restores.`);
     return true;
 }
 

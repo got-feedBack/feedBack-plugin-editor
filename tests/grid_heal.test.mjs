@@ -82,6 +82,27 @@ t('a lone oversized hole flags too, even with no tiny gap beside it', () => {
     assert.deepStrictEqual(_gridHealScanPure(g), [1]);
 });
 
+t('a sub-millisecond measure is left alone, never healed into duplicate times', () => {
+    // Downbeats 2 ms apart with 3 interior beats: the even spacing is 0.5 ms, so a
+    // re-space rounded to the grid's millisecond resolution would land two beats on
+    // the SAME time — a duplicate-time grid is worse than the sickness it replaces
+    // (beatOf/timeOf stop being inverses across a zero-width gap). Corruption past
+    // what an even re-space can fix: the scan must skip it.
+    const g = [
+        D(10.0, 1), I(10.0001), I(10.0002), I(10.0019),
+        D(10.002, 2), I(10.5), I(11.0), I(11.5), D(12.0, 3),
+    ];
+    assert.deepStrictEqual(_gridHealScanPure(g), [], 'sub-ms measure is not healable');
+    assert.strictEqual(_gridHealPure(g), null);
+});
+
+t('the healed grid is always strictly increasing', () => {
+    const healed = _gridHealPure(fieldGrid());
+    for (let i = 1; i < healed.length; i++) {
+        assert.ok(healed[i].time > healed[i - 1].time, `beat ${i} must advance`);
+    }
+});
+
 t('non-time fields ride through the heal untouched', () => {
     const g = fieldGrid();
     g[5].locked = true;             // even a (nonsensical) interior flag survives

@@ -106,7 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and re-spaces their interior beats evenly between the barlines. **Barlines
   never move** — they're your authored truth; the beats between them are
   bookkeeping — and **notes keep their exact timing** against the recording.
-  One undoable step; if the grid is healthy it says so and touches nothing.
+  One undoable step, and it **names the measures it healed** so a bar you meant
+  to be wildly uneven (a held grand pause reads the same as a corrupt gap) is
+  one Ctrl+Z away; if the grid is healthy it says so and touches nothing.
 - **Scan for tempo zones (preview).** A new **Tempo/Grid ▸ Scan for tempo zones**
   action reads the recording and reports the handful of *tempo intents* it finds
   — e.g. "3 tempo zones detected: 120 bpm · 140 bpm · rit 140→90". It's the first
