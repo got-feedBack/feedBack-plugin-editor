@@ -538,6 +538,11 @@ class ResnapEdgesCmd {
 function _editorResnapSelection() {
     const idxs = _editorCurrentNoteIndices();
     if (!idxs.length) { setStatus('Select notes first'); return false; }
+    // The verb has always been refused on a read-only roll (its MoveNoteCmd half
+    // isn't pitchPreserving, so the history gate rejects it). Say so HERE: the
+    // gate's refusal is silent to us, and the success line below would otherwise
+    // overwrite the lock notice and claim notes moved when none did.
+    if (_rollReadOnly()) { _rollLockNotice(); return true; }
     const nn = notes();
     const oldTimes = idxs.map(i => nn[i].time);
     const oldSustains = idxs.map(i => Number(nn[i].sustain) || 0);
