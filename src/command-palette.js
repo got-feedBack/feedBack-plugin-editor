@@ -21,7 +21,7 @@
  */
 
 import { setStatus } from './ui.js';
-import { _editorLoadShortcutProfile, _editorShortcutRowsPure } from './shortcuts.js';
+import { _editorShortcutRowsPure, editorShortcutProfile } from './shortcuts.js';
 
 /* @pure:command-palette:start */
 // Build the searchable entries: registry rows (id + live key) first, then
@@ -88,8 +88,11 @@ const $input = () => document.getElementById('editor-palette-input');
 const $list = () => document.getElementById('editor-palette-list');
 
 function _entries() {
+    // `editorShortcutProfile` is the live export-let binding — the LOADER
+    // returns nothing, so passing its result would silently pin the palette
+    // to FeedBack keys whatever profile is active.
     return _paletteEntriesPure(
-        _editorShortcutRowsPure(_editorLoadShortcutProfile()), _hooks.menus || []);
+        _editorShortcutRowsPure(editorShortcutProfile), _hooks.menus || []);
 }
 
 function _render() {
