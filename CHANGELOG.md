@@ -97,6 +97,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ctrl+Z restores the previous grid. **Single tempo instead** is the escape
   hatch when a steady song over-segments — one uniform grid at the zones'
   duration-weighted tempo.
+- **Heal uneven beat spacing.** Hand re-syncs and old imports can leave a
+  measure's *interior* beats in a pathological shape — sub-beats piled a few
+  milliseconds apart next to a seconds-wide hole — which garbles the metronome,
+  snapping, and every per-beat view, even though the barlines themselves are
+  right. A new **Tempo/Grid ▸ Heal uneven beat spacing** action finds those
+  measures (any beat gap under 30% or over 300% of the measure's even spacing)
+  and re-spaces their interior beats evenly between the barlines. **Barlines
+  never move** — they're your authored truth; the beats between them are
+  bookkeeping — and **notes keep their exact timing** against the recording.
+  One undoable step, and it **names the measures it healed** so a bar you meant
+  to be wildly uneven (a held grand pause reads the same as a corrupt gap) is
+  one Ctrl+Z away; if the grid is healthy it says so and touches nothing.
+- **Scan for tempo zones (preview).** A new **Tempo/Grid ▸ Scan for tempo zones**
+  action reads the recording and reports the handful of *tempo intents* it finds
+  — e.g. "3 tempo zones detected: 120 bpm · 140 bpm · rit 140→90". It's the first
+  step of segment-first mapping: instead of guessing one tempo for the whole song
+  or laying a shaky barline on every beat, it proposes a few constant/ramp zones
+  the way a musician would describe the arrangement. This preview only *reports*
+  what it finds — turning the zones into a grid (Confirm & Apply) is coming next.
+  Under the hood it locates the pulse by autocorrelating the detected onsets with
+  an octave guard + tempo prior (so it doesn't read double-time or half-time),
+  and it gets sharper once the banded onset detection lands.
 - **Apply a rough map from the detected tempo zones.** After Scan shows the
   zones, **Tempo/Grid ▸ Apply rough map** turns them into an actual beat grid —
   a barline grid at each zone's tempo, with its downbeat phase seeded from the
