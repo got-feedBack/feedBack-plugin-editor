@@ -191,6 +191,24 @@ export const host = {
      * through here so it stays audio-import-free.
      */
     mixUiState: () => ({ pcts: { ref: 100, guide: 35, click: 25 }, blip: true }),
+    /**
+     * Stem-mix gesture (a Stems strip changed S.stemMix), crossing from the
+     * panel to the engine in src/audio.js: kicks the lazy stem decode on the
+     * first touch, ramps live gains, or flips the source path at the unity
+     * boundary. Inert default: no engine, gestures are UI-only.
+     */
+    stemMixChanged: () => {},
+    /**
+     * Stem engine status for the panel's Stems section (loading / failed
+     * notes, audition-slowdown bypass). Owned by src/audio.js.
+     */
+    stemUiState: () => ({ loadState: 'idle', slow: false, failedIds: [] }),
+    /**
+     * Engine → panel: stem load state or the audition bypass flipped —
+     * re-render the Stems strips. Wired to the mixer panel's memoized
+     * refresh; inert default for the unit tests' bare `host`.
+     */
+    stemUiChanged: () => {},
 };
 
 export function setHostHooks(hooks) { Object.assign(host, hooks); }

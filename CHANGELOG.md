@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Stem mixer — isolate any instrument while you edit.** When the loaded pack
+  ships per-instrument stems (guitar / bass / drums / vocals / …), the docked
+  Mixer panel (Shift+C) grows a **Stems** section with one strip per stem:
+  volume, mute and solo, under the familiar DAW rule (mute wins; any solo
+  isolates). Solo the guitar to hear exactly the note you're tuning. Stems are
+  fetched and decoded lazily on the first strip gesture; while every strip sits
+  at unity the editor keeps playing the pack's own mixdown, bit-identical to
+  before. Gain moves ramp live without restarting playback; the Recording
+  fader, A/B guide passes, count-in and loop wraps all govern the stem mix
+  exactly as they governed the single recording. While audition speed is below
+  100% the stems are bypassed (the pitch-preserving slow path is a single
+  media element) and the strips say so; stem mute/solo/volume is session
+  state and resets with the loaded song.
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
   its note shape: it's sized to the current note value (the snap step, so the box

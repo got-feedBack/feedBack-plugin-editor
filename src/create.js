@@ -30,7 +30,7 @@ import { KEYS_PATTERN, isKeysMode, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
 import { S, markSessionDirty } from './state.js';
 import { disposeBackendSession, stopSessionProcesses } from './session-lifecycle.js';
-import { _ensureOnsetsShifted } from './audio.js';
+import { _ensureOnsetsShifted, _stemResetForNewSong } from './audio.js';
 import { _firstDownbeatTimePure, _importBar1NudgePure, _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
 import { seedSurfacePreset, surfacePersistFor } from './toolbars.js';
 import { _editorMaybeStartTour } from './tour.js';
@@ -2184,6 +2184,10 @@ export async function editorApplyCreateResult(data) {
     // New song, new strips: part mute/solo/volume is session UI state keyed
     // by part index, so it must not leak across installs (mixer panel, B6).
     S.partMix = {};
+    // Create-mode packs start life with a single master track — no stems.
+    _stemResetForNewSong();
+    S.stems = [];
+    S.stemMix = {};
     // Create-mode import — the source builds tuning to the actual string count,
     // so length 6 means a genuine 6-string bass / standard guitar (not a
     // padded tuning). Seed `_extendedStrings` to keep `_stringCountFor` honest.

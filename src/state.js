@@ -66,6 +66,14 @@ export const S = {
     // Parts-gutter M/S/A all read. Reset when a song is installed.
     partMix: {},
 
+    // Per-stem mix state (mixer panel Stems section) — stem id ('guitar',
+    // 'bass', …) → { vol, mute, solo }. Session-scoped UI state like partMix
+    // (never the pack, never persisted): a stale solo next session would read
+    // as a playback bug. `stems` is the /load payload's [{id, url}] list
+    // (present only when the pack has ≥2 real stems); both reset on song load.
+    stems: [],
+    stemMix: {},
+
     // Tempo Map mode — EOF-style: drag the song-wide beat grid's measure
     // downbeats ("sync points") to fit it to the audio; BPM is derived
     // from sync-point spacing. tempoSel/tempoHover index into S.beats. Under

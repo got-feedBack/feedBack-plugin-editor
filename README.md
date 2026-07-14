@@ -29,6 +29,11 @@ read this top-to-bottom once — the architecture section saves real time.
 - **Companion strips** — a fretboard strip for fretted parts (candidate
   positions from the suggest-position resolver, click to assign) and a drum
   kit / pad strip for drum parts (GM-mapped, MIDI-monitor capable).
+- **Stem mixer** — when a pack ships per-instrument stems, the docked Mixer
+  panel (Shift+C) grows a **Stems** section: per-stem volume / mute / solo to
+  isolate any instrument's audio while editing (solo the guitar to hear the
+  note you're tuning). Stems decode lazily on the first strip touch; untouched
+  strips keep the pack's own mixdown playing, bit-identical to before.
 - **Advisory lints** — drum limb feasibility and fretted playability checks
   that name physical questions without ever blocking or auto-fixing.
 - **Build** — assembles the finished `.feedpak` through the host's core

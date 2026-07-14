@@ -44,6 +44,7 @@ function makeEl(id) {
 }
 const els = {};
 for (const id of ['editor-mixer-panel', 'editor-mixer-parts', 'editor-mixer-btn', 'editor-tp-mixer',
+    'editor-mixer-stems-head', 'editor-mixer-stems',
     'editor-mix-ref', 'editor-mix-ref-val', 'editor-mix-guide', 'editor-mix-guide-val',
     'editor-mix-click', 'editor-mix-click-val', 'editor-mix-blip', 'editor-status']) {
     els[id] = makeEl(id);
@@ -64,6 +65,7 @@ const {
     _mixerPartsPure, _mixerPartStatePure, _mixerAnySoloPure, _mixerPartAudiblePure,
     _mixerClapStatePure, _mixerOpenFromStoredPure, _mixerClapState,
     _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel,
+    _mixerStemsPure, _mixerStemNotePure,
 } = await import('../src/mixer-panel.js');
 const { S } = await import('../src/state.js');
 const { host } = await import('../src/host.js');
@@ -237,6 +239,130 @@ t('a volume input scales the clap state', () => {
     assert.strictEqual(_mixerClapState().vol, 0.3);
     editorToggleMixerPanel(false);
     S.partMix = {};
+});
+
+// ── Stems section ────────────────────────────────────────────────────
+
+t('_mixerStemsPure: <2 stems is not a mixer; labels come from ids, capitalized', () => {
+    assert.deepStrictEqual(_mixerStemsPure(null), []);
+    assert.deepStrictEqual(_mixerStemsPure([]), []);
+    assert.deepStrictEqual(_mixerStemsPure([{ id: 'guitar', url: '/g.ogg' }]), []);
+    assert.deepStrictEqual(_mixerStemsPure([{ id: 'guitar', url: '/g' }, { id: 'bass', url: '/b' }]), [
+        { key: 'guitar', name: 'Guitar' },
+        { key: 'bass', name: 'Bass' },
+    ]);
+    // Malformed entries are dropped, not rendered as blank strips.
+    assert.deepStrictEqual(_mixerStemsPure([{ id: 'guitar' }, null, { url: '/x' }, { id: 'bass' }]), [
+        { key: 'guitar', name: 'Guitar' },
+        { key: 'bass', name: 'Bass' },
+    ]);
+});
+
+t('_mixerStemNotePure explains why the combined mix is playing', () => {
+    assert.strictEqual(_mixerStemNotePure({ loadState: 'idle', slow: false, failedIds: [] }), '');
+    assert.strictEqual(_mixerStemNotePure({ loadState: 'ready', slow: false, failedIds: [] }), '');
+    assert.match(_mixerStemNotePure({ loadState: 'loading', slow: false, failedIds: [] }), /loading/i);
+    assert.match(_mixerStemNotePure({ loadState: 'failed', slow: false, failedIds: [] }), /combined mix/i);
+    assert.match(_mixerStemNotePure({ loadState: 'ready', slow: false, failedIds: ['piano'] }), /piano/);
+    // The slow-path bypass outranks everything — it's what the ear hears.
+    assert.match(_mixerStemNotePure({ loadState: 'ready', slow: true, failedIds: [] }), /audition/i);
+});
+
+t('stems section renders one strip per stem and hides for stem-less songs', () => {
+    Object.assign(S, {
+        arrangements: [{ name: 'Lead' }], drumTab: null, partMix: {}, currentArr: 0,
+        stems: [{ id: 'guitar', url: '/g' }, { id: 'drums', url: '/d' }], stemMix: {},
+    });
+    editorToggleMixerPanel(true);
+    assert.strictEqual(els['editor-mixer-stems'].classList.contains('hidden'), false);
+    const html = els['editor-mixer-stems'].innerHTML;
+    assert.ok(html.includes('data-stem-part="guitar"'), 'guitar strip');
+    assert.ok(html.includes('data-stem-part="drums"'), 'drums strip (stem axis, not the part key)');
+    assert.ok(html.includes('data-stem-act="solo"'), 'solo button');
+    editorToggleMixerPanel(false);
+    // Stem-less song → the whole section hides.
+    S.stems = [];
+    editorToggleMixerPanel(true);
+    assert.strictEqual(els['editor-mixer-stems'].classList.contains('hidden'), true);
+    assert.strictEqual(els['editor-mixer-stems-head'].classList.contains('hidden'), true);
+    editorToggleMixerPanel(false);
+    S.stemMix = {};
+});
+
+function fakeStemBtn(key, act) {
+    return {
+        getAttribute: (k) => (k === 'data-stem-part' ? key : act),
+        // Only the stem selector matches — a real part button never matches
+        // a [data-stem-act] selector and vice versa.
+        closest: function (sel) { return sel.includes('data-stem-act') ? this : null; },
+    };
+}
+
+t('a stem Mute click flips S.stemMix and pokes the engine via host.stemMixChanged', () => {
+    Object.assign(S, {
+        arrangements: [{ name: 'Lead' }], drumTab: null, partMix: {}, currentArr: 0,
+        stems: [{ id: 'guitar', url: '/g' }, { id: 'bass', url: '/b' }], stemMix: {},
+    });
+    const prev = host.stemMixChanged;
+    let pokes = 0;
+    host.stemMixChanged = () => { pokes++; };
+    editorToggleMixerPanel(true);
+    const onClick = els['editor-mixer-panel'].listeners.click[0];
+    onClick({ target: fakeStemBtn('guitar', 'mute') });
+    assert.strictEqual(S.stemMix.guitar.mute, true);
+    assert.strictEqual(pokes, 1, 'engine poked on the gesture');
+    // …and S.partMix is untouched: the axes never cross.
+    assert.deepStrictEqual(S.partMix, {});
+    onClick({ target: fakeStemBtn('guitar', 'mute') });
+    assert.strictEqual(S.stemMix.guitar.mute, false);
+    assert.strictEqual(pokes, 2);
+    host.stemMixChanged = prev;
+    editorToggleMixerPanel(false);
+    S.stems = []; S.stemMix = {};
+});
+
+t('a stem volume input scales S.stemMix and pokes the engine', () => {
+    Object.assign(S, {
+        stems: [{ id: 'guitar', url: '/g' }, { id: 'bass', url: '/b' }], stemMix: {},
+    });
+    const prev = host.stemMixChanged;
+    let pokes = 0;
+    host.stemMixChanged = () => { pokes++; };
+    editorToggleMixerPanel(true);
+    const onInput = els['editor-mixer-panel'].listeners.input[0];
+    onInput({
+        target: {
+            getAttribute: (k) => (k === 'data-stem-act' ? 'vol' : k === 'data-stem-part' ? 'bass' : null),
+            value: '30',
+        },
+    });
+    assert.strictEqual(S.stemMix.bass.vol, 30);
+    assert.strictEqual(pokes, 1);
+    host.stemMixChanged = prev;
+    editorToggleMixerPanel(false);
+    S.stems = []; S.stemMix = {};
+});
+
+t('a stemMix change and an engine-state change both invalidate the render memo', () => {
+    Object.assign(S, {
+        arrangements: [{ name: 'Lead' }], drumTab: null, partMix: {}, currentArr: 0,
+        stems: [{ id: 'guitar', url: '/g' }, { id: 'bass', url: '/b' }], stemMix: {},
+    });
+    editorToggleMixerPanel(true);
+    els['editor-mixer-stems'].innerHTML = 'SENTINEL';
+    _mixerPanelRefresh();
+    assert.strictEqual(els['editor-mixer-stems'].innerHTML, 'SENTINEL', 'memoized: same state, no re-render');
+    S.stemMix = { guitar: { solo: true } };
+    _mixerPanelRefresh();
+    assert.ok(els['editor-mixer-stems'].innerHTML.includes('aria-pressed="true"'), 'solo lit after re-render');
+    // Engine state (host.stemUiState) is part of the memo key too.
+    const prev = host.stemUiState;
+    host.stemUiState = () => ({ loadState: 'loading', slow: false, failedIds: [] });
+    _mixerPanelRefresh();
+    assert.ok(els['editor-mixer-stems'].innerHTML.includes('Loading'), 'loading note rendered');
+    host.stemUiState = prev;
+    editorToggleMixerPanel(false);
+    S.stems = []; S.stemMix = {};
 });
 
 t('double init / repeated toggles never stack the delegated listeners', () => {

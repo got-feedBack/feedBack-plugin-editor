@@ -336,6 +336,15 @@
                 <span class="text-xs font-semibold">Mixer</span>
                 <button onclick="editorToggleMixer(false)" class="text-gray-500 hover:text-white text-sm leading-none" title="Close the mixer panel">&times;</button>
             </div>
+            <!-- Stems section — one strip per audio stem (guitar/bass/…) when
+                 the pack ships ≥2 real stems. Unlike the Tracks strips these
+                 gate the RECORDING itself: mute/solo/volume drive per-stem
+                 gain nodes in src/audio.js (lazily decoded on first touch);
+                 untouched (unity) strips keep the shipped mixdown playing.
+                 Hidden entirely for stem-less songs. Strips render via
+                 src/mixer-panel.js. -->
+            <div id="editor-mixer-stems-head" class="hidden px-3 pt-2 text-[10px] uppercase tracking-wide text-gray-500">Stems</div>
+            <div id="editor-mixer-stems" class="hidden p-3 pt-1.5 space-y-2.5 border-b border-gray-700/70"></div>
             <div class="px-3 pt-2 text-[10px] uppercase tracking-wide text-gray-500">Tracks</div>
             <div id="editor-mixer-parts" class="p-3 pt-1.5 space-y-2.5 border-b border-gray-700/70"></div>
             <div class="px-3 pt-2 text-[10px] uppercase tracking-wide text-gray-500">Buses</div>
@@ -878,7 +887,7 @@
                 <li><strong>Transport bar</strong> — play/stop, clock, loop, count-in, metronome, follow-playhead.</li>
                 <li><strong>Inspector</strong> — details for the current selection (a note's fret/techniques, a barline's BPM, a section's name).</li>
                 <li><strong>Companion strips</strong> — a fretboard strip (candidate positions — click to assign) for fretted tracks, a drum pad strip for drums.</li>
-                <li><strong>Mixer</strong> (<kbd>Shift</kbd>+<kbd>C</kbd>) — per-track volume / mute / solo.</li>
+                <li><strong>Mixer</strong> (<kbd>Shift</kbd>+<kbd>C</kbd>) — per-track volume / mute / solo, plus per-stem strips to isolate any instrument's audio when the pack ships stems.</li>
             </ul>
             <p>Press <kbd>?</kbd> for the searchable shortcut panel, or <kbd>Ctrl</kbd>+<kbd>K</kbd> for the command palette.</p>
 

@@ -3,7 +3,7 @@
 // are re-attached by main.js; display refreshers (draw, updateTimeDisplay) are
 // reached through host.
 
-import { loadAudio, stopPlayback } from './audio.js';
+import { _stemResetForNewSong, loadAudio, stopPlayback } from './audio.js';
 import { _uploadAudioForMode, createState } from './create.js';
 import { _editorApplyScrollBounds } from './loop.js';
 import { S, markSessionDirty } from './state.js';
@@ -96,6 +96,12 @@ export async function editorApplyReplaceAudio() {
             apply.disabled = false;
             return;
         }
+        // The replacement collapses the pack to a single full-mix stem
+        // (manifest["stems"] = [full]), so the old per-instrument stems are
+        // stale — drop them and hide the Stems strips.
+        _stemResetForNewSong();
+        S.stems = [];
+        S.stemMix = {};
         if (S.cursorTime > S.duration) S.cursorTime = 0;
         _editorApplyScrollBounds();
         document.getElementById('editor-play-btn').disabled = false;

@@ -46,7 +46,7 @@ import {
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
     editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
-    editorToggleAuditionTrainer,
+    editorToggleAuditionTrainer, editorStemMixChanged, _stemUiState,
 } from './audio.js';
 import { _mixerClapState, _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import {
@@ -507,6 +507,9 @@ setHostHooks({
     tempoResolvedMeasureIdx: (...a) => _tempoResolvedMeasureIdx(...a),
     partClapState: _mixerClapState,
     mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
+    stemMixChanged: (...a) => editorStemMixChanged(...a),
+    stemUiState: (...a) => _stemUiState(...a),
+    stemUiChanged: () => _mixerPanelRefresh(),
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML

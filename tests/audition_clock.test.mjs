@@ -209,12 +209,16 @@ t('a failed slow path DEMOTES to 100% and plays the buffer — never silence und
     const run = new Function('S', '_audioBufferStartPure', '_auditionActive', '_startRefMediaAt',
         '_mixApplyFirstPlayFade', '_stopRefMedia', '_auditionRefreshUi', 'setStatus',
         '_ensureRefGain', '_anchorTransportAtCursor',
+        '_stopAllAudioSources', '_stemPlaybackWanted', '_stemStartSourcesAt',
         extractFn('_startAudioSourceAtCursor') + '\nreturn _startAudioSourceAtCursor;'
     )(S,
         () => ({ play: true, offset: 5, delay: 0 }),
         () => Number(S.auditionRate) < 1,
         () => false,                       // the slow path is unavailable
-        () => {}, () => {}, () => {}, (m) => status.push(m), () => null, () => {});
+        () => {}, () => {}, () => {}, (m) => status.push(m), () => null, () => {},
+        // Stem engine stubs: no stems in this song — the combined-mix
+        // BufferSource path must take over on the demote.
+        () => { S.audioSource = null; }, () => false, () => false);
 
     run(0);
     assert.strictEqual(S.auditionRate, 1, 'demoted to full speed so the clock matches the audio');

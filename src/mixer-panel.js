@@ -1,10 +1,11 @@
 // ════════════════════════════════════════════════════════════════════
 // Mixer panel (workspace-shell B6) — the one first-class mixer surface.
 //
-// Consolidates the old floating audio-mixer popover (and the never-implemented
-// stem-mixer stub) into a DOCKED panel beside the canvas (inspector idiom):
-// one channel strip per part (volume · mute · solo) over the three bus faders
-// (recording / guide / click) and the edit blip.
+// Consolidates the old floating audio-mixer popover into a DOCKED panel
+// beside the canvas (inspector idiom): a Stems section (one strip per audio
+// stem, when the pack ships them) over one channel strip per part
+// (volume · mute · solo) over the three bus faders (recording / guide /
+// click) and the edit blip.
 //
 // This module owns the CANONICAL per-part mix state, `S.partMix` — a map from
 // part key ('arr:<idx>' for arrangements, 'drums' for the drum tab) to
@@ -20,10 +21,17 @@
 // Audio consumes the state through `host.partClapState` (inert default:
 // audible at unity), so src/audio.js never imports this module.
 //
+// The Stems section is the same panel over a different axis: `S.stemMix`
+// (stem id → { vol, mute, solo }) mixes the RECORDING itself via per-stem
+// gain nodes in src/audio.js — strips write the map here, then poke the
+// engine through `host.stemMixChanged()` (lazy decode on first touch, live
+// gain ramps, unity keeps the shipped mixdown playing). A stem solo never
+// gates parts, buses or guide claps, and vice versa.
+//
 // Panel open state is an editor pref (`editorMixerPanel`, never the pack);
 // bus levels stay on the existing `editorMix*` prefs owned by src/audio.js.
-// Part mute/solo/volume is SESSION state — it resets with the loaded song
-// (create.js / file-ops.js clear `S.partMix` when they install arrangements).
+// Part and stem mute/solo/volume are SESSION state — they reset with the
+// loaded song (create.js / file-ops.js clear both maps on install).
 // ════════════════════════════════════════════════════════════════════
 import { host } from './host.js';
 import { S, editGen } from './state.js';
@@ -83,6 +91,33 @@ export function _mixerClapStatePure(partMix, drumEditMode, currentArr) {
 export function _mixerOpenFromStoredPure(raw) {
     return raw === '1';
 }
+// One strip per audio stem, from the /load payload's [{id, url}] list. The
+// Stems strips mix the RECORDING itself (per-stem gain nodes in src/audio.js)
+// — a separate axis from the Tracks strips, which shape guide voices per
+// chart part. Fewer than 2 stems is not a mixer: the section hides entirely.
+export function _mixerStemsPure(stems) {
+    const list = Array.isArray(stems) ? stems : [];
+    if (list.length < 2) return [];
+    return list
+        .filter(s => s && typeof s.id === 'string' && s.id)
+        .map(s => ({
+            key: s.id,
+            name: s.id.charAt(0).toUpperCase() + s.id.slice(1),
+        }));
+}
+// The Stems section's status note, from the engine's UI state: empty at
+// unity-idle and during normal stem playback; otherwise the one line that
+// explains why the ear is hearing the combined mix instead.
+export function _mixerStemNotePure(ui) {
+    const u = ui || {};
+    if (u.slow) return 'Audition below 100% — stems bypassed, the combined mix plays.';
+    if (u.loadState === 'loading') return 'Loading stems…';
+    if (u.loadState === 'failed') return 'Stems unavailable — playing the combined mix.';
+    if (u.loadState === 'ready' && Array.isArray(u.failedIds) && u.failedIds.length) {
+        return 'Unavailable: ' + u.failedIds.join(', ') + ' — mixing the rest.';
+    }
+    return '';
+}
 /* @pure:mixer-panel:end */
 
 // The host-hook target audio.js consults per scheduled clap voice.
@@ -97,6 +132,14 @@ let _lastKey = '';
 
 function _msBtn(key, act, pressed, label, title) {
     return `<button data-mix-part="${key}" data-mix-act="${act}" aria-pressed="${pressed}"`
+        + ` class="editor-mix-ms" title="${title}">${label}</button>`;
+}
+
+// Stem strips use their own data attributes (data-stem-part / data-stem-act):
+// a stem id like 'drums' is also a valid PART key, so sharing data-mix-* would
+// cross the two state maps in the delegated handlers.
+function _stemMsBtn(key, act, pressed, label, title) {
+    return `<button data-stem-part="${key}" data-stem-act="${act}" aria-pressed="${pressed}"`
         + ` class="editor-mix-ms" title="${title}">${label}</button>`;
 }
 
@@ -121,6 +164,38 @@ function _renderParts(container) {
             + `<span data-mix-val="${p.key}" class="w-9 text-right font-mono text-gray-400">${st.vol}%</span>`
             + `</div></div>`;
     }).join('');
+}
+
+// The Stems section: strips over S.stemMix (the same DAW rule pures as the
+// part strips — they're generic over any {key → {vol,mute,solo}} map), plus
+// the engine's status note. Grayed while the audition slow path bypasses
+// stems so the controls read as "armed but not in the signal right now".
+function _renderStems(head, container) {
+    const stems = _mixerStemsPure(S.stems);
+    const none = !stems.length;
+    head.classList.toggle('hidden', none);
+    container.classList.toggle('hidden', none);
+    if (none) { container.innerHTML = ''; return; }
+    const ui = host.stemUiState();
+    const note = _mixerStemNotePure(ui);
+    container.classList.toggle('opacity-50', !!ui.slow);
+    container.innerHTML = stems.map(p => {
+        const st = _mixerPartStatePure(S.stemMix, p.key);
+        const name = _editorEscHtml(p.name);
+        const gone = ui.loadState === 'ready' && ui.failedIds.includes(p.key);
+        return `<div class="space-y-1${gone ? ' opacity-40' : ''}" data-stem-row="${p.key}">`
+            + `<div class="flex items-center gap-1.5">`
+            + `<span class="flex-1 truncate text-gray-300" title="${name}">${name}</span>`
+            + _stemMsBtn(p.key, 'mute', st.mute, 'M', 'Mute this stem')
+            + _stemMsBtn(p.key, 'solo', st.solo, 'S', 'Solo this stem — the other stems go silent; guide voices are unaffected')
+            + `</div>`
+            + `<div class="flex items-center gap-2">`
+            + `<input type="range" min="0" max="100" value="${st.vol}" data-stem-part="${p.key}" data-stem-act="vol"`
+            + ` aria-label="${name} stem volume percent" class="flex-1 accent-accent">`
+            + `<span data-stem-val="${p.key}" class="w-9 text-right font-mono text-gray-400">${st.vol}%</span>`
+            + `</div></div>`;
+    }).join('')
+        + (note ? `<p class="text-[10px] text-gray-500">${_editorEscHtml(note)}</p>` : '');
 }
 
 // Seed the bus faders + blip checkbox from their prefs (owned by audio.js,
@@ -157,6 +232,14 @@ function _setPart(key, patch) {
     S.partMix[key] = { ..._mixerPartStatePure(S.partMix, key), ...patch };
 }
 
+// Twin of _setPart over the stem map — every write is followed by
+// host.stemMixChanged() so the engine can lazy-load / ramp / re-path.
+function _setStem(key, patch) {
+    if (!S.stemMix || typeof S.stemMix !== 'object') S.stemMix = {};
+    S.stemMix[key] = { ..._mixerPartStatePure(S.stemMix, key), ...patch };
+    host.stemMixChanged();
+}
+
 // One delegated listener pair on the (static) panel element — guarded so a
 // defensive double-init can never stack handlers. The panel element itself is
 // replaced when the host re-injects the screen, so nothing leaks across
@@ -165,42 +248,75 @@ function _wire(panel) {
     if (panel.__mixerWired) return;
     panel.__mixerWired = true;
     panel.addEventListener('click', (e) => {
-        const btn = e.target && e.target.closest ? e.target.closest('[data-mix-act="mute"],[data-mix-act="solo"]') : null;
-        if (!btn) return;
-        const key = btn.getAttribute('data-mix-part');
-        const act = btn.getAttribute('data-mix-act');
-        const st = _mixerPartStatePure(S.partMix, key);
-        _setPart(key, act === 'mute' ? { mute: !st.mute } : { solo: !st.solo });
+        const closest = e.target && e.target.closest ? (sel) => e.target.closest(sel) : () => null;
+        // Part strips first (the data-mix-* and data-stem-* attribute sets are
+        // disjoint in the DOM, so order only matters to keep this branch the
+        // common path), then the stem strips.
+        const btn = closest('[data-mix-act="mute"],[data-mix-act="solo"]');
+        if (btn) {
+            const key = btn.getAttribute('data-mix-part');
+            const act = btn.getAttribute('data-mix-act');
+            const st = _mixerPartStatePure(S.partMix, key);
+            _setPart(key, act === 'mute' ? { mute: !st.mute } : { solo: !st.solo });
+            _lastKey = '';
+            _mixerPanelRefresh();
+            const now = _mixerPartStatePure(S.partMix, key);
+            setStatus(act === 'mute'
+                ? (now.mute ? 'Track muted — its guide voice is silent' : 'Track unmuted')
+                : (now.solo ? 'Track soloed — other tracks’ guide voices are silent; the recording stays audible' : 'Solo off'));
+            return;
+        }
+        const stemBtn = closest('[data-stem-act="mute"],[data-stem-act="solo"]');
+        if (!stemBtn) return;
+        const key = stemBtn.getAttribute('data-stem-part');
+        const act = stemBtn.getAttribute('data-stem-act');
+        const st = _mixerPartStatePure(S.stemMix, key);
+        _setStem(key, act === 'mute' ? { mute: !st.mute } : { solo: !st.solo });
         _lastKey = '';
         _mixerPanelRefresh();
-        const now = _mixerPartStatePure(S.partMix, key);
+        const now = _mixerPartStatePure(S.stemMix, key);
         setStatus(act === 'mute'
-            ? (now.mute ? 'Track muted — its guide voice is silent' : 'Track unmuted')
-            : (now.solo ? 'Track soloed — other tracks’ guide voices are silent; the recording stays audible' : 'Solo off'));
+            ? (now.mute ? 'Stem muted' : 'Stem unmuted')
+            : (now.solo ? 'Stem soloed — the other stems are silent' : 'Stem solo off'));
     });
     panel.addEventListener('input', (e) => {
         const el = e.target;
-        if (!el || el.getAttribute('data-mix-act') !== 'vol') return;
-        const key = el.getAttribute('data-mix-part');
-        _setPart(key, { vol: Number(el.value) });
-        const val = panel.querySelector(`[data-mix-val="${key}"]`);
-        if (val) val.textContent = _mixerPartStatePure(S.partMix, key).vol + '%';
+        if (!el) return;
+        if (el.getAttribute('data-mix-act') === 'vol') {
+            const key = el.getAttribute('data-mix-part');
+            _setPart(key, { vol: Number(el.value) });
+            const val = panel.querySelector(`[data-mix-val="${key}"]`);
+            if (val) val.textContent = _mixerPartStatePure(S.partMix, key).vol + '%';
+            return;
+        }
+        if (el.getAttribute('data-stem-act') !== 'vol') return;
+        const key = el.getAttribute('data-stem-part');
+        _setStem(key, { vol: Number(el.value) });
+        const val = panel.querySelector(`[data-stem-val="${key}"]`);
+        if (val) val.textContent = _mixerPartStatePure(S.stemMix, key).vol + '%';
     });
 }
 
 // Memoized refresh, called from updateStatus() beside the other companion
-// strips: re-renders the part strips only when an edit (rename/add/delete)
-// or the part list itself changed. No-op while the panel is hidden.
+// strips: re-renders the strips only when an edit (rename/add/delete), the
+// part/stem lists, the stem mix, or the stem engine's status changed.
+// No-op while the panel is hidden.
 export function _mixerPanelRefresh() {
     const panel = _panel();
     if (!panel || panel.classList.contains('hidden')) { _lastKey = ''; return; }
     const container = document.getElementById('editor-mixer-parts');
     if (!container) return;
     const parts = _mixerPartsPure(S.arrangements, S.drumTab);
-    const key = editGen + '|' + JSON.stringify(S.partMix) + '|' + parts.map(p => p.key + ':' + p.name).join(',');
+    const stemUi = host.stemUiState();
+    const key = editGen + '|' + JSON.stringify(S.partMix) + '|' + parts.map(p => p.key + ':' + p.name).join(',')
+        + '|' + JSON.stringify(S.stemMix) + '|' + _mixerStemsPure(S.stems).map(p => p.key).join(',')
+        + '|' + stemUi.loadState + ':' + (stemUi.slow ? 1 : 0) + ':' + stemUi.failedIds.join(',');
     if (key === _lastKey) return;
     _lastKey = key;
     _renderParts(container);
+    const head = document.getElementById('editor-mixer-stems-head');
+    const stemBox = document.getElementById('editor-mixer-stems');
+    if (head && stemBox) _renderStems(head, stemBox);
 }
 
 // The one toggle every entry point routes through: View ▸ Panels ▸ Mixer,

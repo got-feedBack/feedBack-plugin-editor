@@ -4,7 +4,7 @@
 // triggers stay in main.js and are reached through host.
 
 import { _anchorsAreDirty, _stripToneInternals, _tonesAreDirty, _updateTonesButtonVisibility } from './annotation-lanes.js';
-import { _abDisarm, _resetAuditionForNewSong, loadAudio } from './audio.js';
+import { _abDisarm, _resetAuditionForNewSong, _stemResetForNewSong, loadAudio } from './audio.js';
 import { _handshapesAreDirty, _normalizeHandshape, flattenChords, reconstructChords } from './chords.js';
 import { _normalizeTuningToLanes } from './commands.js';
 import { EditHistory } from './history.js';
@@ -134,6 +134,11 @@ export async function loadCDLC(filename, options = {}) {
         // New song, new strips: part mute/solo/volume is session UI state
         // keyed by part index, so it must not leak across loads (B6).
         S.partMix = {};
+        // Same rule for the stem strips — and the engine must drop the old
+        // song's decoded stem buffers/sources before the new list installs.
+        _stemResetForNewSong();
+        S.stems = Array.isArray(data.stems) ? data.stems : [];
+        S.stemMix = {};
         // Sloppak sources don't pad tuning to 6 slots like RS XML does,
         // so a bass arrangement arriving with tuning.length === 6 from
         // a sloppak is a genuine 6-string bass (not padded 4-string).
