@@ -228,6 +228,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'tempoFullDialog' },
         { cmd: 'tempoRebuildGrid' },
         { sep: true },
+        { cmd: 'songFit' },
         { label: 'Sync tempo to audio', fn: 'editorSyncTempo', audioOnly: true },
         { label: 'Scan for tempo zones…', fn: 'editorScanTempoZones', audioOnly: true },
         { label: 'Apply rough map from tempo zones', fn: 'editorApplyTempoZones', audioOnly: true },
@@ -251,7 +252,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'showShortcutHelp' },
         { cmd: 'midiTones' },
         { sep: true },
-        { label: 'Shortcut profile: FeedBack ⇄ EOF', fn: '__swapProfile' },
+        { label: 'Shortcut profile: next (FeedBack → Logical → Cableton → Legacy)', fn: '__swapProfile' },
     ] },
 ]);
 
@@ -415,7 +416,9 @@ function dispatch(d) {
     if (d.guideVoice) { _editorSetGuideVoiceMode(d.guideVoice); return; }
     if (d.gmVoice != null) { editorSetGmVoice(d.gmKind, d.gmVoice); return; }
     if (d.fn === '__swapProfile') {
-        const next = editorShortcutProfile === 'eof' ? 'feedback' : 'eof';
+        // Cycle the four profiles in a fixed order; the two selects follow.
+        const order = ['feedback', 'logical', 'cableton', 'eof'];
+        const next = order[(order.indexOf(editorShortcutProfile) + 1) % order.length];
         if (typeof window.editorSetShortcutProfile === 'function') window.editorSetShortcutProfile(next);
         const sel = document.getElementById('editor-shortcut-profile');
         if (sel) sel.value = next;

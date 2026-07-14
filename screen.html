@@ -182,7 +182,9 @@
         <span class="text-xs text-gray-500">Keys:</span>
         <select id="editor-shortcut-profile" onchange="editorSetShortcutProfile(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Keyboard shortcut profile">
             <option value="feedback">FeedBack</option>
-            <option value="eof">EOF Legacy</option>
+            <option value="logical">Logical (Logic-style)</option>
+            <option value="cableton">Cableton (Ableton-style)</option>
+            <option value="eof">Legacy (EOF)</option>
         </select>
         <button id="editor-shortcuts-btn" onclick="editorToggleShortcutPanel()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs" title="Show shortcut and command controls">Shortcuts…</button>
     </div>
@@ -305,7 +307,9 @@
                     <span class="text-gray-500">Profile</span>
                     <select id="editor-shortcut-panel-profile" onchange="editorSetShortcutProfile(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none">
                         <option value="feedback">FeedBack</option>
-                        <option value="eof">EOF Legacy</option>
+                        <option value="logical">Logical (Logic-style)</option>
+                        <option value="cableton">Cableton (Ableton-style)</option>
+                        <option value="eof">Legacy (EOF)</option>
                     </select>
                     <span class="text-gray-500 ml-2">Right-click</span>
                     <select id="editor-right-click-behavior" onchange="editorSetRightClickBehavior(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none">
