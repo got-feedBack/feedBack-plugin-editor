@@ -236,7 +236,8 @@ export class ResolveWindowCmd {
 }
 
 // ── The sweep (module state + a tiny floating bar) ───────────────────
-let sweep = null;   // { refs: [note], cur: number } | null
+let sweep = null;   // { refs: [note], reviewOnly: Set<note>, cur: number } | null
+                    // reviewOnly = refused + ambiguous-open refs: walked, never bulk-accepted.
 
 const $bar = () => document.getElementById('editor-sweep-bar');
 
