@@ -120,7 +120,6 @@ import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from '
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
 import { EDITOR_MENUS, initMenuBar } from './menu-bar.js';
-import { initMenuBar } from './menu-bar.js';
 import { _tabViewHideIfShown, _tabViewPing, editorToggleTabView, teardownTabView } from './tab-view-live.js';
 import { initToolbars } from './toolbars.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
@@ -229,14 +228,17 @@ function _cancelPendingDraw() {
 
 function drawNow() {
     if (!canvas) return;
+    // The toolbar LCDs refresh on EVERY draw, before any mode fork — undo/
+    // redo can change BPM / time signature while a lens (Tab view included)
+    // owns the timeline, and the readouts must not go stale behind it.
+    updateBPMDisplay();
+    updateTempoSigDisplay();
     // Live Tab view: the engraved score OWNS the timeline area — ping the
     // module (it shows the mount + re-renders on real changes) and skip the
     // canvas chain. The else-branch hides the mount the moment any mode
     // toggle clears the flag, so no toggle needs teardown knowledge.
     if (S.tabViewMode) { _tabViewPing(); return; }
     _tabViewHideIfShown();
-    updateBPMDisplay();
-    updateTempoSigDisplay();
     const w = canvas.width / DPR;
     const h = canvas.height / DPR;
     ctx.save();
