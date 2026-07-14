@@ -774,6 +774,20 @@ export function playbackTick() {
         // A/B compare flips its pass BEFORE the restart so the ramped
         // reference mute/unmute lands with the wrap, not a frame late.
         _abOnLoopWrap();
+        // Trainer (P2-10): count the completed pass and maybe step the rate —
+        // BEFORE the restart, which re-anchors the clock at the new rate.
+        _trainerOnLoopWrap();
+        if (_trainerWrapWantsCountIn()) {
+            // Route the pass through the full start path so the armed
+            // count-in pre-roll precedes it (at the slowed tempo — the
+            // count-in clicks ride the same rate transform as everything).
+            stopPlayback();
+            S.cursorTime = loopRestart;
+            startPlayback();
+            host.updateTimeDisplay();
+            host.drawNow();
+            return;   // startPlayback scheduled its own tick.
+        }
         _restartPlaybackAt(loopRestart);
         host.updateTimeDisplay();
         // playbackTick already runs once per animation frame — paint
@@ -927,6 +941,64 @@ function _metroClicksInWindowPure(beats, from, to) {
     return out;
 }
 /* @pure:guide-clap:end */
+
+/* @pure:audition-trainer:start */
+// ── Audition trainer (P2-10): loop-and-step-up + finer click ────────────────
+// The practice ladder the trainer climbs — the same three steps the speed
+// select offers, so the trainer never lands on a rate the UI can't show.
+export const TRAINER_LADDER = [0.5, 0.75, 1];
+
+// The next ladder step ABOVE `rate` (null at/above the top). Tolerant of a
+// hand-picked off-ladder rate: it climbs to the nearest step above it.
+export function _trainerNextRatePure(ladder, rate) {
+    for (const r of (ladder || [])) { if (r > rate + 1e-9) return r; }
+    return null;
+}
+
+// One completed loop pass: count it, and after `passesPerStep` clean passes
+// propose the next ladder rate. Pure — the caller owns the state and the
+// engine call. Returns { passes, stepTo } where stepTo is null except on the
+// pass that earns the step (and null forever once the top is reached).
+export function _trainerOnWrapPure(passes, passesPerStep, rate, ladder) {
+    const n = (Number(passes) || 0) + 1;
+    const per = Math.max(1, Number(passesPerStep) || 1);
+    if (n < per) return { passes: n, stepTo: null };
+    return { passes: 0, stepTo: _trainerNextRatePure(ladder, rate) };
+}
+
+// How fine the metronome clicks at a given audition rate: quarters at (near)
+// full speed, 8ths slowed, 16ths at half speed and below. The drum seat's
+// rule — the student references the intended pulse while slowed.
+export function _metroSubdivForRatePure(rate) {
+    const r = Number.isFinite(rate) ? rate : 1;
+    if (r <= 0.55) return 4;
+    if (r < 0.9) return 2;
+    return 1;
+}
+
+// Subdivision click times BETWEEN adjacent grid beats — `div`−1 evenly-spaced
+// ticks per beat span, beats themselves excluded (the accented/plain beat
+// clicks already schedule). A PURE function of the beat grid: click times are
+// independent of the audition rate, so the click stays LOCKED to the grid at
+// every speed and the student hears their micro-timing against the intended
+// pulse — the click must never wobble with the transform.
+export function _metroSubdivClicksPure(beats, from, to, div) {
+    const d = Math.max(1, Math.floor(Number(div) || 1));
+    if (d < 2 || !Array.isArray(beats) || beats.length < 2 || !(to > from)) return [];
+    const out = [];
+    for (let i = 0; i + 1 < beats.length; i++) {
+        const t0 = beats[i].time, t1 = beats[i + 1].time;
+        if (t1 <= from - (t1 - t0) || t0 >= to) { if (t0 >= to) break; continue; }
+        const span = t1 - t0;
+        if (!(span > 0)) continue;
+        for (let k = 1; k < d; k++) {
+            const t = t0 + (span * k) / d;
+            if (t >= from && t < to) out.push({ t });
+        }
+    }
+    return out;
+}
+/* @pure:audition-trainer:end */
 
 const GUIDE_LOOKAHEAD = 0.12;  // seconds scheduled ahead of the transport
 const GUIDE_TICK_MS = 25;      // scheduler cadence
@@ -1392,6 +1464,17 @@ function _guideTick() {
             _metroClickVoiceAt(
                 _guideChartToCtxPure(c.t, S.playStartWall, S.playStartTime, _auditionRate()), c.accent);
         }
+        // Slowed audition subdivides the click (P2-10): 8ths, then 16ths, so
+        // the slowed pulse still carries the rhythm. The subdivision times are
+        // a pure function of the GRID — locked to it at every speed; only the
+        // chart→ctx mapping (shared with every voice above) knows the rate.
+        const div = _metroSubdivForRatePure(_auditionRate());
+        if (div > 1) {
+            for (const c of _metroSubdivClicksPure(S.beats || [], from, to, div)) {
+                _metroClickVoiceAt(
+                    _guideChartToCtxPure(c.t, S.playStartWall, S.playStartTime, _auditionRate()), false);
+            }
+        }
     }
     _guideScheduledUntil = to;
     // Drop bookkeeping for voices that already finished (bounded memory).
@@ -1399,6 +1482,79 @@ function _guideTick() {
         const nowCtx = S.audioCtx.currentTime;
         _guideVoices = _guideVoices.filter(v => v.until > nowCtx);
     }
+}
+
+// ── Audition trainer — loop-and-step-up (P2-10) ──────────────────────
+// The Riff-Repeater / slow-downer practice pattern: loop a short A/B
+// selection slowed, and after every N completed passes step the audition
+// rate up the ladder toward 100%. Rides the existing rate transform (#247)
+// and loop region — no new audio path. Session-only state: a trainer armed
+// on a later visit would read as a playback bug, exactly like A/B.
+
+const TRAINER_PASSES_PER_STEP = 3;
+let _trainerOn = false;
+let _trainerPasses = 0;
+
+export function _trainerActive() { return _trainerOn; }
+
+function _trainerRefreshBtn() {
+    const btn = document.getElementById('editor-tp-trainer');
+    if (!btn) return;
+    btn.classList.toggle('editor-tp-on', _trainerOn);
+    btn.setAttribute('aria-pressed', _trainerOn ? 'true' : 'false');
+}
+
+export function editorToggleAuditionTrainer() {
+    if (!_trainerOn) {
+        const region = _normalizeLoopRegionPure(S.barSel, S.duration);
+        if (!region || !S.loopEnabled) {
+            setStatus('Trainer needs a loop: select a bar range and turn Loop on, then arm the trainer.');
+            return true;
+        }
+        if (!_auditionActive() && _auditionRate() >= 1) {
+            // Start the ladder at its slowest step; the select mirrors it.
+            editorSetAuditionRate(TRAINER_LADDER[0]);
+        }
+        _trainerOn = true;
+        _trainerPasses = 0;
+        const pct = Math.round(_auditionRate() * 100);
+        const ci = editorCountInBars();
+        setStatus(`Trainer armed at ${pct}%: every ${TRAINER_PASSES_PER_STEP} passes the speed steps up toward 100%`
+            + (ci ? ` — your ${ci}-bar count-in precedes each pass.` : ' — tip: arm Count for a count-in before each pass.'));
+    } else {
+        _trainerOn = false;
+        setStatus('Trainer off — speed stays where it is.');
+    }
+    _trainerRefreshBtn();
+    return true;
+}
+
+// Called from the playbackTick loop-wrap branch (one completed pass). May
+// step the rate — safe exactly there because the wrap re-anchors the clock.
+function _trainerOnLoopWrap() {
+    if (!_trainerOn) return;
+    const r = _trainerOnWrapPure(_trainerPasses, TRAINER_PASSES_PER_STEP, _auditionRate(), TRAINER_LADDER);
+    _trainerPasses = r.passes;
+    if (r.stepTo !== null) {
+        editorSetAuditionRate(r.stepTo);
+        if (r.stepTo >= 1) {
+            _trainerOn = false;
+            _trainerRefreshBtn();
+            setStatus('Trainer: full speed reached — you earned it. Trainer off.');
+            return;
+        }
+        setStatus(`Trainer: stepping up to ${Math.round(r.stepTo * 100)}%.`);
+        return;
+    }
+    setStatus(`Trainer: pass ${r.passes}/${TRAINER_PASSES_PER_STEP} at ${Math.round(_auditionRate() * 100)}%.`);
+}
+
+// A trainer pass restarts through the full start path when a count-in is
+// armed, so the pre-roll clicks precede the pass at the slowed tempo (the
+// count-in scheduler already rides the rate transform). Recording never
+// takes this path — the wrap branch is skipped entirely while recording.
+function _trainerWrapWantsCountIn() {
+    return _trainerOn && editorCountInBars() > 0 && !!S.audioBuffer;
 }
 
 // ── Loop A/B compare — the ear-training loop ─────────────────────────
