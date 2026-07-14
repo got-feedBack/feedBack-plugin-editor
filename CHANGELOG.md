@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Assisted tempo mapping trusts a bridged gap once the far side confirms.**
+  When Suggest marches across a sustained or held bar (no attack to snap to),
+  it keeps going on prediction but marks those bars very low confidence — and
+  used to leave them there even after the next bar snapped cleanly, proving
+  the marched path was right. Bars bridged BETWEEN two confirmed hits now get
+  their confidence raised retroactively (still discounted, never outranking a
+  real hit), so the ghost markers over a held chord read as "probably right"
+  instead of "guessing". A trailing march that never re-confirms keeps the
+  floor and is still dropped, exactly as before; a barline you locked confirms
+  at full trust.
+
 ### Fixed
 
 - **Inspector technique edits are undoable now.** Toggling a technique flag
