@@ -1,8 +1,9 @@
 /* Slopsmith Arrangement Editor — keyboard shortcuts & right-click behaviour.
  *
- * The two shortcut profiles (FeedBack native / EOF legacy), the key→command
- * mapping for each, the right-click behaviour that rides on the profile, their
- * localStorage persistence, and the shortcut-panel renderer.
+ * The four shortcut profiles (FeedBack native / Logical / Cableton / EOF
+ * legacy), the key→command mapping for each, the right-click behaviour that
+ * rides on the profile, their localStorage persistence, and the
+ * shortcut-panel renderer.
  *
  * `editorShortcutProfile` and `editorRightClickBehavior` are `export let`: they
  * are reassigned, but every writer lives here (the two `editorSet*` setters and
@@ -14,7 +15,20 @@ import { setStatus } from './ui.js';
 
 const EDITOR_SHORTCUT_PROFILE_KEY = 'editor.shortcutProfile';
 const EDITOR_RIGHT_CLICK_BEHAVIOR_KEY = 'editor.rightClickBehavior';
-const EDITOR_SHORTCUT_PROFILES = new Set(['feedback', 'eof']);
+// Four profiles. 'feedback' and 'eof' keep their battle-tested hand resolvers;
+// 'logical' (Logic-style) and 'cableton' (Ableton-style) are DELTAS over the
+// FeedBack resolver (EDITOR_PROFILE_OVERRIDES below): an override wins, and a
+// key it doesn't claim falls back to its FeedBack meaning — so the DAW
+// muscle-memory keys land where a Logic / Live user expects while every
+// editor-specific command keeps working. 'eof' keeps its internal id for
+// localStorage compat; the UI shows it as "Legacy (EOF)".
+const EDITOR_SHORTCUT_PROFILES = new Set(['feedback', 'logical', 'cableton', 'eof']);
+export const EDITOR_PROFILE_NAMES = Object.freeze({
+    feedback: 'FeedBack',
+    logical: 'Logical (Logic-style)',
+    cableton: 'Cableton (Ableton-style)',
+    eof: 'Legacy (EOF)',
+});
 const EDITOR_RIGHT_CLICK_BEHAVIORS = new Set(['context', 'eofEdit']);
 export let editorShortcutProfile = 'feedback';
 export let editorRightClickBehavior = null;
@@ -32,17 +46,19 @@ export function _editorKeySigPure(e) {
 const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'save', label: 'Save project', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+S', eof: 'F2 / Ctrl+S' } },
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
-    { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', eof: 'C' } },
-    { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', logical: 'Ctrl+Shift+C', eof: 'C' } },
+    { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', logical: 'K', cableton: 'O', eof: '' } },
     { id: 'toggleMixer', label: 'Toggle Mixer panel', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
     { id: 'toggleLoopAB', label: 'Toggle loop A/B compare (recording ↔ guide)', group: 'Preview', status: 'ready', keys: { feedback: 'Alt+B', eof: 'Alt+B' } },
+    { id: 'toggleLoopRegion', label: 'Toggle loop playback for the selected region', group: 'Preview', status: 'ready', keys: { feedback: '', logical: 'C', cableton: 'Ctrl+L', eof: '' } },
+    { id: 'songFit', label: 'Song Fit — line the chart up with the recording', group: 'Tempo map', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleOnsetStrip', label: 'Toggle onset detection strip', group: 'View', status: 'ready', keys: { feedback: 'Shift+W', eof: 'Shift+W' } },
     { id: 'togglePartsView', label: 'Toggle Tracks overview', group: 'View', status: 'ready', keys: { feedback: 'Shift+A', eof: 'Shift+A' } },
     { id: 'toggleKeyHighlight', label: 'Toggle in-key highlight', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'cycleViewMode', label: 'Cycle track view (String / Piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showTabPreview', label: 'Preview track as tab (read-only, saved pack)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleDrumDensity', label: 'Toggle drum row density (Full / Compact)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
-    { id: 'toggleFollow', label: 'Toggle follow playhead', group: 'View', status: 'ready', keys: { feedback: 'Shift+L', eof: 'Shift+L' } },
+    { id: 'toggleFollow', label: 'Toggle follow playhead', group: 'View', status: 'ready', keys: { feedback: 'Shift+L', cableton: 'Ctrl+Shift+F', eof: 'Shift+L' } },
     { id: 'renamePart', label: 'Rename current track', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'movePartEarlier', label: 'Move current track earlier', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'movePartLater', label: 'Move current track later', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
@@ -52,8 +68,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'importXml', label: 'Import XML source', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F7' } },
     { id: 'importGp', label: 'Import Guitar Pro source', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F12' } },
     { id: 'exportGp5', label: 'Export track as Guitar Pro (.gp5)', group: 'File', status: 'ready', keys: { feedback: '', eof: '' } },
-    { id: 'prevBeat', label: 'Jump to previous beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Up', eof: 'Page Up' } },
-    { id: 'nextBeat', label: 'Jump to next beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Down', eof: 'Page Down' } },
+    { id: 'prevBeat', label: 'Jump to previous beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Up', logical: ',', eof: 'Page Up' } },
+    { id: 'nextBeat', label: 'Jump to next beat', group: 'Timeline', status: 'ready', keys: { feedback: 'Page Down', logical: '.', eof: 'Page Down' } },
     { id: 'prevNote', label: 'Jump to previous note', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+Left', eof: 'Shift+Page Up' } },
     { id: 'nextNote', label: 'Jump to next note', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+Right', eof: 'Shift+Page Down' } },
     { id: 'nudgeTimeLeft', label: 'Nudge selection earlier one step (playhead when nothing selected)', group: 'Timeline', status: 'ready', keys: { feedback: 'Left', eof: 'Left' } },
@@ -66,9 +82,9 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'setBookmarkDigit', label: 'Set / clear bookmark 1-9 at cursor', group: 'Timeline', status: 'ready', keys: { feedback: 'Shift+Alt+1-9', eof: 'Shift+Alt+1-9' } },
     { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: '[' } },
     { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: ']' } },
-    { id: 'toggleSnap', label: 'Toggle snap on/off', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'G', eof: '' } },
-    { id: 'snapDown', label: 'Decrease snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: ',', eof: ',' } },
-    { id: 'snapUp', label: 'Increase snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: '.', eof: '.' } },
+    { id: 'toggleSnap', label: 'Toggle snap on/off', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'G', cableton: 'Ctrl+4', eof: '' } },
+    { id: 'snapDown', label: 'Decrease snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: ',', logical: 'Ctrl+,', cableton: 'Ctrl+2', eof: ',' } },
+    { id: 'snapUp', label: 'Increase snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: '.', logical: 'Ctrl+.', cableton: 'Ctrl+1', eof: '.' } },
     { id: 'toggleSnapMode', label: 'Toggle snap target (grid / audio onset)', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'editFret', label: 'Edit fret / fingering', group: 'Notes', status: 'ready', keys: { feedback: 'F', eof: 'F / Ctrl+F' } },
     { id: 'suggestFingers', label: 'Suggest fret-hand fingers', group: 'Notes', status: 'ready', keys: { feedback: '', eof: '' } },
@@ -97,19 +113,19 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleAccent', label: 'Toggle accent', group: 'Techniques', status: 'ready', keys: { feedback: 'A', eof: 'Ctrl+Shift+A' } },
     { id: 'toggleIgnore', label: 'Toggle ignore', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+I', eof: 'Ctrl+Shift+I' } },
     { id: 'toggleTremolo', label: 'Toggle tremolo', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+O', eof: 'Ctrl+Shift+O' } },
-    { id: 'togglePop', label: 'Toggle pop / pluck', group: 'Techniques', status: 'ready', keys: { feedback: 'O', eof: 'Ctrl+Shift+P' } },
+    { id: 'togglePop', label: 'Toggle pop / pluck', group: 'Techniques', status: 'ready', keys: { feedback: 'O', cableton: 'Ctrl+Shift+P', eof: 'Ctrl+Shift+P' } },
     { id: 'toggleSlap', label: 'Toggle slap', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+O', eof: 'Shift+O' } },
-    { id: 'cyclePickDirection', label: 'Cycle pick direction', group: 'Techniques', status: 'ready', keys: { feedback: 'K', eof: 'K' } },
+    { id: 'cyclePickDirection', label: 'Cycle pick direction', group: 'Techniques', status: 'ready', keys: { feedback: 'K', logical: 'Shift+K', eof: 'K' } },
     { id: 'fretUp', label: 'Increase selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl++', eof: 'Ctrl++' } },
     { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+-' } },
     { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
-    { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', eof: 'Ctrl+L' } },
+    { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', cableton: 'Ctrl+Shift+L', eof: 'Ctrl+L' } },
     { id: 'duplicateSelection', label: 'Duplicate selection to next position', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+D', eof: 'Ctrl+D' } },
     { id: 'copySelection', label: 'Copy selection', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+C', eof: 'Ctrl+C' } },
     { id: 'cutSelection', label: 'Cut selection', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+X', eof: 'Shift+Del' } },
     { id: 'pasteAtPlayhead', label: 'Paste at playhead', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+V', eof: 'Ctrl+V' } },
-    { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+R', eof: 'Shift+R' } },
-    { id: 'addSection', label: 'Add section at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+M', eof: 'Shift+S' } },
+    { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+R', logical: 'Q', cableton: 'Ctrl+U', eof: 'Shift+R' } },
+    { id: 'addSection', label: 'Add section at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+M', logical: "Alt+'", eof: 'Shift+S' } },
     { id: 'addPhrase', label: 'Add phrase at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+P', eof: 'Shift+P' } },
     { id: 'addToneChange', label: 'Add tone change at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+Shift+T', eof: 'Ctrl+Shift+T' } },
     { id: 'addHandshape', label: 'Add handshape from selection', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+H', eof: 'Ctrl+Shift+H' } },
@@ -136,13 +152,18 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
 ]);
 
 export function _editorShortcutRowsPure(profile) {
-    const p = profile === 'eof' ? 'eof' : 'feedback';
+    const p = EDITOR_SHORTCUT_PROFILES.has(profile) ? profile : 'feedback';
     return EDITOR_SHORTCUT_COMMANDS.map(cmd => ({
         id: cmd.id,
         label: cmd.label,
         group: cmd.group,
         status: cmd.status,
-        key: (cmd.keys && cmd.keys[p]) || '',
+        // A profile entry that is ABSENT inherits the FeedBack key (the delta
+        // model: unoverridden keys keep their FeedBack meaning). An entry that
+        // is EXPLICITLY '' means the profile reassigned that key away and the
+        // command is keyless there — the two must not collapse, or a shadowed
+        // command would display a key that no longer runs it.
+        key: (cmd.keys && (cmd.keys[p] ?? cmd.keys.feedback)) || '',
     }));
 }
 export function _editorEofCommandForKeyPure(e, mode) {
@@ -261,6 +282,69 @@ export function _editorEofCommandForKeyPure(e, mode) {
     return null;
 }
 
+
+// ── Logical / Cableton — delta tables over the FeedBack resolver ─────────────
+// Sig (from _editorKeySigPure) → command id. A sig in the table WINS (which is
+// also how a FeedBack meaning gets shadowed: 'K' in Logical is the metronome,
+// so pick-direction cycling is keyless there — its registry entry says so);
+// any sig absent from the table falls through to the FeedBack resolver, so
+// every editor-specific command keeps working under DAW muscle memory.
+// Bindings marked "authentic" are the DAW's own defaults (Logic Pro user
+// guide key-command appendix; Live 12 manual keyboard-shortcut chapter,
+// Windows column) — the rest are derived relocations for shadowed commands.
+export const EDITOR_PROFILE_OVERRIDES = Object.freeze({
+    logical: Object.freeze({
+        'K': 'toggleMetronome',          // authentic: Click
+        'Q': 'resnapSelection',          // authentic: Quantize Selected Events
+        ',': 'prevBeat',                 // authentic: Rewind
+        '.': 'nextBeat',                 // authentic: Forward
+        'C': 'toggleLoopRegion',         // authentic: Cycle Mode
+        "Alt+'": 'addSection',           // authentic: Create Marker (Option-Apostrophe)
+        'Ctrl+,': 'snapDown',            // relocated (',' now rewinds)
+        'Ctrl+.': 'snapUp',              // relocated ('.' now forwards)
+        'Shift+K': 'cyclePickDirection', // relocated ('K' now clicks)
+        'Ctrl+Shift+C': 'toggleGuideClap', // relocated ('C' now cycles)
+        // NOT BOUND: Logic's Repeat is Cmd-R, but the Electron host registers a
+        // {role:'reload'} menu item, whose CmdOrCtrl+R accelerator fires in the
+        // main process BEFORE the renderer keydown — preventDefault() cannot
+        // stop it, so binding it here would reload the editor and drop unsaved
+        // edits. duplicateSelection already answers Ctrl+D in every profile
+        // (input.js, outside the resolvers), so it stays reachable.
+    }),
+    cableton: Object.freeze({
+        'Ctrl+U': 'resnapSelection',     // authentic: Quantize
+        'Ctrl+1': 'snapUp',              // authentic: Narrow Grid (finer)
+        'Ctrl+2': 'snapDown',            // authentic: Widen Grid (coarser)
+        'Ctrl+4': 'toggleSnap',          // authentic: Snap to Grid
+        'O': 'toggleMetronome',          // authentic: Metronome (Live 12)
+        'Ctrl+Shift+F': 'toggleFollow',  // authentic: Follow Playback
+        'Ctrl+L': 'toggleLoopRegion',    // authentic: Loop Selection
+        'Ctrl+Shift+P': 'togglePop',     // relocated ('O' now clicks)
+        'Ctrl+Shift+L': 'selectLike',    // relocated ('Ctrl+L' now loops)
+    }),
+});
+
+// Generic table resolution for the delta profiles: the override wins, then
+// the FeedBack resolver (which owns the tempo-map overlay, the digit/bookmark
+// families, and everything unoverridden). The override sigs are disjoint from
+// the FeedBack tempo-map overlay by construction — pinned by test.
+export function _editorTableCommandForKeyPure(e, mode, overrides) {
+    const hit = overrides ? overrides[_editorKeySigPure(e)] : undefined;
+    if (hit) return hit;
+    return _editorFeedbackCommandForKeyPure(e, mode);
+}
+
+// Validator (test-facing): the effective binding surface of a delta profile —
+// override sigs must be unique (frozen-object keys already are) and must not
+// collide with the FeedBack TEMPO-MAP overlay, whose keys resolve first in
+// spirit (they share the fall-through). Returns colliding sigs; empty = sound.
+export function _editorProfileCollisionsPure(overrides, tempoMapSigs) {
+    const out = [];
+    for (const sig of Object.keys(overrides || {})) {
+        if ((tempoMapSigs || []).includes(sig)) out.push(sig);
+    }
+    return out;
+}
 
 export function _editorDefaultRightClickBehaviorPure(profile) {
     return profile === 'eof' ? 'eofEdit' : 'context';
@@ -424,7 +508,7 @@ export function editorSetShortcutProfile(profile) {
     if (panelEl) panelEl.value = editorShortcutProfile;
     _editorSyncRightClickBehaviorControls();
     _editorRenderShortcutPanel();
-    setStatus(editorShortcutProfile === 'eof' ? 'Shortcut profile: EOF Legacy' : 'Shortcut profile: FeedBack');
+    setStatus(`Shortcut profile: ${EDITOR_PROFILE_NAMES[editorShortcutProfile] || 'FeedBack'}`);
 }
 
 export function _editorCommandById(id) {

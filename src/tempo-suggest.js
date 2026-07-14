@@ -155,6 +155,11 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
     const combSwitchMargin = o.combSwitchMargin || 0.15;
     const minBpm = o.minBpm || 40;
     const maxBpm = o.maxBpm || 300;
+    // Segment-first (P2-3): the caller's grid already encodes a constant-tempo
+    // prior, so bound the drift tracker to ±stretchClamp of 1 — the march can
+    // track real push/pull inside the clamp but can never RUN AWAY chasing a
+    // fill or a wrong-band onset train. Off (null) everywhere else.
+    const stretchClamp = Number.isFinite(o.stretchClamp) ? o.stretchClamp : null;
     const eps = 0.01;
     const downs = _suggestDownbeatsFromPure(beats, fromIdx);
     if (downs.length < 2 || !Array.isArray(onsets) || !onsets.length) {
@@ -216,6 +221,9 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
             stretchHist.push(rawStretch);
             if (stretchHist.length > medianN) stretchHist.shift();
             stretch = _suggestMedianPure(stretchHist);
+            if (stretchClamp !== null) {
+                stretch = Math.max(1 - stretchClamp, Math.min(1 + stretchClamp, stretch));
+            }
             // (c2)+(c6) Confidence = comb × continuity × consistency.
             const continuity = Math.max(0, 1 - missesBefore * 0.5);
             const consistency = Math.max(0, 1 - Math.abs(rawStretch - stretch) / jumpTol);

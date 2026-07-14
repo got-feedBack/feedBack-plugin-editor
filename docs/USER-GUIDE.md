@@ -5,9 +5,13 @@ grid up to the music, place the notes, mark the tempo and sections, and build a
 `.feedpak` the rest of the app can practice against.
 
 This guide is the same content you get in-app from **Help ▸ User Guide**. It
-covers the FeedBack shortcut profile (the default); the EOF Legacy profile
-remaps some keys — switch profiles in **Help ▸ Shortcut profile** or the
-shortcut panel (`?`).
+covers the FeedBack shortcut profile (the default). Three other profiles remap
+some keys to match muscle memory you may already have: **Logical**
+(Logic-style — K clicks the metronome, Q quantizes, `,`/`.` step by beat, C
+loops the selection), **Cableton** (Ableton-style — Ctrl+U quantizes, Ctrl+1/2
+narrow/widen the grid, Ctrl+4 toggles snap, Ctrl+L loops), and **Legacy
+(EOF)**. Anything a profile doesn't remap keeps its FeedBack key. Switch
+profiles in **Help ▸ Shortcut profile** or the shortcut panel (`?`).
 
 ![The Song Editor loaded with a song: the menu bar and toolbars up top, the timeline (waveform and colored note blocks per string) in the middle, the transport and inspector around it.](../assets/guide/workspace.png)
 

@@ -28,9 +28,11 @@ function t(name, fn) {
     catch (e) { fail++; console.error('  FAIL ' + name + ': ' + e.message); }
 }
 
-t('countin is an LCD cell, in the charrette order (… Key · Count-in · Sel · Mode)', () => {
+t('countin is an LCD cell, in the charrette order (… Key · Count-in · Grid · Sel · Mode)', () => {
+    // Deliberate pin update: the Map Health grid pill joined the LCD between
+    // Count-in and Sel.
     assert.deepStrictEqual(TRANSPORT_LCD_CELLS,
-        ['position', 'time', 'tempo', 'meter', 'key', 'countin', 'sel', 'mode']);
+        ['position', 'time', 'tempo', 'meter', 'key', 'countin', 'grid', 'sel', 'mode']);
 });
 
 t('countin defaults visible, including under a pref blob saved before it existed', () => {
