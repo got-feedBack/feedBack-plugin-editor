@@ -737,6 +737,18 @@ export function editorApplyTempoZones() {
         setStatus('Rough map: no clear pulse to build a grid from (sparse or unmapped audio).');
         return true;
     }
+    // Guard a HAND-MAPPED grid. A variable tempo map (≥2 distinct measure BPMs)
+    // is work the user placed — replacing it wholesale wants a confirm even though
+    // it's one undo away. A flat single-tempo grid is the untouched default, so it
+    // applies with no nag. (Byron's review: Apply overwrote with no confirm.)
+    if (_tempoHasMultipleMeasureBpmsPure(S.beats, 0.01)
+            && typeof window !== 'undefined' && typeof window.confirm === 'function'
+            && !window.confirm('Apply rough map? This replaces your current tempo map with the '
+                + 'auto-detected one. Your notes keep their timing and Undo restores it — but any '
+                + 'hand-tuned tempo changes will be overwritten.')) {
+        setStatus('Rough map cancelled — your tempo map is unchanged.');
+        return true;
+    }
     const firstDown = rough.beats.findIndex(b => b.measure > 0);
     S.history.exec(new TempoGridCmd(S.beats || [], rough.beats, 'segment-first rough map',
         S.tempoSel, firstDown >= 0 ? firstDown : -1));
