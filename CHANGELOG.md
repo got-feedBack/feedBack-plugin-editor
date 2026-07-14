@@ -46,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   onto its start (it keeps at least one subdivision), while zero-length chips
   are never inflated. One undoable step, and the status line now always tells
   you what happened, including "already on the grid."
+- **Inspector technique edits are undoable now.** Toggling a technique flag
   (Palm Mute, Hammer-On, Tap, …) or setting a bend/slide value from the
   inspector panel used to mutate the note in place with no undo — so Ctrl+Z
   couldn't take it back, even though the same toggle from the keyboard could.

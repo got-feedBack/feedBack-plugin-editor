@@ -92,5 +92,17 @@ t('a zero-sustain chip stays a chip — length is authored intent', () => {
     assert.strictEqual(r.newSustains[0], 0, 'never inflated by a quantize');
 });
 
+t('no usable grid: a sustained note keeps its length, never collapses to a chip', () => {
+    // The hole the end-edge guard has to plug: in ONSET mode snapFn still snaps
+    // even with no beat grid, so both edges of a short note can land on the same
+    // onset — and afterFn (grid-based) has no guideline to offer, so it returns
+    // the identity. A quantize must not silently eat the sustain.
+    const bothToSameOnset = () => 1.0;      // snapFn: every edge → the one onset
+    const noGuideline = (x) => x;           // afterFn: identity (no grid)
+    const r = _resnapEdgesPure([1.13], [0.1], bothToSameOnset, noGuideline);
+    assert.strictEqual(r.newTimes[0], 1.0);
+    assert.strictEqual(r.newSustains[0], 0.1, 'original length kept, not zeroed');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

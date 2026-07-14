@@ -515,7 +515,12 @@ export function _resnapEdgesPure(oldTimes, oldSustains, snapFn, afterFn) {
         if (!(sus > 0)) return sus || 0;
         const end = snapFn(oldTimes[i] + sus);
         const bounded = end > newTimes[i] + 1e-9 ? end : afterFn(newTimes[i]);
-        return bounded - newTimes[i];
+        // afterFn is the identity when there is no usable grid (fewer than two
+        // beats, or the snap value is off) — and in ONSET mode snapFn still
+        // snaps, so a short note's two edges can land on the same onset with no
+        // guideline to push the end past it. A quantize must never eat a
+        // sustained note: with no positive bound to offer, keep the length.
+        return bounded > newTimes[i] + 1e-9 ? bounded - newTimes[i] : sus;
     });
     return { newTimes, newSustains };
 }
