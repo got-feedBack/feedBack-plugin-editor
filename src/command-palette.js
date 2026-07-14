@@ -198,6 +198,10 @@ export function initCommandPalette(hooks) {
         else if (e.key === 'ArrowDown') { e.preventDefault(); _sel = Math.min(_results.length - 1, _sel + 1); _render(); }
         else if (e.key === 'ArrowUp') { e.preventDefault(); _sel = Math.max(0, _sel - 1); _render(); }
         else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); _runSelected(); }
+        // Focus trap. The input is the palette's ONLY focusable node (the rows
+        // are click-handled <li>s), so trapping Tab degenerates to swallowing
+        // it — otherwise Tab walks focus into the page BEHIND the open overlay.
+        else if (e.key === 'Tab') { e.preventDefault(); }
     });
     input.addEventListener('input', () => { _sel = 0; _refresh(); });
     list.addEventListener('click', (e) => {

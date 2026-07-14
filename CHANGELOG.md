@@ -110,6 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to be wildly uneven (a held grand pause reads the same as a corrupt gap) is
   one Ctrl+Z away; if the grid is healthy it says so and touches nothing.
 - **Command palette (Ctrl+K).** Press **Ctrl+K** (or View ▸ Command palette)
+- **Command palette (Ctrl+K).** Press **Ctrl+K** (or Help ▸ Command palette)
   and just type what you want to do — every editor command and menu action is
   searchable in one place, each shown with its live keyboard shortcut for your
   active profile. Arrow keys select, Enter runs, Esc closes. If you've ever
