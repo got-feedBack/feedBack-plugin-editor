@@ -182,7 +182,9 @@
         <span class="text-xs text-gray-500">Keys:</span>
         <select id="editor-shortcut-profile" onchange="editorSetShortcutProfile(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Keyboard shortcut profile">
             <option value="feedback">FeedBack</option>
-            <option value="eof">EOF Legacy</option>
+            <option value="logical">Logical (Logic-style)</option>
+            <option value="cableton">Cableton (Ableton-style)</option>
+            <option value="eof">Legacy (EOF)</option>
         </select>
         <button id="editor-shortcuts-btn" onclick="editorToggleShortcutPanel()" class="px-2 py-0.5 bg-dark-600 hover:bg-dark-500 rounded text-xs" title="Show shortcut and command controls">Shortcuts…</button>
     </div>
@@ -204,6 +206,32 @@
                 <button id="editor-sweep-skip" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Skip (Right arrow)">&#8594;</button>
                 <button id="editor-sweep-all" class="px-2 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Accept all remaining (A)">Accept all</button>
                 <button id="editor-sweep-done" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Close (Esc)">&#10005;</button>
+            </div>
+            <!-- Tempo-zone confirm bar (P2-3) — shown by Tempo/Grid ▸ Scan for
+                 tempo zones; adjust the bands on the timeline (drag a boundary,
+                 Split/Merge/Kind/BPM on the selected zone), then Confirm & refine.
+                 Esc dismisses without applying. -->
+            <div id="editor-segment-bar" class="hidden absolute top-12 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-md border border-teal-500/50 bg-dark-800/95 backdrop-blur-sm px-3 py-1.5 text-xs">
+                <span class="text-teal-300 font-medium">Tempo zones</span>
+                <span id="editor-segment-count" class="font-mono text-gray-300"></span>
+                <button id="editor-segment-split" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600 disabled:opacity-40" title="Split the selected zone at the playhead">Split</button>
+                <button id="editor-segment-merge" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600 disabled:opacity-40" title="Merge the selected zone with the one after it">Merge &#8594;</button>
+                <button id="editor-segment-kind" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600 disabled:opacity-40" title="Cycle the selected zone: steady &#8594; ramp &#8594; unmapped">Kind</button>
+                <button id="editor-segment-bpm" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600 disabled:opacity-40" title="Type the selected zone's tempo">BPM&#8230;</button>
+                <button id="editor-segment-octave" class="hidden px-2 py-0.5 rounded bg-amber-700 text-white hover:bg-amber-600"></button>
+                <button id="editor-segment-single" class="px-2 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Replace every zone with one steady tempo (escape hatch for an over-segmented steady song)">Single tempo</button>
+                <button id="editor-segment-apply" class="px-2 py-0.5 rounded bg-teal-700 text-white hover:bg-teal-600" title="Build the grid: seed each zone, then snap its barlines to the recording inside it">Confirm &amp; refine</button>
+                <button id="editor-segment-dismiss" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Dismiss (Esc)">&#10005;</button>
+            </div>
+            <!-- Command palette (Ctrl+K) — a searchable front door over every
+                 registry command (with its live keybinding) and menu action.
+                 Type-to-filter; ↑/↓ select, Enter runs, Esc / backdrop closes. -->
+            <div id="editor-command-palette" class="hidden absolute inset-0 z-40 bg-black/40 backdrop-blur-[2px]">
+                <div class="mx-auto mt-16 w-[36rem] max-w-[calc(100%-2rem)] rounded-lg border border-gray-600 bg-dark-800/95 shadow-2xl text-sm" role="dialog" aria-label="Command palette">
+                    <input id="editor-palette-input" type="text" placeholder="Type a command… (Esc to close)" autocomplete="off" spellcheck="false"
+                           class="w-full bg-transparent px-3 py-2.5 text-gray-100 placeholder-gray-500 border-b border-gray-700 outline-none" />
+                    <ul id="editor-palette-list" class="max-h-80 overflow-y-auto p-1.5 text-xs"></ul>
+                </div>
             </div>
             <!-- Live Tab view mount (view-modality): the engraved score that
                  OWNS the timeline area while S.tabViewMode is on. alphaTab
@@ -283,7 +311,9 @@
                     <span class="text-gray-500">Profile</span>
                     <select id="editor-shortcut-panel-profile" onchange="editorSetShortcutProfile(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none">
                         <option value="feedback">FeedBack</option>
-                        <option value="eof">EOF Legacy</option>
+                        <option value="logical">Logical (Logic-style)</option>
+                        <option value="cableton">Cableton (Ableton-style)</option>
+                        <option value="eof">Legacy (EOF)</option>
                     </select>
                     <span class="text-gray-500 ml-2">Right-click</span>
                     <select id="editor-right-click-behavior" onchange="editorSetRightClickBehavior(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none">

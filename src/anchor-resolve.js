@@ -14,8 +14,12 @@
  * state (a note with a confirmed position was either authored by hand or
  * explicitly accepted — the resolver never touches those). Refusals are
  * honored absolutely: a note the resolver refuses (out of range, string
- * occupied, outside the window, open-vs-fretted ambiguity) keeps its
- * current position and its mark — named in the status line, never guessed.
+ * occupied, outside the window, singleton open-vs-fretted ambiguity) keeps
+ * its current position and its mark — named in the status line, never
+ * guessed. The one deliberate exception: a chord GRIP may voice a note open
+ * where a fretted alternative existed ("use opens, flag for review") — the
+ * pick is flagged `ambiguousOpen`, walked in the sweep like everything else,
+ * and excluded from "Accept all" so only an individual look confirms it.
  */
 
 import { S } from './state.js';
@@ -52,11 +56,16 @@ export function _anchorWindowPure(anchors, anchor) {
 }
 
 // Resolve every unresolved (suggested) note inside the window, in time
-// order. Returns { moves, refused, targets }:
-//   moves    [{ index, oldString, oldFret, newString, newFret }] — repicks
-//            (identity repicks are dropped; nothing to write).
+// order. Returns { moves, refused, targets, ambiguousOpen }:
+//   moves    [{ index, oldString, oldFret, newString, newFret, ambiguousOpen? }]
+//            — repicks (identity repicks are dropped; nothing to write).
 //   refused  [{ index, reason }] — the resolver said no; never guessed.
 //   targets  every unresolved index in the window (the sweep list).
+//   ambiguousOpen  [index] — notes a grip voiced OPEN where a fretted
+//            alternative existed ("use opens, flag for review"). Listed even
+//            when the pick was an identity repick (no move written), because
+//            the exclusion from bulk accept must not depend on whether the
+//            note happened to already sit on the open string.
 // Occupancy mirrors the roll writer: a note can't share a string with any
 // other note sounding at its instant; earlier repicks in this same pass
 // claim their new strings for later ones.
@@ -67,7 +76,7 @@ export function _anchorWindowPure(anchors, anchor) {
 // the stretch lint scolds it. A cluster with no coherent grip (or a single
 // note) falls back to the per-note resolver, so behaviour never regresses.
 export function _resolveWindowPure(nn, win, anchors, ctx, isSuggestedFn) {
-    const out = { moves: [], refused: [], targets: [] };
+    const out = { moves: [], refused: [], targets: [], ambiguousOpen: [] };
     if (!Array.isArray(nn) || !win || !ctx) return out;
     const isSug = typeof isSuggestedFn === 'function' ? isSuggestedFn : () => false;
     const targets = nn.map((n, i) => ({ n, i }))
@@ -104,13 +113,15 @@ export function _resolveWindowPure(nn, win, anchors, ctx, isSuggestedFn) {
         if (!p || !Number.isFinite(p.fret)) return null;
         return fretOf.has(p.idx) ? fretOf.get(p.idx) : p.fret;
     };
-    const recordMove = (i, n, newString, newFret) => {
+    const recordMove = (i, n, newString, newFret, ambiguousOpen) => {
         if (newString === n.string && newFret === n.fret) {
             // already where the resolver wants it — still claim the string
             strOf.set(i, newString); fretOf.set(i, newFret);
             return;
         }
-        out.moves.push({ index: i, oldString: n.string, oldFret: n.fret, newString, newFret });
+        const m = { index: i, oldString: n.string, oldFret: n.fret, newString, newFret };
+        if (ambiguousOpen) m.ambiguousOpen = true;
+        out.moves.push(m);
         strOf.set(i, newString); fretOf.set(i, newFret);
     };
     // Per-note greedy resolve (the pre-existing policy; the fallback path). It
@@ -161,7 +172,10 @@ export function _resolveWindowPure(nn, win, anchors, ctx, isSuggestedFn) {
                 for (let j = 1; j < group.length; j++) for (const s of occupiedFor(group[j].n, groupIdx)) occ.add(s);
                 const grip = _resolveChordGripPure(clusterPitches, ctx, cfg, prevFretAt(t0, group[0].i), occ);
                 if (grip) {
-                    for (const a of grip.assignments) recordMove(a.idx, nn[a.idx], a.string, a.fret);
+                    for (const a of grip.assignments) {
+                        recordMove(a.idx, nn[a.idx], a.string, a.fret, a.ambiguousOpen);
+                        if (a.ambiguousOpen) out.ambiguousOpen.push(a.idx);
+                    }
                     continue;   // cluster handled jointly
                 }
             }
@@ -187,8 +201,11 @@ export function _sweepStepPure(len, cur, action) {
 // Which refs "Accept all" confirms: still-suggested AND actually placed by the
 // resolver. A REFUSED note (in `refusedSet`) was never re-fingered, so a bulk
 // accept must NOT clear its mark — it stays suggested and keeps counting in the
-// honest "positions unresolved: N" gap. Single-note accept (a deliberate look
-// at one note) is unaffected; this only gates the bulk verb.
+// honest "positions unresolved: N" gap. An ambiguous OPEN voicing rides the
+// same gate (callers put those refs in the same set): the machine made a real
+// articulation choice, so only an individual look may confirm it. Single-note
+// accept (a deliberate look at one note) is unaffected; this only gates the
+// bulk verb.
 export function _acceptAllRefsPure(refs, from, refusedSet, isSug) {
     const sug = typeof isSug === 'function' ? isSug : () => false;
     return (refs || []).slice(from)
@@ -219,7 +236,8 @@ export class ResolveWindowCmd {
 }
 
 // ── The sweep (module state + a tiny floating bar) ───────────────────
-let sweep = null;   // { refs: [note], cur: number } | null
+let sweep = null;   // { refs: [note], reviewOnly: Set<note>, cur: number } | null
+                    // reviewOnly = refused + ambiguous-open refs: walked, never bulk-accepted.
 
 const $bar = () => document.getElementById('editor-sweep-bar');
 
@@ -269,11 +287,14 @@ function sweepAccept() {
 
 function sweepAcceptAll() {
     if (!sweep) return;
-    // Only confirm notes the resolver actually placed — refused notes keep
-    // their suggested mark and stay in the honest gap (they were never re-fingered).
-    const remaining = _acceptAllRefsPure(sweep.refs, sweep.cur, sweep.refused, _isSuggested);
+    // Only confirm notes the resolver placed WITHOUT an open question — refused
+    // notes were never re-fingered, and ambiguous open voicings need an
+    // individual look; both keep their suggested mark and stay in the honest gap.
+    const remaining = _acceptAllRefsPure(sweep.refs, sweep.cur, sweep.reviewOnly, _isSuggested);
     if (remaining.length) S.history.exec(new AcceptPositionsCmd(remaining));
-    sweepEnd(`Accepted ${remaining.length} position${remaining.length === 1 ? '' : 's'}`);
+    const held = sweep.refs.slice(sweep.cur).filter((r) => sweep.reviewOnly.has(r) && _isSuggested(r)).length;
+    const heldNote = held ? ` · ${held} left for individual review` : '';
+    sweepEnd(`Accepted ${remaining.length} position${remaining.length === 1 ? '' : 's'}${heldNote}`);
 }
 
 export function _sweepActive() { return !!sweep; }
@@ -303,11 +324,19 @@ export function editorResolveAnchorWindow(anchor) {
     if (!r.targets.length) { setStatus('No unresolved positions in this window'); return; }
     if (r.moves.length) S.history.exec(new ResolveWindowCmd(r.moves));
     const refusedNote = r.refused.length ? ` · ${r.refused.length} refused (left as-is)` : '';
-    setStatus(`Resolved ${r.moves.length} of ${r.targets.length} in the window${refusedNote} — sweep to confirm`);
+    const openNote = r.ambiguousOpen.length
+        ? ` · ${r.ambiguousOpen.length} open voicing${r.ambiguousOpen.length === 1 ? '' : 's'} to review`
+        : '';
+    setStatus(`Resolved ${r.moves.length} of ${r.targets.length} in the window${refusedNote}${openNote} — sweep to confirm`);
     // The sweep walks by REF so undo/index shuffles can't derail it. Refused
-    // refs are walked (the charter should see them) but never bulk-accepted.
-    const refused = new Set(r.refused.map((x) => nn[x.index]).filter(Boolean));
-    sweep = { refs: r.targets.map((i) => nn[i]).filter(Boolean), refused, cur: 0 };
+    // refs are walked (the charter should see them) but never bulk-accepted —
+    // and neither is a grip's ambiguous OPEN voicing (an open where a fretted
+    // alternative existed): each is confirmed one at a time, in view.
+    const reviewOnly = new Set([
+        ...r.refused.map((x) => nn[x.index]),
+        ...r.ambiguousOpen.map((i) => nn[i]),
+    ].filter(Boolean));
+    sweep = { refs: r.targets.map((i) => nn[i]).filter(Boolean), reviewOnly, cur: 0 };
     sweepFocus();
 }
 

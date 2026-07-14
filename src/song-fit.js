@@ -19,17 +19,35 @@ export function _consequenceBadgePure(kind) {
         case 'shift': return 'audio stays · grid, notes & sections all move together';
         case 'fit': return 'audio stays · grid rescales to the tempo · notes ride along';
         case 'constant': return 'audio stays · one steady tempo · you pick whether notes ride or hold';
+        case 'resync': return 'audio stays · barlines re-fit to the recording from this bar on · notes ride';
         default: return '';
     }
 }
 
-// The three Song Fit options, each carrying its consequence badge as the hint.
+// The four Song Fit options, each carrying its consequence badge as the hint.
 export function _songFitChoicesPure() {
     return [
         { key: 'shift', label: 'Shift everything…', hint: _consequenceBadgePure('shift') },
         { key: 'fit', label: 'Fit tempo to recording…', hint: _consequenceBadgePure('fit') },
         { key: 'constant', label: 'Set constant tempo…', hint: _consequenceBadgePure('constant') },
+        { key: 'resync', label: 'Re-sync from this bar on…', hint: _consequenceBadgePure('resync') },
     ];
+}
+
+// The re-sync anchor: the last DOWNBEAT at or before the playhead (the user
+// parked the playhead where the chart stops matching the recording — "right
+// up to here, wrong after"), or the first downbeat when the playhead sits
+// before bar 1. Returns the beats index, or -1 with no downbeats at all.
+export function _songFitResyncAnchorPure(beats, cursorTime) {
+    const t = Number.isFinite(cursorTime) ? cursorTime : 0;
+    let anchor = -1, first = -1;
+    for (let i = 0; i < (beats || []).length; i++) {
+        const b = beats[i];
+        if (!b || !(b.measure > 0)) continue;
+        if (first < 0) first = i;
+        if (b.time <= t + 1e-6) anchor = i;
+    }
+    return anchor >= 0 ? anchor : first;
 }
 
 // Open the Song Fit popover and dispatch the chosen operation. Reachable from the
@@ -50,6 +68,27 @@ export async function _editorSongFit() {
     if (choice === 'shift') { _editorShiftEverything(sessionBefore); return; }
     if (choice === 'fit') { _callWindow('editorSyncTempo'); return; }
     if (choice === 'constant') { await _songFitSetConstant(sessionBefore); return; }
+    if (choice === 'resync') { _songFitResync(); return; }
+}
+
+// "Re-sync from this bar on": the drift-rescue front door (a real tester
+// workflow — constant tempo set from a tab, recording actually a hair slower,
+// chart right up to bar N and increasingly wrong after). Enters Tempo Map,
+// anchors the assisted fit on the playhead's bar, and RUNS it immediately —
+// the suggested barline corrections appear as ghost markers to click-accept
+// (nothing commits until the user accepts; Esc dismisses). Pure chrome: mode
+// entry and the fit both dispatch through the same registry commands the
+// keyboard uses, so this stays a front door, not a second engine.
+function _songFitResync() {
+    if (!S.tempoMapMode) _callWindow('editorRunShortcutCommand', 'toggleTempoMap');
+    if (!S.tempoMapMode) return;   // no grid to map — the toggle already said so
+    // Anchor AFTER entering the mode (entry clears the barline selection), and
+    // drop any multi-selection — a live multi outranks the anchor in the fit.
+    const anchor = _songFitResyncAnchorPure(S.beats, S.cursorTime);
+    if (anchor < 0) { setStatus('No barlines to re-fit — mark a barline first.'); return; }
+    S.tempoSel = anchor;
+    if (S.tempoSelMulti) S.tempoSelMulti.clear();
+    _callWindow('editorRunShortcutCommand', 'tempoSuggestFit');
 }
 
 // "Set constant tempo": prompt for one BPM, then reuse editorSetBPM's flatten

@@ -46,6 +46,7 @@ import {
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
     editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
+    editorToggleAuditionTrainer,
 } from './audio.js';
 import { _mixerClapState, _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import {
@@ -90,9 +91,11 @@ import {
 } from './tab-preview.js';
 import { editorExportGp5 } from './gp5-export.js';
 import {
-    _editorCurrentNoteIndices, _editorSeekToTime, _editorSnapStepSeconds,
-    editorRunShortcutCommand, editorToggleShortcutPanel, onContextMenu, onKeyDown
+    _editorCurrentNoteIndices, _editorEntryPreviewEnabled, _editorSeekToTime,
+    _editorSnapStepSeconds, editorRunShortcutCommand, editorToggleEntryPreview,
+    editorToggleShortcutPanel, onContextMenu, onKeyDown
 } from './input.js';
+import { editorCloseCommandPalette, initCommandPalette } from './command-palette.js';
 import {
     editorAddString, editorHideStringsModal, editorRemoveString,
     editorSetStringTuning, editorShowStringsModal
@@ -116,7 +119,7 @@ import { initAnchorResolve } from './anchor-resolve.js';
 import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from './playability-lint.js';
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
-import { initMenuBar } from './menu-bar.js';
+import { EDITOR_MENUS, initMenuBar } from './menu-bar.js';
 import { _tabViewHideIfShown, _tabViewPing, editorToggleTabView, teardownTabView } from './tab-view-live.js';
 import { initToolbars } from './toolbars.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
@@ -129,8 +132,10 @@ import {
     _tempoHasMultipleMeasureBpmsPure, _tempoMapDraw, _tempoMapOnDragEnd, _tempoMeasureBeatCount,
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
     _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
-    _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones
+    _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones,
+    editorConfirmTempoZones, editorZonesSingleTempo, editorHealGrid, editorZonesOctaveFix
 } from './tempo.js';
+import { initTempoZones } from './tempo-zones.js';
 import {
     drawAnchorLane,
     drawHandshapeLane, drawToneLane, editorApplyTonesModal, editorHideTonesModal,
@@ -223,14 +228,17 @@ function _cancelPendingDraw() {
 
 function drawNow() {
     if (!canvas) return;
+    // The toolbar LCDs refresh on EVERY draw, before any mode fork — undo/
+    // redo can change BPM / time signature while a lens (Tab view included)
+    // owns the timeline, and the readouts must not go stale behind it.
+    updateBPMDisplay();
+    updateTempoSigDisplay();
     // Live Tab view: the engraved score OWNS the timeline area — ping the
     // module (it shows the mount + re-renders on real changes) and skip the
     // canvas chain. The else-branch hides the mount the moment any mode
     // toggle clears the flag, so no toggle needs teardown knowledge.
     if (S.tabViewMode) { _tabViewPing(); return; }
     _tabViewHideIfShown();
-    updateBPMDisplay();
-    updateTempoSigDisplay();
     const w = canvas.width / DPR;
     const h = canvas.height / DPR;
     ctx.save();
@@ -494,6 +502,7 @@ setHostHooks({
     editorSeekToTime: _editorSeekToTime,
     refreshDrumPadStrip: _drumPadStripRefresh,
     editorSnapStepSeconds: _editorSnapStepSeconds,
+    editorEntryPreviewEnabled: _editorEntryPreviewEnabled,
     effectiveAudioOffset: () => _effectiveAudioOffset(),
     applyEditorPendingView: (...a) => _applyEditorPendingView(...a),
     showAddNote: (...a) => showAddNote(...a),
@@ -542,6 +551,7 @@ window.editorSaveAs = editorSaveAs;
 window.editorSetAudioShift = editorSetAudioShift;
 window.editorNudgeAudioShift = editorNudgeAudioShift;
 window.editorSetAuditionRate = editorSetAuditionRate;
+window.editorToggleAuditionTrainer = editorToggleAuditionTrainer;
 // Slide the recording in time to line it up with the chart (audio moves, chart
 // stays). Prompt is prefilled with the current shift in seconds; +ve = later.
 window.editorPromptAudioShift = async () => {
@@ -565,6 +575,7 @@ window.editorSyncTempo = editorSyncTempo;
 window.editorToggleTabView = (force) => editorToggleTabView(force);
 window.editorScanTempoZones = () => editorScanTempoZones();
 window.editorApplyTempoZones = () => editorApplyTempoZones();
+window.editorHealGrid = () => editorHealGrid();
 window.editorToggleMapHealth = (force) => editorToggleMapHealth(force);
 window.editorSyncUpdateFactor = editorSyncUpdateFactor;
 window.editorHideSyncDialog = editorHideSyncDialog;
@@ -622,6 +633,7 @@ window.editorOpenBendCurve = editorOpenBendCurve;
 window.editorUngroupStrum = editorUngroupStrum;
 window.editorSetEditBlip = editorSetEditBlip;
 window.editorSetMixLevel = editorSetMixLevel;
+window.editorToggleEntryPreview = (force) => editorToggleEntryPreview(force);
 window.editorToggleGuideClap = _editorToggleGuideClap;
 window.editorToggleLoopAB = _editorToggleLoopAB;
 window.editorToggleMetronome = _editorToggleMetronome;
@@ -755,6 +767,11 @@ _globalListeners.add(document, 'keydown', (e) => {
         hideAddNote();
         hideContextMenu();
         window.editorHideLoadModal();
+        // The palette's own Escape (on its input) stops propagation, so this
+        // only fires when focus has LEFT the palette — a click on the menu bar
+        // or a toolbar, both of which sit outside the canvas-wrap its backdrop
+        // covers. Without it that click strands the overlay open.
+        editorCloseCommandPalette();
         // The User Guide is NOT closed here: this listener registers at import
         // time, so it runs before input.js onKeyDown — closing the guide here
         // would blind onKeyDown's read-only-lens gate (it would read the modal
@@ -1978,6 +1995,21 @@ function init() {
     initCreate();
     initAudio();
     initAnchorResolve();
+    // The zone confirm bar's two APPLY verbs live in tempo.js (TempoGridCmd),
+    // handed over as hooks so tempo-zones.js never imports tempo.js (cycle).
+    initTempoZones({ confirm: editorConfirmTempoZones, single: editorZonesSingleTempo,
+        octave: editorZonesOctaveFix });
+    // Registry commands run through `editorRunShortcutCommand` — the SAME
+    // by-id dispatcher the shortcut panel's buttons use, which is what the
+    // palette is (a click on a command, not a keypress). Going straight to
+    // `_editorRunEofCommand` (the raw keyboard switch) would leave the three
+    // digit-RANGE rows — "Set selected fret 0-9", the two bookmark 1-9 rows —
+    // silently inert: that switch only knows the per-digit forms
+    // (`setFretDigit:<n>`), so the bare id falls to `default: return false`.
+    // This path already carries their explain-hint. The menu model rides along
+    // too; both are hooks so command-palette.js imports neither input.js nor
+    // menu-bar.js (each would close an import cycle).
+    initCommandPalette({ run: editorRunShortcutCommand, menus: EDITOR_MENUS });
     initPlayabilityLint();
     initDrumPadStrip();
     initFretboardStrip();

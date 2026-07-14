@@ -150,6 +150,13 @@ export function _editorCycleViewMode() {
         return true;
     }
     if (viewFor(arr) === 'piano') {
+        // Drums have no tab (same refusal as the lens's own guard) — the
+        // toggle would refuse WITHOUT changing mode and the cycle would
+        // stick on the roll. Skip the Tab stop and wrap to String view.
+        if (/^drums/i.test(arr.name || '')) {
+            window.editorSetViewMode('string');
+            return true;
+        }
         if (typeof window.editorToggleTabView === 'function') window.editorToggleTabView(true);
         return true;
     }

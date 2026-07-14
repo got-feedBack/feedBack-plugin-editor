@@ -82,7 +82,8 @@ t('#editor-canvas is a DIRECT child of #editor-canvas-wrap — never nested in a
 });
 
 t('the canvas-wrap overlays are siblings of the canvas, not ancestors', () => {
-    for (const id of ['editor-sweep-bar', 'editor-tabview-mount', 'editor-lint-pop',
+    for (const id of ['editor-sweep-bar', 'editor-segment-bar', 'editor-command-palette',
+        'editor-tabview-mount', 'editor-lint-pop',
         'editor-drum-pad-strip', 'editor-fretboard-strip', 'editor-roll-lock-pill',
         'editor-shortcut-panel']) {
         assert.strictEqual(parentOf[id], 'editor-canvas-wrap', id);
