@@ -21,7 +21,14 @@
 // time-signature controls it builds into the toolbar.
 // ════════════════════════════════════════════════════════════════════
 import { _ensureOnsetsShifted, _nearestOnsetTimePure } from './audio.js';
-import { _localTempoSeriesPure, _segmentRoughMapPure, _segmentTempoPure } from './tempo-segment.js';
+import {
+    _localTempoSeriesPure, _segmentRefineGridPure, _segmentRoughMapPure,
+    _segmentSeedBeatsPure, _segmentSingleTempoPure, _segmentTempoPure,
+} from './tempo-segment.js';
+import {
+    _zonesBoundaryHitAt, _zonesDismiss, _zonesDragBoundary, _zonesDraw,
+    _zonesGet, _zonesSelect, _zonesShow, _zonesStripHit, _zonesZoneAt,
+} from './tempo-zones.js';
 import { beatOf, timeOf } from './beats.js';
 import { DPR, canvas, ctx } from './canvas.js';
 import { _drumLaneIdxForPiece, _drumPieceCount } from './drum.js';
@@ -228,6 +235,10 @@ export function _tempoMapDraw(w, h) {
             LABEL_W + 12, (TIMELINE_TOP + WAVEFORM_H) + 30);
         return;
     }
+
+    // Tempo-zone proposal bands (P2-3 confirm) — under the poles so a pole
+    // grab below the strip stays unobstructed; the strip itself owns its clicks.
+    _zonesDraw(ctx, w);
 
     // Beat grid lines (downbeats brighter than sub-beats).
     for (const b of S.beats) {
@@ -682,11 +693,12 @@ function _ensureTempoSignatureControl() {
 }
 // ── Tempo Map toolbar toggle ────────────────────────────────────────
 
-// Segment-first tempo scan (P2-3, PREVIEW). Runs the pure detection engine over
-// the recording's onsets and reports the tempo-intent zones it finds — a
-// non-committing rough map ("3 tempo zones detected: …"). The confirm bar +
-// Apply (one TempoGridCmd from _segmentSeedGridPure) are the follow-up; this
-// surfaces the analysis so it can be seen and trusted first. Never mutates.
+// Segment-first tempo scan (P2-3). Runs the pure detection engine over the
+// recording's onsets, paints the tempo-intent zones as BANDS on the tempo-map
+// timeline and docks the confirm bar: adjust (drag a boundary / split / merge /
+// kind / BPM), then Confirm & refine — or Single tempo instead. Everything
+// before Confirm is transient proposal state (tempo-zones.js); Scan itself
+// never mutates. Enters Tempo Map mode so the bands have their surface.
 export function editorScanTempoZones() {
     const onsets = _ensureOnsetsShifted();
     if (!onsets) {
@@ -700,6 +712,12 @@ export function editorScanTempoZones() {
         setStatus('Scan for tempo zones: no clear pulse found (sparse or unmapped audio).');
         return true;
     }
+    // The bands live on the tempo-map surface; enter the mode when needed (a
+    // grid-less song can't — the zones still report via status below).
+    if (!S.tempoMapMode && S.beats && S.beats.length >= 2) _editorToggleTempoMapMode();
+    _suggestDismiss();          // one proposal surface at a time
+    _zonesShow(segs);
+    host.draw();
     const label = (s) => s.kind === 'ramp'
         ? `${s.bpmStart > s.bpmEnd ? 'rit' : 'accel'} ${Math.round(s.bpmStart)}→${Math.round(s.bpmEnd)}`
         : `${Math.round(s.bpmStart)} bpm`;
@@ -710,7 +728,68 @@ export function editorScanTempoZones() {
     setStatus(`${segs.length} tempo zone${segs.length === 1 ? '' : 's'} detected: `
         + segs.map(label).join(' · ')
         + (weakest < 0.35 ? ' — LOW CONFIDENCE, the pulse is unsteady; check each zone' : '')
-        + ' — preview (segment-first Confirm & Apply is coming).');
+        + ' — adjust the bands, then Confirm & refine.');
+    return true;
+}
+
+// Confirm & refine (P2-3 Apply, the real one): seed a grid from the ADJUSTED
+// zones, then snap each zone's barlines to the recording with the bounded,
+// tempo-clamped suggest march — ONE undoable TempoGridCmd (notes keep their
+// seconds and ride the re-lift; Ctrl+Z restores the old grid exactly).
+export function editorConfirmTempoZones() {
+    if (!S.sessionId || !S.history) {
+        setStatus('Confirming tempo zones needs a song open — create or open one first.');
+        return true;
+    }
+    const segments = _zonesGet();
+    if (!segments) return true;
+    const onsets = _ensureOnsetsShifted();
+    if (!onsets || onsets.length < 8) {
+        setStatus('Confirm & refine needs the recording’s onset analysis — load audio first.');
+        return true;
+    }
+    const seeded = _segmentSeedBeatsPure(onsets, segments);
+    if (!seeded) {
+        setStatus('These zones don’t produce a grid (all unmapped, or too short).');
+        return true;
+    }
+    const { beats: refined, refined: nRefined } = _segmentRefineGridPure(seeded, onsets, segments);
+    const firstDown = refined.findIndex(b => b.measure > 0);
+    _zonesDismiss();
+    S.history.exec(new TempoGridCmd(S.beats || [], refined, 'tempo zones (refined)',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    host.draw();
+    host.updateStatus();
+    const n = segments.length;
+    setStatus(`Built the grid from ${n} tempo zone${n === 1 ? '' : 's'} and snapped `
+        + `${nRefined} barline${nRefined === 1 ? '' : 's'} to the recording — notes kept their timing; Undo restores.`);
+    return true;
+}
+
+// "Single tempo instead" — the escape hatch when a steady song over-segments:
+// one constant zone at the duration-weighted median, uniform grid, no refine
+// (refining would un-uniform the very thing the button promises).
+export function editorZonesSingleTempo() {
+    if (!S.sessionId || !S.history) {
+        setStatus('Applying a tempo needs a song open — create or open one first.');
+        return true;
+    }
+    const segments = _zonesGet();
+    if (!segments) return true;
+    const onsets = _ensureOnsetsShifted();
+    const single = _segmentSingleTempoPure(segments);
+    const seeded = single && onsets ? _segmentSeedBeatsPure(onsets, single) : null;
+    if (!seeded) {
+        setStatus('No mapped zone to take a tempo from.');
+        return true;
+    }
+    const firstDown = seeded.findIndex(b => b.measure > 0);
+    _zonesDismiss();
+    S.history.exec(new TempoGridCmd(S.beats || [], seeded, 'tempo zones (single tempo)',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    host.draw();
+    host.updateStatus();
+    setStatus(`Applied one steady tempo (${Math.round(single[0].bpmStart)} BPM) across the mapped span — Undo restores.`);
     return true;
 }
 
@@ -765,6 +844,7 @@ export function _editorToggleTempoMapMode() {
     if (S.tempoSelMulti) S.tempoSelMulti.clear();   // multi-select is mode-scoped (PR 5a)
     _tapTempo = null;   // abandon any pending tap run on mode change
     _suggestDismiss();  // proposals are mode-scoped — never survive an exit
+    _zonesDismiss();    // zone bands too — same rule, same reason
     if (S.tempoMapMode) {
         // Tempo, drum, and parts modes are mutually exclusive.
         S.drumEditMode = false;
@@ -954,6 +1034,22 @@ export function _tempoMapOnMouseDown(e, x, y) {
         if (host.isRecording()) return;
         S.cursorTime = Math.max(0, xToTime(x));
         if (S.playing) { host.stopPlayback(); host.startPlayback(); }
+        host.draw();
+        return;
+    }
+
+    // Tempo-zone strip (P2-3 confirm): while zone bands are showing, the strip
+    // owns its clicks — a boundary handle starts a pre-commit boundary drag
+    // (transient proposal state, no history until Confirm), a band body selects
+    // the zone for the bar's verbs. Sits above the pole band, so poles below
+    // the strip still grab exactly as before.
+    if (_zonesStripHit(y)) {
+        const bIdx = _zonesBoundaryHitAt(x);
+        if (bIdx >= 0) {
+            S.drag = { type: 'segment-boundary', bIdx, moved: false, startX: x };
+            return;
+        }
+        _zonesSelect(_zonesZoneAt(x));
         host.draw();
         return;
     }
@@ -2490,6 +2586,14 @@ export function _tempoMapOnDragMove(x) {
         const deltaT = xToTime(x) - dg.startTime;
         S.beats = _tempoApplyGroupDragPure(dg.origBeats, dg.selIdxs, deltaT, MIN_MEASURE, S.duration || 0);
         host.draw();
+        return;
+    }
+    // Tempo-zone boundary drag (P2-3 confirm): pre-commit — reshapes only the
+    // transient proposal (the pure clamps both neighbours to a minimum span);
+    // nothing reaches S.beats or history until Confirm & refine.
+    if (dg.type === 'segment-boundary') {
+        dg.moved = true;
+        _zonesDragBoundary(dg.bIdx, xToTime(x));
         return;
     }
     if (dg.type !== 'tempo-sync') return;

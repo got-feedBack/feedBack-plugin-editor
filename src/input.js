@@ -8,6 +8,7 @@ import { AddAnchorCmd, AddHandshapeCmd, AddToneChangeCmd, RemoveAnchorCmd, Remov
 import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsetsShifted, startPlayback, stopPlayback } from './audio.js';
 import { editorSuggestFingers } from './anchor-resolve.js';
 import { _suggestActive, _suggestCompute, _suggestDismiss } from './tempo-suggest.js';
+import { _zonesDismiss } from './tempo-zones.js';
 import { editorToggleMixerPanel } from './mixer-panel.js';
 import { canvas } from './canvas.js';
 import { AddNoteCmd, ChangeFretCmd, ChangeFretGroupCmd, DeleteNotesCmd, MoveNoteCmd, ResizeSustainGroupCmd, SetPitchedSlideTargetsCmd, SetTeachingMarkCmd, ToggleTechniqueCmd, _execCyclePosition, _execMoveString, _execMoveStringSameFret, _rollAddByPitch, _withStableSelection } from './commands.js';
@@ -802,6 +803,7 @@ function _editorTempoSuggestFit() {
         return true;
     }
     S.tempoSel = anchor;
+    _zonesDismiss();   // one proposal surface at a time — G replaces the zone bands
     const n = _suggestCompute(anchor, onsets, opts);
     host.draw();
     setStatus(n
