@@ -1006,6 +1006,40 @@ export function _tempoMapOnMouseDown(e, x, y) {
             setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
             return;
         }
+        // Group drag (PR 5b): grabbing a pole that belongs to a multi-selection
+        // of 2+ downbeats drags the whole selection rigidly. Locked poles are
+        // excluded — they defend re-fits, so excluding them is least surprising —
+        // and the status says how many stayed put. The selection is KEPT (a
+        // TempoMapCmd is index-preserving), so the group survives the drag.
+        if (S.tempoSelMulti && S.tempoSelMulti.size >= 2 && S.tempoSelMulti.has(hit)) {
+            const all = [...S.tempoSelMulti];
+            const movable = all.filter(i => S.beats[i] && S.beats[i].measure > 0 && !S.beats[i].locked);
+            if (movable.length) {
+                if (hit !== S.tempoSel) _tapTempo = null;
+                S.tempoSel = hit;
+                S.drag = {
+                    type: 'tempo-group',
+                    selIdxs: movable,
+                    startX: x,
+                    startTime: xToTime(x),
+                    origBeats: S.beats.map(b => ({ ...b })),
+                    moved: false,
+                };
+                const lockedOut = all.length - movable.length;
+                if (lockedOut > 0) {
+                    setStatus(`Dragging ${movable.length} barline${movable.length === 1 ? '' : 's'} — `
+                        + `${lockedOut} locked ${lockedOut === 1 ? 'stays' : 'stay'} put.`);
+                }
+                host.draw();
+                return;
+            }
+            // Every selected pole is locked: keep the group selected and do not
+            // fall through to a single-pole drag, which would move a protected
+            // anchor despite the group no-op rule.
+            setStatus('Selected barlines are locked — unlock one to move it.');
+            host.draw();
+            return;
+        }
         if (hit !== S.tempoSel) _tapTempo = null;   // selection moved — drop stale tap run
         S.tempoSel = hit;
         if (S.tempoSelMulti) S.tempoSelMulti.clear();   // plain pole click = single focus
@@ -1986,6 +2020,81 @@ export function _tempoApplyDrag(beats, d, newT) {
     }
 }
 
+/* @pure:tempo-group-drag:start */
+// Group drag (PR 5b) — move a multi-selection of downbeats rigidly by one Δt.
+// The clamp keeps the WHOLE group together: it is the tightest headroom of any
+// selected pole against its nearest UNSELECTED downbeat (± minGap), so no pole
+// can cross a fixed neighbour. A selected pole with no unselected neighbour on
+// a side is bounded by the song start (0) / `duration`. Locked and non-selected
+// downbeats are treated as fixed, so they constrain (and defend) the move.
+// Returns the clamped Δt actually applicable for `deltaT`.
+export function _tempoGroupDragClampPure(beats, selIdxs, deltaT, minGap = MIN_MEASURE, duration = 0) {
+    if (!Array.isArray(beats) || !Array.isArray(selIdxs) || !selIdxs.length) return 0;
+    const sel = new Set(selIdxs);
+    let headRight = Infinity, headLeft = Infinity;
+    for (const i of sel) {
+        if (!beats[i] || beats[i].measure <= 0) continue;
+        // Nearest UNSELECTED downbeat to the right — the fixed pole this one
+        // must stay `minGap` behind; none ⇒ the song end (duration).
+        let rt = -1;
+        for (let j = i + 1; j < beats.length; j++) {
+            if (beats[j].measure > 0 && !sel.has(j)) { rt = j; break; }
+        }
+        const hiBound = rt >= 0
+            ? beats[rt].time - minGap
+            : Math.max(beats[i].time, duration || beats[beats.length - 1].time);
+        headRight = Math.min(headRight, hiBound - beats[i].time);
+        // Nearest UNSELECTED downbeat to the left; none ⇒ the song start (0).
+        let lf = -1;
+        for (let j = i - 1; j >= 0; j--) {
+            if (beats[j].measure > 0 && !sel.has(j)) { lf = j; break; }
+        }
+        const loBound = lf >= 0 ? beats[lf].time + minGap : 0;
+        headLeft = Math.min(headLeft, beats[i].time - loBound);
+    }
+    if (!Number.isFinite(headRight)) headRight = 0;
+    if (!Number.isFinite(headLeft)) headLeft = 0;
+    return deltaT >= 0
+        ? Math.min(deltaT, Math.max(0, headRight))
+        : Math.max(deltaT, -Math.max(0, headLeft));
+}
+
+// Apply a group drag to a COPY of `beats` (never mutates the input). Every
+// selected+unselectable-excluded downbeat shifts by the clamped Δt; each
+// measure span then re-spaces its interior proportionally between its
+// (possibly moved) downbeats — so a span between two selected poles rigid-
+// shifts for free, and a span at the selection's edge re-spaces against its
+// fixed outside pole. A leading pickup / trailing tail rigid-shifts only when
+// its bounding downbeat moved. Locked poles are dropped from the group (they
+// stay put and act as fixed neighbours). Equal length in/out — a TempoMapCmd.
+export function _tempoApplyGroupDragPure(beats, selIdxs, deltaT, minGap = MIN_MEASURE, duration = 0) {
+    const out = (beats || []).map(b => ({ ...b }));
+    if (!Array.isArray(beats) || !Array.isArray(selIdxs) || !selIdxs.length) return out;
+    const sel = new Set(selIdxs.filter(i => beats[i] && beats[i].measure > 0 && !beats[i].locked));
+    if (!sel.size) return out;
+    const delta = _tempoGroupDragClampPure(beats, [...sel], deltaT, minGap, duration);
+    for (const i of sel) out[i].time = beats[i].time + delta;
+    const dbs = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i].measure > 0) dbs.push(i);
+    if (!dbs.length) return out;
+    // Leading pickup: rigid-shift iff the first downbeat moved.
+    if (sel.has(dbs[0])) for (let i = 0; i < dbs[0]; i++) out[i].time = beats[i].time + delta;
+    // Interior spans: proportional re-space between the (new) bounding times.
+    for (let s = 0; s + 1 < dbs.length; s++) {
+        const a = dbs[s], b = dbs[s + 1];
+        const oldSpan = beats[b].time - beats[a].time;
+        for (let k = a + 1; k < b; k++) {
+            const frac = oldSpan > 0 ? (beats[k].time - beats[a].time) / oldSpan : (k - a) / (b - a);
+            out[k].time = out[a].time + frac * (out[b].time - out[a].time);
+        }
+    }
+    // Trailing tail: rigid-shift iff the last downbeat moved.
+    const last = dbs[dbs.length - 1];
+    if (sel.has(last)) for (let i = last + 1; i < beats.length; i++) out[i].time = beats[i].time + delta;
+    return out;
+}
+/* @pure:tempo-group-drag:end */
+
 // Metric modulation prompt + apply for the selected barline. New tempo
 // = current × ratio, from the selected measure to the next tempo change
 // (the uniform-run boundary — hand-authored downstream tempo is a natural
@@ -2371,7 +2480,19 @@ export function _tempoOnsetSnapPure(rawT, onsets, tol, loBound, hiBound) {
 
 export function _tempoMapOnDragMove(x) {
     const dg = S.drag;
-    if (!dg || dg.type !== 'tempo-sync') return;
+    if (!dg) return;
+    // Group drag (PR 5b): rigid Δt over the whole selection, rebuilt from the
+    // original grid each move (no compounding), clamped so the group can't
+    // cross a fixed neighbour. Finalized by the shared _tempoMapOnDragEnd.
+    if (dg.type === 'tempo-group') {
+        if (!dg.moved && Math.abs(x - dg.startX) < 3) return;
+        dg.moved = true;
+        const deltaT = xToTime(x) - dg.startTime;
+        S.beats = _tempoApplyGroupDragPure(dg.origBeats, dg.selIdxs, deltaT, MIN_MEASURE, S.duration || 0);
+        host.draw();
+        return;
+    }
+    if (dg.type !== 'tempo-sync') return;
     if (!dg.moved && Math.abs(x - dg.startX) < 3) return;
     dg.moved = true;
     const d = dg.beatIdx;
@@ -2406,10 +2527,11 @@ export function _tempoMapOnDragMove(x) {
 export function _tempoMapOnDragEnd() {
     const dg = S.drag;
     S.drag = null;
-    // Finalizes both drag kinds — a moved pole ('tempo-sync') and a moved
-    // individual beat ('tempo-beat') — identically: same revert-then-exec,
-    // same equal-count invariant, one undoable TempoMapCmd.
-    if (!dg || (dg.type !== 'tempo-sync' && dg.type !== 'tempo-beat')) return;
+    // Finalizes every time-only tempo drag — a moved pole ('tempo-sync'), a
+    // moved individual beat ('tempo-beat'), and a moved multi-selection
+    // ('tempo-group') — identically: same revert-then-exec, same equal-count
+    // invariant, one undoable TempoMapCmd.
+    if (!dg || (dg.type !== 'tempo-sync' && dg.type !== 'tempo-beat' && dg.type !== 'tempo-group')) return;
     if (!dg.moved) { host.draw(); return; }  // a click-select, not a drag
     const newBeats = S.beats.map(b => ({ ...b }));
     S.beats = dg.origBeats;  // revert — TempoMapCmd.exec re-applies it
@@ -2423,10 +2545,17 @@ export function _tempoMapOnDragEnd() {
         host.draw();
         return;
     }
-    S.history.exec(new TempoMapCmd(dg.origBeats, newBeats, 'drag'));
-    // Confirm an onset snap so the user knows the barline landed on a real attack
-    // (only set on a tempo-sync drag under Snap = Onset; silent otherwise).
-    if (dg.snappedT != null) setStatus(`Barline snapped to a detected attack at ${dg.snappedT.toFixed(2)}s.`);
+    const isGroup = dg.type === 'tempo-group';
+    S.history.exec(new TempoMapCmd(dg.origBeats, newBeats, isGroup ? 'group-drag' : 'drag'));
+    if (isGroup) {
+        const n = dg.selIdxs ? dg.selIdxs.length : 0;
+        setStatus(`Moved ${n} barline${n === 1 ? '' : 's'} together — notes ride the grid.`);
+    } else if (dg.snappedT != null) {
+        // Confirm an onset snap so the user knows the barline landed on a real
+        // attack (only set on a tempo-sync drag under Snap = Onset; silent
+        // otherwise — and never on a group drag, which doesn't onset-snap).
+        setStatus(`Barline snapped to a detected attack at ${dg.snappedT.toFixed(2)}s.`);
+    }
     host.draw();
 }
 

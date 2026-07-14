@@ -398,6 +398,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   category buttons keep their semantic colors. `window.editorSetTheme(name)` /
   `editorCycleTheme()` drive it.
 
+- **Drag a whole barline selection at once** in Tempo Map mode. Grab any pole in
+  a multi-selection and the entire group slides together by one offset — the
+  spans *between* selected barlines shift rigidly (their tempo is preserved),
+  while the spans at the selection's edges re-space against the fixed barline
+  just outside it, exactly like a single pole drag. The group stops as soon as
+  any member would collide with a fixed neighbour, so it can never reorder the
+  grid, and notes ride the move. **Locked barlines are excluded** — they stay
+  put and act as fixed anchors the group re-spaces around (the status says how
+  many stayed), since a lock's whole job is to defend a hand-verified time. One
+  undoable step (Move N barlines together).
+
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:
   Transport ▸ Guide voice ▸ Instrument (GM), with a per-part-kind instrument
