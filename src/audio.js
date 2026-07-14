@@ -540,6 +540,7 @@ export function editorAuditionRate() { return _auditionRate(); }
 // Reset to full speed when a new song loads (a per-song pref never persists).
 export function _resetAuditionForNewSong() {
     S.auditionRate = 1;
+    _trainerDisarm();   // an armed trainer without its ladder would only spam the status line
     _stopRefMedia();
     _auditionRefreshUi();
 }
@@ -775,15 +776,24 @@ export function playbackTick() {
         // reference mute/unmute lands with the wrap, not a frame late.
         _abOnLoopWrap();
         // Trainer (P2-10): count the completed pass and maybe step the rate —
-        // BEFORE the restart, which re-anchors the clock at the new rate.
+        // BEFORE the restart, which re-anchors the clock at the new rate. Seat
+        // the cursor at the wrap FIRST: a rate step re-seats live playback at
+        // S.cursorTime, which still sits PAST the loop end here — restarting
+        // there would burst a few ms of audio from beyond the loop.
+        S.cursorTime = loopRestart;
         _trainerOnLoopWrap();
         if (_trainerWrapWantsCountIn()) {
             // Route the pass through the full start path so the armed
             // count-in pre-roll precedes it (at the slowed tempo — the
             // count-in clicks ride the same rate transform as everything).
+            // startPlayback restarts the A/B cycle on the recording pass; the
+            // wrap already flipped the phase, so carry it across the restart or
+            // A/B would never reach a guide pass while the trainer runs.
+            const abPhase = _abPhase;
             stopPlayback();
             S.cursorTime = loopRestart;
             startPlayback();
+            if (_abActive()) { _abPhase = abPhase; _abApplyRefGain(); }
             host.updateTimeDisplay();
             host.drawNow();
             return;   // startPlayback scheduled its own tick.
@@ -988,7 +998,8 @@ export function _metroSubdivClicksPure(beats, from, to, div) {
     const out = [];
     for (let i = 0; i + 1 < beats.length; i++) {
         const t0 = beats[i].time, t1 = beats[i + 1].time;
-        if (t1 <= from - (t1 - t0) || t0 >= to) { if (t0 >= to) break; continue; }
+        if (t0 >= to) break;          // beats are sorted — nothing further is in the window
+        if (t1 <= from) continue;     // this span's ticks all sit before it
         const span = t1 - t0;
         if (!(span > 0)) continue;
         for (let k = 1; k < d; k++) {
@@ -1495,13 +1506,26 @@ const TRAINER_PASSES_PER_STEP = 3;
 let _trainerOn = false;
 let _trainerPasses = 0;
 
-export function _trainerActive() { return _trainerOn; }
+// Armed AND the loop it rides is on — like _abActive(). Turning Loop off with
+// the trainer armed can never leave a lit button over a trainer that will never
+// see a wrap; the transport bar reads the lamp from here every tick.
+export function _trainerActive() { return _trainerOn && !!S.loopEnabled; }
+
+// Disarm and reset the ladder. Called on the exits that make a trainer
+// meaningless: the loop region cleared, a new song loaded, the screen torn
+// down. (Session-only state, exactly like A/B — see _abDisarm.)
+export function _trainerDisarm() {
+    _trainerOn = false;
+    _trainerPasses = 0;
+    _trainerRefreshBtn();
+}
 
 function _trainerRefreshBtn() {
     const btn = document.getElementById('editor-tp-trainer');
     if (!btn) return;
-    btn.classList.toggle('editor-tp-on', _trainerOn);
-    btn.setAttribute('aria-pressed', _trainerOn ? 'true' : 'false');
+    // The transport bar styles "on" off aria-pressed (.editor-transport-btn
+    // [aria-pressed="true"]) — there is no class to toggle.
+    btn.setAttribute('aria-pressed', _trainerActive() ? 'true' : 'false');
 }
 
 export function editorToggleAuditionTrainer() {
@@ -1532,14 +1556,13 @@ export function editorToggleAuditionTrainer() {
 // Called from the playbackTick loop-wrap branch (one completed pass). May
 // step the rate — safe exactly there because the wrap re-anchors the clock.
 function _trainerOnLoopWrap() {
-    if (!_trainerOn) return;
+    if (!_trainerActive()) return;
     const r = _trainerOnWrapPure(_trainerPasses, TRAINER_PASSES_PER_STEP, _auditionRate(), TRAINER_LADDER);
     _trainerPasses = r.passes;
     if (r.stepTo !== null) {
         editorSetAuditionRate(r.stepTo);
         if (r.stepTo >= 1) {
-            _trainerOn = false;
-            _trainerRefreshBtn();
+            _trainerDisarm();
             setStatus('Trainer: full speed reached — you earned it. Trainer off.');
             return;
         }
@@ -1554,7 +1577,7 @@ function _trainerOnLoopWrap() {
 // count-in scheduler already rides the rate transform). Recording never
 // takes this path — the wrap branch is skipped entirely while recording.
 function _trainerWrapWantsCountIn() {
-    return _trainerOn && editorCountInBars() > 0 && !!S.audioBuffer;
+    return _trainerActive() && editorCountInBars() > 0 && !!S.audioBuffer;
 }
 
 // ── Loop A/B compare — the ear-training loop ─────────────────────────
@@ -1774,6 +1797,7 @@ export function teardownAudio() {
     _stopRefMedia();
     try { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } } catch (_) { /* no frame queued */ }
     S.playing = false;
+    _trainerDisarm();   // session-only: a replaced screen never comes back armed
     _guideTimerSync();
     _guideCancelVoices();
 }

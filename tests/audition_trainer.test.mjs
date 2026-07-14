@@ -27,7 +27,7 @@ globalThis.window = globalThis.window || globalThis;
 const {
     TRAINER_LADDER, _trainerNextRatePure, _trainerOnWrapPure,
     _metroSubdivForRatePure, _metroSubdivClicksPure,
-    _trainerActive, editorToggleAuditionTrainer, editorAuditionRate,
+    _trainerActive, _trainerDisarm, editorToggleAuditionTrainer, editorAuditionRate,
 } = await import('../src/audio.js');
 const { S } = await import('../src/state.js');
 
@@ -110,6 +110,20 @@ t('arming refuses without an enabled loop; arms at the slowest step from full sp
     assert.strictEqual(editorAuditionRate(), 0.5, 'starts the ladder at its slowest step');
     editorToggleAuditionTrainer();
     assert.strictEqual(_trainerActive(), false, 'toggle disarms');
+});
+
+t('the trainer goes with its loop — Loop off reads OFF, and a disarm resets it', () => {
+    Object.assign(S, {
+        barSel: { startTime: 4, endTime: 8 }, loopEnabled: true, duration: 60,
+        auditionRate: 1, audioUrl: null, audioBuffer: null,
+    });
+    editorToggleAuditionTrainer();
+    assert.strictEqual(_trainerActive(), true, 'armed');
+    S.loopEnabled = false;   // the Loop button goes off under an armed trainer
+    assert.strictEqual(_trainerActive(), false, 'no loop ⇒ no wrap can fire, and the lamp says so');
+    S.loopEnabled = true;
+    _trainerDisarm();        // song load / region cleared / screen teardown
+    assert.strictEqual(_trainerActive(), false, 'disarmed for good — never re-arms itself');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

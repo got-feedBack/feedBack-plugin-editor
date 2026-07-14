@@ -47,7 +47,7 @@ import { S } from './state.js';
 import { host } from './host.js';
 import { setStatus } from './ui.js';
 import {
-    _editorToggleFollow, editorAuditionRate, editorCountInBars, editorFollowEnabled, editorSetCountIn,
+    _editorToggleFollow, _trainerActive, editorAuditionRate, editorCountInBars, editorFollowEnabled, editorSetCountIn,
     stopPlayback,
 } from './audio.js';
 import { PIANO_NOTE_NAMES, SCALE_LABELS } from './theory.js';
@@ -603,6 +603,9 @@ export function _transportBarTick(force) {
     press('editor-tp-follow', editorFollowEnabled());
     press('editor-tp-parts', !!S.partsViewMode);
     press('editor-tp-count', bars > 0);
+    // The trainer rides the loop: it reads OFF the moment the loop does, and a
+    // bar rebuild (audio arriving/leaving) re-seats the lamp from the state.
+    press('editor-tp-trainer', _trainerActive());
     const mirror = (id, srcId) => {
         const el = document.getElementById(id), src = document.getElementById(srcId);
         if (!el || !src) return;
