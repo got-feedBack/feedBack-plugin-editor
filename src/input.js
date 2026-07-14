@@ -19,11 +19,14 @@ import { hitNote } from './hit-test.js';
 import { _renderInspector, _selectedChordContext } from './inspector.js';
 import { PIANO_LANE_H, _rollLockNotice, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, pianoLaneCount, yToMidi } from './keys.js';
 import { lanes, _stringCountFor } from './lanes.js';
-import { _editorClampScrollX, _loopNudgeEdge, snapGuidelineAfter, snapTime } from './loop.js';
+import {
+    _editorClampScrollX, _loopNudgeEdge, editorToggleLoopRegion, snapGuidelineAfter, snapTime,
+} from './loop.js';
+import { _editorSongFit } from './song-fit.js';
 import { _recState } from './midi-record.js';
 import { getMousePos } from './mouse.js';
 import { _resizeSustainsForDeltaPure, notes } from './notes.js';
-import { _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure, _editorIsTypingTarget, _editorRenderShortcutPanel, editorRightClickBehavior, editorShortcutProfile } from './shortcuts.js';
+import { EDITOR_PROFILE_OVERRIDES, _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure, _editorIsTypingTarget, _editorRenderShortcutPanel, _editorTableCommandForKeyPure, editorRightClickBehavior, editorShortcutProfile } from './shortcuts.js';
 import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure } from './snap.js';
 import { S } from './state.js';
 import { _editorShowTabPreview, _tabPreviewKeyPolicyPure } from './tab-preview.js';
@@ -913,6 +916,8 @@ export function _editorRunEofCommand(cmd) {
     case 'toggleMetronome': return _editorToggleMetronome();
     case 'toggleMixer': return editorToggleMixerPanel();
     case 'toggleLoopAB': return _editorToggleLoopAB();
+    case 'toggleLoopRegion': return editorToggleLoopRegion();
+    case 'songFit': _editorSongFit(); return true;
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return host.editorTogglePartsView();
     case 'toggleKeyHighlight': return host.editorToggleKeyHighlight();
@@ -1017,8 +1022,19 @@ export function _editorRunEofCommand(cmd) {
 }
 
 function _editorDispatchFeedbackShortcut(e) {
-    if (editorShortcutProfile !== 'feedback' || _editorIsTypingTarget(e)) return false;
-    const cmd = _editorFeedbackCommandForKeyPure(e, S.tempoMapMode ? 'tempoMap' : 'note');
+    if (_editorIsTypingTarget(e)) return false;
+    // The delta profiles (Logical / Cableton) resolve their override table
+    // first and fall through to the FeedBack meaning for everything else;
+    // plain FeedBack skips the table. EOF has its own dispatcher below.
+    let cmd = null;
+    if (editorShortcutProfile === 'feedback') {
+        cmd = _editorFeedbackCommandForKeyPure(e, S.tempoMapMode ? 'tempoMap' : 'note');
+    } else if (EDITOR_PROFILE_OVERRIDES[editorShortcutProfile]) {
+        cmd = _editorTableCommandForKeyPure(e, S.tempoMapMode ? 'tempoMap' : 'note',
+            EDITOR_PROFILE_OVERRIDES[editorShortcutProfile]);
+    } else {
+        return false;
+    }
     if (!cmd) return false;
     const def = _editorCommandById(cmd);
     if (def && def.status !== 'ready') return false;

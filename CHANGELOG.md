@@ -127,6 +127,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   known the editor *probably* has something but couldn't find which menu it
   lives in, this is the answer: type "snap", "tempo", "export", "guide" and
   the matching commands surface instantly, fuzzy matching included.
+- **Two new shortcut profiles: Logical and Cableton.** If your hands already
+  know a DAW, the editor can meet them there. **Logical** (Logic-style) puts
+  the metronome on **K**, quantize on **Q**, steps the playhead by beat with
+  **`,` / `.`**, loops the selection with **C**, creates a section with
+  **Alt+'** (the marker key). **Cableton** (Ableton-style) quantizes with
+  **Ctrl+U**, narrows/widens the grid with **Ctrl+1 / Ctrl+2**, toggles snap
+  with **Ctrl+4**, clicks with **O**, follows playback with **Ctrl+Shift+F**,
+  and loops the selection with **Ctrl+L**. Everything a profile doesn't remap
+  keeps its FeedBack key, so editor-specific commands (techniques, tempo
+  mapping, string moves) work identically everywhere — and where a DAW key
+  displaces a FeedBack one, the displaced command *relocates* (Logical: pick
+  direction moves to **Shift+K**, guide claps to **Ctrl+Shift+C**; Cableton:
+  pop moves to **Ctrl+Shift+P**, select-matching to **Ctrl+Shift+L**) and the
+  shortcut panel shows its new key — no command ever loses its keyboard, and
+  no chord is ever double-bound. Logic's Repeat (**Cmd/Ctrl+R**) is
+  deliberately *not* bound: the desktop app's own Reload accelerator owns that
+  chord and would reload the editor out from under you; duplicate stays on
+  **Ctrl+D** in every profile. The old EOF profile is still here as **Legacy
+  (EOF)**. Switch in Help ▸ Shortcut profile, the Shortcuts panel, or the
+  toolbar select; the shortcut panel always shows the keys for whichever
+  profile is live.
+- **Loop toggle and Song Fit are real commands now.** "Toggle loop playback
+  for the selected region" and "Song Fit" joined the command registry, so both
+  are reachable from anywhere commands are listed, Song Fit gained a menu home
+  (**Tempo/Grid ▸ Song Fit**), and profiles can bind keys to them (Logical's C
+  and Cableton's Ctrl+L drive the loop toggle).
 - **Scan for tempo zones (preview).** A new **Tempo/Grid ▸ Scan for tempo zones**
   action reads the recording and reports the handful of *tempo intents* it finds
   — e.g. "3 tempo zones detected: 120 bpm · 140 bpm · rit 140→90". It's the first
