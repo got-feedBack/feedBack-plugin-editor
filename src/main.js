@@ -90,8 +90,9 @@ import {
 } from './tab-preview.js';
 import { editorExportGp5 } from './gp5-export.js';
 import {
-    _editorCurrentNoteIndices, _editorSeekToTime, _editorSnapStepSeconds,
-    editorRunShortcutCommand, editorToggleShortcutPanel, onContextMenu, onKeyDown
+    _editorCurrentNoteIndices, _editorEntryPreviewEnabled, _editorSeekToTime,
+    _editorSnapStepSeconds, editorRunShortcutCommand, editorToggleEntryPreview,
+    editorToggleShortcutPanel, onContextMenu, onKeyDown
 } from './input.js';
 import {
     editorAddString, editorHideStringsModal, editorRemoveString,
@@ -487,6 +488,7 @@ setHostHooks({
     editorSeekToTime: _editorSeekToTime,
     refreshDrumPadStrip: _drumPadStripRefresh,
     editorSnapStepSeconds: _editorSnapStepSeconds,
+    editorEntryPreviewEnabled: _editorEntryPreviewEnabled,
     effectiveAudioOffset: () => _effectiveAudioOffset(),
     applyEditorPendingView: (...a) => _applyEditorPendingView(...a),
     showAddNote: (...a) => showAddNote(...a),
@@ -614,6 +616,7 @@ window.editorOpenBendCurve = editorOpenBendCurve;
 window.editorUngroupStrum = editorUngroupStrum;
 window.editorSetEditBlip = editorSetEditBlip;
 window.editorSetMixLevel = editorSetMixLevel;
+window.editorToggleEntryPreview = (force) => editorToggleEntryPreview(force);
 window.editorToggleGuideClap = _editorToggleGuideClap;
 window.editorToggleLoopAB = _editorToggleLoopAB;
 window.editorToggleMetronome = _editorToggleMetronome;

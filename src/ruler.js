@@ -406,7 +406,11 @@ export function drawRuler(w) {
 // ── Interaction (routed from mouse.js; drags ride S.drag) ───────────
 
 function scrubTo(x) {
-    S.cursorTime = Math.max(0, xToTime(x));
+    // Logic-style: clicking the ruler snaps the playhead to the grid (beat /
+    // subdivision) when snap is on, so the caret lands on a real note position.
+    // Hold Alt (S.drag.bypassSnap) for a free, un-snapped scrub.
+    const raw = Math.max(0, xToTime(x));
+    S.cursorTime = (S.drag && S.drag.bypassSnap) ? raw : snapTime(raw);
     host.draw();
 }
 
@@ -500,7 +504,7 @@ export function rulerOnMouseDown(e, x, y, w) {
     // Scrub: seek immediately and keep tracking while the button is down.
     const resume = S.playing;
     if (resume) stopPlayback();
-    S.drag = { type: 'scrub', resume };
+    S.drag = { type: 'scrub', resume, bypassSnap: e.altKey };
     scrubTo(x);
     return true;
 }
@@ -508,7 +512,9 @@ export function rulerOnMouseDown(e, x, y, w) {
 export function rulerOnMouseMove(e, x, w) {
     if (!S.drag) return false;
     if (S.drag.type === 'minimap') { minimapPan(x, w); return true; }
-    if (S.drag.type === 'scrub') { scrubTo(x); return true; }
+    // Alt is live per move (like Shift on the loop drags): press/release it
+    // mid-scrub and snapping follows, instead of freezing at the mouse-down state.
+    if (S.drag.type === 'scrub') { S.drag.bypassSnap = e.altKey; scrubTo(x); return true; }
     if (S.drag.type === 'loopedge') {
         if (!S.barSel) return true;
         const mode = _loopLiveMode(e.shiftKey);

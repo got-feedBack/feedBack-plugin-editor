@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The note-entry caret now previews the note you're about to type.** In String
+  view with nothing selected, the dashed cell that marks the entry point earns
+  its note shape: it's sized to the current note value (the snap step, so the box
+  is exactly the footprint a typed note will fill), sits on the caret's string
+  lane, and ghosts the fret it will carry — the caret shows *which* note lands
+  and *how long*, not just *where*. Typed notes are placed at that same length so
+  consecutive entries tile the grid instead of stacking as zero-length notes. The
+  preview is a persisted view pref: **Tempo/Grid ▸ Snap ▸ Note-entry preview** toggles
+  it off (and back on) for mouse-first charters who find the cell distracting.
+- **Clicking the ruler snaps the playhead to the grid, Logic-style.** A scrub
+  click on the timeline ruler now lands the playhead on the nearest beat /
+  subdivision when snap is on (so the entry caret sits on a real note position),
+  instead of seeking to the raw pixel time. Hold **Alt** while clicking for a
+  free, un-snapped scrub.
+
 ### Fixed
 
 - **Inspector technique edits are undoable now.** Toggling a technique flag
