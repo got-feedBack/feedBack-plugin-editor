@@ -187,7 +187,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'nextAnchor' },
         { sep: true },
         { hdr: 'Loop' },
-        { label: 'Loop region', fn: 'editorToggleLoopRegion' },
+        { cmd: 'toggleLoopRegion' },
         { cmd: 'toggleLoopAB' },
         { label: 'Loop in 3D', fn: 'editorLoopIn3D' },
         { loopClear: true, label: 'Clear loop' },
