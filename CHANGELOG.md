@@ -131,15 +131,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   know a DAW, the editor can meet them there. **Logical** (Logic-style) puts
   the metronome on **K**, quantize on **Q**, steps the playhead by beat with
   **`,` / `.`**, loops the selection with **C**, creates a section with
-  **Alt+'** (the marker key), and repeats a selection with **Ctrl+R**.
-  **Cableton** (Ableton-style) quantizes with **Ctrl+U**, narrows/widens the
-  grid with **Ctrl+1 / Ctrl+2**, toggles snap with **Ctrl+4**, clicks with
-  **O**, follows playback with **Ctrl+Shift+F**, and loops the selection with
-  **Ctrl+L**. Everything a profile doesn't remap keeps its FeedBack key, so
-  editor-specific commands (techniques, tempo mapping, string moves) work
-  identically everywhere — and where a DAW key displaces a FeedBack one, the
-  displaced command relocates or shows as keyless in the shortcut panel, never
-  silently double-bound. The old EOF profile is still here as **Legacy
+  **Alt+'** (the marker key). **Cableton** (Ableton-style) quantizes with
+  **Ctrl+U**, narrows/widens the grid with **Ctrl+1 / Ctrl+2**, toggles snap
+  with **Ctrl+4**, clicks with **O**, follows playback with **Ctrl+Shift+F**,
+  and loops the selection with **Ctrl+L**. Everything a profile doesn't remap
+  keeps its FeedBack key, so editor-specific commands (techniques, tempo
+  mapping, string moves) work identically everywhere — and where a DAW key
+  displaces a FeedBack one, the displaced command *relocates* (Logical: pick
+  direction moves to **Shift+K**, guide claps to **Ctrl+Shift+C**; Cableton:
+  pop moves to **Ctrl+Shift+P**, select-matching to **Ctrl+Shift+L**) and the
+  shortcut panel shows its new key — no command ever loses its keyboard, and
+  no chord is ever double-bound. Logic's Repeat (**Cmd/Ctrl+R**) is
+  deliberately *not* bound: the desktop app's own Reload accelerator owns that
+  chord and would reload the editor out from under you; duplicate stays on
+  **Ctrl+D** in every profile. The old EOF profile is still here as **Legacy
   (EOF)**. Switch in Help ▸ Shortcut profile, the Shortcuts panel, or the
   toolbar select; the shortcut panel always shows the keys for whichever
   profile is live.

@@ -53,7 +53,17 @@ t('Logical: the Logic defaults land — K click, Q quantize, ,/. transport, C cy
     assert.strictEqual(resolve(L, ev('.')), 'nextBeat');
     assert.strictEqual(resolve(L, ev('c')), 'toggleLoopRegion');
     assert.strictEqual(resolve(L, ev("'", { alt: true })), 'addSection');
-    assert.strictEqual(resolve(L, ev('r', { ctrl: true })), 'duplicateSelection');
+});
+
+t('Logical does NOT take Ctrl+R for Repeat — the host menu reloads on it', () => {
+    // Logic's Repeat is Cmd-R, but the Electron {role:'reload'} accelerator is
+    // handled in the main process and preventDefault() cannot reclaim it, so the
+    // editor would reload and drop unsaved edits. Ctrl+D still duplicates in
+    // every profile (input.js handles it outside the resolvers).
+    assert.notStrictEqual(resolve(L, ev('r', { ctrl: true })), 'duplicateSelection');
+    assert.strictEqual(L['Ctrl+R'], undefined);
+    const lRows = Object.fromEntries(_editorShortcutRowsPure('logical').map(r => [r.id, r.key]));
+    assert.strictEqual(lRows.duplicateSelection, 'Ctrl+D', 'displays the chord that actually works');
 });
 
 t('Cableton: the Live defaults land — Ctrl+U quantize, Ctrl+1/2 grid, Ctrl+4 snap, O click, Ctrl+L loop', () => {
@@ -75,12 +85,14 @@ t('anything unoverridden falls through to its FeedBack meaning', () => {
         'the old FeedBack key stays as a harmless alias');
 });
 
-t('a shadowed command relocates or goes keyless — and the rows SAY so', () => {
-    // Logical: K now clicks, so pick-direction cycling is keyless there.
+t('a shadowed command relocates — and the rows SAY so', () => {
+    // Logical: K now clicks and C now cycles, so both of their old owners move.
     assert.strictEqual(resolve(L, ev('k')), 'toggleMetronome');
+    assert.strictEqual(resolve(L, ev('k', { shift: true })), 'cyclePickDirection');
+    assert.strictEqual(resolve(L, ev('c', { ctrl: true, shift: true })), 'toggleGuideClap');
     const lRows = Object.fromEntries(_editorShortcutRowsPure('logical').map(r => [r.id, r.key]));
-    assert.strictEqual(lRows.cyclePickDirection, '', 'explicitly keyless, not inheriting the stolen K');
-    assert.strictEqual(lRows.toggleGuideClap, '', 'C belongs to the loop now');
+    assert.strictEqual(lRows.cyclePickDirection, 'Shift+K', 'relocated off the stolen K');
+    assert.strictEqual(lRows.toggleGuideClap, 'Ctrl+Shift+C', 'relocated off the stolen C');
     assert.strictEqual(lRows.toggleMetronome, 'K');
     assert.strictEqual(lRows.save, 'Ctrl+S', 'unoverridden displays the inherited FeedBack key');
     // Cableton: O clicks, pop relocates; Ctrl+L loops, select-like relocates.
@@ -103,6 +115,51 @@ t('override sigs are disjoint from the FeedBack tempo-map overlay', () => {
         'Shift+T', 'Alt+T', 'Ctrl+Shift+T', 'I', 'Insert', 'Delete', 'Backspace'];
     assert.deepStrictEqual(_editorProfileCollisionsPure(L, TEMPO_MAP_SIGS), []);
     assert.deepStrictEqual(_editorProfileCollisionsPure(A, TEMPO_MAP_SIGS), []);
+});
+
+// ── the two checks this class of feature actually fails on ───────────
+
+// Build a keydown from an override-table sig, so the table round-trips through
+// the very resolver the dispatcher calls — a table entry that cannot be typed,
+// or that resolves to something else, fails here.
+function evFromSig(sig) {
+    const parts = sig.split('+');
+    let key = parts.pop();
+    if (key === '') key = '+';                       // "Ctrl++"
+    return {
+        key: key.length === 1 ? key.toLowerCase() : key, code: '',
+        ctrlKey: parts.includes('Ctrl'), metaKey: false,
+        shiftKey: parts.includes('Shift'), altKey: parts.includes('Alt'),
+    };
+}
+
+t('NO COMMAND LOSES ITS KEYBOARD: a chord a delta profile steals is relocated, never orphaned', () => {
+    const base = Object.fromEntries(_editorShortcutRowsPure('feedback').map(r => [r.id, r.key]));
+    for (const profile of ['logical', 'cableton']) {
+        const rows = _editorShortcutRowsPure(profile);
+        const orphans = rows.filter(r => base[r.id] && !r.key).map(r => r.id);
+        assert.deepStrictEqual(orphans, [], `${profile} strands: ${orphans.join(', ')}`);
+    }
+    // and every override in the table really resolves to the command it claims
+    for (const [profile, table] of Object.entries(EDITOR_PROFILE_OVERRIDES)) {
+        for (const [sig, id] of Object.entries(table)) {
+            assert.strictEqual(resolve(table, evFromSig(sig)), id, `${profile}: ${sig} should run ${id}`);
+        }
+    }
+});
+
+t('NO PROFILE BINDS A HOST-RESERVED CHORD (the Electron menu wins those)', () => {
+    // feedback-desktop's app menu registers roles reload / forceReload /
+    // toggleDevTools / quit / close. A menu accelerator is handled in the MAIN
+    // process before the renderer sees keydown, so preventDefault() cannot take
+    // it back: a chord bound here would reload (losing unsaved edits) instead of
+    // running the command. Ctrl+Shift+I is grandfathered — it is toggleIgnore on
+    // main in BOTH shipped profiles, so it is a pre-existing call, not ours.
+    const RESERVED = ['Ctrl+R', 'Ctrl+Shift+R', 'Ctrl+W', 'Ctrl+Q', 'F5'];
+    for (const [profile, table] of Object.entries(EDITOR_PROFILE_OVERRIDES)) {
+        const hits = Object.keys(table).filter(sig => RESERVED.includes(sig));
+        assert.deepStrictEqual(hits, [], `${profile} binds reserved ${hits.join(', ')}`);
+    }
 });
 
 // ── profile plumbing + the two new registry commands ─────────────────

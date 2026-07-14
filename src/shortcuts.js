@@ -46,7 +46,7 @@ export function _editorKeySigPure(e) {
 const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'save', label: 'Save project', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+S', eof: 'F2 / Ctrl+S' } },
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
-    { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', logical: '', eof: 'C' } },
+    { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', logical: 'Ctrl+Shift+C', eof: 'C' } },
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', logical: 'K', cableton: 'O', eof: '' } },
     { id: 'toggleMixer', label: 'Toggle Mixer panel', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
     { id: 'toggleLoopAB', label: 'Toggle loop A/B compare (recording ↔ guide)', group: 'Preview', status: 'ready', keys: { feedback: 'Alt+B', eof: 'Alt+B' } },
@@ -115,12 +115,12 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleTremolo', label: 'Toggle tremolo', group: 'Techniques', status: 'ready', keys: { feedback: 'Ctrl+Shift+O', eof: 'Ctrl+Shift+O' } },
     { id: 'togglePop', label: 'Toggle pop / pluck', group: 'Techniques', status: 'ready', keys: { feedback: 'O', cableton: 'Ctrl+Shift+P', eof: 'Ctrl+Shift+P' } },
     { id: 'toggleSlap', label: 'Toggle slap', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+O', eof: 'Shift+O' } },
-    { id: 'cyclePickDirection', label: 'Cycle pick direction', group: 'Techniques', status: 'ready', keys: { feedback: 'K', logical: '', eof: 'K' } },
+    { id: 'cyclePickDirection', label: 'Cycle pick direction', group: 'Techniques', status: 'ready', keys: { feedback: 'K', logical: 'Shift+K', eof: 'K' } },
     { id: 'fretUp', label: 'Increase selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl++', eof: 'Ctrl++' } },
     { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+-' } },
     { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
     { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', cableton: 'Ctrl+Shift+L', eof: 'Ctrl+L' } },
-    { id: 'duplicateSelection', label: 'Duplicate selection to next position', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+D', logical: 'Ctrl+R', eof: 'Ctrl+D' } },
+    { id: 'duplicateSelection', label: 'Duplicate selection to next position', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+D', eof: 'Ctrl+D' } },
     { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+R', logical: 'Q', cableton: 'Ctrl+U', eof: 'Shift+R' } },
     { id: 'addSection', label: 'Add section at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+M', logical: "Alt+'", eof: 'Shift+S' } },
     { id: 'addPhrase', label: 'Add phrase at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+P', eof: 'Shift+P' } },
@@ -294,9 +294,16 @@ export const EDITOR_PROFILE_OVERRIDES = Object.freeze({
         '.': 'nextBeat',                 // authentic: Forward
         'C': 'toggleLoopRegion',         // authentic: Cycle Mode
         "Alt+'": 'addSection',           // authentic: Create Marker (Option-Apostrophe)
-        'Ctrl+R': 'duplicateSelection',  // authentic: Repeat Regions/Events (Cmd-R)
         'Ctrl+,': 'snapDown',            // relocated (',' now rewinds)
         'Ctrl+.': 'snapUp',              // relocated ('.' now forwards)
+        'Shift+K': 'cyclePickDirection', // relocated ('K' now clicks)
+        'Ctrl+Shift+C': 'toggleGuideClap', // relocated ('C' now cycles)
+        // NOT BOUND: Logic's Repeat is Cmd-R, but the Electron host registers a
+        // {role:'reload'} menu item, whose CmdOrCtrl+R accelerator fires in the
+        // main process BEFORE the renderer keydown — preventDefault() cannot
+        // stop it, so binding it here would reload the editor and drop unsaved
+        // edits. duplicateSelection already answers Ctrl+D in every profile
+        // (input.js, outside the resolvers), so it stays reachable.
     }),
     cableton: Object.freeze({
         'Ctrl+U': 'resnapSelection',     // authentic: Quantize
