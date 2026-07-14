@@ -102,19 +102,20 @@ t('median robustness: one expressive off-onset does NOT flag the timekeeper bar 
     assert.ok(h.measures[0].driftFrac <= 0.05, `driftFrac stays low (got ${h.measures[0].driftFrac})`);
 });
 
-t('a genuinely wrong bar (every beat >12% off present onsets) reads RED', () => {
+t('a genuinely wrong bar (every beat past a fifth of a beat off) reads RED', () => {
     const beats = grid(120, 1, 4);
-    const h = _mapHealthPure(beats, onsetsAtBeats(beats, 0.18));
-    assert.strictEqual(h.measures[0].band, 'red', 'consistent 18% drift with corroborating onsets = error');
-    assert.ok(h.measures[0].driftFrac > 0.12);
+    const h = _mapHealthPure(beats, onsetsAtBeats(beats, 0.28));
+    assert.strictEqual(h.measures[0].band, 'red', 'consistent 28% drift with corroborating onsets = error');
+    assert.ok(h.measures[0].driftFrac > 0.20);
 });
 
-t('band thresholds: green <5%, amber 5–12%, red >12%', () => {
+t('band thresholds are conservative: green <5%, amber 5–20%, red >20% (red only when sure)', () => {
     const beats = grid(120, 1, 4);
     const band = (frac) => _mapHealthPure(beats, onsetsAtBeats(beats, frac)).measures[0].band;
     assert.strictEqual(band(0.03), 'green');
     assert.strictEqual(band(0.08), 'amber');
-    assert.strictEqual(band(0.15), 'red');
+    assert.strictEqual(band(0.15), 'amber', '15% is a look-at-it drift, not yet the red alarm');
+    assert.strictEqual(band(0.28), 'red');
 });
 
 t('degenerate input degrades to an empty grey result', () => {

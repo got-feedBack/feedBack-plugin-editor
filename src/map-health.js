@@ -15,8 +15,9 @@
  *
  * THREE states, and the third is non-negotiable:
  *   green  — the grid agrees with present onsets (driftFrac < greenMax).
- *   amber  — the grid is drifting from present onsets (greenMax..redMin).
- *   red    — the grid DISAGREES with present corroborating onsets (> redMin).
+ *   amber  — the grid is drifting from present onsets (greenMax..redMin ≈ 5–20%).
+ *   red    — the grid DISAGREES with present corroborating onsets (> redMin ≈ 20%);
+ *            deliberately conservative so a red bar is trustworthy (never cry wolf).
  *   grey   — NO onsets to judge (silence / sustained / held / pedaled): NEUTRAL,
  *            never red. Colouring an unmeasurable held bar red is crying wolf —
  *            the author learns to ignore red, which is fatal. Absence of evidence
@@ -65,7 +66,13 @@ function _bandFor(driftFrac, coverage, greenMax, redMin, minCoverage) {
 export function _mapHealthPure(beats, onsets, opts) {
     const o = opts || {};
     const greenMax = Number.isFinite(o.greenMax) ? o.greenMax : 0.05;
-    const redMin = Number.isFinite(o.redMin) ? o.redMin : 0.12;
+    // RED is a trust signal — a single false red teaches the author to ignore red,
+    // which is fatal. Until the colours are validated against real recordings
+    // on-device, keep red DELIBERATELY CONSERVATIVE: it fires only past a fifth of
+    // a beat, an unambiguous, audible disagreement. Everything 5–20% reads amber
+    // ("drifting — worth a look"), never the alarm. (Byron's review: nobody has
+    // confirmed a real red bar yet, so under-flag rather than cry wolf.)
+    const redMin = Number.isFinite(o.redMin) ? o.redMin : 0.20;
     const evidenceWin = Number.isFinite(o.evidenceWin) ? o.evidenceWin : 0.4;   // ± fraction of a beat
     const minCoverage = Number.isFinite(o.minCoverage) ? o.minCoverage : 0.34;
     const empty = { measures: [], overall: { band: 'grey', driftFrac: null, coverage: 0, measures: 0 } };
