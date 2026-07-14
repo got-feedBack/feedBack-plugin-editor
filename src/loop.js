@@ -382,18 +382,24 @@ export function editorToggleLoopRegion() { return _setLoopRegionEnabled(!S.loopE
 // placements; beyond it, snapTime falls back to grid snap.
 export const ONSET_SNAP_TOL = 0.07;
 
-export function snapTime(t) {
+// `force` bypasses the Snap ON/OFF toggle (the snap VALUE and mode still
+// apply): the toggle governs live interactive placement, but an EXPLICIT
+// quantize verb ("Resnap selection to grid") must snap regardless — with the
+// toggle off it silently returned every time unchanged, which read as the
+// command not existing at all. Default off: every interactive caller keeps
+// honouring the toggle exactly as before.
+export function snapTime(t, force = false) {
     // Onset-snap mode (charrette §1.6): when snapping is on and the target is
     // 'onset', prefer the nearest detected audio transient within ONSET_SNAP_TOL
     // — the bridge between musical time and audio-attack time for transcription
     // (no warp; just snap placement to the onset time). Falls back to grid snap
     // when no onset is near, or none is computed, so placement stays sensible.
-    if (S.snapEnabled && S.snapMode === 'onset') {
+    if ((S.snapEnabled || force) && S.snapMode === 'onset') {
         const onsets = (typeof _ensureOnsetsShifted === 'function') ? _ensureOnsetsShifted() : null;
         const near = _nearestOnsetTimePure(onsets, t, ONSET_SNAP_TOL);
         if (near !== null) return near;
     }
-    const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
+    const sv = _editorEffectiveSnapValuePure(S.snapEnabled || force, SNAP_VALUES[S.snapIdx]);
     if (!sv || S.beats.length < 2) return t;
     // Snap in the beat domain, then convert back (charrette §1.1):
     // snap = timeOf(round(beatOf(t)·subs)/subs). Sharing the converter makes the
@@ -404,6 +410,19 @@ export function snapTime(t) {
     // Swing rides the same converter as a beat-domain phase offset (D2):
     // at 50% (straight) this is bit-identical to plain rounding.
     return timeOf(S.beats, _swingQuantizeBeatPure(beatOf(S.beats, t), subs, S.swingPct));
+}
+
+// The first grid guideline strictly AFTER `t` at the current subdivision —
+// the minimum length an END-edge snap may leave a sustained note (the Logic
+// piano-roll rule: edges snap to the guidelines, but a sustained note never
+// collapses to zero; it keeps at least one subdivision). Same `force`
+// semantics as snapTime. Identity when snapping is unavailable.
+export function snapGuidelineAfter(t, force = false) {
+    const sv = _editorEffectiveSnapValuePure(S.snapEnabled || force, SNAP_VALUES[S.snapIdx]);
+    if (!sv || S.beats.length < 2) return t;
+    const subs = _editorSnapSubdivisionsPure(sv);
+    const q = Math.floor(beatOf(S.beats, t) * subs + 1e-6) + 1;
+    return timeOf(S.beats, q / subs);
 }
 
 /* @pure:group-time-delta:start */
