@@ -15,7 +15,7 @@ import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, MINIMAP_H, TIMELINE_TOP, TON
 import { hitNote, hitNoteEdge } from './hit-test.js';
 import { PIANO_LANE_H, _inKeyboardGutterPure, _rollMidiForNote, _rollPitchCtx, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, midiToY, noteToMidi, pianoLaneCount, yToMidi } from './keys.js';
 import { LC, laneToStr, lanes, strToLane } from './lanes.js';
-import { _downbeatTimes, _editorClampScrollX, _groupTimeDeltaPure, _loopLiveMode, _loopRegionForDragPure, _setBarSel, snapTime } from './loop.js';
+import { _downbeatTimes, _editorClampScrollX, _groupTimeDeltaPure, _loopLiveMode, _loopRegionForDragPure, _setBarSel, magneticSnapTime, snapTime } from './loop.js';
 import { _recState } from './midi-record.js';
 import { _resizeSustainsForDeltaPure, _resizeTargetIndicesPure, notes } from './notes.js';
 import { _rulerZonePure, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp } from './ruler.js';
@@ -381,8 +381,22 @@ function _onMouseMoveBody(e, x, y, L) {
     }
 
     if (S.drag.type === 'resize') {
-        const dt = (x - S.drag.startX) / S.zoom;
+        const dtRaw = (x - S.drag.startX) / S.zoom;
         const nn = notes();
+        // The grabbed note's END edge is the magnetic target (the piano-roll
+        // model: EDGES snap to the current-subdivision guidelines — magnetic,
+        // never locking); every other note in the resize group takes the SAME
+        // effective delta so the group's relative lengths hold, mirroring the
+        // move drag's primary-once rule. Alt = fully free, as for moves.
+        let dt = dtRaw;
+        if (!e.altKey) {
+            const pi = S.drag.indices.indexOf(S.drag.noteIdx);
+            const grabbed = nn[S.drag.noteIdx];
+            if (grabbed && pi >= 0) {
+                const end0 = grabbed.time + (S.drag.origSustains[pi] || 0);
+                dt = magneticSnapTime(end0 + dtRaw) - end0;
+            }
+        }
         const nextSustains = _resizeSustainsForDeltaPure(
             nn, S.drag.indices, S.drag.origSustains, dt);
         for (let i = 0; i < S.drag.indices.length; i++) {
@@ -402,12 +416,14 @@ function _onMouseMoveBody(e, x, y, L) {
         // delta, so the group stays rigid and small drags move all of it — not
         // just the notes that happened to sit near a grid line.
         //
-        // Grid lock/unlock, the way DAWs do it (verified: Ableton — hold Alt to
-        // temporarily disable snap; Logic — Ctrl-Shift for off-grid tick steps):
-        // by default the group is LOCKED to the grid; hold Alt while dragging to
-        // move it FREE of the grid. Only the time grid is bypassed — vertical
-        // stays semitone/string-quantized (no between-pitch notes), like every DAW.
-        const snapFn = e.altKey ? (t => t) : snapTime;
+        // MAGNETIC, not locking (the design call, matching the Logic/Ableton
+        // piano-roll feel): the grabbed note's target sticks to a guideline
+        // while inside a small zoom-aware magnet radius, and pulling PAST the
+        // magnet releases it — minor off-grid adjustments need no modifier.
+        // Alt still means fully free from the first pixel. Only the time grid
+        // is bypassed either way — vertical stays semitone/string-quantized
+        // (no between-pitch notes), like every DAW.
+        const snapFn = e.altKey ? (t => t) : magneticSnapTime;
         const snappedDt = _groupTimeDeltaPure(
             S.drag.origTimes, S.drag.primaryOrigTime, dtRaw, snapFn);
 

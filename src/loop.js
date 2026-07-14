@@ -425,6 +425,49 @@ export function snapGuidelineAfter(t, force = false) {
     return timeOf(S.beats, q / subs);
 }
 
+// Magnetic drag snap (the DAW piano-roll feel — the design call: "magnetic,
+// not locking"): a guideline ATTRACTS the dragged edge inside a small
+// SCREEN-SPACE radius but never locks it — keep pulling past the magnet and
+// the edge follows the pointer exactly, so minor off-grid adjustments need
+// no modifier (Alt still gives fully-free from the first pixel). The radius
+// is in PIXELS, so it is zoom-aware like Logic's Smart snap: zoomed in, the
+// magnet spans less time and fine placement gets finer for free; zoomed way
+// out, guidelines sit closer together than the magnet and dragging is
+// effectively grid-stepped — exactly when free placement is unusable anyway.
+// DRAG paths only: click placement and the explicit resnap verb still snap
+// fully (a click has no "pull past" gesture to express intent with).
+export const MAGNET_PX = 8;
+export const MAGNET_GAP_FRAC = 0.35;
+export function magneticSnapTime(t) {
+    const snapped = snapTime(t);
+    if (snapped === t) return t;                       // snap off / no grid — free
+    // An ONSET hit passes through untouched: onset snap is ALREADY a magnet
+    // (ONSET_SNAP_TOL is its radius) and onsets are sparse, so it cannot degrade
+    // into locked stepping the way a dense grid can. Re-gating it on the GRID's
+    // radius would silently kill onset snap on drags at fine subdivisions — the
+    // gap cap below shrinks under the onset tolerance (at 1/16 it is ~11 ms vs
+    // the 70 ms tolerance), so the attack you aimed at would be released.
+    if (S.snapEnabled && S.snapMode === 'onset') {
+        const onsets = (typeof _ensureOnsetsShifted === 'function') ? _ensureOnsetsShifted() : null;
+        if (_nearestOnsetTimePure(onsets, t, ONSET_SNAP_TOL) !== null) return snapped;
+    }
+    // The grid magnet is ALSO capped at a fraction of the LOCAL guideline gap, so a
+    // free band always survives between two magnets. Without the cap, a dense
+    // grid (fine subdivision and/or low zoom) puts guidelines closer together
+    // than the magnet's diameter — every pointer position is inside SOME
+    // magnet and dragging degrades to locked stepping, exactly what
+    // "magnetic, not locking" forbids. (Neighbouring lines are taken from the
+    // straight subdivision; under swing the gap is approximate, which only
+    // perturbs the radius, never the snap target itself.)
+    const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
+    if (!sv || S.beats.length < 2) return t;
+    const subs = _editorSnapSubdivisionsPure(sv);
+    const q = Math.floor(beatOf(S.beats, t) * subs);
+    const gap = Math.max(1e-9, timeOf(S.beats, (q + 1) / subs) - timeOf(S.beats, q / subs));
+    const radius = Math.min(MAGNET_PX / Math.max(1e-9, S.zoom), gap * MAGNET_GAP_FRAC);
+    return Math.abs(snapped - t) <= radius ? snapped : t;
+}
+
 /* @pure:group-time-delta:start */
 // The time delta to apply to a WHOLE dragged selection. Snapping each note's
 // absolute time independently (`snapFn(origTime + dtRaw)` per note) quantises
