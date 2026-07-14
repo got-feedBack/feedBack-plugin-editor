@@ -614,8 +614,15 @@ export function _transportBarTick(force) {
             const pill = S.audioBuffer ? _mapHealthPillPure(_mapHealthResults()) : null;
             const txt = pill ? `${pill.pct}%` : '—';
             if (gridEl.textContent !== txt) gridEl.textContent = txt;
-            const color = pill ? MAP_HEALTH_COLORS[pill.band] : '';
-            if (gridEl.style.color !== color) gridEl.style.color = color;
+            // Guard the colour write on the BAND, not on style.color: the DOM
+            // normalizes an assigned '#ef4444' back to 'rgb(239, 68, 68)', so a
+            // hex compare NEVER matches and would re-write the inline style on
+            // every tick — exactly the per-frame churn the _set() guards avoid.
+            const band = pill ? pill.band : '';
+            if (gridEl.dataset.band !== band) {
+                gridEl.dataset.band = band;
+                gridEl.style.color = band ? MAP_HEALTH_COLORS[band] : '';
+            }
         }
     }
 
