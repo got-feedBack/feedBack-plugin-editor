@@ -142,7 +142,18 @@ export function _editorCycleViewMode() {
         setStatus('Keys tracks always use the piano roll');
         return true;
     }
-    window.editorSetViewMode(viewFor(arr) === 'piano' ? 'string' : 'piano');
+    // String → Piano roll → Tab → String. The Tab lens sits ON TOP of the
+    // per-part view pref, so leaving it restores whichever view the pref says.
+    if (S.tabViewMode) {
+        if (typeof window.editorToggleTabView === 'function') window.editorToggleTabView(false);
+        window.editorSetViewMode('string');
+        return true;
+    }
+    if (viewFor(arr) === 'piano') {
+        if (typeof window.editorToggleTabView === 'function') window.editorToggleTabView(true);
+        return true;
+    }
+    window.editorSetViewMode('piano');
     return true;
 }
 

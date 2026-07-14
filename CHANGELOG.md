@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Tab view — live engraved tablature of the track you're editing.** The
+  view cycle gains a third stop (String view → Piano roll → **Tab**, also in
+  the View menu): the timeline becomes real engraved tab of the CURRENT
+  chart, re-drawn as you edit — no saving first, no other plugin installed,
+  unlike the read-only preview window (which stays, for proofreading what's
+  actually on disk). **Click any beat in the tab to select those notes** and
+  move the playhead there, then edit in String view or the roll as usual —
+  the score keeps up. Quantization is honest about its v1 limits: positions
+  engrave on a 16th grid against your tempo map (variable tempo included),
+  durations read from the spacing between notes, and anything outside the
+  barline span is counted in the status rather than silently dropped.
+  Fretted tracks only for now; standard notation is the follow-up.
+
 ### Fixed
 
 - **Inspector technique edits are undoable now.** Toggling a technique flag

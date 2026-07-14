@@ -147,6 +147,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'togglePartsView' },
         { cmd: 'toggleKeyHighlight' },
         { cmd: 'toggleFollow' },
+        { cmd: 'toggleTabView' },
         { cmd: 'showTabPreview' },
         { sep: true },
         { label: 'Theme: Dark → Medium → Light', fn: 'editorCycleTheme', v3Only: true },

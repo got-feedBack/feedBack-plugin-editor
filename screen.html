@@ -205,6 +205,10 @@
                 <button id="editor-sweep-all" class="px-2 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Accept all remaining (A)">Accept all</button>
                 <button id="editor-sweep-done" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Close (Esc)">&#10005;</button>
             </div>
+            <!-- Live Tab view mount (view-modality): the engraved score that
+                 OWNS the timeline area while S.tabViewMode is on. alphaTab
+                 renders into it; the draw pass shows/hides it. -->
+            <div id="editor-tabview-mount" class="hidden absolute inset-0 z-20 overflow-auto bg-white"></div>
             <!-- Playability-lint popover (P9) — anchored bottom-right of the timeline. -->
             <div id="editor-lint-pop" role="dialog" aria-label="Playability notes" class="hidden absolute right-3 bottom-2 z-30 editor-lint-pop"></div>
             <!-- Entry tour card (workspace-shell C3) — a non-modal, task-based

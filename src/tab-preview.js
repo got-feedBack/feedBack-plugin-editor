@@ -69,8 +69,12 @@ export { _tabPreviewKeyPolicyPure, _tabPreviewUrlPure };
 const _TAB_PREVIEW_AT_VERSION = '1.8.2';
 const _TAB_PREVIEW_CDN = 'https://cdn.jsdelivr.net/npm/@coderline/alphatab@'
     + _TAB_PREVIEW_AT_VERSION + '/dist';
+// Exported for the live Tab view — one pinned font source for both surfaces.
+export const TAB_RENDERER_FONT_DIR = _TAB_PREVIEW_CDN + '/font/';
 let _tabPreviewLoadPromise = null;
-function _tabPreviewLoadScript() {
+// Exported: the live Tab VIEW (tab-view-live.js) shares this exact loader —
+// one pinned version, one memoized script tag, whichever surface loads first.
+export function _tabPreviewLoadScript() {
     if (window.alphaTab) return Promise.resolve();
     if (_tabPreviewLoadPromise) return _tabPreviewLoadPromise;
     _tabPreviewLoadPromise = new Promise((resolve, reject) => {

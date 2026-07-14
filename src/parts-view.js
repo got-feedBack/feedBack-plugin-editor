@@ -280,6 +280,7 @@ export function _editorTogglePartsView() {
         S.tempoMapMode = false;
         S.tempoSel = -1;
         S.drumEditMode = false;
+        S.tabViewMode = false;
         S.drumSel = new Set();
         hideContextMenu();
         host.hideAddNote();

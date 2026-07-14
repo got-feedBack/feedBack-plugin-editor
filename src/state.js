@@ -104,6 +104,9 @@ export const S = {
     // snapped to downbeat boundaries. `null` = no bar range selected.
     barSel: null,
     loopEnabled: false,
+    // Live Tab view (view-modality): an orthogonal lens flag like
+    // partsViewMode — mode toggles clear it, the draw pass enforces it.
+    tabViewMode: false,
     // True when this editor session was opened from the 3D highway's
     // "Edit region" action. Used to make the preview button read as a
     // return trip instead of a fresh action.

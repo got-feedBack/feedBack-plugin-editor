@@ -26,6 +26,7 @@ import { _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofC
 import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure } from './snap.js';
 import { S } from './state.js';
 import { _editorShowTabPreview, _tabPreviewKeyPolicyPure } from './tab-preview.js';
+import { editorToggleTabView } from './tab-view-live.js';
 import { editorExportGp5 } from './gp5-export.js';
 import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSelection, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup, _tempoSelRangePure } from './tempo.js';
 import { _tourNoteAction } from './tour.js';
@@ -827,6 +828,7 @@ export function _editorRunEofCommand(cmd) {
     case 'toggleDrumDensity': return _editorToggleDrumDensity();
     case 'showTabPreview': return _editorShowTabPreview();
     case 'cycleViewMode': return host.editorCycleViewMode();
+    case 'toggleTabView': return editorToggleTabView();
     case 'movePartEarlier': return host.editorMovePart(-1);
     case 'movePartLater': return host.editorMovePart(+1);
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
