@@ -26,8 +26,8 @@ import {
 } from './tempo-segment.js';
 
 // ── proposal state ───────────────────────────────────────────────────
-let _zones = null;   // { segments, sel, gen, session } | null
-let _hooks = { confirm: null, single: null };
+let _zones = null;   // { segments, sel, gen, session, octave } | null
+let _hooks = { confirm: null, single: null, octave: null };
 
 export function _zonesActive() {
     if (!_zones) return false;
@@ -44,9 +44,12 @@ export function _zonesActive() {
 export function _zonesGet() { return _zonesActive() ? _zones.segments : null; }
 export function _zonesSelected() { return _zonesActive() ? _zones.sel : -1; }
 
-export function _zonesShow(segments) {
+export function _zonesShow(segments, octave = null) {
     if (!Array.isArray(segments) || !segments.length) return;
-    _zones = { segments, sel: -1, gen: editGen, session: S.sessionId };
+    // `octave` = 'double' | 'half' | null: Scan detected the whole grid an
+    // octave off the recording's pulse — the bar then offers the one-click
+    // half/double-time fix (a per-bar re-fit can never repair an octave).
+    _zones = { segments, sel: -1, gen: editGen, session: S.sessionId, octave };
     _zonesRenderBar();
 }
 
@@ -226,6 +229,17 @@ export function _zonesRenderBar() {
         const b = document.getElementById(id);
         if (b) b.disabled = _zones.sel < 0;
     }
+    // The octave rescue only shows when Scan actually detected the mismatch.
+    const oct = document.getElementById('editor-segment-octave');
+    if (oct) {
+        oct.classList.toggle('hidden', !_zones.octave);
+        if (_zones.octave) {
+            oct.textContent = _zones.octave === 'double' ? 'Double grid tempo' : 'Halve grid tempo';
+            oct.title = _zones.octave === 'double'
+                ? 'The recording pulses at about TWICE your grid — each grid bar spans two real bars. One click doubles the grid tempo (undoable; audio and notes stay put).'
+                : 'The recording pulses at about HALF your grid — your grid runs double-time. One click halves the grid tempo (undoable; audio and notes stay put).';
+        }
+    }
 }
 
 export function initTempoZones(hooks) {
@@ -237,6 +251,7 @@ export function initTempoZones(hooks) {
             if (!t || !_zonesActive()) return;
             if (t.id === 'editor-segment-apply' && _hooks.confirm) _hooks.confirm();
             else if (t.id === 'editor-segment-single' && _hooks.single) _hooks.single();
+            else if (t.id === 'editor-segment-octave' && _hooks.octave && _zones.octave) _hooks.octave(_zones.octave);
             else if (t.id === 'editor-segment-split') _zonesSplitSelectedAt(S.cursorTime || 0);
             else if (t.id === 'editor-segment-merge') _zonesMergeSelected();
             else if (t.id === 'editor-segment-kind') _zonesCycleSelected();

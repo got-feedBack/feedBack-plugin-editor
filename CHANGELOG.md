@@ -119,6 +119,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Under the hood it locates the pulse by autocorrelating the detected onsets with
   an octave guard + tempo prior (so it doesn't read double-time or half-time),
   and it gets sharper once the banded onset detection lands.
+- **Scan now catches a grid running at double or half the real tempo.**
+  Drum-heavy songs are routinely charted at exactly twice or half the real
+  pulse (double-kick reads fast, half-time backbeats read slow) — and once
+  that happens, no amount of per-bar fixing can repair it. When Scan's
+  detected zones sit at about 2× or ½ your grid's tempo, the confirm bar now
+  shows a one-click **Double grid tempo** / **Halve grid tempo** rescue:
+  barlines merge or split onto the real pulse while the audio and every note
+  stay exactly where they are. One undoable step; ordinary drift never
+  triggers it (the check is deliberately tight), and after the fix Scan can
+  be run again to confirm the zones agree.
 - **Apply a rough map from the detected tempo zones.** After Scan shows the
   zones, **Tempo/Grid ▸ Apply rough map** turns them into an actual beat grid —
   a barline grid at each zone's tempo, with its downbeat phase seeded from the
