@@ -73,6 +73,26 @@ _DRUM_TAB_ABSENT = object()
 # `dict.get(...) or []` would silently disable both behaviours.
 _FIELD_ABSENT = object()
 
+
+def _parse_audio_shift(data: dict):
+    """Validated `audio_shift` (seconds) from a request body.
+
+    The editor's "Shift Audio…" slides the RECORDING against a fixed chart;
+    the frontend ships the cumulative shift on every save so it can survive a
+    reopen. Returns `_FIELD_ABSENT` when the key wasn't sent (older client —
+    leave whatever is persisted alone), a rounded float otherwise. A
+    non-numeric value coerces to 0.0 rather than erroring: the field is
+    supplementary alignment state, and failing the whole save over it would
+    cost the user their actual edits.
+    """
+    if "audio_shift" not in data:
+        return _FIELD_ABSENT
+    try:
+        return round(float(data.get("audio_shift") or 0), 6)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 _sessions = None
 
 # Authorable note technique fields, in a fixed order. The Note dataclass
@@ -3652,6 +3672,17 @@ def setup(app, context):
                 manifest_offset = 0.0
             if manifest_offset:
                 result["offset"] = manifest_offset
+            # Audio placement shift ("Shift Audio…"): saved as a manifest
+            # extension key; restored here so a reopened song keeps the
+            # recording-vs-chart alignment the charter set (the frontend
+            # reads `data.audio_shift` into S.audioShift on load). Same
+            # defensive coercion as `offset` above.
+            try:
+                _manifest_shift = float(loaded.manifest.get("audio_shift", 0) or 0)
+            except (TypeError, ValueError):
+                _manifest_shift = 0.0
+            if _manifest_shift:
+                result["audio_shift"] = _manifest_shift
             # Surface the parsed drum_tab (if any) so the editor frontend can
             # show a "drums present" indicator and the +Drums modal can offer
             # Replace vs Cancel rather than silently overwriting. getattr
@@ -3805,6 +3836,11 @@ def setup(app, context):
         tones = data.get("tones", _FIELD_ABSENT)
         handshapes = data.get("handshapes", _FIELD_ABSENT)
         anchors_user = data.get("anchors_user", _FIELD_ABSENT)
+        # Audio placement shift ("Shift Audio…") — absent means "older client,
+        # leave the persisted value alone"; zero means "explicitly unshifted"
+        # and REMOVES the manifest key (a shift slid back to 0 must not leave
+        # residue in the pack).
+        audio_shift = _parse_audio_shift(data)
         # Merge session metadata (album/year captured at archive load
         # time) with anything the frontend sent. `_buildSaveBody` ships
         # `{title, artist}` on every save path; this merge keeps the
@@ -4217,6 +4253,17 @@ def setup(app, context):
                     except (TypeError, ValueError):
                         pass
 
+            # Audio placement shift — persisted as a manifest extension key
+            # (feedpak §4 ignored-but-preserved) so a reopened song keeps the
+            # alignment the charter set; the frontend restores it from
+            # `data.audio_shift` on load. Nonzero writes, zero removes,
+            # absent (older client) leaves the existing key untouched.
+            if audio_shift is not _FIELD_ABSENT:
+                if audio_shift:
+                    manifest["audio_shift"] = audio_shift
+                else:
+                    manifest.pop("audio_shift", None)
+
             _write_song_timeline_sidecar(source_dir, manifest, beats, sections)
 
             # Write manifest.yaml back into the source dir
@@ -4301,6 +4348,11 @@ def setup(app, context):
         # `year` would be silently dropped when packaging the .sloppak.
         meta = dict(session.get("metadata") or {})
         meta.update(data.get("metadata") or {})
+        # Audio placement shift rides `meta` into _write_sloppak_pak's
+        # manifest (extension key). Absent/zero → no key.
+        _req_shift = _parse_audio_shift(data)
+        if _req_shift is not _FIELD_ABSENT and _req_shift:
+            meta["audio_shift"] = _req_shift
 
         audio_file = session.get("audio_file") or ""
         if not audio_file or not Path(audio_file).exists():
@@ -7009,6 +7061,11 @@ def setup(app, context):
         # silently drop album/year fields the user typed during import.
         meta = dict(session.get("metadata") or {})
         meta.update(data.get("metadata") or {})
+        # Audio placement shift rides `meta` into _write_sloppak_pak's
+        # manifest (extension key). Absent/zero → no key.
+        _req_shift = _parse_audio_shift(data)
+        if _req_shift is not _FIELD_ABSENT and _req_shift:
+            meta["audio_shift"] = _req_shift
         audio_url = data.get("audio_url", "")
         art_path = data.get("art_path", "")
         preview_path = data.get("preview_path", "")
@@ -7360,6 +7417,16 @@ def setup(app, context):
             # this marker existed can never be distinguished retroactively.
             manifest["origin"] = {"tool": "feedback-editor",
                                   "version": _plugin_version()}
+
+            # Audio placement shift ("Shift Audio…") — extension key (feedpak
+            # §4 ignored-but-preserved): the recording slid vs a fixed chart.
+            # Written only when nonzero so unshifted packs stay byte-identical.
+            try:
+                _ashift = float(meta.get("audio_shift", 0) or 0)
+            except (TypeError, ValueError):
+                _ashift = 0.0
+            if _ashift:
+                manifest["audio_shift"] = round(_ashift, 6)
 
             # Spec-complete optional metadata (feedpak §5.1) — written only when
             # present so packs without them stay minimal. String scalars,
