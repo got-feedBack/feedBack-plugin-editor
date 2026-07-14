@@ -521,11 +521,24 @@ export function _clipboardPastePlanPure(clip, atTime, laneCount) {
 
 let _noteClipboard = null;
 
+// The registry made Cut/Paste menu- and palette-invokable, which BYPASSES
+// onKeyDown's mode gates — so every clipboard WRITE re-checks them here:
+// no mutation while MIDI-recording, in the Tracks overview, or in the
+// read-only fretted roll (delete and add are pitch-writes there, same as
+// the right-click delete guard). Plain Copy is a read and stays free.
+function _clipboardWriteBlocked() {
+    if (_recState === 'recording') { setStatus('Stop recording first.'); return true; }
+    if (S.partsViewMode) { setStatus('Leave the Tracks overview to edit notes.'); return true; }
+    if (_rollReadOnly()) { _rollLockNotice(); return true; }
+    return false;
+}
+
 // Ctrl+C / Ctrl+X. Cut is copy + the existing undoable delete — the clipboard
 // itself is deliberately NOT part of history (undoing a cut restores the
 // notes but keeps the clipboard, exactly like every text editor).
 export function _editorCopySelection(cutting = false) {
     if (S.drumEditMode || S.tempoMapMode) return false;
+    if (cutting && _clipboardWriteBlocked()) return true;
     const idxs = _editorCurrentNoteIndices();
     if (!idxs.length) { setStatus(`Select notes to ${cutting ? 'cut' : 'copy'} first.`); return true; }
     const nn = notes();
@@ -549,12 +562,12 @@ export function _editorCopySelection(cutting = false) {
 // refused like every other pitch write.
 export function _editorPasteAtPlayhead() {
     if (S.drumEditMode || S.tempoMapMode) return false;
+    if (_clipboardWriteBlocked()) return true;
     if (!_noteClipboard) { setStatus('Nothing to paste — copy or cut notes first.'); return true; }
     if (_noteClipboard.keys !== isKeysArr()) {
         setStatus('Can\'t paste between keys and fretted tracks — the note shapes don\'t translate.');
         return true;
     }
-    if (_noteClipboard.arrIndex !== S.currentArr && _rollReadOnly()) { _rollLockNotice(); return true; }
     const arr = S.arrangements[S.currentArr];
     if (!arr) return false;
     const nn = notes();

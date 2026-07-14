@@ -125,6 +125,37 @@ t('mode and shape guards: drum/tempo modes refuse; keys↔fretted refuses', () =
     S.tempoMapMode = true;
     assert.strictEqual(_editorPasteAtPlayhead(), false, 'tempo map → not handled');
     S.tempoMapMode = false;
+    // The keys↔fretted refusal, actually exercised: copy from the fretted
+    // track, then try to paste onto a keys-named arrangement — refused
+    // (handled, but nothing added), and the reverse direction refuses too.
+    S.arrangements.push({ name: 'Keys', tuning: [], capo: 0, notes: [] });
+    S.currentArr = 1;
+    S.cursorTime = 10;
+    assert.strictEqual(_editorPasteAtPlayhead(), true, 'handled (status message)');
+    assert.strictEqual(S.arrangements[1].notes.length, 0, 'nothing pasted onto keys');
+    S.arrangements[1].notes = [N(1, 0, 60)];
+    S.sel = new Set([0]);
+    _editorCopySelection(false);                     // keys-shaped clipboard
+    S.currentArr = 0;
+    assert.strictEqual(_editorPasteAtPlayhead(), true);
+    assert.strictEqual(S.arrangements[0].notes.length, 1, 'nothing pasted onto fretted');
+});
+
+t('registry-path write guards: Tracks overview blocks cut and paste (copy stays free)', () => {
+    // Menu/palette dispatch bypasses onKeyDown's gates — the commands
+    // themselves must refuse writes in the read-only Tracks overview.
+    seed([N(1, 0, 3), N(2, 1, 5)]);
+    _editorCopySelection(false);
+    S.partsViewMode = true;
+    assert.strictEqual(_editorPasteAtPlayhead(), true, 'handled (refusal status)');
+    assert.strictEqual(S.arrangements[0].notes.length, 2, 'paste blocked in the overview');
+    assert.strictEqual(_editorCopySelection(true), true);
+    assert.strictEqual(S.arrangements[0].notes.length, 2, 'cut blocked in the overview');
+    assert.strictEqual(_editorCopySelection(false), true, 'plain copy is a read — allowed');
+    S.partsViewMode = false;
+    S.cursorTime = 10;
+    assert.strictEqual(_editorPasteAtPlayhead(), true);
+    assert.strictEqual(S.arrangements[0].notes.length, 4, 'leaving the overview unblocks');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
