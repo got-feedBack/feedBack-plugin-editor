@@ -47,7 +47,7 @@ import { S } from './state.js';
 import { host } from './host.js';
 import { setStatus } from './ui.js';
 import {
-    _editorToggleFollow, editorAuditionRate, editorCountInBars, editorFollowEnabled, editorSetCountIn,
+    _editorToggleFollow, _trainerActive, editorAuditionRate, editorCountInBars, editorFollowEnabled, editorSetCountIn,
     stopPlayback,
 } from './audio.js';
 import { PIANO_NOTE_NAMES, SCALE_LABELS } from './theory.js';
@@ -332,6 +332,7 @@ function buildBar() {
         + tbtn('editor-tp-click', 'Click', 'Metronome: click every beat, accented on downbeats', ' aria-pressed="false"')
         + tbtn('editor-tp-clap', 'Clap', 'Guide claps: tick each charted note during playback (C)', ' aria-pressed="false"')
         + tbtn('editor-tp-ab', 'A/B', 'Loop A/B compare — alternates recording and guide per pass', ' aria-pressed="false"')
+        + tbtn('editor-tp-trainer', 'Step↑', 'Audition trainer: loop the selection slowed and step the speed up toward 100% every few passes (needs a bar range + Loop)', ' aria-pressed="false"')
         + tbtn('editor-tp-count', 'Count', 'Count-in: arm/disarm the pre-roll clicks (arming restores the last bar count)', ' aria-pressed="false"')
         + `<select id="editor-tp-snap" class="editor-transport-snap" title="Snap grid"></select>`
         + `<select id="editor-audition-speed" class="editor-transport-snap" aria-label="Audition speed"`
@@ -463,6 +464,7 @@ function wireBar(bar) {
     on('editor-tp-click', () => { if (typeof window.editorToggleMetronome === 'function') window.editorToggleMetronome(); _transportBarTick(true); });
     on('editor-tp-clap', () => { if (typeof window.editorToggleGuideClap === 'function') window.editorToggleGuideClap(); _transportBarTick(true); });
     on('editor-tp-ab', () => { if (typeof window.editorToggleLoopAB === 'function') window.editorToggleLoopAB(); _transportBarTick(true); });
+    on('editor-tp-trainer', () => { if (typeof window.editorToggleAuditionTrainer === 'function') window.editorToggleAuditionTrainer(); _transportBarTick(true); });
     on('editor-tp-count', () => {
         const cur = editorCountInBars();
         let last = null;
@@ -601,6 +603,9 @@ export function _transportBarTick(force) {
     press('editor-tp-follow', editorFollowEnabled());
     press('editor-tp-parts', !!S.partsViewMode);
     press('editor-tp-count', bars > 0);
+    // The trainer rides the loop: it reads OFF the moment the loop does, and a
+    // bar rebuild (audio arriving/leaving) re-seats the lamp from the state.
+    press('editor-tp-trainer', _trainerActive());
     const mirror = (id, srcId) => {
         const el = document.getElementById(id), src = document.getElementById(srcId);
         if (!el || !src) return;

@@ -20,7 +20,7 @@
 // ════════════════════════════════════════════════════════════════════
 import {
     _abApplyRefGain, _abDisarm, _abOn, _audioTimelineDurationPure,
-    _ensureOnsetsShifted, _nearestOnsetTimePure, _refreshLoopABBtn,
+    _ensureOnsetsShifted, _nearestOnsetTimePure, _refreshLoopABBtn, _trainerDisarm,
 } from './audio.js';
 import { beatOf, timeOf } from './beats.js';
 import { DPR, canvas } from './canvas.js';
@@ -342,8 +342,10 @@ export function _updateLoopRegionControls() {
     const region = _selectedLoopRegion();
     if (!region && S.loopEnabled) S.loopEnabled = false;
     // A/B rides the loop region — clearing the region disarms it (and
-    // restores the reference gain via the guarded apply).
+    // restores the reference gain via the guarded apply). The audition trainer
+    // rides the same region: it goes with it.
     if (!region && _abOn) _abDisarm();
+    if (!region) _trainerDisarm();
     _refreshLoopABBtn();
     const loopBtn = document.getElementById('editor-loop-region-btn');
     if (loopBtn) {

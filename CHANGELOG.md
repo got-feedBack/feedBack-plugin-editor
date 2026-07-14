@@ -164,6 +164,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference ride a pitch-preserving path, kept in lock-step with the transport
   clock. (Slow-only, ≤100% — this is a practice slow-downer, not a varispeed; the
   recording itself is never stretched or warped.)
+- **Audition trainer — loop a passage and let the speed climb.** A new **Step↑**
+  toggle in the transport bar turns the loop + audition speed into a real
+  practice trainer: select a bar range, turn Loop on, arm the trainer, and it
+  plays the passage slowed — then **steps the speed up** (50% → 75% → 100%)
+  after every three completed passes, telling you where you are ("Trainer: pass
+  2/3 at 75%"). Reaching full speed disarms it with due congratulations. If you
+  have a **count-in** armed, the pre-roll clicks precede *every* pass at the
+  slowed tempo, so your hands are ready when the loop comes around. While
+  slowed, the **metronome subdivides finer** — 8ths at 75%, 16ths at 50% — and
+  the click stays **locked to the grid** at every speed: you hear your
+  micro-timing against the intended pulse, never against a wobbling click.
 - **Playability lint now catches finger conflicts.** Once notes carry fret-hand
   fingers (from Suggest Fingers, or by hand), the advisory lint flags a chord
   that asks **one finger to hold two different frets at the same time** — a shape

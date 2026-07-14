@@ -46,6 +46,7 @@ import {
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
     editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
+    editorToggleAuditionTrainer,
 } from './audio.js';
 import { _mixerClapState, _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import {
@@ -539,6 +540,7 @@ window.editorSaveAs = editorSaveAs;
 window.editorSetAudioShift = editorSetAudioShift;
 window.editorNudgeAudioShift = editorNudgeAudioShift;
 window.editorSetAuditionRate = editorSetAuditionRate;
+window.editorToggleAuditionTrainer = editorToggleAuditionTrainer;
 // Slide the recording in time to line it up with the chart (audio moves, chart
 // stays). Prompt is prefilled with the current shift in seconds; +ve = later.
 window.editorPromptAudioShift = async () => {
