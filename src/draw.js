@@ -501,7 +501,9 @@ export function drawNotes(w) {
         ctx.font = 'bold 13px monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(gf), cx + Math.min(cw, MIN_NOTE_W) / 2, cy + ch / 2);
+        // Centred in the cell's FIRST MIN_NOTE_W (the cell is never narrower than
+        // that), so the digit stays put as the box grows with the note value.
+        ctx.fillText(String(gf), cx + MIN_NOTE_W / 2, cy + ch / 2);
         ctx.restore();
     }
 }

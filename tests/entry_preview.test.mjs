@@ -29,6 +29,10 @@ function t(name, fn) {
     try { fn(); pass++; console.log('  ok   ' + name); }
     catch (e) { fail++; console.error('  FAIL ' + name + ': ' + e.message); }
 }
+async function ta(name, fn) {
+    try { await fn(); pass++; console.log('  ok   ' + name); }
+    catch (e) { fail++; console.error('  FAIL ' + name + ': ' + e.message); }
+}
 
 // ── _caretCellWidthPure: the cell earns its note SHAPE ────────────────────────
 t('cell width is the note value (step × zoom) when that beats the minimum', () => {
@@ -57,13 +61,21 @@ t('grows and shrinks monotonically with the snap step (longer note → wider cel
 });
 
 // ── toggle: persisted view pref, default ON ───────────────────────────────────
-t('defaults ON when nothing is stored', () => {
-    _store = {};
-    // Re-reading a fresh module cache isn't possible here, but with an empty store
-    // the getter's cache may already be seeded ON from import — assert the contract
-    // via an explicit force to a known state first.
-    editorToggleEntryPreview(true);
-    assert.strictEqual(_editorEntryPreviewEnabled(), true);
+// The getter caches on first read, so the localStorage-backed DEFAULT can only be
+// exercised on a module instance that has not read it yet. A distinct import
+// specifier gives us a fresh one (input.js has no import-time side effects).
+async function freshEnabled(store) {
+    _store = store;
+    const m = await import(`../src/input.js?probe=${Math.random()}`);
+    return m._editorEntryPreviewEnabled();
+}
+
+await ta('defaults ON when nothing is stored', async () => {
+    assert.strictEqual(await freshEnabled({}), true);
+});
+
+await ta('reads a stored OFF back as off', async () => {
+    assert.strictEqual(await freshEnabled({ editorEntryPreview: '0' }), false);
 });
 
 t('toggling flips the flag and persists it to localStorage', () => {
