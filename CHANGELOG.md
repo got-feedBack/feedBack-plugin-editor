@@ -73,26 +73,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Scan for tempo zones (preview).** A new **Tempo/Grid ▸ Scan for tempo zones**
-  action reads the recording and reports the handful of *tempo intents* it finds
-  — e.g. "3 tempo zones detected: 120 bpm · 140 bpm · rit 140→90". It's the first
-  step of segment-first mapping: instead of guessing one tempo for the whole song
-  or laying a shaky barline on every beat, it proposes a few constant/ramp zones
-  the way a musician would describe the arrangement. This preview only *reports*
-  what it finds — turning the zones into a grid (Confirm & Apply) is coming next.
-  Under the hood it locates the pulse by autocorrelating the detected onsets with
-  an octave guard + tempo prior (so it doesn't read double-time or half-time),
-  and it gets sharper once the banded onset detection lands.
+- **Scan for tempo zones — now with a confirm bar you can adjust.** **Tempo/Grid
+  ▸ Scan for tempo zones…** reads the recording, finds the handful of *tempo
+  intents* it plays — e.g. "3 tempo zones: 120 bpm · 140 bpm · rit 140→90" — and
+  paints them as colored bands on the Tempo Map timeline with a confirm bar
+  docked above. Before anything commits you can **drag a zone boundary** onto
+  the real change (both neighbours keep a minimum span), **split** the selected
+  zone at the playhead, **merge** it with the next (the join is described by its
+  own endpoints — a real rit never flattens into a lie), cycle its **kind**
+  (steady / ramp / unmapped — an unmapped zone lays no barlines), or **type its
+  BPM**. A zone whose pulse read as shaky is marked with a "?" so you know where
+  to look. Esc dismisses the whole proposal untouched; nothing changes until you
+  confirm. Under the hood the pulse is located by autocorrelating the detected
+  onsets with an octave guard + tempo prior (so it doesn't read double-time or
+  half-time).
+- **Confirm & refine — the zones become a grid snapped to the recording.** The
+  confirm bar's main action seeds a barline grid from your adjusted zones (each
+  zone's downbeat phase seeded from the kick/bass onsets), then runs the
+  assisted barline fit **inside each zone** — bounded at the zone's edges, with
+  the zone's tempo holding the fit on course so it can never run away chasing a
+  fill the way a whole-song march can. The result lands as **one undoable
+  step**: notes keep their exact timing against the recording, and a single
+  Ctrl+Z restores the previous grid. **Single tempo instead** is the escape
+  hatch when a steady song over-segments — one uniform grid at the zones'
+  duration-weighted tempo.
 - **Apply a rough map from the detected tempo zones.** After Scan shows the
   zones, **Tempo/Grid ▸ Apply rough map** turns them into an actual beat grid —
   a barline grid at each zone's tempo, with its downbeat phase seeded from the
   onsets so bar 1 has a fighting chance of not landing on the backbeat (it gets
   properly reliable once the banded onset detection lands). Your notes keep their
   exact timing against the recording (they ride the audio), and it's a single
-  **Undo** away, so it's safe to try. From there, open Tempo Map and run **Suggest
-  barline fit** on a zone to snap its barlines tight to the recording. (The
-  drag-to-adjust confirm bar — nudge a boundary, split/merge a zone — is coming;
-  for now it's Scan to review, Apply to commit.)
+  **Undo** away, so it's safe to try. (This is the quick no-questions path; the
+  Scan confirm bar's **Confirm & refine** is the reviewed one — it also snaps
+  each zone's barlines to the recording.)
 - **Map Health — see where the grid drifts from the recording.** A new **Map
   Health** toggle (Tempo/Grid menu) paints a thin colour strip under the ruler,
   one span per bar, showing how well the beat grid agrees with the notes the

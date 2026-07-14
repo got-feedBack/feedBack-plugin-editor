@@ -129,8 +129,10 @@ import {
     _tempoHasMultipleMeasureBpmsPure, _tempoMapDraw, _tempoMapOnDragEnd, _tempoMeasureBeatCount,
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
     _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
-    _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones
+    _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones,
+    editorConfirmTempoZones, editorZonesSingleTempo
 } from './tempo.js';
+import { initTempoZones } from './tempo-zones.js';
 import {
     drawAnchorLane,
     drawHandshapeLane, drawToneLane, editorApplyTonesModal, editorHideTonesModal,
@@ -1970,6 +1972,9 @@ function init() {
     initCreate();
     initAudio();
     initAnchorResolve();
+    // The zone confirm bar's two APPLY verbs live in tempo.js (TempoGridCmd),
+    // handed over as hooks so tempo-zones.js never imports tempo.js (cycle).
+    initTempoZones({ confirm: editorConfirmTempoZones, single: editorZonesSingleTempo });
     initPlayabilityLint();
     initDrumPadStrip();
     initFretboardStrip();

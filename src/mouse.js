@@ -349,9 +349,12 @@ function _onMouseMoveBody(e, x, y, L) {
     }
 
     // Tempo-map drag: re-space the two measures around the dragged pole.
-    // A group drag (a multi-selection grabbed by one of its poles) rides the
-    // same handler — it dispatches on S.drag.type internally.
-    if (S.drag.type === 'tempo-sync' || S.drag.type === 'tempo-group') {
+    // A group drag (a multi-selection grabbed by one of its poles) and a
+    // tempo-zone boundary drag (P2-3 confirm bar) both ride the same handler —
+    // it dispatches on S.drag.type internally. The boundary drag only reshapes
+    // the transient proposal; the other two move the grid.
+    if (S.drag.type === 'tempo-sync' || S.drag.type === 'tempo-group'
+        || S.drag.type === 'segment-boundary') {
         _tempoMapOnDragMove(x);
         return;
     }
@@ -492,6 +495,13 @@ export function onMouseUp(e) {
 
     if (S.drag.type === 'tempo-sync' || S.drag.type === 'tempo-beat' || S.drag.type === 'tempo-group') {
         _tempoMapOnDragEnd();
+        return;
+    }
+
+    // A tempo-zone boundary drag is pre-commit: the proposal already holds the
+    // dragged shape, there is nothing to finalize — just release the drag.
+    if (S.drag.type === 'segment-boundary') {
+        S.drag = null;
         return;
     }
 
