@@ -601,9 +601,14 @@ export function _rollTechBadgesPure(techs) {
 export function _nextSameStringMapPure(nn) {
     const map = new Map();
     const lastByString = new Map();
-    for (let i = (nn || []).length - 1; i >= 0; i--) {
-        const n = nn[i];
-        if (!n) continue;
+    // Order by CURRENT time, not array order: drag moves mutate n.time in
+    // place without re-sorting the array (that identity-stability is the
+    // draw-memo contract), so after a drag the array can be out of time
+    // order and "next in the array" would link the wrong note.
+    const byTime = (nn || []).filter(Boolean)
+        .slice().sort((a, b) => (a.time - b.time) || (a.string - b.string));
+    for (let i = byTime.length - 1; i >= 0; i--) {
+        const n = byTime[i];
         const prev = lastByString.get(n.string);
         if (prev) map.set(n, prev);
         lastByString.set(n.string, n);

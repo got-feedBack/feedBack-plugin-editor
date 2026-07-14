@@ -40,6 +40,16 @@ t('the map links each note to the NEXT note on its own string, skipping other st
     assert.strictEqual(_nextSameStringMapPure([]).size, 0);
 });
 
+t('links follow CURRENT time, not array order (drag moves mutate time in place)', () => {
+    // The array order (a,b,c) no longer matches time order after a drag
+    // moved c earlier: chronology is a(0) -> c(1) -> b(2) on one string.
+    const a = N(0, 2, 5), b = N(2, 2, 9), c = N(1, 2, 7);
+    const map = _nextSameStringMapPure([a, b, c]);
+    assert.strictEqual(map.get(a), c, 'a links to the chronologically next note, not the array-next');
+    assert.strictEqual(map.get(c), b);
+    assert.strictEqual(map.get(b), undefined, 'the chronologically last note has no target');
+});
+
 t('a slide connects only when the next note IS its landing fret', () => {
     const landing = N(2, 2, 7);
     assert.strictEqual(_slideConnectsPure({ slide_to: 7 }, landing), true);
