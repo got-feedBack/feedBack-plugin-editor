@@ -441,7 +441,17 @@ export const MAGNET_GAP_FRAC = 0.35;
 export function magneticSnapTime(t) {
     const snapped = snapTime(t);
     if (snapped === t) return t;                       // snap off / no grid — free
-    // The magnet is ALSO capped at a fraction of the LOCAL guideline gap, so a
+    // An ONSET hit passes through untouched: onset snap is ALREADY a magnet
+    // (ONSET_SNAP_TOL is its radius) and onsets are sparse, so it cannot degrade
+    // into locked stepping the way a dense grid can. Re-gating it on the GRID's
+    // radius would silently kill onset snap on drags at fine subdivisions — the
+    // gap cap below shrinks under the onset tolerance (at 1/16 it is ~11 ms vs
+    // the 70 ms tolerance), so the attack you aimed at would be released.
+    if (S.snapEnabled && S.snapMode === 'onset') {
+        const onsets = (typeof _ensureOnsetsShifted === 'function') ? _ensureOnsetsShifted() : null;
+        if (_nearestOnsetTimePure(onsets, t, ONSET_SNAP_TOL) !== null) return snapped;
+    }
+    // The grid magnet is ALSO capped at a fraction of the LOCAL guideline gap, so a
     // free band always survives between two magnets. Without the cap, a dense
     // grid (fine subdivision and/or low zoom) puts guidelines closer together
     // than the magnet's diameter — every pointer position is inside SOME

@@ -75,6 +75,32 @@ t('snap off: the magnet vanishes entirely (identity, like snapTime)', () => {
     S.snapEnabled = true;
 });
 
+t('no grid at all: identity, never NaN', () => {
+    const saved = S.beats;
+    S.beats = [];
+    assert.strictEqual(magneticSnapTime(1.06), 1.06, 'zero guidelines → free');
+    S.beats = [{ time: 0, measure: 1 }];              // degenerate: a single beat
+    assert.strictEqual(magneticSnapTime(1.06), 1.06, 'one guideline → free');
+    S.beats = saved;
+});
+
+t('an ONSET hit is not re-gated on the grid magnet (a fine grid must not kill onset snap)', () => {
+    // A single attack at t = 1.24 s, 40 ms off the 1/16 grid. The grid magnet at
+    // 1/16 is ~11 ms wide — narrower than the 70 ms onset tolerance — so gating
+    // the onset on it would release the very attack the user aimed at.
+    const rms = new Array(400).fill(0.1);
+    rms[124] = 1.0;                                   // binSec = duration/bins = 0.01 s
+    Object.assign(S, {
+        duration: 4, waveformPeaks: { bins: 400, rms }, audioBuffer: null, audioShift: 0,
+        snapMode: 'onset', snapIdx: 7, zoom: 120,     // snapIdx 7 = 1/16
+    });
+    assert.strictEqual(magneticSnapTime(1.2), 1.24, 'the attack wins over the grid');
+    // …and with no attack near, the grid magnet still governs (and still releases).
+    assert.strictEqual(magneticSnapTime(3.015625), 3.015625,
+        'no attack near → grid magnet, and mid-gap still releases');
+    Object.assign(S, { snapMode: 'grid', snapIdx: 0, zoom: 100, waveformPeaks: null, duration: 0 });
+});
+
 t('group delta composes: a magnetic stick means ZERO creep, a release follows the drag', () => {
     S.zoom = 100;
     // Grabbed note sits ON a guideline. A 50ms wiggle stays inside the magnet
