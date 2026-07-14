@@ -74,15 +74,28 @@ _DRUM_TAB_ABSENT = object()
 _FIELD_ABSENT = object()
 
 
-def _coerce_audio_shift(value) -> float:
+def _coerce_audio_shift(value, invalid=0.0):
     """`audio_shift` (seconds) as a finite float, rounded to the microsecond.
 
-    Anything unusable — non-numeric, NaN, ±Infinity — becomes 0.0 rather than
-    raising: the field is supplementary alignment state, and failing a whole
-    save over it would cost the user their actual note edits. The isfinite
-    guard is load-bearing, not paranoia: `float("nan")` and `float("inf")`
-    both succeed and are truthy, so without it a garbage value would sail
-    through the write check and land in manifest.yaml as `.nan` / `.inf`.
+    An unusable value — non-numeric, NaN, ±Infinity — becomes `invalid` rather
+    than raising: the field is supplementary alignment state, and failing a
+    whole save over it would cost the user their actual note edits. The
+    isfinite guard is load-bearing, not paranoia: `float("nan")` and
+    `float("inf")` both succeed and are truthy, so without it a garbage value
+    would sail through the write check and land in manifest.yaml as `.nan` /
+    `.inf`.
+
+    `invalid` differs by boundary, and the difference is a data-loss bug if you
+    get it wrong. SANITIZING an already-persisted value (the sloppak load path,
+    the pack writer) wants the 0.0 default: a corrupt or absent stored value is
+    simply an unshifted song, and there is nothing to preserve. But at the
+    REQUEST boundary garbage must not be read as zero, because zero is a
+    meaningful command — it REMOVES the manifest key — so a malformed body
+    would silently wipe alignment the charter actually saved. There
+    `_parse_audio_shift` passes `_FIELD_ABSENT`: unusable input touches nothing.
+
+    Note an explicitly falsy spelling (0, 0.0, None, "") is NOT garbage: it
+    coerces through `value or 0` to a genuine 0.0 "unshifted" on every path.
 
     The one coercion shared by every reader and writer of the key (request
     bodies, the sloppak load path, the pack writer) so they cannot drift.
@@ -90,8 +103,8 @@ def _coerce_audio_shift(value) -> float:
     try:
         shift = round(float(value or 0), 6)
     except (TypeError, ValueError):
-        return 0.0
-    return shift if math.isfinite(shift) else 0.0
+        return invalid
+    return shift if math.isfinite(shift) else invalid
 
 
 def _parse_audio_shift(data: dict):
@@ -100,11 +113,13 @@ def _parse_audio_shift(data: dict):
     The editor's "Shift Audio…" slides the RECORDING against a fixed chart;
     the frontend ships the cumulative shift on every save so it can survive a
     reopen. Returns `_FIELD_ABSENT` when the key wasn't sent (older client —
-    leave whatever is persisted alone), a coerced float otherwise.
+    leave whatever is persisted alone) AND when it was sent unusable (garbage
+    is less trustworthy than silence, so it gets no authority to erase state),
+    a coerced float otherwise.
     """
     if "audio_shift" not in data:
         return _FIELD_ABSENT
-    return _coerce_audio_shift(data.get("audio_shift"))
+    return _coerce_audio_shift(data.get("audio_shift"), invalid=_FIELD_ABSENT)
 
 
 def _apply_audio_shift(manifest: dict, shift) -> None:

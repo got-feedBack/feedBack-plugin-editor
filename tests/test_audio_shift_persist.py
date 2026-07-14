@@ -51,12 +51,14 @@ def test_string_numbers_coerce_like_every_other_lenient_field():
     assert _parse_audio_shift({"audio_shift": "0.125"}) == 0.125
 
 
-def test_garbage_coerces_to_zero_instead_of_failing_the_save():
+def test_garbage_is_absent_not_zero_so_it_never_fails_the_save_nor_wipes_state():
     # The field is supplementary alignment state — a malformed value must
-    # never cost the user their actual note edits with a 400/500.
-    assert _parse_audio_shift({"audio_shift": "abc"}) == 0.0
-    assert _parse_audio_shift({"audio_shift": {"nested": 1}}) == 0.0
-    assert _parse_audio_shift({"audio_shift": [1, 2]}) == 0.0
+    # never cost the user their actual note edits with a 400/500. But it must
+    # not coerce to 0.0 either: zero is a COMMAND (it removes the manifest
+    # key), so reading garbage as zero would hand a malformed body the power to
+    # erase a shift the charter really saved. Unusable input touches nothing.
+    for bad in ("abc", {"nested": 1}, [1, 2], object()):
+        assert _parse_audio_shift({"audio_shift": bad}) is _FIELD_ABSENT, repr(bad)
 
 
 def test_rounded_to_microseconds_so_float_noise_never_reaches_the_manifest():
@@ -68,8 +70,34 @@ def test_non_finite_never_reaches_the_manifest():
     # without the isfinite guard they'd pass the nonzero write check and land
     # in manifest.yaml as `.nan` / `.inf` — poisoning the pack for every
     # reader. (`json.loads` accepts bare NaN/Infinity, so this is reachable.)
+    # At the request boundary they are garbage → absent (change nothing);
+    # on the sanitize paths there is nothing to preserve → a clean 0.0.
     for bad in ("nan", "inf", "-inf", float("nan"), float("inf")):
-        assert _parse_audio_shift({"audio_shift": bad}) == 0.0, repr(bad)
+        assert _parse_audio_shift({"audio_shift": bad}) is _FIELD_ABSENT, repr(bad)
+        assert _coerce_audio_shift(bad) == 0.0, repr(bad)
+
+    # …and whichever path it came down, the key never lands in a manifest.
+    manifest = {"title": "Song"}
+    _apply_audio_shift(manifest, _parse_audio_shift({"audio_shift": float("nan")}))
+    _apply_audio_shift(manifest, _coerce_audio_shift(float("inf")))
+    assert "audio_shift" not in manifest
+
+
+def test_a_malformed_body_does_not_wipe_a_saved_shift():
+    # The data-loss regression: garbage used to coerce to 0.0, and zero REMOVES
+    # the key — so one malformed save body silently threw away the charter's
+    # alignment. Garbage is now absent-shaped, so the persisted value survives.
+    for bad in ("abc", float("nan"), float("inf"), [1, 2]):
+        manifest = {"title": "Song", "audio_shift": 0.25}
+        _apply_audio_shift(manifest, _parse_audio_shift({"audio_shift": bad}))
+        assert manifest["audio_shift"] == 0.25, repr(bad)
+
+
+def test_an_explicit_zero_still_outranks_garbage_and_clears_the_key():
+    # The flip side: don't over-correct. A real zero is a real command.
+    manifest = {"title": "Song", "audio_shift": 0.25}
+    _apply_audio_shift(manifest, _parse_audio_shift({"audio_shift": 0}))
+    assert "audio_shift" not in manifest
 
 
 # ── the save → disk → load round trip (the bug this PR fixes) ────────────────
