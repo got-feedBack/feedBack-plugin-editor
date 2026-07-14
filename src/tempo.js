@@ -776,9 +776,15 @@ export function editorZonesSingleTempo() {
     }
     const segments = _zonesGet();
     if (!segments) return true;
+    // Diagnose the two failures apart — folding them into one message blames
+    // the zones for what is actually a missing onset analysis.
     const onsets = _ensureOnsetsShifted();
+    if (!onsets || !onsets.length) {
+        setStatus('Single tempo needs the recording’s onset analysis — load audio first.');
+        return true;
+    }
     const single = _segmentSingleTempoPure(segments);
-    const seeded = single && onsets ? _segmentSeedBeatsPure(onsets, single) : null;
+    const seeded = single ? _segmentSeedBeatsPure(onsets, single) : null;
     if (!seeded) {
         setStatus('No mapped zone to take a tempo from.');
         return true;

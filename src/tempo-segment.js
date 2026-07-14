@@ -376,8 +376,14 @@ export function _segmentBoundaryDragPure(segments, bIdx, newT, minLen = _SEG_MIN
             || bIdx < 0 || bIdx + 1 >= segments.length || !Number.isFinite(newT)) return null;
     const out = segments.map(s => ({ ...s }));
     const a = out[bIdx], b = out[bIdx + 1];
-    const t = Math.max(a.tStart + minLen, Math.min(b.tEnd - minLen, newT));
-    if (!(t > a.tStart && t < b.tEnd)) return null;   // segments too short to move between
+    // The feasible window for the join. When the PAIR is shorter than 2×minLen
+    // the window is empty (lo > hi) — refuse, rather than let the Math.max win
+    // and hand back a right segment below minLen. Clamping a value into an
+    // empty range is the off-by-one that quietly breaks the invariant this
+    // function's whole contract is: BOTH neighbours keep at least `minLen`.
+    const lo = a.tStart + minLen, hi = b.tEnd - minLen;
+    if (!(lo <= hi)) return null;   // pair too short to hold a movable boundary
+    const t = Math.max(lo, Math.min(hi, newT));
     a.tEnd = t;
     b.tStart = t;
     if (Number.isFinite(a.downbeatTime) && a.downbeatTime >= t) delete a.downbeatTime;
@@ -494,7 +500,10 @@ export function _segmentSingleTempoPure(segments) {
 // the segment's constant-tempo prior clamping the stretch tracker — the
 // structural cure for the runaway off-phase march. Locked downbeats defend
 // as always (the engine pins them). Returns { beats, refined } where `refined`
-// counts the downbeats that took an onset-corroborated time; beats outside
+// counts the downbeats the march MOVED (every non-locked proposal). A trailing
+// uncorroborated run is already dropped by the engine, but an INTERIOR held-note
+// bar marches on prediction and still counts — `refined` is "barlines re-timed",
+// not "barlines that landed on an onset". Beats outside
 // every segment (and past each bound) are untouched.
 export function _segmentRefineGridPure(beats, onsets, segments, opts) {
     const o = opts || {};

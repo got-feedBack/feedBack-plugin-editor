@@ -79,6 +79,23 @@ t('boundary drag moves the join, clamps to a minimum span, drops stale seeds', (
     assert.strictEqual(_segmentBoundaryDragPure(segs, 3, 10), null, 'no such boundary');
 });
 
+// The clamp window is [a.tStart + minLen, b.tEnd - minLen]. When the PAIR is
+// shorter than 2×minLen that window is EMPTY, and clamping into an empty range
+// silently returns a `t` that leaves the right zone below minLen — the exact
+// off-by-one this function's contract ("both neighbours keep at least minLen")
+// exists to forbid. Refuse instead.
+t('boundary drag refuses a pair too short to hold a movable boundary', () => {
+    const tiny = [seg(0, 1.5, 'constant', 120), seg(1.5, 3, 'constant', 90)];   // 3s pair, minLen 2
+    assert.strictEqual(_segmentBoundaryDragPure(tiny, 0, 0.5), null, 'empty clamp window — refused');
+    assert.strictEqual(_segmentBoundaryDragPure(tiny, 0, 2.5), null, 'refused from either side');
+    assert.strictEqual(tiny[0].tEnd, 1.5, 'input never mutated');
+    // Exactly 2×minLen still works, degenerately: the join is pinned, both keep minLen.
+    const exact = _segmentBoundaryDragPure([seg(0, 2, 'constant', 120), seg(2, 4, 'constant', 90)], 0, 3.5);
+    assert.strictEqual(exact[0].tEnd, 2, 'pinned at the only feasible join');
+    assert.ok(exact[0].tEnd - exact[0].tStart >= 2 && exact[1].tEnd - exact[1].tStart >= 2,
+        'both neighbours keep minLen');
+});
+
 t('split: a constant splits at the same tempo; a ramp interpolates at the cut', () => {
     const c = _segmentSplitPure([seg(0, 20, 'constant', 120)], 0, 8);
     assert.strictEqual(c.length, 2);
