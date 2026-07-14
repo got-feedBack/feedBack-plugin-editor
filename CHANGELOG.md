@@ -155,6 +155,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dragging notes is now magnetic, not locked.** With snapping on, a dragged
+  note (or a sustained note's end edge) **sticks** to the nearest grid
+  guideline while you're close to it — and if you keep pulling past the snap
+  point, it **releases** and follows your pointer exactly, so small off-grid
+  adjustments no longer need a modifier key. The magnet is a small
+  screen-space radius, which makes it zoom-aware the way a DAW piano roll is:
+  zoom in and the magnet covers less time, giving you finer control for free —
+  and however dense the grid gets, the middle of every gap between guidelines
+  stays free, so pulling past a snap point always releases instead of stepping
+  you into the next one. Alt-drag still means fully free from the first pixel,
+  clicks still place notes on the grid, and the explicit "Resnap selection"
+  remains a full quantize.
 - **Onset detection now hears frequency, not just loudness.** The little amber
   attack markers (the onset strip, and what note-drags snap to) used to come from
   a broadband "the recording got louder" test, which went blind on the events
