@@ -2596,8 +2596,13 @@ export function _tempoMapOnDragMove(x) {
     }
     // Tempo-zone boundary drag (P2-3 confirm): pre-commit — reshapes only the
     // transient proposal (the pure clamps both neighbours to a minimum span);
-    // nothing reaches S.beats or history until Confirm & refine.
+    // nothing reaches S.beats or history until Confirm & refine. Same 3px
+    // click-vs-drag threshold as the other two kinds, and it matters MORE here:
+    // the handle is narrow and the reshape is pre-commit, so a jitter-nudge on
+    // an intended click would silently move the boundary with no undo to
+    // recover it (Ctrl+Z only reaches committed grids).
     if (dg.type === 'segment-boundary') {
+        if (!dg.moved && Math.abs(x - dg.startX) < 3) return;
         dg.moved = true;
         _zonesDragBoundary(dg.bIdx, xToTime(x));
         return;
