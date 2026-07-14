@@ -406,7 +406,11 @@ export function drawRuler(w) {
 // ── Interaction (routed from mouse.js; drags ride S.drag) ───────────
 
 function scrubTo(x) {
-    S.cursorTime = Math.max(0, xToTime(x));
+    // Logic-style: clicking the ruler snaps the playhead to the grid (beat /
+    // subdivision) when snap is on, so the caret lands on a real note position.
+    // Hold Alt (S.drag.bypassSnap) for a free, un-snapped scrub.
+    const raw = Math.max(0, xToTime(x));
+    S.cursorTime = (S.drag && S.drag.bypassSnap) ? raw : snapTime(raw);
     host.draw();
 }
 
@@ -437,6 +441,13 @@ export function _mapHealthBarAt(t) {
 export function _mapHealthClickThrough(t) {
     const m = _mapHealthBarAt(t);
     if (!m || (m.band !== 'red' && m.band !== 'amber')) return false;
+    _mapHealthGotoMeasure(m);
+    return true;
+}
+
+// The shared "take me to the fix" motion — used by the wash click-through
+// above and the transport LCD grid pill (which works even with the wash off).
+export function _mapHealthGotoMeasure(m) {
     // Enter Tempo Map FIRST (it clears the selection), THEN anchor Suggest on
     // this bar's downbeat so the fit marches from exactly the bar that's drifting.
     if (!S.tempoMapMode) _editorToggleTempoMapMode();
@@ -459,7 +470,6 @@ export function _mapHealthClickThrough(t) {
     const cmd = _editorCommandById('tempoSuggestFit');
     const key = ((cmd && cmd.keys && cmd.keys[editorShortcutProfile]) || 'G').split(' (')[0];
     setStatus(`Bar ${m.measure} drifts ${pct}% from the recording — Tempo Map opened; press ${key} to fit the barlines from here.`);
-    return true;
 }
 
 export function rulerOnMouseDown(e, x, y, w) {
@@ -500,7 +510,7 @@ export function rulerOnMouseDown(e, x, y, w) {
     // Scrub: seek immediately and keep tracking while the button is down.
     const resume = S.playing;
     if (resume) stopPlayback();
-    S.drag = { type: 'scrub', resume };
+    S.drag = { type: 'scrub', resume, bypassSnap: e.altKey };
     scrubTo(x);
     return true;
 }
@@ -508,7 +518,9 @@ export function rulerOnMouseDown(e, x, y, w) {
 export function rulerOnMouseMove(e, x, w) {
     if (!S.drag) return false;
     if (S.drag.type === 'minimap') { minimapPan(x, w); return true; }
-    if (S.drag.type === 'scrub') { scrubTo(x); return true; }
+    // Alt is live per move (like Shift on the loop drags): press/release it
+    // mid-scrub and snapping follows, instead of freezing at the mouse-down state.
+    if (S.drag.type === 'scrub') { S.drag.bypassSnap = e.altKey; scrubTo(x); return true; }
     if (S.drag.type === 'loopedge') {
         if (!S.barSel) return true;
         const mode = _loopLiveMode(e.shiftKey);

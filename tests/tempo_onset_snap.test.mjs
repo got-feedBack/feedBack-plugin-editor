@@ -72,7 +72,8 @@ t('the drag move gates onset-snap on Snap = Onset and a non-locked pole', () => 
     const b = body('export function _tempoMapOnDragMove', 'export function _tempoMapOnDragEnd');
     assert.match(b, /S\.snapMode === 'onset'/, 'only snaps in Onset mode');
     assert.match(b, /!\(orig\[d\] && orig\[d\]\.locked\)/, 'locked poles never snap');
-    assert.match(b, /_tempoOnsetSnapPure\(rawT, _ensureOnsets\(\)/, 'uses the live onset cache');
+    assert.match(b, /_tempoOnsetSnapPure\(rawT, _ensureOnsetsShifted\(\)/,
+        'snaps against CHART-time onsets (shift-corrected), matching Suggest-fit — issue #254');
 });
 t('the drag end reports a snap', () => {
     const b = body('export function _tempoMapOnDragEnd', 'export function _makeTimeRemap');

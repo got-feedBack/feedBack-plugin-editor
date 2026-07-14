@@ -119,6 +119,9 @@ export const S = {
     // note at (caretString, snapped cursorTime). Drawn as a caret cell in that
     // state so it reads as an entry position.
     caretString: 0,
+    // The fret the caret cell ghosts (the last one placed) — what a typed digit
+    // will carry until you type a different one.
+    caretFret: 0,
 
     // Playback
     playing: false,
