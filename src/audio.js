@@ -1485,7 +1485,7 @@ function _guideTick() {
 }
 
 // ── Audition trainer — loop-and-step-up (P2-10) ──────────────────────
-// The Riff-Repeater / slow-downer practice pattern: loop a short A/B
+// The classic slow-downer practice pattern: loop a short A/B
 // selection slowed, and after every N completed passes step the audition
 // rate up the ladder toward 100%. Rides the existing rate transform (#247)
 // and loop region — no new audio path. Session-only state: a trainer armed
