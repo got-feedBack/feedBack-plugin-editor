@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **"Shift Audio…" now survives saving and reopening.** The recording-vs-chart
+  shift was sent with every save but the backend silently dropped it, so a
+  carefully aligned song came back misaligned on the next open — reading as
+  lost work. The shift is now persisted into the pack (a manifest extension
+  key, invisible to and ignored by anything that doesn't know it) and restored
+  on load, through plain saves, Save As, and first builds alike. Sliding the
+  shift back to zero removes it from the pack again, so unshifted songs stay
+  byte-identical to before.
 - **Inspector technique edits are undoable now.** Toggling a technique flag
   (Palm Mute, Hammer-On, Tap, …) or setting a bend/slide value from the
   inspector panel used to mutate the note in place with no undo — so Ctrl+Z
