@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lane, and ghosts the fret it will carry — the caret shows *which* note lands
   and *how long*, not just *where*. Typed notes are placed at that same length so
   consecutive entries tile the grid instead of stacking as zero-length notes. The
-  preview is a persisted view pref: **View ▸ Snap ▸ Note-entry preview** toggles
+  preview is a persisted view pref: **Tempo/Grid ▸ Snap ▸ Note-entry preview** toggles
   it off (and back on) for mouse-first charters who find the cell distracting.
 - **Clicking the ruler snaps the playhead to the grid, Logic-style.** A scrub
   click on the timeline ruler now lands the playhead on the nearest beat /

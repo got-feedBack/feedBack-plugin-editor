@@ -115,7 +115,7 @@ function _editorPlaceAtCaret(fret) {
     // cell and consecutive notes tile the grid instead of stacking zero-length.
     const step = _editorSnapStepSeconds();
     const f = Math.max(0, Math.min(24, Number(fret) || 0));
-    const note = { time, string, fret: f, sustain: step > 0 ? step : 0, techniques: {} };
+    const note = { time, string, fret: f, sustain: step, techniques: {} };
     const cmd = new AddNoteCmd(note);
     S.history.exec(cmd);
     S.caretFret = f;                       // remember for the preview's fret ghost
@@ -124,7 +124,10 @@ function _editorPlaceAtCaret(fret) {
     // Entry flow: leave NO selection (so the next digit places again) and advance
     // the caret one snap step for rapid sequential entry.
     S.sel.clear();
-    _editorSeekToTime((S.cursorTime || 0) + step);   // same step the note is long → notes tile
+    // Advance from the note's SNAPPED time, not the raw cursor: after a free
+    // (Alt) scrub the cursor sits off-grid, and stepping from it would leave the
+    // next note a fraction of a step away from this one instead of flush against it.
+    _editorSeekToTime(time + step);   // same step the note is long → notes tile
     host.draw();
     host.updateStatus();
     setStatus(`Placed fret ${note.fret} on string ${string + 1} — type to keep placing, or click a note to edit`);

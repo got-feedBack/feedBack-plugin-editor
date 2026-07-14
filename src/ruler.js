@@ -512,7 +512,9 @@ export function rulerOnMouseDown(e, x, y, w) {
 export function rulerOnMouseMove(e, x, w) {
     if (!S.drag) return false;
     if (S.drag.type === 'minimap') { minimapPan(x, w); return true; }
-    if (S.drag.type === 'scrub') { scrubTo(x); return true; }
+    // Alt is live per move (like Shift on the loop drags): press/release it
+    // mid-scrub and snapping follows, instead of freezing at the mouse-down state.
+    if (S.drag.type === 'scrub') { S.drag.bypassSnap = e.altKey; scrubTo(x); return true; }
     if (S.drag.type === 'loopedge') {
         if (!S.barSel) return true;
         const mode = _loopLiveMode(e.shiftKey);
