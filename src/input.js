@@ -8,6 +8,7 @@ import { AddAnchorCmd, AddHandshapeCmd, AddToneChangeCmd, RemoveAnchorCmd, Remov
 import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsetsShifted, startPlayback, stopPlayback } from './audio.js';
 import { editorSuggestFingers } from './anchor-resolve.js';
 import { _suggestActive, _suggestCompute, _suggestDismiss } from './tempo-suggest.js';
+import { _zonesDismiss } from './tempo-zones.js';
 import { editorToggleMixerPanel } from './mixer-panel.js';
 import { canvas } from './canvas.js';
 import { AddNoteCmd, ChangeFretCmd, ChangeFretGroupCmd, DeleteNotesCmd, MoveNoteCmd, ResizeSustainGroupCmd, SetPitchedSlideTargetsCmd, SetTeachingMarkCmd, ToggleTechniqueCmd, _execCyclePosition, _execMoveString, _execMoveStringSameFret, _rollAddByPitch, _withStableSelection } from './commands.js';
@@ -18,14 +19,18 @@ import { hitNote } from './hit-test.js';
 import { _renderInspector, _selectedChordContext } from './inspector.js';
 import { PIANO_LANE_H, _rollLockNotice, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, pianoLaneCount, yToMidi } from './keys.js';
 import { lanes, _stringCountFor } from './lanes.js';
-import { _editorClampScrollX, _loopNudgeEdge, snapTime } from './loop.js';
+import {
+    _editorClampScrollX, _loopNudgeEdge, editorToggleLoopRegion, snapGuidelineAfter, snapTime,
+} from './loop.js';
+import { _editorSongFit } from './song-fit.js';
 import { _recState } from './midi-record.js';
 import { getMousePos } from './mouse.js';
 import { _resizeSustainsForDeltaPure, notes } from './notes.js';
-import { _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure, _editorIsTypingTarget, _editorRenderShortcutPanel, editorRightClickBehavior, editorShortcutProfile } from './shortcuts.js';
+import { EDITOR_PROFILE_OVERRIDES, _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure, _editorIsTypingTarget, _editorRenderShortcutPanel, _editorTableCommandForKeyPure, editorRightClickBehavior, editorShortcutProfile } from './shortcuts.js';
 import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure } from './snap.js';
 import { S } from './state.js';
 import { _editorShowTabPreview, _tabPreviewKeyPolicyPure } from './tab-preview.js';
+import { editorOpenCommandPalette } from './command-palette.js';
 import { editorExportGp5 } from './gp5-export.js';
 import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSelection, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup, _tempoSelRangePure } from './tempo.js';
 import { _tourNoteAction } from './tour.js';
@@ -111,15 +116,23 @@ function _editorPlaceAtCaret(fret) {
     if (!nStr) { setStatus('Select notes first'); return false; }
     const string = Math.max(0, Math.min(nStr - 1, Number(S.caretString) || 0));
     const time = snapTime(S.cursorTime || 0);
-    const note = { time, string, fret: Math.max(0, Math.min(24, Number(fret) || 0)), sustain: 0, techniques: {} };
+    // Length = the note value (the snap step), so a typed note fills the preview
+    // cell and consecutive notes tile the grid instead of stacking zero-length.
+    const step = _editorSnapStepSeconds();
+    const f = Math.max(0, Math.min(24, Number(fret) || 0));
+    const note = { time, string, fret: f, sustain: step, techniques: {} };
     const cmd = new AddNoteCmd(note);
     S.history.exec(cmd);
+    S.caretFret = f;                       // remember for the preview's fret ghost
     _tourNoteAction('placeNote');
     _editBlipAt();
     // Entry flow: leave NO selection (so the next digit places again) and advance
     // the caret one snap step for rapid sequential entry.
     S.sel.clear();
-    _editorSeekToTime((S.cursorTime || 0) + _editorSnapStepSeconds());
+    // Advance from the note's SNAPPED time, not the raw cursor: after a free
+    // (Alt) scrub the cursor sits off-grid, and stepping from it would leave the
+    // next note a fraction of a step away from this one instead of flush against it.
+    _editorSeekToTime(time + step);   // same step the note is long → notes tile
     host.draw();
     host.updateStatus();
     setStatus(`Placed fret ${note.fret} on string ${string + 1} — type to keep placing, or click a note to edit`);
@@ -138,6 +151,28 @@ function _editorMoveCaretString(dir) {
     host.draw();
     setStatus(`Entry caret on string ${S.caretString + 1} — type 0-9 to place a note`);
     return true;
+}
+
+// Note-entry preview toggle (default ON): the dashed caret cell that previews a
+// typed note's string, length, and fret. A view pref — off if the box distracts
+// (e.g. a mouse-only charter). Cached like the other view flags.
+let _entryPreviewOn = null;
+export function _editorEntryPreviewEnabled() {
+    if (_entryPreviewOn === null) {
+        try { _entryPreviewOn = localStorage.getItem('editorEntryPreview') !== '0'; }
+        catch (_) { _entryPreviewOn = true; }
+    }
+    return _entryPreviewOn;
+}
+export function editorToggleEntryPreview(force) {
+    const next = typeof force === 'boolean' ? force : !_editorEntryPreviewEnabled();
+    _entryPreviewOn = next;
+    try { localStorage.setItem('editorEntryPreview', next ? '1' : '0'); } catch (_) { /* private mode */ }
+    if (host && typeof host.draw === 'function') host.draw();
+    setStatus(next
+        ? 'Note-entry preview on — the dashed cell shows where a typed note lands (string · length · fret)'
+        : 'Note-entry preview off');
+    return next;
 }
 
 function _editorSetSelectedFret(fret) {
@@ -472,22 +507,83 @@ function _editorNudgeSelectionTime(dir) {
     return true;
 }
 
+/* @pure:resnap-edges:start */
+// Both EDGES of every note snap to the current-subdivision guidelines — the
+// Logic piano-roll model: the start edge quantises to its nearest guideline,
+// and a SUSTAINED note's end edge does too, except it never collapses onto
+// the start (it keeps at least one subdivision — `afterFn` supplies the first
+// guideline strictly after the new start). A zero-sustain chip stays a chip:
+// length is authored intent, never inflated by a quantize.
+export function _resnapEdgesPure(oldTimes, oldSustains, snapFn, afterFn) {
+    const newTimes = oldTimes.map(t => snapFn(t));
+    const newSustains = oldSustains.map((sus, i) => {
+        if (!(sus > 0)) return sus || 0;
+        const end = snapFn(oldTimes[i] + sus);
+        const bounded = end > newTimes[i] + 1e-9 ? end : afterFn(newTimes[i]);
+        // afterFn is the identity when there is no usable grid (fewer than two
+        // beats, or the snap value is off) — and in ONSET mode snapFn still
+        // snaps, so a short note's two edges can land on the same onset with no
+        // guideline to push the end past it. A quantize must never eat a
+        // sustained note: with no positive bound to offer, keep the length.
+        return bounded > newTimes[i] + 1e-9 ? bounded - newTimes[i] : sus;
+    });
+    return { newTimes, newSustains };
+}
+/* @pure:resnap-edges:end */
+
+// One undoable step for the two halves of an edge resnap — starts move,
+// sustained ends re-length. Exec in order, rollback in reverse; gating
+// follows the MoveNoteCmd half (same as the verb always had).
+class ResnapEdgesCmd {
+    constructor(move, resize) { this.move = move; this.resize = resize; }
+    exec() { this.move.exec(); if (this.resize) this.resize.exec(); }
+    rollback() { if (this.resize) this.resize.rollback(); this.move.rollback(); }
+}
+
 function _editorResnapSelection() {
     const idxs = _editorCurrentNoteIndices();
     if (!idxs.length) { setStatus('Select notes first'); return false; }
+    // The verb has always been refused on a read-only roll (its MoveNoteCmd half
+    // isn't pitchPreserving, so the history gate rejects it). Say so HERE: the
+    // gate's refusal is silent to us, and the success line below would otherwise
+    // overwrite the lock notice and claim notes moved when none did.
+    if (_rollReadOnly()) { _rollLockNotice(); return true; }
     const nn = notes();
     const oldTimes = idxs.map(i => nn[i].time);
-    const newTimes = oldTimes.map(t => snapTime(t));
-    for (let i = 0; i < idxs.length; i++) nn[idxs[i]].time = oldTimes[i];
+    const oldSustains = idxs.map(i => Number(nn[i].sustain) || 0);
+    // FORCED snap: this is the explicit quantize verb, so it snaps to the
+    // guidelines (or onsets, in Onset mode) even while the live Snap toggle
+    // is OFF — with the toggle honoured it silently moved nothing, which read
+    // as "there's no way to snap notes to the grid" (a real tester report).
+    const { newTimes, newSustains } = _resnapEdgesPure(
+        oldTimes, oldSustains, (t) => snapTime(t, true), (t) => snapGuidelineAfter(t, true));
     const dtimes = newTimes.map((t, i) => t - oldTimes[i]);
+    const touched = idxs.filter((_, i) => Math.abs(dtimes[i]) > 1e-9
+        || Math.abs(newSustains[i] - oldSustains[i]) > 1e-9).length;
+    if (!touched) {
+        // Say so — a silent no-op is indistinguishable from a missing feature.
+        setStatus(`Selection already on the grid (${idxs.length} note${idxs.length === 1 ? '' : 's'} checked).`);
+        return true;
+    }
     const dstrings = idxs.map(() => 0);
-    S.history.exec(new MoveNoteCmd(idxs, dtimes, dstrings, null));
+    const susIdx = [], susVals = [];
+    for (let i = 0; i < idxs.length; i++) {
+        if (Math.abs(newSustains[i] - oldSustains[i]) > 1e-9) {
+            susIdx.push(idxs[i]);
+            susVals.push(newSustains[i]);
+        }
+    }
+    S.history.exec(new ResnapEdgesCmd(
+        new MoveNoteCmd(idxs, dtimes, dstrings, null),
+        susIdx.length ? new ResizeSustainGroupCmd(susIdx, susVals) : null));
     // Repeated resnapping is the canonical "fighting the grid" signal (charrette
     // §3.2): the notes keep landing off the beat, so the GRID may be the thing
     // that's wrong — nudge toward the Tempo tools.
     _signpostNote('gridFight');
     host.draw();
     host.updateStatus();
+    setStatus(`Snapped ${touched} of ${idxs.length} note${idxs.length === 1 ? '' : 's'} to the `
+        + `${S.snapMode === 'onset' ? 'detected onsets' : 'grid'} (both edges).`);
     return true;
 }
 
@@ -711,6 +807,7 @@ function _editorTempoSuggestFit() {
         return true;
     }
     S.tempoSel = anchor;
+    _zonesDismiss();   // one proposal surface at a time — G replaces the zone bands
     const n = _suggestCompute(anchor, onsets, opts);
     host.draw();
     setStatus(n
@@ -819,6 +916,8 @@ export function _editorRunEofCommand(cmd) {
     case 'toggleMetronome': return _editorToggleMetronome();
     case 'toggleMixer': return editorToggleMixerPanel();
     case 'toggleLoopAB': return _editorToggleLoopAB();
+    case 'toggleLoopRegion': return editorToggleLoopRegion();
+    case 'songFit': _editorSongFit(); return true;
     case 'toggleOnsetStrip': return _editorToggleOnsetStrip();
     case 'togglePartsView': return host.editorTogglePartsView();
     case 'toggleKeyHighlight': return host.editorToggleKeyHighlight();
@@ -830,7 +929,7 @@ export function _editorRunEofCommand(cmd) {
     case 'movePartEarlier': return host.editorMovePart(-1);
     case 'movePartLater': return host.editorMovePart(+1);
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
-    case 'openCommandPalette': return _editorShowShortcutDiscovery('Command palette');
+    case 'openCommandPalette': return editorOpenCommandPalette();
     case 'importMidi': _editorOpenImportMidi(); return true;
     case 'importXml': _editorOpenImportXml(); return true;
     case 'importGp': _editorOpenImportGp(); return true;
@@ -923,8 +1022,19 @@ export function _editorRunEofCommand(cmd) {
 }
 
 function _editorDispatchFeedbackShortcut(e) {
-    if (editorShortcutProfile !== 'feedback' || _editorIsTypingTarget(e)) return false;
-    const cmd = _editorFeedbackCommandForKeyPure(e, S.tempoMapMode ? 'tempoMap' : 'note');
+    if (_editorIsTypingTarget(e)) return false;
+    // The delta profiles (Logical / Cableton) resolve their override table
+    // first and fall through to the FeedBack meaning for everything else;
+    // plain FeedBack skips the table. EOF has its own dispatcher below.
+    let cmd = null;
+    if (editorShortcutProfile === 'feedback') {
+        cmd = _editorFeedbackCommandForKeyPure(e, S.tempoMapMode ? 'tempoMap' : 'note');
+    } else if (EDITOR_PROFILE_OVERRIDES[editorShortcutProfile]) {
+        cmd = _editorTableCommandForKeyPure(e, S.tempoMapMode ? 'tempoMap' : 'note',
+            EDITOR_PROFILE_OVERRIDES[editorShortcutProfile]);
+    } else {
+        return false;
+    }
     if (!cmd) return false;
     const def = _editorCommandById(cmd);
     if (def && def.status !== 'ready') return false;

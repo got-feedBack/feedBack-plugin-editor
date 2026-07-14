@@ -154,6 +154,8 @@ export const host = {
     editorSeekToTime: () => {},
     /** The current snap step in seconds. */
     editorSnapStepSeconds: () => 0,
+    /** Whether the note-entry preview cell should be drawn (a view pref). */
+    editorEntryPreviewEnabled: () => true,
 
     // ── Rendering and scroll, for src/audio.js ────────────────────────
     /** Force an immediate synchronous repaint (draw() is rAF-coalesced). */

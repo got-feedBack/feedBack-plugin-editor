@@ -20,7 +20,7 @@
 // ════════════════════════════════════════════════════════════════════
 import {
     _abApplyRefGain, _abDisarm, _abOn, _audioTimelineDurationPure,
-    _ensureOnsetsShifted, _nearestOnsetTimePure, _refreshLoopABBtn,
+    _ensureOnsetsShifted, _nearestOnsetTimePure, _refreshLoopABBtn, _trainerDisarm,
 } from './audio.js';
 import { beatOf, timeOf } from './beats.js';
 import { DPR, canvas } from './canvas.js';
@@ -342,8 +342,10 @@ export function _updateLoopRegionControls() {
     const region = _selectedLoopRegion();
     if (!region && S.loopEnabled) S.loopEnabled = false;
     // A/B rides the loop region — clearing the region disarms it (and
-    // restores the reference gain via the guarded apply).
+    // restores the reference gain via the guarded apply). The audition trainer
+    // rides the same region: it goes with it.
     if (!region && _abOn) _abDisarm();
+    if (!region) _trainerDisarm();
     _refreshLoopABBtn();
     const loopBtn = document.getElementById('editor-loop-region-btn');
     if (loopBtn) {
@@ -382,18 +384,24 @@ export function editorToggleLoopRegion() { return _setLoopRegionEnabled(!S.loopE
 // placements; beyond it, snapTime falls back to grid snap.
 export const ONSET_SNAP_TOL = 0.07;
 
-export function snapTime(t) {
+// `force` bypasses the Snap ON/OFF toggle (the snap VALUE and mode still
+// apply): the toggle governs live interactive placement, but an EXPLICIT
+// quantize verb ("Resnap selection to grid") must snap regardless — with the
+// toggle off it silently returned every time unchanged, which read as the
+// command not existing at all. Default off: every interactive caller keeps
+// honouring the toggle exactly as before.
+export function snapTime(t, force = false) {
     // Onset-snap mode (charrette §1.6): when snapping is on and the target is
     // 'onset', prefer the nearest detected audio transient within ONSET_SNAP_TOL
     // — the bridge between musical time and audio-attack time for transcription
     // (no warp; just snap placement to the onset time). Falls back to grid snap
     // when no onset is near, or none is computed, so placement stays sensible.
-    if (S.snapEnabled && S.snapMode === 'onset') {
+    if ((S.snapEnabled || force) && S.snapMode === 'onset') {
         const onsets = (typeof _ensureOnsetsShifted === 'function') ? _ensureOnsetsShifted() : null;
         const near = _nearestOnsetTimePure(onsets, t, ONSET_SNAP_TOL);
         if (near !== null) return near;
     }
-    const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
+    const sv = _editorEffectiveSnapValuePure(S.snapEnabled || force, SNAP_VALUES[S.snapIdx]);
     if (!sv || S.beats.length < 2) return t;
     // Snap in the beat domain, then convert back (charrette §1.1):
     // snap = timeOf(round(beatOf(t)·subs)/subs). Sharing the converter makes the
@@ -404,6 +412,62 @@ export function snapTime(t) {
     // Swing rides the same converter as a beat-domain phase offset (D2):
     // at 50% (straight) this is bit-identical to plain rounding.
     return timeOf(S.beats, _swingQuantizeBeatPure(beatOf(S.beats, t), subs, S.swingPct));
+}
+
+// The first grid guideline strictly AFTER `t` at the current subdivision —
+// the minimum length an END-edge snap may leave a sustained note (the Logic
+// piano-roll rule: edges snap to the guidelines, but a sustained note never
+// collapses to zero; it keeps at least one subdivision). Same `force`
+// semantics as snapTime. Identity when snapping is unavailable.
+export function snapGuidelineAfter(t, force = false) {
+    const sv = _editorEffectiveSnapValuePure(S.snapEnabled || force, SNAP_VALUES[S.snapIdx]);
+    if (!sv || S.beats.length < 2) return t;
+    const subs = _editorSnapSubdivisionsPure(sv);
+    const q = Math.floor(beatOf(S.beats, t) * subs + 1e-6) + 1;
+    return timeOf(S.beats, q / subs);
+}
+
+// Magnetic drag snap (the DAW piano-roll feel — the design call: "magnetic,
+// not locking"): a guideline ATTRACTS the dragged edge inside a small
+// SCREEN-SPACE radius but never locks it — keep pulling past the magnet and
+// the edge follows the pointer exactly, so minor off-grid adjustments need
+// no modifier (Alt still gives fully-free from the first pixel). The radius
+// is in PIXELS, so it is zoom-aware like Logic's Smart snap: zoomed in, the
+// magnet spans less time and fine placement gets finer for free; zoomed way
+// out, guidelines sit closer together than the magnet and dragging is
+// effectively grid-stepped — exactly when free placement is unusable anyway.
+// DRAG paths only: click placement and the explicit resnap verb still snap
+// fully (a click has no "pull past" gesture to express intent with).
+export const MAGNET_PX = 8;
+export const MAGNET_GAP_FRAC = 0.35;
+export function magneticSnapTime(t) {
+    const snapped = snapTime(t);
+    if (snapped === t) return t;                       // snap off / no grid — free
+    // An ONSET hit passes through untouched: onset snap is ALREADY a magnet
+    // (ONSET_SNAP_TOL is its radius) and onsets are sparse, so it cannot degrade
+    // into locked stepping the way a dense grid can. Re-gating it on the GRID's
+    // radius would silently kill onset snap on drags at fine subdivisions — the
+    // gap cap below shrinks under the onset tolerance (at 1/16 it is ~11 ms vs
+    // the 70 ms tolerance), so the attack you aimed at would be released.
+    if (S.snapEnabled && S.snapMode === 'onset') {
+        const onsets = (typeof _ensureOnsetsShifted === 'function') ? _ensureOnsetsShifted() : null;
+        if (_nearestOnsetTimePure(onsets, t, ONSET_SNAP_TOL) !== null) return snapped;
+    }
+    // The grid magnet is ALSO capped at a fraction of the LOCAL guideline gap, so a
+    // free band always survives between two magnets. Without the cap, a dense
+    // grid (fine subdivision and/or low zoom) puts guidelines closer together
+    // than the magnet's diameter — every pointer position is inside SOME
+    // magnet and dragging degrades to locked stepping, exactly what
+    // "magnetic, not locking" forbids. (Neighbouring lines are taken from the
+    // straight subdivision; under swing the gap is approximate, which only
+    // perturbs the radius, never the snap target itself.)
+    const sv = _editorEffectiveSnapValuePure(S.snapEnabled, SNAP_VALUES[S.snapIdx]);
+    if (!sv || S.beats.length < 2) return t;
+    const subs = _editorSnapSubdivisionsPure(sv);
+    const q = Math.floor(beatOf(S.beats, t) * subs);
+    const gap = Math.max(1e-9, timeOf(S.beats, (q + 1) / subs) - timeOf(S.beats, q / subs));
+    const radius = Math.min(MAGNET_PX / Math.max(1e-9, S.zoom), gap * MAGNET_GAP_FRAC);
+    return Math.abs(snapped - t) <= radius ? snapped : t;
 }
 
 /* @pure:group-time-delta:start */

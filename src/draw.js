@@ -15,6 +15,7 @@
  */
 
 import { ctx } from './canvas.js';
+import { host } from './host.js';
 import {
     LABEL_W,
     LANE_H,
@@ -473,19 +474,40 @@ export function drawNotes(w) {
         }
     }
 
-    // Keyboard-entry caret: in String view with nothing selected, show where a
-    // typed fret will land (caret string × playhead) so entry has a visible
-    // target. A dashed cyan cell; ↑/↓ move it, 0-9 place a note there.
-    if (!keysMode && S.sel.size === 0) {
-        const cx = timeToX(S.cursorTime || 0);
+    // Keyboard-entry caret: in String view with nothing selected, preview the note
+    // a typed fret will drop — its STRING (the lane the cell sits on), its LENGTH
+    // (the box is the note value = the snap step, so it earns its note shape), and
+    // the FRET it'll carry (a ghosted digit). ↑/↓ move the string, 0-9 place. A
+    // view pref (host.editorEntryPreviewEnabled) — off if the box distracts.
+    if (!keysMode && S.sel.size === 0
+            && (!host.editorEntryPreviewEnabled || host.editorEntryPreviewEnabled())) {
+        // Draw on the grid the typed note will actually LAND on: _editorPlaceAtCaret
+        // places at snapTime(cursor), so after a free (Alt) scrub — or mid-playback —
+        // the raw cursor sits off-grid and a box drawn there would promise a position
+        // the note won't take. The cell must not lie about WHERE.
+        const cx = timeToX(host.snapTime ? host.snapTime(S.cursorTime || 0) : (S.cursorTime || 0));
         const cy = strToY(S.caretString || 0) + NOTE_PAD;
         const ch = LANE_H - NOTE_PAD * 2;
+        const step = host.editorSnapStepSeconds ? host.editorSnapStepSeconds() : 0;
+        const cw = _caretCellWidthPure(step, S.zoom, MIN_NOTE_W);
         ctx.save();
+        // Faint fill: the box is the note's FOOTPRINT (its length), not just an edge.
+        ctx.fillStyle = '#38bdf822';
+        ctx.fillRect(cx, cy, cw, ch);
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 1.5;
         ctx.setLineDash([3, 2]);
-        ctx.strokeRect(cx, cy, MIN_NOTE_W, ch);
+        ctx.strokeRect(cx, cy, cw, ch);
         ctx.setLineDash([]);
+        // Ghost the fret it will carry (last placed), so you see WHICH note lands.
+        const gf = Math.max(0, Math.min(24, Number(S.caretFret) || 0));
+        ctx.fillStyle = '#7dd3fc';
+        ctx.font = 'bold 13px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        // Centred in the cell's FIRST MIN_NOTE_W (the cell is never narrower than
+        // that), so the digit stays put as the box grows with the note value.
+        ctx.fillText(String(gf), cx + MIN_NOTE_W / 2, cy + ch / 2);
         ctx.restore();
     }
 }
@@ -898,6 +920,15 @@ function _drawPianoNote(n, selected, hl, midi, fretted, linted) {
             ctx.fillRect(x + 1, y + 1, 2, 2);
         }
     }
+}
+
+// The note-entry caret's width in px: the note VALUE (snap step, seconds) at the
+// current zoom, floored to a visible minimum so the cell always shows even at
+// tiny steps / low zoom. A step of 0 (no grid) → the minimum. Pure.
+export function _caretCellWidthPure(stepSec, zoom, minW) {
+    const mw = Number(minW) || 0;
+    const w = (Number(stepSec) > 0 && Number(zoom) > 0) ? stepSec * zoom : 0;
+    return Math.max(mw, w);
 }
 
 export function drawCursor(w, h) {
