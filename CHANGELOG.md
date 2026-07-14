@@ -35,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shift back to zero removes it from the pack again, so unshifted songs stay
   byte-identical to before.
 - **Inspector technique edits are undoable now.** Toggling a technique flag
+- **Resnap selection now works with Snap toggled off — and snaps both edges.**
+  "Resnap selection to grid" (Edit menu / its shortcut) honoured the live Snap
+  toggle, so with snapping off it silently moved nothing — which read as the
+  feature not existing at all ("I miss a way to snap the selected notes to the
+  grid"). An explicit quantize now always snaps, using whatever **subdivision
+  you have selected** — the same guidelines the grid draws, like the piano-roll
+  grid in a DAW. And it snaps **both edges**: note starts quantise to the
+  nearest guideline, and a sustained note's end edge follows — never collapsing
+  onto its start (it keeps at least one subdivision), while zero-length chips
+  are never inflated. One undoable step, and the status line now always tells
+  you what happened, including "already on the grid."
+- **Inspector technique edits are undoable now.** Toggling a technique flag
   (Palm Mute, Hammer-On, Tap, …) or setting a bend/slide value from the
   inspector panel used to mutate the note in place with no undo — so Ctrl+Z
   couldn't take it back, even though the same toggle from the keyboard could.

@@ -18,7 +18,7 @@ import { hitNote } from './hit-test.js';
 import { _renderInspector, _selectedChordContext } from './inspector.js';
 import { PIANO_LANE_H, _rollLockNotice, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, pianoLaneCount, yToMidi } from './keys.js';
 import { lanes, _stringCountFor } from './lanes.js';
-import { _editorClampScrollX, _loopNudgeEdge, snapTime } from './loop.js';
+import { _editorClampScrollX, _loopNudgeEdge, snapGuidelineAfter, snapTime } from './loop.js';
 import { _recState } from './midi-record.js';
 import { getMousePos } from './mouse.js';
 import { _resizeSustainsForDeltaPure, notes } from './notes.js';
@@ -502,22 +502,83 @@ function _editorNudgeSelectionTime(dir) {
     return true;
 }
 
+/* @pure:resnap-edges:start */
+// Both EDGES of every note snap to the current-subdivision guidelines — the
+// Logic piano-roll model: the start edge quantises to its nearest guideline,
+// and a SUSTAINED note's end edge does too, except it never collapses onto
+// the start (it keeps at least one subdivision — `afterFn` supplies the first
+// guideline strictly after the new start). A zero-sustain chip stays a chip:
+// length is authored intent, never inflated by a quantize.
+export function _resnapEdgesPure(oldTimes, oldSustains, snapFn, afterFn) {
+    const newTimes = oldTimes.map(t => snapFn(t));
+    const newSustains = oldSustains.map((sus, i) => {
+        if (!(sus > 0)) return sus || 0;
+        const end = snapFn(oldTimes[i] + sus);
+        const bounded = end > newTimes[i] + 1e-9 ? end : afterFn(newTimes[i]);
+        // afterFn is the identity when there is no usable grid (fewer than two
+        // beats, or the snap value is off) — and in ONSET mode snapFn still
+        // snaps, so a short note's two edges can land on the same onset with no
+        // guideline to push the end past it. A quantize must never eat a
+        // sustained note: with no positive bound to offer, keep the length.
+        return bounded > newTimes[i] + 1e-9 ? bounded - newTimes[i] : sus;
+    });
+    return { newTimes, newSustains };
+}
+/* @pure:resnap-edges:end */
+
+// One undoable step for the two halves of an edge resnap — starts move,
+// sustained ends re-length. Exec in order, rollback in reverse; gating
+// follows the MoveNoteCmd half (same as the verb always had).
+class ResnapEdgesCmd {
+    constructor(move, resize) { this.move = move; this.resize = resize; }
+    exec() { this.move.exec(); if (this.resize) this.resize.exec(); }
+    rollback() { if (this.resize) this.resize.rollback(); this.move.rollback(); }
+}
+
 function _editorResnapSelection() {
     const idxs = _editorCurrentNoteIndices();
     if (!idxs.length) { setStatus('Select notes first'); return false; }
+    // The verb has always been refused on a read-only roll (its MoveNoteCmd half
+    // isn't pitchPreserving, so the history gate rejects it). Say so HERE: the
+    // gate's refusal is silent to us, and the success line below would otherwise
+    // overwrite the lock notice and claim notes moved when none did.
+    if (_rollReadOnly()) { _rollLockNotice(); return true; }
     const nn = notes();
     const oldTimes = idxs.map(i => nn[i].time);
-    const newTimes = oldTimes.map(t => snapTime(t));
-    for (let i = 0; i < idxs.length; i++) nn[idxs[i]].time = oldTimes[i];
+    const oldSustains = idxs.map(i => Number(nn[i].sustain) || 0);
+    // FORCED snap: this is the explicit quantize verb, so it snaps to the
+    // guidelines (or onsets, in Onset mode) even while the live Snap toggle
+    // is OFF — with the toggle honoured it silently moved nothing, which read
+    // as "there's no way to snap notes to the grid" (a real tester report).
+    const { newTimes, newSustains } = _resnapEdgesPure(
+        oldTimes, oldSustains, (t) => snapTime(t, true), (t) => snapGuidelineAfter(t, true));
     const dtimes = newTimes.map((t, i) => t - oldTimes[i]);
+    const touched = idxs.filter((_, i) => Math.abs(dtimes[i]) > 1e-9
+        || Math.abs(newSustains[i] - oldSustains[i]) > 1e-9).length;
+    if (!touched) {
+        // Say so — a silent no-op is indistinguishable from a missing feature.
+        setStatus(`Selection already on the grid (${idxs.length} note${idxs.length === 1 ? '' : 's'} checked).`);
+        return true;
+    }
     const dstrings = idxs.map(() => 0);
-    S.history.exec(new MoveNoteCmd(idxs, dtimes, dstrings, null));
+    const susIdx = [], susVals = [];
+    for (let i = 0; i < idxs.length; i++) {
+        if (Math.abs(newSustains[i] - oldSustains[i]) > 1e-9) {
+            susIdx.push(idxs[i]);
+            susVals.push(newSustains[i]);
+        }
+    }
+    S.history.exec(new ResnapEdgesCmd(
+        new MoveNoteCmd(idxs, dtimes, dstrings, null),
+        susIdx.length ? new ResizeSustainGroupCmd(susIdx, susVals) : null));
     // Repeated resnapping is the canonical "fighting the grid" signal (charrette
     // §3.2): the notes keep landing off the beat, so the GRID may be the thing
     // that's wrong — nudge toward the Tempo tools.
     _signpostNote('gridFight');
     host.draw();
     host.updateStatus();
+    setStatus(`Snapped ${touched} of ${idxs.length} note${idxs.length === 1 ? '' : 's'} to the `
+        + `${S.snapMode === 'onset' ? 'detected onsets' : 'grid'} (both edges).`);
     return true;
 }
 
