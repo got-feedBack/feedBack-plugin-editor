@@ -130,7 +130,7 @@ import {
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
     _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
     _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones,
-    editorConfirmTempoZones, editorZonesSingleTempo, editorHealGrid
+    editorConfirmTempoZones, editorZonesSingleTempo, editorHealGrid, editorZonesOctaveFix
 } from './tempo.js';
 import { initTempoZones } from './tempo-zones.js';
 import {
@@ -1975,7 +1975,8 @@ function init() {
     initAnchorResolve();
     // The zone confirm bar's two APPLY verbs live in tempo.js (TempoGridCmd),
     // handed over as hooks so tempo-zones.js never imports tempo.js (cycle).
-    initTempoZones({ confirm: editorConfirmTempoZones, single: editorZonesSingleTempo });
+    initTempoZones({ confirm: editorConfirmTempoZones, single: editorZonesSingleTempo,
+        octave: editorZonesOctaveFix });
     initPlayabilityLint();
     initDrumPadStrip();
     initFretboardStrip();

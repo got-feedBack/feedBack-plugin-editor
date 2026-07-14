@@ -22,7 +22,8 @@
 // ════════════════════════════════════════════════════════════════════
 import { _ensureOnsetsShifted, _nearestOnsetTimePure } from './audio.js';
 import {
-    _localTempoSeriesPure, _segmentRefineGridPure, _segmentRoughMapPure,
+    _gridMedianBpmPure, _localTempoSeriesPure, _segmentOctaveMismatchPure,
+    _segmentRefineGridPure, _segmentRoughMapPure,
     _segmentSeedBeatsPure, _segmentSingleTempoPure, _segmentTempoPure,
 } from './tempo-segment.js';
 import {
@@ -716,7 +717,13 @@ export function editorScanTempoZones() {
     // grid-less song can't — the zones still report via status below).
     if (!S.tempoMapMode && S.beats && S.beats.length >= 2) _editorToggleTempoMapMode();
     _suggestDismiss();          // one proposal surface at a time
-    _zonesShow(segs);
+    // Octave check (Christian's call: ask during Scan): when the detected
+    // zones sit at ~2x or ~1/2 the grid's own tempo, the whole grid is an
+    // octave off — surface the one-click half/double-time rescue in the bar.
+    const single = _segmentSingleTempoPure(segs);
+    const octave = _segmentOctaveMismatchPure(
+        single ? single[0].bpmStart : 0, _gridMedianBpmPure(S.beats) || 0);
+    _zonesShow(segs, octave);
     host.draw();
     const label = (s) => s.kind === 'ramp'
         ? `${s.bpmStart > s.bpmEnd ? 'rit' : 'accel'} ${Math.round(s.bpmStart)}→${Math.round(s.bpmEnd)}`
@@ -728,7 +735,81 @@ export function editorScanTempoZones() {
     setStatus(`${segs.length} tempo zone${segs.length === 1 ? '' : 's'} detected: `
         + segs.map(label).join(' · ')
         + (weakest < 0.35 ? ' — LOW CONFIDENCE, the pulse is unsteady; check each zone' : '')
-        + ' — adjust the bands, then Confirm & refine.');
+        + (octave ? ` — ⚠ the recording reads ${octave === 'double' ? 'double' : 'half'}-time against your grid; the bar offers a one-click fix`
+            : ' — adjust the bands, then Confirm & refine.'));
+    return true;
+}
+
+/* @pure:grid-octave:start */
+// The octave rescue itself. An octave-trapped grid has the wrong BEAT RATE
+// (a 236-BPM grid carries twice the beats of the 118-BPM music), so the fix
+// must change beat density, not just re-tag barlines:
+//   'half'   — keep every 2nd beat PHASE-LOCKED TO EACH BAR'S OWN DOWNBEAT
+//              (so every barline survives whatever a bar's beat count is —
+//              real grids carry pickups, odd bars and squeezed measures),
+//              then merge measure pairs: a 236 4/4 grid becomes 118 4/4 with
+//              every surviving time EXACTLY where it was.
+//   'double' — insert the midpoint between every consecutive beat, then
+//              promote each measure's midpoint beat to a downbeat.
+// Null only when the grid is too small to mean anything. Composes the
+// existing half/double range pures for the bar-level half, so bar
+// renumbering keeps their pinned behaviour.
+export function _gridOctaveRescuePure(beats, dir) {
+    if (!Array.isArray(beats) || beats.length < 3) return null;
+    if (dir === 'half') {
+        const d0 = beats.findIndex(b => b && b.measure > 0);
+        if (d0 < 0) return null;
+        const kept = [];
+        // Leading pickup thins backwards from bar 1, so bar 1 itself is kept.
+        for (let j = d0 - 2; j >= 0; j -= 2) kept.unshift({ ...beats[j] });
+        let i = d0;
+        while (i < beats.length) {
+            let next = beats.length;
+            for (let k = i + 1; k < beats.length; k++) {
+                if (beats[k].measure > 0) { next = k; break; }
+            }
+            for (let k = i; k < next; k += 2) kept.push({ ...beats[k] });
+            i = next;
+        }
+        if (kept.length < 3) return null;
+        const merged = _tempoHalveRangePure(kept, 0, kept.length - 1);
+        return merged ? merged.beats : kept;
+    }
+    if (dir === 'double') {
+        const dense = [];
+        for (let i = 0; i < beats.length; i++) {
+            dense.push({ ...beats[i] });
+            if (i + 1 < beats.length) {
+                dense.push({ time: _r3((beats[i].time + beats[i + 1].time) / 2), measure: -1 });
+            }
+        }
+        const split = _tempoDoubleRangePure(dense, 0, dense.length - 1);
+        return split ? split.beats : dense;
+    }
+    return null;
+}
+/* @pure:grid-octave:end */
+
+// The octave rescue verb (offered by Scan's confirm bar): one undoable
+// TempoGridCmd re-lays the whole grid at the correct beat rate — audio and
+// note positions never move (notes re-lift their beat coordinates from the
+// new grid). The zone proposal is invalidated by the commit (it was detected
+// against the old grid) — the status says to re-Scan.
+export function editorZonesOctaveFix(dir) {
+    if (!S.sessionId || !S.history || !S.beats || S.beats.length < 3) return true;
+    const rescued = _gridOctaveRescuePure(S.beats, dir);
+    if (!rescued) {
+        setStatus('Could not re-time this grid automatically (odd meter or too few beats) — try Single tempo instead.');
+        return true;
+    }
+    _zonesDismiss();
+    S.history.exec(new TempoGridCmd(S.beats, rescued,
+        dir === 'double' ? 'double grid tempo' : 'halve grid tempo', S.tempoSel, -1));
+    host.draw();
+    host.updateStatus();
+    setStatus(dir === 'double'
+        ? 'Grid tempo doubled onto the real pulse — audio and notes stayed put. Run Scan again to confirm, then re-fit per zone. Undo restores.'
+        : 'Grid tempo halved onto the real pulse — audio and notes stayed put. Run Scan again to confirm, then re-fit per zone. Undo restores.');
     return true;
 }
 

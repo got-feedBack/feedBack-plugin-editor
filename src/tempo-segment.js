@@ -494,6 +494,41 @@ export function _segmentSingleTempoPure(segments) {
     return out;
 }
 
+// ── Octave-mismatch rescue (the "reads double/half-time" trap) ──────────────
+// Drum-heavy recordings routinely get charted at exactly half or twice the
+// real pulse (double-kick reads 2×, half-time backbeats read ½×). When Scan's
+// detected zones sit at ~2× or ~½ the CURRENT grid's tempo, the whole grid is
+// an octave off — a per-bar re-fit can never fix that, but one half/double-
+// time operation can. These pures make that call; the confirm bar offers it.
+
+// The grid's own median tempo (per-measure BPM, median over measures) — the
+// honest single number to compare the detected zones against.
+export function _gridMedianBpmPure(beats) {
+    const dbs = [];
+    for (let i = 0; i < (beats || []).length; i++) {
+        if (beats[i] && beats[i].measure > 0) dbs.push(i);
+    }
+    const bpms = [];
+    for (let k = 0; k + 1 < dbs.length; k++) {
+        const nBeats = dbs[k + 1] - dbs[k];
+        const dt = beats[dbs[k + 1]].time - beats[dbs[k]].time;
+        if (dt > 0 && nBeats > 0) bpms.push((60 * nBeats) / dt);
+    }
+    return bpms.length ? _median(bpms) : null;
+}
+
+// 'double' = the recording pulses at ~2× the grid (each grid bar spans two
+// real bars — double-time the grid); 'half' = the recording pulses at ~½ the
+// grid (halve it); null = no octave mismatch. Tolerance is relative (default
+// ±8%), tight enough that ordinary drift never reads as an octave error.
+export function _segmentOctaveMismatchPure(zoneBpm, gridBpm, tol = 0.08) {
+    if (!(zoneBpm > 0) || !(gridBpm > 0)) return null;
+    const r = zoneBpm / gridBpm;
+    if (Math.abs(r - 2) <= 2 * tol) return 'double';
+    if (Math.abs(r - 0.5) <= 0.5 * tol) return 'half';
+    return null;
+}
+
 // ── Bounded per-segment refine (P2-3 Apply) ─────────────────────────────────
 // Given the SEEDED grid, snap each mapped segment's barlines onto the recording
 // with pass-1's suggest engine, bounded INSIDE the segment (opts.toIdx) and with
