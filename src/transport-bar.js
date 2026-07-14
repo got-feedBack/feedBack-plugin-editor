@@ -478,8 +478,12 @@ function wireBar(bar) {
     on('editor-lcd-grid', () => {
         if (!_mapHealthEnabled()) return;   // cell is hidden with the lens off; belt and braces
         if (!S.audioBuffer) { setStatus('Grid health needs a recording to judge against.'); return; }
-        const worst = _mapHealthWorstPure(_mapHealthResults());
+        const res = _mapHealthResults();
+        const worst = _mapHealthWorstPure(res);
         if (worst) _mapHealthGotoMeasure(worst);
+        // No worst bar has TWO causes, and the pill already tells them apart:
+        // a dash (no judgeable bar at all) must not claim the grid "agrees".
+        else if (!_mapHealthPillPure(res)) setStatus('Grid health: nothing judgeable in this recording yet — no bars to fix.');
         else setStatus('Grid health: every judgeable bar agrees with the recording — nothing to fix.');
     });
     on('editor-tp-count', () => {
