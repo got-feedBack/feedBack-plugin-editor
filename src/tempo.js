@@ -1010,6 +1010,93 @@ export function _tempoBeatDragBoundsPure(beats, d, minGap, duration) {
 }
 /* @pure:tempo-beat-drag:end */
 
+/* @pure:grid-heal:start */
+// ── Heal uneven beat spacing (the degenerate-bar repair) ─────────────────────
+// Real projects accumulate pathological INTERIOR beat spacing — hand re-syncs
+// and old imports leave sub-beats piled milliseconds apart next to a
+// seconds-wide hole inside one measure (seen in the field: 5 ms gaps beside a
+// 2 s gap), which garbles the click, snapping, and every per-beat view. The
+// heal re-spaces a sick measure's interior beats EVENLY between its two
+// downbeats. Downbeats are NEVER moved — barlines are the charter's authored
+// truth; the beats between them are bookkeeping.
+
+// A measure is sick when any interior gap is under `minFrac` (default 30%) or
+// over `maxFrac` (default 300%) of its even spacing. Returns the measure
+// numbers that need healing (empty = grid is fine).
+export function _gridHealScanPure(beats, opts) {
+    const o = opts || {};
+    const minFrac = Number.isFinite(o.minFrac) ? o.minFrac : 0.3;
+    const maxFrac = Number.isFinite(o.maxFrac) ? o.maxFrac : 3;
+    const out = [];
+    if (!Array.isArray(beats) || beats.length < 2) return out;
+    const dbs = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i].measure > 0) dbs.push(i);
+    for (let s = 0; s + 1 < dbs.length; s++) {
+        const a = dbs[s], b = dbs[s + 1];
+        if (b - a < 2) continue;                       // no interior beats to judge
+        const span = beats[b].time - beats[a].time;
+        if (!(span > 0)) continue;
+        const even = span / (b - a);
+        for (let k = a; k < b; k++) {
+            const gap = beats[k + 1].time - beats[k].time;
+            if (gap < even * minFrac || gap > even * maxFrac) {
+                out.push(beats[a].measure);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+// Re-space every sick measure's interior beats evenly between its (unmoved)
+// downbeats. Equal-length output, strictly increasing, downbeat times and all
+// non-time fields untouched — shaped for a TempoGridCmd, so notes keep their
+// SECONDS and re-lift their beat positions from the healed grid (the notes
+// were synced to the audio; the grid was the sick part).
+export function _gridHealPure(beats, opts) {
+    const sick = new Set(_gridHealScanPure(beats, opts));
+    if (!sick.size) return null;
+    const out = beats.map(b => ({ ...b }));
+    const dbs = [];
+    for (let i = 0; i < out.length; i++) if (out[i].measure > 0) dbs.push(i);
+    for (let s = 0; s + 1 < dbs.length; s++) {
+        const a = dbs[s], b = dbs[s + 1];
+        if (!sick.has(out[a].measure) || b - a < 2) continue;
+        const span = out[b].time - out[a].time;
+        for (let k = a + 1; k < b; k++) {
+            out[k].time = _r3(out[a].time + (span * (k - a)) / (b - a));
+        }
+    }
+    return out;
+}
+/* @pure:grid-heal:end */
+
+// The menu verb: scan, heal, commit as ONE undoable TempoGridCmd. Notes keep
+// their exact seconds (they were synced to the recording — the grid was the
+// sick part); Undo restores the old spacing bit-exact.
+export function editorHealGrid() {
+    if (!S.beats || S.beats.length < 2) {
+        setStatus('No beat grid on this song — nothing to heal.');
+        return true;
+    }
+    if (!S.sessionId || !S.history) {
+        setStatus('Healing the grid needs a song open — create or open one first.');
+        return true;
+    }
+    const healed = _gridHealPure(S.beats);
+    if (!healed) {
+        setStatus('Beat spacing looks healthy — nothing to heal.');
+        return true;
+    }
+    const n = _gridHealScanPure(S.beats).length;
+    S.history.exec(new TempoGridCmd(S.beats, healed, 'heal uneven beats', S.tempoSel, S.tempoSel));
+    host.draw();
+    host.updateStatus();
+    setStatus(`Healed uneven beat spacing in ${n} measure${n === 1 ? '' : 's'} — barlines untouched, `
+        + 'notes kept their timing; Undo restores.');
+    return true;
+}
+
 // Per-beat rubato drag — the intra-bar counterpart of the pole drag.
 // Rebuilds from the original grid each move (no compounding) and lets
 // _tempoApplyDrag re-space the neighbours proportionally around the

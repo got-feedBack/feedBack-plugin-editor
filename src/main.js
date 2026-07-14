@@ -130,7 +130,7 @@ import {
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
     _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
     _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones,
-    editorConfirmTempoZones, editorZonesSingleTempo
+    editorConfirmTempoZones, editorZonesSingleTempo, editorHealGrid
 } from './tempo.js';
 import { initTempoZones } from './tempo-zones.js';
 import {
@@ -561,6 +561,7 @@ window.editorApplyReplaceAudio = editorApplyReplaceAudio;
 window.editorSyncTempo = editorSyncTempo;
 window.editorScanTempoZones = () => editorScanTempoZones();
 window.editorApplyTempoZones = () => editorApplyTempoZones();
+window.editorHealGrid = () => editorHealGrid();
 window.editorToggleMapHealth = (force) => editorToggleMapHealth(force);
 window.editorSyncUpdateFactor = editorSyncUpdateFactor;
 window.editorHideSyncDialog = editorHideSyncDialog;
