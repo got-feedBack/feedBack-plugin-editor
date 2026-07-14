@@ -85,6 +85,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   durations read from the spacing between notes, and anything outside the
   barline span is counted in the status rather than silently dropped.
   Fretted tracks only for now; standard notation is the follow-up.
+- **Standard notation in the score view — View ▸ Score staff.** Pick what
+  the live score engraves: **tablature only** (the default), **standard
+  notation only**, or **both staves together**. Clicking a beat selects its
+  notes on every staff choice, the pick is remembered per browser, and
+  choosing a staff while the score view is off switches you into it.
 
 ### Fixed
 

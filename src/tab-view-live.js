@@ -6,10 +6,13 @@
  * plugin (contrast tab-preview.js, the saved-pack proofreading modal, which
  * stays for checking what actually shipped to disk).
  *
- * v1 contract (Christian's calls): tab staff only (standard notation is the
- * follow-up), read + CLICK-TO-SELECT — clicking an engraved beat selects its
- * source notes and seeks the playhead; editing stays in the timeline views,
- * whose shortcuts keep working while the score refreshes live.
+ * Contract (Christian's calls): read + CLICK-TO-SELECT — clicking an
+ * engraved beat selects its source notes and seeks the playhead; editing
+ * stays in the timeline views, whose shortcuts keep working while the score
+ * refreshes live. The engraved STAFF is a per-browser reading preference
+ * (View ▸ Score staff): tab only (default), standard notation only, or both
+ * — same generated alphaTex either way, alphaTab derives pitch from
+ * tuning + fret.
  *
  * Lifecycle: `S.tabViewMode` is an orthogonal lens flag like partsViewMode —
  * the drum / tempo-map / parts toggles clear it, and the draw pass is the
@@ -30,11 +33,28 @@ import { TAB_RENDERER_FONT_DIR, _tabPreviewLoadScript } from './tab-preview.js';
 
 let _api = null;
 let _apiMount = null;           // the DOM node the api was built on (re-injection guard)
+let _apiStaff = '';             // the staff profile the api was built with
 let _beatMap = null;
 let _renderedKey = '';          // editGen|arr|session — regen only on real change
 let _debounce = 0;
 
 const $mount = () => document.getElementById('editor-tabview-mount');
+
+// Restore the staff preference — a READING preference, never chart data, so
+// it lives in localStorage like the loop-snap mode does.
+try {
+    const m = localStorage.getItem('editorTabViewStaff');
+    if (m === 'notation' || m === 'both') S.tabViewStaff = m;
+} catch (_) { /* storage unavailable — the 'tab' default stands */ }
+
+// The staff preference → alphaTab's StaveProfile enum KEY. A pure string map
+// (no alphaTab needed) so the contract is pinnable in node, and so an
+// unknown/legacy stored value degrades to tab instead of throwing.
+export function _scoreStaffProfilePure(staff) {
+    if (staff === 'notation') return 'Score';
+    if (staff === 'both') return 'ScoreTab';
+    return 'Tab';
+}
 
 function _keyNow() {
     return `${editGen}|${S.currentArr}|${S.sessionId}`;
@@ -44,6 +64,7 @@ function _destroyApi() {
     if (_api) { try { _api.destroy(); } catch (_) { /* best-effort */ } }
     _api = null;
     _apiMount = null;
+    _apiStaff = '';
     _beatMap = null;
     _renderedKey = '';
 }
@@ -52,14 +73,18 @@ function _destroyApi() {
 // the click-to-select: alphaTab reports the clicked beat's bar + in-bar index,
 // which is exactly how the generator's beatMap is keyed.
 function _ensureApi(mount) {
-    if (_api && _apiMount === mount) return _api;
+    if (_api && _apiMount === mount && _apiStaff === S.tabViewStaff) return _api;
     _destroyApi();
     /* global alphaTab */
     _api = new alphaTab.AlphaTabApi(mount, {
         // The music font MUST come from the same pinned CDN — a null/missing
         // fontDirectory engraves an invisible score (glyphs never load).
         core: { fontDirectory: TAB_RENDERER_FONT_DIR, includeNoteBounds: true },
-        display: { layoutMode: alphaTab.LayoutMode.Page, scale: 0.85 },
+        display: {
+            layoutMode: alphaTab.LayoutMode.Page,
+            scale: 0.85,
+            staveProfile: alphaTab.StaveProfile[_scoreStaffProfilePure(S.tabViewStaff)],
+        },
         // The interaction layer (beat clicks + the bounds lookup behind them)
         // is gated on the player flag in this alphaTab line — enable it with
         // NO soundfont and no cursor: nothing downloads, nothing sounds, the
@@ -67,6 +92,7 @@ function _ensureApi(mount) {
         player: { enablePlayer: true, enableCursor: false, enableUserInteraction: true },
     });
     _apiMount = mount;
+    _apiStaff = S.tabViewStaff;
     const select = (beat) => {
         try {
             const barIdx = beat.voice.bar.index;
@@ -206,6 +232,28 @@ export function editorToggleTabView(force) {
     host.draw();
     host.updateStatus();
     return true;
+}
+
+// The menu's Score-staff radio: getter feeds the checkmarks, setter applies
+// + persists. Picking a staff while the score view is OFF also enters it —
+// choosing what to read implies wanting to read.
+export function editorTabViewStaff() { return S.tabViewStaff; }
+
+export function editorSetTabViewStaff(staff) {
+    const v = (staff === 'notation' || staff === 'both') ? staff : 'tab';
+    const label = v === 'notation' ? 'standard notation'
+        : v === 'both' ? 'notation + tab' : 'tablature';
+    if (v !== S.tabViewStaff) {
+        S.tabViewStaff = v;
+        try { localStorage.setItem('editorTabViewStaff', v); } catch (_) { /* preference just won't persist */ }
+        // A different staff needs a rebuilt renderer (staveProfile is a
+        // construction-time setting) AND a re-render: _ensureApi sees the
+        // staff mismatch, _renderedKey forces the ping to regenerate.
+        _renderedKey = '';
+    }
+    if (!S.tabViewMode) { editorToggleTabView(true); return; }
+    setStatus(`Score staff: ${label}.`);
+    host.draw();
 }
 
 // Session teardown: the mount is being replaced wholesale — drop the api so
