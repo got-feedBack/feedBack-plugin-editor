@@ -17,7 +17,7 @@
  */
 import assert from 'node:assert';
 import fs from 'node:fs';
-import { _consequenceBadgePure, _songFitChoicesPure } from '../src/song-fit.js';
+import { _consequenceBadgePure, _songFitChoicesPure, _songFitResyncAnchorPure } from '../src/song-fit.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -42,10 +42,29 @@ t('_consequenceBadgePure is empty for an unknown kind', () => {
 });
 
 // ── 2. _songFitChoicesPure ───────────────────────────────────────────────────
-t('_songFitChoicesPure offers exactly the three fit operations', () => {
+t('_songFitChoicesPure offers exactly the four fit operations', () => {
     const c = _songFitChoicesPure();
-    assert.deepStrictEqual(c.map(x => x.key), ['shift', 'fit', 'constant']);
+    assert.deepStrictEqual(c.map(x => x.key), ['shift', 'fit', 'constant', 'resync']);
     for (const x of c) assert.ok(x.label && x.label.length, 'each choice is labelled');
+});
+
+// ── 2b. The re-sync anchor (the drift-rescue entry point) ────────────────────
+t('the re-sync anchor is the last downbeat at or before the playhead', () => {
+    const beats = [
+        { time: 0, measure: 1 }, { time: 0.5, measure: -1 },
+        { time: 2, measure: 2 }, { time: 2.5, measure: -1 },
+        { time: 4, measure: 3 },
+    ];
+    assert.strictEqual(_songFitResyncAnchorPure(beats, 3.2), 2, 'inside bar 2 → its downbeat');
+    assert.strictEqual(_songFitResyncAnchorPure(beats, 2), 2, 'exactly ON a downbeat → that one');
+    assert.strictEqual(_songFitResyncAnchorPure(beats, 99), 4, 'past the end → the last downbeat');
+});
+
+t('a playhead before bar 1 anchors on the FIRST downbeat, and no downbeats refuses', () => {
+    const beats = [{ time: 1, measure: 1 }, { time: 1.5, measure: -1 }, { time: 3, measure: 2 }];
+    assert.strictEqual(_songFitResyncAnchorPure(beats, 0.2), 0, 'before bar 1 → bar 1');
+    assert.strictEqual(_songFitResyncAnchorPure([{ time: 0, measure: -1 }], 1), -1, 'interiors only → -1');
+    assert.strictEqual(_songFitResyncAnchorPure([], 1), -1);
 });
 t('_songFitChoicesPure hints ARE the shared badges (single source)', () => {
     for (const x of _songFitChoicesPure()) {
