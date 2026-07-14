@@ -15,7 +15,14 @@ coercion (a garbage value must cost the field, never the whole save).
 Run: python -m pytest tests/test_audio_shift_persist.py -q
 """
 
-from routes import _FIELD_ABSENT, _parse_audio_shift  # noqa: E402
+import yaml  # noqa: E402
+
+from routes import (  # noqa: E402
+    _FIELD_ABSENT,
+    _apply_audio_shift,
+    _coerce_audio_shift,
+    _parse_audio_shift,
+)
 
 
 def test_absent_key_returns_the_sentinel_identity():
@@ -54,3 +61,76 @@ def test_garbage_coerces_to_zero_instead_of_failing_the_save():
 
 def test_rounded_to_microseconds_so_float_noise_never_reaches_the_manifest():
     assert _parse_audio_shift({"audio_shift": 0.1234567899}) == 0.123457
+
+
+def test_non_finite_never_reaches_the_manifest():
+    # `float("nan")` and `float("inf")` both SUCCEED and are truthy, so
+    # without the isfinite guard they'd pass the nonzero write check and land
+    # in manifest.yaml as `.nan` / `.inf` — poisoning the pack for every
+    # reader. (`json.loads` accepts bare NaN/Infinity, so this is reachable.)
+    for bad in ("nan", "inf", "-inf", float("nan"), float("inf")):
+        assert _parse_audio_shift({"audio_shift": bad}) == 0.0, repr(bad)
+
+
+# ── the save → disk → load round trip (the bug this PR fixes) ────────────────
+
+def _round_trip(manifest: dict) -> float:
+    """Serialize the manifest the way a save does, read it the way a load does.
+
+    yaml is the real disk boundary — a value that survives in memory but not
+    through safe_dump/safe_load is still lost work on reopen.
+    """
+    reloaded = yaml.safe_load(yaml.safe_dump(manifest, sort_keys=False))
+    return _coerce_audio_shift(reloaded.get("audio_shift"))
+
+
+def test_a_saved_shift_comes_back_identical_on_reopen():
+    # The whole point of the fix: align a song, save, reopen, still aligned.
+    manifest = {"title": "Song"}
+    _apply_audio_shift(manifest, _parse_audio_shift({"audio_shift": 0.25}))
+    assert manifest["audio_shift"] == 0.25
+    assert _round_trip(manifest) == 0.25
+
+
+def test_a_negative_shift_round_trips_too():
+    manifest = {"title": "Song"}
+    _apply_audio_shift(manifest, _parse_audio_shift({"audio_shift": -1.5}))
+    assert _round_trip(manifest) == -1.5
+
+
+def test_sliding_back_to_zero_removes_the_key_from_the_pack():
+    # An unshifted song must stay byte-identical to a pack that never had a
+    # shift — zero REMOVES the key rather than writing `audio_shift: 0`.
+    manifest = {"title": "Song", "audio_shift": 0.25}
+    _apply_audio_shift(manifest, _parse_audio_shift({"audio_shift": 0}))
+    assert "audio_shift" not in manifest
+    assert _round_trip(manifest) == 0.0
+
+
+def test_an_older_client_that_omits_the_field_does_not_wipe_a_saved_shift():
+    # Absent ≠ zero. A client that predates the feature saves title edits
+    # without shipping `audio_shift`; the persisted alignment must survive.
+    manifest = {"title": "Song", "audio_shift": 0.25}
+    _apply_audio_shift(manifest, _parse_audio_shift({"title": "Renamed"}))
+    assert manifest["audio_shift"] == 0.25
+
+
+def test_an_old_pack_with_no_key_loads_as_unshifted_not_nan():
+    # Backward compat: every pack built before this feature has no
+    # `audio_shift` key at all. The load path must produce a clean 0.0 —
+    # never None/NaN — so the frontend leaves the recording where it is.
+    shift = _coerce_audio_shift({"title": "Old Song"}.get("audio_shift"))
+    assert shift == 0.0
+    assert isinstance(shift, float)
+
+
+def test_the_build_path_carries_the_shift_from_meta_into_a_fresh_manifest():
+    # The build writes a brand-new manifest from `meta`; nonzero lands, and a
+    # meta with no shift leaves a fresh pack with no key (stays minimal).
+    built = {}
+    _apply_audio_shift(built, _coerce_audio_shift({"audio_shift": 0.4}.get("audio_shift")))
+    assert built["audio_shift"] == 0.4
+
+    unshifted = {}
+    _apply_audio_shift(unshifted, _coerce_audio_shift({}.get("audio_shift")))
+    assert "audio_shift" not in unshifted
