@@ -91,10 +91,11 @@ import {
 } from './tab-preview.js';
 import { editorExportGp5 } from './gp5-export.js';
 import {
-    _editorCurrentNoteIndices, _editorEntryPreviewEnabled, _editorSeekToTime,
-    _editorSnapStepSeconds, editorRunShortcutCommand, editorToggleEntryPreview,
-    editorToggleShortcutPanel, onContextMenu, onKeyDown
+    _editorCurrentNoteIndices, _editorEntryPreviewEnabled, _editorRunEofCommand,
+    _editorSeekToTime, _editorSnapStepSeconds, editorRunShortcutCommand,
+    editorToggleEntryPreview, editorToggleShortcutPanel, onContextMenu, onKeyDown
 } from './input.js';
+import { initCommandPalette } from './command-palette.js';
 import {
     editorAddString, editorHideStringsModal, editorRemoveString,
     editorSetStringTuning, editorShowStringsModal
@@ -118,7 +119,7 @@ import { initAnchorResolve } from './anchor-resolve.js';
 import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from './playability-lint.js';
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
-import { initMenuBar } from './menu-bar.js';
+import { EDITOR_MENUS, initMenuBar } from './menu-bar.js';
 import { initToolbars } from './toolbars.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
 import { editorDismissSignpost } from './signposts.js';
@@ -1979,6 +1980,10 @@ function init() {
     // handed over as hooks so tempo-zones.js never imports tempo.js (cycle).
     initTempoZones({ confirm: editorConfirmTempoZones, single: editorZonesSingleTempo,
         octave: editorZonesOctaveFix });
+    // Registry commands run through the keyboard's own dispatcher, and the
+    // menu model rides along too — both handed over as hooks so
+    // command-palette.js imports neither input.js nor menu-bar.js (cycles).
+    initCommandPalette({ run: _editorRunEofCommand, menus: EDITOR_MENUS });
     initPlayabilityLint();
     initDrumPadStrip();
     initFretboardStrip();

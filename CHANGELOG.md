@@ -109,6 +109,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   One undoable step, and it **names the measures it healed** so a bar you meant
   to be wildly uneven (a held grand pause reads the same as a corrupt gap) is
   one Ctrl+Z away; if the grid is healthy it says so and touches nothing.
+- **Command palette (Ctrl+K).** Press **Ctrl+K** (or View ▸ Command palette)
+  and just type what you want to do — every editor command and menu action is
+  searchable in one place, each shown with its live keyboard shortcut for your
+  active profile. Arrow keys select, Enter runs, Esc closes. If you've ever
+  known the editor *probably* has something but couldn't find which menu it
+  lives in, this is the answer: type "snap", "tempo", "export", "guide" and
+  the matching commands surface instantly, fuzzy matching included.
 - **Scan for tempo zones (preview).** A new **Tempo/Grid ▸ Scan for tempo zones**
   action reads the recording and reports the handful of *tempo intents* it finds
   — e.g. "3 tempo zones detected: 120 bpm · 140 bpm · rit 140→90". It's the first
