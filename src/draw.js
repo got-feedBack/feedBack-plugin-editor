@@ -571,6 +571,46 @@ export function _rollTechBadgesPure(techs) {
 }
 /* @pure:tech-badges:end */
 
+/* @pure:technique-connect:start */
+// Next note on the SAME STRING, per note — the target a pitched slide lands
+// on and the note a tie (link_next) legatos into. One reverse pass; returned
+// as a Map keyed by note OBJECT so the draw loop (which has the note, not its
+// index) reads it in O(1).
+export function _nextSameStringMapPure(nn) {
+    const map = new Map();
+    const lastByString = new Map();
+    for (let i = (nn || []).length - 1; i >= 0; i--) {
+        const n = nn[i];
+        if (!n) continue;
+        const prev = lastByString.get(n.string);
+        if (prev) map.set(n, prev);
+        lastByString.set(n.string, n);
+    }
+    return map;
+}
+
+// A slide CONNECTS to the next same-string note only when that note is the
+// slide's actual landing (its fret equals slide_to) — otherwise the target
+// isn't charted and the within-note glyph stays (never draw a line to a note
+// the gesture doesn't reach).
+export function _slideConnectsPure(techs, next) {
+    return !!(next && techs && Number.isFinite(techs.slide_to)
+        && next.fret === techs.slide_to);
+}
+/* @pure:technique-connect:end */
+
+// The per-frame lookup: memoized on editGen + the notes array identity (the
+// standard draw-memo contract — in-place time moves keep identity, and every
+// committed edit bumps the gen). Cost per frame after an edit: one O(n) pass.
+let _nextStrMemo = { gen: -1, ref: null, map: null };
+function _nextSameString(nn) {
+    if (_nextStrMemo.gen === editGen && _nextStrMemo.ref === nn && _nextStrMemo.map) {
+        return _nextStrMemo.map;
+    }
+    _nextStrMemo = { gen: editGen, ref: nn, map: _nextSameStringMapPure(nn) };
+    return _nextStrMemo.map;
+}
+
 function _drawNote(n, selected, ghl, linted) {
     const x = timeToX(n.time);
     const y = strToY(n.string) + NOTE_PAD;
@@ -673,14 +713,21 @@ function _drawNote(n, selected, ghl, linted) {
             ctx.closePath(); ctx.fill();
         }
     }
-    // Slide: a diagonal line across the note, sloping up or down toward the target.
+    // Slide: a diagonal sloping up or down toward the target. When the NEXT
+    // note on this string IS the slide's landing (fret === slide_to), the
+    // diagonal reaches all the way to that note's head — the gesture visibly
+    // connects to where it lands. No charted landing → the within-note glyph.
     const _sdir = _slideDirPure(n.fret, techs.slide_to);
     if (_sdir !== 0) {
+        const _next = _nextSameString(notes()).get(n);
+        const _endX = _slideConnectsPure(techs, _next)
+            ? Math.max(x + _ovW - 1, timeToX(_next.time) - 1)
+            : x + _ovW - 1;
         ctx.strokeStyle = '#93c5fd';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.moveTo(x + 1, _sdir > 0 ? y + h - 1 : y + 1);
-        ctx.lineTo(x + _ovW - 1, _sdir > 0 ? y + 1 : y + h - 1);
+        ctx.lineTo(_endX, _sdir > 0 ? y + 1 : y + h - 1);
         ctx.stroke();
     }
     // Vibrato: a small squiggle just above the note.
@@ -695,12 +742,22 @@ function _drawNote(n, selected, ghl, linted) {
             ctx.stroke();
         }
     }
-    // Tie (link_next): a small legato hook off the trailing edge.
+    // Tie (link_next): a legato arc from this note's tail to the LINKED
+    // note's head — the two notes visibly belong to one gesture. With no
+    // next note on the string (or an overlap), the old trailing hook stays.
     if (techs.link_next) {
         ctx.strokeStyle = '#a7f3d0';
         ctx.lineWidth = 1.5;
+        const _next = _nextSameString(notes()).get(n);
+        const _headX = _next ? timeToX(_next.time) : -1;
         ctx.beginPath();
-        ctx.arc(x + _ovW, y + h / 2, 4, -Math.PI / 2, Math.PI / 2);
+        if (_next && _headX > x + _ovW + 2) {
+            const midX = (x + _ovW + _headX) / 2;
+            ctx.moveTo(x + _ovW, y + h / 2);
+            ctx.quadraticCurveTo(midX, y - 3, _headX, y + h / 2);
+        } else {
+            ctx.arc(x + _ovW, y + h / 2, 4, -Math.PI / 2, Math.PI / 2);
+        }
         ctx.stroke();
     }
 

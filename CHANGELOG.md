@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Slides and ties now reach the note they belong to.** A pitched slide's
+  diagonal used to stop at the edge of its own note; when the next note on
+  that string is where the slide actually lands, the line now runs all the
+  way to it — you can see the gesture arrive. Likewise a tie (link-next) now
+  draws a legato arc from the note's tail to the linked note's head instead
+  of a small hook, so the two notes visibly belong to one gesture. When no
+  landing is charted (or notes overlap), the old compact glyphs remain —
+  the editor never draws a connection the music doesn't have.
+
 ### Fixed
 
 - **Inspector technique edits are undoable now.** Toggling a technique flag
