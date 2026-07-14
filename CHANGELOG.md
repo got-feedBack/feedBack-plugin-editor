@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the editor never draws a connection the music doesn't have.
 ### Added
 
+- **Meter groupings now teach the feel.** An authored grouping (`7/8` as
+  `2+2+3`) reaches its three consumers: the **metronome accents** each
+  grouping-cell start (strong-weak-strong-weak-strong-weak-weak — you hear
+  where the riff resets), the **ruler** keeps the felt pulse visible (bright
+  ticks on the accents at every zoom, and at far zoom the few sub-bar ticks
+  are spent on the accents instead of vanishing), and **tempo suggestions
+  corroborate on the felt pulse** — a candidate barline whose onsets land on
+  the `2+2+3` accents now out-scores one that merely matches an even seven.
+  Ungrouped bars behave exactly as before.
+
 - **Hold / fermata bars and meter groupings — the chart can finally say what
   the band meant.** Right-click a barline in the Tempo Map: **"Hold /
   fermata this bar"** marks a bar the band holds out (a big rock ending, a

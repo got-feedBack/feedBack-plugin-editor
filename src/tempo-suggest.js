@@ -23,7 +23,7 @@
 // ════════════════════════════════════════════════════════════════════
 import { timeToX } from './geometry.js';
 import { S, editGen } from './state.js';
-import { _holdMeasuresPure } from './tempo-marks.js';
+import { _groupingAccentsByMeasurePure, _holdMeasuresPure } from './tempo-marks.js';
 
 /* @pure:tempo-suggest:start */
 // Downbeat indices at or after `fromIdx` (fromIdx itself first).
@@ -82,25 +82,31 @@ export function _suggestAnyOnsetInPure(onsets, lo, hi) {
 // onset support of ALL the bar's implied beats (the interior subdivisions plus
 // the closing downbeat), not the single downbeat onset — so a bar whose whole
 // pulse is played reads as far more certain than a bare, possibly-spurious
-// downbeat hit. Even subdivision (no grouping field exists yet). Mean support
-// in [0,1]; `startT` is the previous (already-accepted) downbeat, excluded.
-export function _suggestCombPure(onsets, startT, endT, beatsInBar, win) {
+// downbeat hit. Weighted-mean support in [0,1]; `startT` is the previous
+// (already-accepted) downbeat, excluded.
+// P2-6: with an authored grouping's `accentMap` ([1,0,1,0,1,0,0] for a
+// 2+2+3 seven), the accented positions carry DOUBLE weight — a phase aligned
+// with the FELT pulse now out-scores one that merely matches an even
+// subdivision. No map = uniform weights, bit-identical to the old mean.
+export function _suggestCombPure(onsets, startT, endT, beatsInBar, win, accentMap) {
     const nb = beatsInBar > 0 ? beatsInBar : 1;
     if (!(endT > startT)) return 0;
-    let sum = 0;
+    let sum = 0, wsum = 0;
     for (let j = 1; j <= nb; j++) {
         const tj = startT + (endT - startT) * (j / nb);
         const hit = _suggestOnsetNearPure(onsets, tj, win);
-        sum += hit ? hit.conf : 0;
+        const w = (accentMap && accentMap[j % nb] === 1) ? 2 : 1;
+        sum += (hit ? hit.conf : 0) * w;
+        wsum += w;
     }
-    return sum / nb;
+    return sum / wsum;
 }
 
 // Look around the local snap for a better bar-level comb. This does NOT widen
 // the single-hit snap rule by itself: a better candidate outside jumpTol still
 // stops the march below. It prevents a dense interior beat from masquerading as
 // the downbeat when the real barline is just outside the beat-relative window.
-function _suggestBestCombCandidatePure(onsets, startT, gridInt, beatsInBar, win, stretch, jumpTol) {
+function _suggestBestCombCandidatePure(onsets, startT, gridInt, beatsInBar, win, stretch, jumpTol, accentMap) {
     if (!Array.isArray(onsets) || !(gridInt > 0)) return null;
     const rawPad = win / gridInt;
     const lo = startT + gridInt * Math.max(0.01, stretch - jumpTol - rawPad);
@@ -110,7 +116,7 @@ function _suggestBestCombCandidatePure(onsets, startT, gridInt, beatsInBar, win,
         if (!Number.isFinite(o.t) || o.t <= lo || o.t > hi) continue;
         const rawStretch = (o.t - startT) / gridInt;
         if (!(rawStretch > 0)) continue;
-        const comb = _suggestCombPure(onsets, startT, o.t, beatsInBar, win);
+        const comb = _suggestCombPure(onsets, startT, o.t, beatsInBar, win, accentMap);
         if (!best || comb > best.comb || (comb === best.comb && Math.abs(o.t - (startT + gridInt * stretch)) < Math.abs(best.time - (startT + gridInt * stretch)))) {
             best = { time: o.t, rawStretch, comb };
         }
@@ -229,8 +235,10 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
         if (hit && hit.t > prevNew + eps) {
             let time = hit.t;
             let rawStretch = (time - prevNew) / gridInt;
-            let comb = _suggestCombPure(onsets, prevNew, time, beatsInBar, win);
-            const better = _suggestBestCombCandidatePure(onsets, prevNew, gridInt, beatsInBar, win, stretch, jumpTol);
+            const accentMap = o.accentsByMeasure
+                ? o.accentsByMeasure.get(beats[prevDownIdx].measure) : null;
+            let comb = _suggestCombPure(onsets, prevNew, time, beatsInBar, win, accentMap);
+            const better = _suggestBestCombCandidatePure(onsets, prevNew, gridInt, beatsInBar, win, stretch, jumpTol, accentMap);
             if (better && better.time !== time && better.comb > comb + combSwitchMargin) {
                 time = better.time;
                 rawStretch = better.rawStretch;
@@ -393,7 +401,12 @@ export function _suggestCompute(anchorIdx, onsets, opts) {
     // Held bars are carried, never fitted (P2-5) — the fermata's span is
     // authored as non-metric. Never mutate the remembered opts object (the
     // regenerate path reuses it): spread the hold set in fresh each compute.
-    const fitOpts = { ...(useOpts || {}), holdMeasures: _holdMeasuresPure(S.tempoMarks) };
+    const fitOpts = {
+        ...(useOpts || {}),
+        holdMeasures: _holdMeasuresPure(S.tempoMarks),
+        // P2-6: grouped bars corroborate on their FELT accents.
+        accentsByMeasure: _groupingAccentsByMeasurePure(S.tempoMarks),
+    };
     const { proposals, stopReason, stopDetail } = _suggestFitPure(S.beats, list, anchorIdx, fitOpts);
     _sug = { anchorIdx, proposals, stopReason, stopDetail, onsets: list, opts: useOpts, gen: editGen };
     return proposals.length;

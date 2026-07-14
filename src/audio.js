@@ -33,6 +33,7 @@ import { _rollMidiForNote, _rollPitchCtx, midiToFreq } from './keys.js';
 import { _recState } from './midi-record.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
+import { _groupingAccentsLive } from './tempo-marks.js';
 import {
     _composeSongDurationPure, _cursorDrawTimePure, _loopPlaybackRestartTimePure,
     _normalizeLoopRegionPure, _countInPlanPure, _transportChartTimePure,
@@ -937,16 +938,31 @@ function _guideWindowEndPure(rawTo, loopEnabled, loopEndTime) {
 // click, downbeats (measure > 0) get the accent; sub-beats are measure -1.
 // Same half-open window contract as the clap query so the shared scheduler
 // never double-fires a beat across adjacent ticks.
-function _metroClicksInWindowPure(beats, from, to) {
+// P2-6: `accentsByMeasure` (measure → grouping accent map, plain data so the
+// sliced env stays clean) also accents the grouping-cell STARTS inside a
+// grouped bar — `2+2+3` clicks strong-weak-strong-weak-strong-weak-weak, so
+// the click teaches where the riff resets. Absent/ungrouped = downbeat-only,
+// bit-identical to the pre-grouping click.
+function _metroClicksInWindowPure(beats, from, to, accentsByMeasure) {
     if (!Array.isArray(beats) || !beats.length || !(to > from)) return [];
     let lo = 0, hi = beats.length;
     while (lo < hi) {
         const mid = (lo + hi) >> 1;
         if (beats[mid].time < from) lo = mid + 1; else hi = mid;
     }
+    // Establish the in-bar position at the window edge: scan back to the
+    // owning downbeat (bounded by one bar's beats).
+    let measure = -1, pos = -1;
+    for (let j = lo; j >= 0; j--) {
+        if (beats[j] && beats[j].measure > 0) { measure = beats[j].measure; pos = lo - j; break; }
+    }
     const out = [];
     for (let i = lo; i < beats.length && beats[i].time < to; i++) {
-        out.push({ t: beats[i].time, accent: beats[i].measure > 0 });
+        const down = beats[i].measure > 0;
+        if (down) { measure = beats[i].measure; pos = 0; }
+        const map = (!down && accentsByMeasure) ? accentsByMeasure.get(measure) : null;
+        out.push({ t: beats[i].time, accent: down || !!(map && pos >= 0 && map[pos] === 1) });
+        pos++;
     }
     return out;
 }
@@ -1470,7 +1486,7 @@ function _guideTick() {
         }
     }
     if (metro) {
-        const clicks = _metroClicksInWindowPure(S.beats || [], from, to);
+        const clicks = _metroClicksInWindowPure(S.beats || [], from, to, _groupingAccentsLive());
         for (const c of clicks) {
             _metroClickVoiceAt(
                 _guideChartToCtxPure(c.t, S.playStartWall, S.playStartTime, _auditionRate()), c.accent);
