@@ -166,8 +166,12 @@ export function _suggestPositionPure(pitch, time, prevNote, anchorList, occupied
 //   prevFret     the previous note's fret (hand reference) or null
 //   occByOthers  strings already sounding from NON-cluster notes at this instant
 //
-// Returns { assignments: [{ idx, string, fret }], span } (assignments in the
-// input cluster order) or null. ALL-OR-NOTHING: every cluster note is placed or
+// Returns { assignments: [{ idx, string, fret, ambiguousOpen? }], span }
+// (assignments in the input cluster order) or null. `ambiguousOpen: true` marks
+// an assignment voiced OPEN where a fretted alternative was also eligible — a
+// real articulation choice the machine made ("use opens, flag for review"):
+// callers must surface it for individual review and never bulk-confirm it.
+// ALL-OR-NOTHING: every cluster note is placed or
 // none is — a partial grip would leave a note neither moved nor refused, and the
 // sweep's "Accept all" would then bulk-confirm a position nobody ever picked.
 // Deterministic: the search order and every tie-break are pinned, so the same
@@ -192,14 +196,16 @@ export function _resolveChordGripPure(cluster, ctx, cfg, prevFret, occByOthers) 
             .filter(p => !occ.has(p.string))
             .filter(p => anchorFret === null || p.fret === 0 || (p.fret >= anchorFret && p.fret < anchorFret + hand));
         if (!cands.length) return null;
-        // Open vs fretted, both playable → a real articulation choice, and
-        // _suggestPositionPure REFUSES it rather than guess. The grip must not
-        // quietly decide it either — worse, open frets are free in the span
-        // metric, so the search actively PREFERS voicing a note open (a D+G
-        // dyad would collapse to two open strings, span 0). Bail: the caller's
-        // per-note path then refuses this note, honestly, as it always did.
-        if (cands.some(p => p.fret === 0) && cands.some(p => p.fret > 0)) return null;
-        perNote.push({ idx: it.idx, cands });
+        // Open vs fretted, both playable → a real articulation choice. The
+        // SINGLETON resolver still refuses it (_suggestPositionPure), but a
+        // grip may voice the note open — opens are how real chord shapes use
+        // the neck, and the span metric (opens are free) naturally prefers
+        // them — provided the choice is never silently confirmed: the pick is
+        // tagged `ambiguousOpen` below, and the sweep's "Accept all" refuses
+        // to bulk-confirm it (the charter reviews each flagged open, one at a
+        // time, in view). `frettedAlt` remembers that a fretted alternative
+        // was eligible, which is what makes an open pick ambiguous.
+        perNote.push({ idx: it.idx, cands, frettedAlt: cands.some(p => p.fret > 0) });
     }
     // Assign the fewest-choice notes first (fail fast, and pins the walk order).
     const order = perNote.map((_, k) => k).sort((a, b) => perNote[a].cands.length - perNote[b].cands.length);
@@ -248,9 +254,14 @@ export function _resolveChordGripPure(cluster, ctx, cfg, prevFret, occByOthers) 
     search(0);
     if (!best) return null;
     const byIdx = new Map();
-    order.forEach((k, ci) => byIdx.set(perNote[k].idx, best.picks[ci]));
+    order.forEach((k, ci) => byIdx.set(perNote[k].idx, { pick: best.picks[ci], frettedAlt: perNote[k].frettedAlt }));
     return {
-        assignments: items.map(it => ({ idx: it.idx, string: byIdx.get(it.idx).string, fret: byIdx.get(it.idx).fret })),
+        assignments: items.map(it => {
+            const { pick, frettedAlt } = byIdx.get(it.idx);
+            const a = { idx: it.idx, string: pick.string, fret: pick.fret };
+            if (pick.fret === 0 && frettedAlt) a.ambiguousOpen = true;
+            return a;
+        }),
         span: best.score[0],
     };
 }

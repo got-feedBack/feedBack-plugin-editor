@@ -15,6 +15,8 @@
  * The confirm UI + Apply (one TempoGridCmd) build on this.
  */
 
+import { _suggestApplyPure, _suggestFitPure } from './tempo-suggest.js';
+
 /* @pure:tempo-segment:start */
 const _median = (a) => {
     if (!a.length) return null;
@@ -325,22 +327,244 @@ export function _segmentSeedGridPure(segments, opts) {
 // CAN land on a snare backbeat, and the confirm bar (drag the boundary) is the out.
 export function _segmentRoughMapPure(onsets, opts) {
     const o = opts || {};
-    const bpb = o.beatsPerBar || 4;
     const segments = _segmentTempoPure(_localTempoSeriesPure(onsets, o), o);
     if (!segments.length) return null;
-    for (const seg of segments) {
+    const beats = _segmentSeedBeatsPure(onsets, segments, o);
+    if (!beats) return null;
+    return { beats, segments };
+}
+
+// Seed the editor-shaped beat grid from an EXPLICIT segment list (the confirm
+// bar hands back segments the human may have dragged/split/merged/re-typed).
+// Re-seeds each segment's downbeat PHASE unless it already carries a
+// `downbeatTime` inside its span (an adjusted boundary drops the stale seed, so
+// only surviving seeds are trusted). Returns beats or null (fewer than 2).
+export function _segmentSeedBeatsPure(onsets, segments, opts) {
+    const o = opts || {};
+    const bpb = o.beatsPerBar || 4;
+    const segs = (Array.isArray(segments) ? segments : []).map(s => ({ ...s }));
+    for (const seg of segs) {
+        if (seg.kind === 'unmapped') continue;
+        if (Number.isFinite(seg.downbeatTime)
+                && seg.downbeatTime >= seg.tStart - 1e-6 && seg.downbeatTime < seg.tEnd) continue;
         const period = 60 / (seg.bpmStart || seg.bpmEnd || 120);
         // Window the phase search to the segment: scoring to the end of the song
         // lets a later zone's pulse drag this zone's bar 1 off its own beat.
         seg.downbeatTime = _downbeatPhasePure(onsets, period, seg.tStart,
             { beatsPerBar: bpb, tEnd: seg.tEnd }).downbeatTime;
     }
-    const skeleton = _segmentSeedGridPure(segments, { beatsPerBar: bpb });
+    const skeleton = _segmentSeedGridPure(segs, { beatsPerBar: bpb });
     if (skeleton.length < 2) return null;
-    const beats = skeleton.map(b => b.measure > 0
+    return skeleton.map(b => b.measure > 0
         ? { time: b.time, measure: b.measure, den: 4 }
         : { time: b.time, measure: -1 });
-    return { beats, segments };
+}
+
+// ── Confirm-bar adjust verbs (P2-3 confirm) ─────────────────────────────────
+// Every verb returns a NEW segments array (input never mutated) or null when
+// the edit is invalid — callers keep the previous proposal on null. Segments
+// are assumed sorted by tStart (the detector emits them that way).
+
+const _SEG_MIN_LEN = 2;        // seconds — a tempo INTENT spans at least a bar or two
+const _SEG_RAMP_FRAC = 0.04;   // endpoint spread that reads as a ramp (matches detector)
+
+// Move the boundary between segments[bIdx] and segments[bIdx+1] to `newT`,
+// clamped so both neighbours keep at least `minLen` seconds. A dragged
+// boundary invalidates the right segment's phase seed (its span changed).
+export function _segmentBoundaryDragPure(segments, bIdx, newT, minLen = _SEG_MIN_LEN) {
+    if (!Array.isArray(segments) || !Number.isInteger(bIdx)
+            || bIdx < 0 || bIdx + 1 >= segments.length || !Number.isFinite(newT)) return null;
+    const out = segments.map(s => ({ ...s }));
+    const a = out[bIdx], b = out[bIdx + 1];
+    // The feasible window for the join. When the PAIR is shorter than 2×minLen
+    // the window is empty (lo > hi) — refuse, rather than let the Math.max win
+    // and hand back a right segment below minLen. Clamping a value into an
+    // empty range is the off-by-one that quietly breaks the invariant this
+    // function's whole contract is: BOTH neighbours keep at least `minLen`.
+    const lo = a.tStart + minLen, hi = b.tEnd - minLen;
+    if (!(lo <= hi)) return null;   // pair too short to hold a movable boundary
+    const t = Math.max(lo, Math.min(hi, newT));
+    a.tEnd = t;
+    b.tStart = t;
+    if (Number.isFinite(a.downbeatTime) && a.downbeatTime >= t) delete a.downbeatTime;
+    if (Number.isFinite(b.downbeatTime) && b.downbeatTime < t) delete b.downbeatTime;
+    return out;
+}
+
+// Split segments[idx] at time `t` (both halves keep at least `minLen`). A
+// constant splits into two constants at the same tempo; a ramp splits into two
+// ramps meeting at the interpolated bpm; unmapped splits into two unmapped.
+export function _segmentSplitPure(segments, idx, t, minLen = _SEG_MIN_LEN) {
+    if (!Array.isArray(segments) || !segments[idx] || !Number.isFinite(t)) return null;
+    const s = segments[idx];
+    if (t < s.tStart + minLen || t > s.tEnd - minLen) return null;
+    const frac = (t - s.tStart) / (s.tEnd - s.tStart);
+    const bpmAt = s.kind === 'ramp'
+        ? Math.round((s.bpmStart + (s.bpmEnd - s.bpmStart) * frac) * 10) / 10
+        : s.bpmStart;
+    const left = { ...s, tEnd: t, bpmEnd: s.kind === 'ramp' ? bpmAt : s.bpmEnd };
+    const right = { ...s, tStart: t, bpmStart: s.kind === 'ramp' ? bpmAt : s.bpmStart };
+    if (Number.isFinite(left.downbeatTime) && left.downbeatTime >= t) delete left.downbeatTime;
+    delete right.downbeatTime;   // the new right half re-seeds its own phase
+    const out = segments.map(x => ({ ...x }));
+    out.splice(idx, 1, left, right);
+    return out;
+}
+
+// Merge segments[idx] with segments[idx+1]. Honest endpoints (the cap-merge
+// rule): the joined span is described by its OWN ends a.bpmStart→b.bpmEnd — a
+// ramp when they differ beyond the ramp threshold, else a constant at their
+// midpoint. Unmapped only when BOTH halves were unmapped.
+export function _segmentMergePure(segments, idx) {
+    if (!Array.isArray(segments) || !segments[idx] || !segments[idx + 1]) return null;
+    const a = segments[idx], b = segments[idx + 1];
+    const med = (a.bpmStart + b.bpmEnd) / 2 || a.bpmStart || b.bpmEnd || 120;
+    const isRamp = Math.abs(b.bpmEnd - a.bpmStart) > med * _SEG_RAMP_FRAC;
+    const joined = {
+        tStart: a.tStart, tEnd: b.tEnd,
+        kind: (a.kind === 'unmapped' && b.kind === 'unmapped') ? 'unmapped'
+            : (isRamp ? 'ramp' : 'constant'),
+        bpmStart: isRamp ? a.bpmStart : Math.round(med * 10) / 10,
+        bpmEnd: isRamp ? b.bpmEnd : Math.round(med * 10) / 10,
+        conf: Math.min(a.conf ?? 0, b.conf ?? 0),
+    };
+    if (Number.isFinite(a.downbeatTime)) joined.downbeatTime = a.downbeatTime;
+    const out = segments.map(x => ({ ...x }));
+    out.splice(idx, 2, joined);
+    return out;
+}
+
+// Cycle a zone's kind: constant → ramp → unmapped → constant. Constant→ramp
+// keeps both endpoints (edit BPM to spread them); ramp→unmapped keeps the
+// numbers for the round trip; unmapped→constant restores a steady zone at the
+// endpoint midpoint (or 120 when the zone never had a tempo).
+export function _segmentCycleKindPure(segments, idx) {
+    if (!Array.isArray(segments) || !segments[idx]) return null;
+    const out = segments.map(x => ({ ...x }));
+    const s = out[idx];
+    if (s.kind === 'constant') s.kind = 'ramp';
+    else if (s.kind === 'ramp') s.kind = 'unmapped';
+    else {
+        s.kind = 'constant';
+        const med = ((s.bpmStart || 0) + (s.bpmEnd || 0)) / 2 || 120;
+        s.bpmStart = s.bpmEnd = Math.round(med * 10) / 10;
+    }
+    return out;
+}
+
+// Set a zone's tempo. A constant takes one value (both ends); a ramp takes
+// start→end. Values outside a playable [30, 400] refuse — a typo'd 0 or 1200
+// would seed a degenerate grid (and a non-finite period hangs the seeder).
+export function _segmentSetBpmPure(segments, idx, bpmStart, bpmEnd) {
+    if (!Array.isArray(segments) || !segments[idx]) return null;
+    const lo = 30, hi = 400;
+    const b0 = Number(bpmStart);
+    const b1 = segments[idx].kind === 'ramp' ? Number(bpmEnd ?? bpmStart) : b0;
+    if (!Number.isFinite(b0) || b0 < lo || b0 > hi) return null;
+    if (!Number.isFinite(b1) || b1 < lo || b1 > hi) return null;
+    const out = segments.map(x => ({ ...x }));
+    out[idx].bpmStart = Math.round(b0 * 10) / 10;
+    out[idx].bpmEnd = Math.round(b1 * 10) / 10;
+    return out;
+}
+
+// "Single tempo instead" — collapse every mapped zone into ONE constant zone
+// spanning them, at the duration-weighted median of the zone tempos (the
+// escape hatch when the detector over-segments a steady song).
+export function _segmentSingleTempoPure(segments) {
+    const mapped = (Array.isArray(segments) ? segments : [])
+        .filter(s => s && s.kind !== 'unmapped' && s.tStart < s.tEnd);
+    if (!mapped.length) return null;
+    const weighted = [];
+    for (const s of mapped) {
+        weighted.push({ bpm: (s.bpmStart + s.bpmEnd) / 2, w: s.tEnd - s.tStart });
+    }
+    weighted.sort((a, b) => a.bpm - b.bpm);
+    const total = weighted.reduce((acc, x) => acc + x.w, 0);
+    let run = 0, bpm = weighted[weighted.length - 1].bpm;
+    for (const x of weighted) { run += x.w; if (run >= total / 2) { bpm = x.bpm; break; } }
+    const first = mapped[0];
+    const out = [{
+        tStart: first.tStart, tEnd: mapped[mapped.length - 1].tEnd,
+        kind: 'constant',
+        bpmStart: Math.round(bpm * 10) / 10, bpmEnd: Math.round(bpm * 10) / 10,
+        conf: Math.min(...mapped.map(s => s.conf ?? 0)),
+    }];
+    if (Number.isFinite(first.downbeatTime)) out[0].downbeatTime = first.downbeatTime;
+    return out;
+}
+
+// ── Octave-mismatch rescue (the "reads double/half-time" trap) ──────────────
+// Drum-heavy recordings routinely get charted at exactly half or twice the
+// real pulse (double-kick reads 2×, half-time backbeats read ½×). When Scan's
+// detected zones sit at ~2× or ~½ the CURRENT grid's tempo, the whole grid is
+// an octave off — a per-bar re-fit can never fix that, but one half/double-
+// time operation can. These pures make that call; the confirm bar offers it.
+
+// The grid's own median tempo (per-measure BPM, median over measures) — the
+// honest single number to compare the detected zones against.
+export function _gridMedianBpmPure(beats) {
+    const dbs = [];
+    for (let i = 0; i < (beats || []).length; i++) {
+        if (beats[i] && beats[i].measure > 0) dbs.push(i);
+    }
+    const bpms = [];
+    for (let k = 0; k + 1 < dbs.length; k++) {
+        const nBeats = dbs[k + 1] - dbs[k];
+        const dt = beats[dbs[k + 1]].time - beats[dbs[k]].time;
+        if (dt > 0 && nBeats > 0) bpms.push((60 * nBeats) / dt);
+    }
+    return bpms.length ? _median(bpms) : null;
+}
+
+// 'double' = the recording pulses at ~2× the grid (each grid bar spans two
+// real bars — double-time the grid); 'half' = the recording pulses at ~½ the
+// grid (halve it); null = no octave mismatch. Tolerance is relative (default
+// ±8%), tight enough that ordinary drift never reads as an octave error.
+export function _segmentOctaveMismatchPure(zoneBpm, gridBpm, tol = 0.08) {
+    if (!(zoneBpm > 0) || !(gridBpm > 0)) return null;
+    const r = zoneBpm / gridBpm;
+    if (Math.abs(r - 2) <= 2 * tol) return 'double';
+    if (Math.abs(r - 0.5) <= 0.5 * tol) return 'half';
+    return null;
+}
+
+// ── Bounded per-segment refine (P2-3 Apply) ─────────────────────────────────
+// Given the SEEDED grid, snap each mapped segment's barlines onto the recording
+// with pass-1's suggest engine, bounded INSIDE the segment (opts.toIdx) and with
+// the segment's constant-tempo prior clamping the stretch tracker — the
+// structural cure for the runaway off-phase march. Locked downbeats defend
+// as always (the engine pins them). Returns { beats, refined } where `refined`
+// counts the downbeats the march MOVED (every non-locked proposal). A trailing
+// uncorroborated run is already dropped by the engine, but an INTERIOR held-note
+// bar marches on prediction and still counts — `refined` is "barlines re-timed",
+// not "barlines that landed on an onset". Beats outside
+// every segment (and past each bound) are untouched.
+export function _segmentRefineGridPure(beats, onsets, segments, opts) {
+    const o = opts || {};
+    const clamp = Number.isFinite(o.stretchClamp) ? o.stretchClamp : 0.12;
+    let out = (beats || []).map(b => ({ ...b }));
+    let refined = 0;
+    for (const seg of (Array.isArray(segments) ? segments : [])) {
+        if (!seg || seg.kind === 'unmapped' || !(seg.tStart < seg.tEnd)) continue;
+        let fromIdx = -1, toIdx = -1;
+        for (let i = 0; i < out.length; i++) {
+            if (out[i].measure <= 0) continue;
+            if (out[i].time < seg.tStart - 1e-6 || out[i].time >= seg.tEnd - 1e-6) continue;
+            if (fromIdx < 0) fromIdx = i;
+            toIdx = i;
+        }
+        if (fromIdx < 0 || toIdx <= fromIdx) continue;   // <2 downbeats — nothing to refine
+        const fit = _suggestFitPure(out, onsets, fromIdx, { toIdx, stretchClamp: clamp });
+        if (!fit.proposals.length) continue;
+        const last = fit.proposals[fit.proposals.length - 1].i;
+        const applied = _suggestApplyPure(out, fit.proposals, last);
+        if (applied) {
+            out = applied;
+            refined += fit.proposals.filter(p => !p.locked).length;
+        }
+    }
+    return { beats: out, refined };
 }
 /* @pure:tempo-segment:end */
 

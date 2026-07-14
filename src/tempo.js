@@ -20,8 +20,16 @@
 // Browser surface: `ctx` (the shared 2D context) plus the sync-inspector and
 // time-signature controls it builds into the toolbar.
 // ════════════════════════════════════════════════════════════════════
-import { _ensureOnsets, _ensureOnsetsShifted, _nearestOnsetTimePure } from './audio.js';
-import { _localTempoSeriesPure, _segmentRoughMapPure, _segmentTempoPure } from './tempo-segment.js';
+import { _ensureOnsetsShifted, _nearestOnsetTimePure } from './audio.js';
+import {
+    _gridMedianBpmPure, _localTempoSeriesPure, _segmentOctaveMismatchPure,
+    _segmentRefineGridPure, _segmentRoughMapPure,
+    _segmentSeedBeatsPure, _segmentSingleTempoPure, _segmentTempoPure,
+} from './tempo-segment.js';
+import {
+    _zonesBoundaryHitAt, _zonesDismiss, _zonesDragBoundary, _zonesDraw,
+    _zonesGet, _zonesSelect, _zonesShow, _zonesStripHit, _zonesZoneAt,
+} from './tempo-zones.js';
 import { beatOf, timeOf } from './beats.js';
 import { DPR, canvas, ctx } from './canvas.js';
 import { _drumLaneIdxForPiece, _drumPieceCount } from './drum.js';
@@ -228,6 +236,10 @@ export function _tempoMapDraw(w, h) {
             LABEL_W + 12, (TIMELINE_TOP + WAVEFORM_H) + 30);
         return;
     }
+
+    // Tempo-zone proposal bands (P2-3 confirm) — under the poles so a pole
+    // grab below the strip stays unobstructed; the strip itself owns its clicks.
+    _zonesDraw(ctx, w);
 
     // Beat grid lines (downbeats brighter than sub-beats).
     for (const b of S.beats) {
@@ -682,11 +694,12 @@ function _ensureTempoSignatureControl() {
 }
 // ── Tempo Map toolbar toggle ────────────────────────────────────────
 
-// Segment-first tempo scan (P2-3, PREVIEW). Runs the pure detection engine over
-// the recording's onsets and reports the tempo-intent zones it finds — a
-// non-committing rough map ("3 tempo zones detected: …"). The confirm bar +
-// Apply (one TempoGridCmd from _segmentSeedGridPure) are the follow-up; this
-// surfaces the analysis so it can be seen and trusted first. Never mutates.
+// Segment-first tempo scan (P2-3). Runs the pure detection engine over the
+// recording's onsets, paints the tempo-intent zones as BANDS on the tempo-map
+// timeline and docks the confirm bar: adjust (drag a boundary / split / merge /
+// kind / BPM), then Confirm & refine — or Single tempo instead. Everything
+// before Confirm is transient proposal state (tempo-zones.js); Scan itself
+// never mutates. Enters Tempo Map mode so the bands have their surface.
 export function editorScanTempoZones() {
     const onsets = _ensureOnsetsShifted();
     if (!onsets) {
@@ -700,6 +713,18 @@ export function editorScanTempoZones() {
         setStatus('Scan for tempo zones: no clear pulse found (sparse or unmapped audio).');
         return true;
     }
+    // The bands live on the tempo-map surface; enter the mode when needed (a
+    // grid-less song can't — the zones still report via status below).
+    if (!S.tempoMapMode && S.beats && S.beats.length >= 2) _editorToggleTempoMapMode();
+    _suggestDismiss();          // one proposal surface at a time
+    // Octave check (Christian's call: ask during Scan): when the detected
+    // zones sit at ~2x or ~1/2 the grid's own tempo, the whole grid is an
+    // octave off — surface the one-click half/double-time rescue in the bar.
+    const single = _segmentSingleTempoPure(segs);
+    const octave = _segmentOctaveMismatchPure(
+        single ? single[0].bpmStart : 0, _gridMedianBpmPure(S.beats) || 0);
+    _zonesShow(segs, octave);
+    host.draw();
     const label = (s) => s.kind === 'ramp'
         ? `${s.bpmStart > s.bpmEnd ? 'rit' : 'accel'} ${Math.round(s.bpmStart)}→${Math.round(s.bpmEnd)}`
         : `${Math.round(s.bpmStart)} bpm`;
@@ -710,7 +735,148 @@ export function editorScanTempoZones() {
     setStatus(`${segs.length} tempo zone${segs.length === 1 ? '' : 's'} detected: `
         + segs.map(label).join(' · ')
         + (weakest < 0.35 ? ' — LOW CONFIDENCE, the pulse is unsteady; check each zone' : '')
-        + ' — preview (segment-first Confirm & Apply is coming).');
+        + (octave ? ` — ⚠ the recording reads ${octave === 'double' ? 'double' : 'half'}-time against your grid; the bar offers a one-click fix`
+            : ' — adjust the bands, then Confirm & refine.'));
+    return true;
+}
+
+/* @pure:grid-octave:start */
+// The octave rescue itself. An octave-trapped grid has the wrong BEAT RATE
+// (a 236-BPM grid carries twice the beats of the 118-BPM music), so the fix
+// must change beat density, not just re-tag barlines:
+//   'half'   — keep every 2nd beat PHASE-LOCKED TO EACH BAR'S OWN DOWNBEAT
+//              (so every barline survives whatever a bar's beat count is —
+//              real grids carry pickups, odd bars and squeezed measures),
+//              then merge measure pairs: a 236 4/4 grid becomes 118 4/4 with
+//              every surviving time EXACTLY where it was.
+//   'double' — insert the midpoint between every consecutive beat, then
+//              promote each measure's midpoint beat to a downbeat.
+// Null only when the grid is too small to mean anything. Composes the
+// existing half/double range pures for the bar-level half, so bar
+// renumbering keeps their pinned behaviour.
+export function _gridOctaveRescuePure(beats, dir) {
+    if (!Array.isArray(beats) || beats.length < 3) return null;
+    if (dir === 'half') {
+        const d0 = beats.findIndex(b => b && b.measure > 0);
+        if (d0 < 0) return null;
+        const kept = [];
+        // Leading pickup thins backwards from bar 1, so bar 1 itself is kept.
+        for (let j = d0 - 2; j >= 0; j -= 2) kept.unshift({ ...beats[j] });
+        let i = d0;
+        while (i < beats.length) {
+            let next = beats.length;
+            for (let k = i + 1; k < beats.length; k++) {
+                if (beats[k].measure > 0) { next = k; break; }
+            }
+            for (let k = i; k < next; k += 2) kept.push({ ...beats[k] });
+            i = next;
+        }
+        if (kept.length < 3) return null;
+        const merged = _tempoHalveRangePure(kept, 0, kept.length - 1);
+        return merged ? merged.beats : kept;
+    }
+    if (dir === 'double') {
+        const dense = [];
+        for (let i = 0; i < beats.length; i++) {
+            dense.push({ ...beats[i] });
+            if (i + 1 < beats.length) {
+                dense.push({ time: _r3((beats[i].time + beats[i + 1].time) / 2), measure: -1 });
+            }
+        }
+        const split = _tempoDoubleRangePure(dense, 0, dense.length - 1);
+        return split ? split.beats : dense;
+    }
+    return null;
+}
+/* @pure:grid-octave:end */
+
+// The octave rescue verb (offered by Scan's confirm bar): one undoable
+// TempoGridCmd re-lays the whole grid at the correct beat rate — audio and
+// note positions never move (notes re-lift their beat coordinates from the
+// new grid). The zone proposal is invalidated by the commit (it was detected
+// against the old grid) — the status says to re-Scan.
+export function editorZonesOctaveFix(dir) {
+    if (!S.sessionId || !S.history || !S.beats || S.beats.length < 3) return true;
+    const rescued = _gridOctaveRescuePure(S.beats, dir);
+    if (!rescued) {
+        setStatus('Could not re-time this grid automatically (odd meter or too few beats) — try Single tempo instead.');
+        return true;
+    }
+    _zonesDismiss();
+    S.history.exec(new TempoGridCmd(S.beats, rescued,
+        dir === 'double' ? 'double grid tempo' : 'halve grid tempo', S.tempoSel, -1));
+    host.draw();
+    host.updateStatus();
+    setStatus(dir === 'double'
+        ? 'Grid tempo doubled onto the real pulse — audio and notes stayed put. Run Scan again to confirm, then re-fit per zone. Undo restores.'
+        : 'Grid tempo halved onto the real pulse — audio and notes stayed put. Run Scan again to confirm, then re-fit per zone. Undo restores.');
+    return true;
+}
+
+// Confirm & refine (P2-3 Apply, the real one): seed a grid from the ADJUSTED
+// zones, then snap each zone's barlines to the recording with the bounded,
+// tempo-clamped suggest march — ONE undoable TempoGridCmd (notes keep their
+// seconds and ride the re-lift; Ctrl+Z restores the old grid exactly).
+export function editorConfirmTempoZones() {
+    if (!S.sessionId || !S.history) {
+        setStatus('Confirming tempo zones needs a song open — create or open one first.');
+        return true;
+    }
+    const segments = _zonesGet();
+    if (!segments) return true;
+    const onsets = _ensureOnsetsShifted();
+    if (!onsets || onsets.length < 8) {
+        setStatus('Confirm & refine needs the recording’s onset analysis — load audio first.');
+        return true;
+    }
+    const seeded = _segmentSeedBeatsPure(onsets, segments);
+    if (!seeded) {
+        setStatus('These zones don’t produce a grid (all unmapped, or too short).');
+        return true;
+    }
+    const { beats: refined, refined: nRefined } = _segmentRefineGridPure(seeded, onsets, segments);
+    const firstDown = refined.findIndex(b => b.measure > 0);
+    _zonesDismiss();
+    S.history.exec(new TempoGridCmd(S.beats || [], refined, 'tempo zones (refined)',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    host.draw();
+    host.updateStatus();
+    const n = segments.length;
+    setStatus(`Built the grid from ${n} tempo zone${n === 1 ? '' : 's'} and snapped `
+        + `${nRefined} barline${nRefined === 1 ? '' : 's'} to the recording — notes kept their timing; Undo restores.`);
+    return true;
+}
+
+// "Single tempo instead" — the escape hatch when a steady song over-segments:
+// one constant zone at the duration-weighted median, uniform grid, no refine
+// (refining would un-uniform the very thing the button promises).
+export function editorZonesSingleTempo() {
+    if (!S.sessionId || !S.history) {
+        setStatus('Applying a tempo needs a song open — create or open one first.');
+        return true;
+    }
+    const segments = _zonesGet();
+    if (!segments) return true;
+    // Diagnose the two failures apart — folding them into one message blames
+    // the zones for what is actually a missing onset analysis.
+    const onsets = _ensureOnsetsShifted();
+    if (!onsets || !onsets.length) {
+        setStatus('Single tempo needs the recording’s onset analysis — load audio first.');
+        return true;
+    }
+    const single = _segmentSingleTempoPure(segments);
+    const seeded = single ? _segmentSeedBeatsPure(onsets, single) : null;
+    if (!seeded) {
+        setStatus('No mapped zone to take a tempo from.');
+        return true;
+    }
+    const firstDown = seeded.findIndex(b => b.measure > 0);
+    _zonesDismiss();
+    S.history.exec(new TempoGridCmd(S.beats || [], seeded, 'tempo zones (single tempo)',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    host.draw();
+    host.updateStatus();
+    setStatus(`Applied one steady tempo (${Math.round(single[0].bpmStart)} BPM) across the mapped span — Undo restores.`);
     return true;
 }
 
@@ -765,6 +931,7 @@ export function _editorToggleTempoMapMode() {
     if (S.tempoSelMulti) S.tempoSelMulti.clear();   // multi-select is mode-scoped (PR 5a)
     _tapTempo = null;   // abandon any pending tap run on mode change
     _suggestDismiss();  // proposals are mode-scoped — never survive an exit
+    _zonesDismiss();    // zone bands too — same rule, same reason
     if (S.tempoMapMode) {
         // Tempo, drum, and parts modes are mutually exclusive.
         S.drumEditMode = false;
@@ -924,6 +1091,105 @@ export function _tempoBeatDragBoundsPure(beats, d, minGap, duration) {
 }
 /* @pure:tempo-beat-drag:end */
 
+/* @pure:grid-heal:start */
+// ── Heal uneven beat spacing (the degenerate-bar repair) ─────────────────────
+// Real projects accumulate pathological INTERIOR beat spacing — hand re-syncs
+// and old imports leave sub-beats piled milliseconds apart next to a
+// seconds-wide hole inside one measure (seen in the field: 5 ms gaps beside a
+// 2 s gap), which garbles the click, snapping, and every per-beat view. The
+// heal re-spaces a sick measure's interior beats EVENLY between its two
+// downbeats. Downbeats are NEVER moved — barlines are the charter's authored
+// truth; the beats between them are bookkeeping.
+
+// A measure is sick when any interior gap is under `minFrac` (default 30%) or
+// over `maxFrac` (default 300%) of its even spacing. Returns the measure
+// numbers that need healing (empty = grid is fine).
+export function _gridHealScanPure(beats, opts) {
+    const o = opts || {};
+    const minFrac = Number.isFinite(o.minFrac) ? o.minFrac : 0.3;
+    const maxFrac = Number.isFinite(o.maxFrac) ? o.maxFrac : 3;
+    const out = [];
+    if (!Array.isArray(beats) || beats.length < 2) return out;
+    const dbs = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i].measure > 0) dbs.push(i);
+    for (let s = 0; s + 1 < dbs.length; s++) {
+        const a = dbs[s], b = dbs[s + 1];
+        if (b - a < 2) continue;                       // no interior beats to judge
+        const span = beats[b].time - beats[a].time;
+        const even = span / (b - a);
+        // Below the grid's millisecond resolution a re-space cannot land its
+        // beats on DISTINCT times (_r3 collapses them), so healing such a
+        // measure would emit a duplicate-time grid — worse than the sickness.
+        // That is corruption past what an even re-space can fix: leave it.
+        // NaN/zero/negative spans fall out here too.
+        if (!(even > 0.001)) continue;
+        for (let k = a; k < b; k++) {
+            const gap = beats[k + 1].time - beats[k].time;
+            if (gap < even * minFrac || gap > even * maxFrac) {
+                out.push(beats[a].measure);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+// Re-space every sick measure's interior beats evenly between its (unmoved)
+// downbeats. Equal-length output, strictly increasing, downbeat times and all
+// non-time fields untouched — shaped for a TempoGridCmd, so notes keep their
+// SECONDS and re-lift their beat positions from the healed grid (the notes
+// were synced to the audio; the grid was the sick part).
+export function _gridHealPure(beats, opts) {
+    const sick = new Set(_gridHealScanPure(beats, opts));
+    if (!sick.size) return null;
+    const out = beats.map(b => ({ ...b }));
+    const dbs = [];
+    for (let i = 0; i < out.length; i++) if (out[i].measure > 0) dbs.push(i);
+    for (let s = 0; s + 1 < dbs.length; s++) {
+        const a = dbs[s], b = dbs[s + 1];
+        if (!sick.has(out[a].measure) || b - a < 2) continue;
+        const span = out[b].time - out[a].time;
+        for (let k = a + 1; k < b; k++) {
+            out[k].time = _r3(out[a].time + (span * (k - a)) / (b - a));
+        }
+    }
+    return out;
+}
+/* @pure:grid-heal:end */
+
+// The menu verb: scan, heal, commit as ONE undoable TempoGridCmd. Notes keep
+// their exact seconds (they were synced to the recording — the grid was the
+// sick part); Undo restores the old spacing bit-exact.
+export function editorHealGrid() {
+    // Session before grid — the menu row is ungated (healing needs no recording),
+    // so "no song open" must say so rather than blame a grid that cannot exist yet.
+    if (!S.sessionId || !S.history) {
+        setStatus('Healing the grid needs a song open — create or open one first.');
+        return true;
+    }
+    if (!S.beats || S.beats.length < 2) {
+        setStatus('No beat grid on this song — nothing to heal.');
+        return true;
+    }
+    const sick = _gridHealScanPure(S.beats);
+    if (!sick.length) {
+        setStatus('Beat spacing looks healthy — nothing to heal.');
+        return true;
+    }
+    const healed = _gridHealPure(S.beats);
+    S.history.exec(new TempoGridCmd(S.beats, healed, 'heal uneven beats', S.tempoSel, S.tempoSel));
+    host.draw();
+    host.updateStatus();
+    // NAME the measures, don't just count them. The scan cannot tell a corrupt
+    // pile-up from a deliberate grand pause held ~9× its neighbours (both are a
+    // wildly uneven interior gap), and this flattens either. Undo restores, but
+    // only if the charter can SEE which bars moved — so list them.
+    const shown = sick.slice(0, 8).join(', ') + (sick.length > 8 ? `, +${sick.length - 8} more` : '');
+    setStatus(`Healed uneven beat spacing in ${sick.length} measure${sick.length === 1 ? '' : 's'} `
+        + `(${shown}) — barlines untouched, notes kept their timing; Undo restores.`);
+    return true;
+}
+
 // Per-beat rubato drag — the intra-bar counterpart of the pole drag.
 // Rebuilds from the original grid each move (no compounding) and lets
 // _tempoApplyDrag re-space the neighbours proportionally around the
@@ -954,6 +1220,22 @@ export function _tempoMapOnMouseDown(e, x, y) {
         if (host.isRecording()) return;
         S.cursorTime = Math.max(0, xToTime(x));
         if (S.playing) { host.stopPlayback(); host.startPlayback(); }
+        host.draw();
+        return;
+    }
+
+    // Tempo-zone strip (P2-3 confirm): while zone bands are showing, the strip
+    // owns its clicks — a boundary handle starts a pre-commit boundary drag
+    // (transient proposal state, no history until Confirm), a band body selects
+    // the zone for the bar's verbs. Sits above the pole band, so poles below
+    // the strip still grab exactly as before.
+    if (_zonesStripHit(y)) {
+        const bIdx = _zonesBoundaryHitAt(x);
+        if (bIdx >= 0) {
+            S.drag = { type: 'segment-boundary', bIdx, moved: false, startX: x };
+            return;
+        }
+        _zonesSelect(_zonesZoneAt(x));
         host.draw();
         return;
     }
@@ -1004,6 +1286,40 @@ export function _tempoMapOnMouseDown(e, x, y) {
             _tapTempo = null;
             host.draw();
             setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
+            return;
+        }
+        // Group drag (PR 5b): grabbing a pole that belongs to a multi-selection
+        // of 2+ downbeats drags the whole selection rigidly. Locked poles are
+        // excluded — they defend re-fits, so excluding them is least surprising —
+        // and the status says how many stayed put. The selection is KEPT (a
+        // TempoMapCmd is index-preserving), so the group survives the drag.
+        if (S.tempoSelMulti && S.tempoSelMulti.size >= 2 && S.tempoSelMulti.has(hit)) {
+            const all = [...S.tempoSelMulti];
+            const movable = all.filter(i => S.beats[i] && S.beats[i].measure > 0 && !S.beats[i].locked);
+            if (movable.length) {
+                if (hit !== S.tempoSel) _tapTempo = null;
+                S.tempoSel = hit;
+                S.drag = {
+                    type: 'tempo-group',
+                    selIdxs: movable,
+                    startX: x,
+                    startTime: xToTime(x),
+                    origBeats: S.beats.map(b => ({ ...b })),
+                    moved: false,
+                };
+                const lockedOut = all.length - movable.length;
+                if (lockedOut > 0) {
+                    setStatus(`Dragging ${movable.length} barline${movable.length === 1 ? '' : 's'} — `
+                        + `${lockedOut} locked ${lockedOut === 1 ? 'stays' : 'stay'} put.`);
+                }
+                host.draw();
+                return;
+            }
+            // Every selected pole is locked: keep the group selected and do not
+            // fall through to a single-pole drag, which would move a protected
+            // anchor despite the group no-op rule.
+            setStatus('Selected barlines are locked — unlock one to move it.');
+            host.draw();
             return;
         }
         if (hit !== S.tempoSel) _tapTempo = null;   // selection moved — drop stale tap run
@@ -1986,6 +2302,81 @@ export function _tempoApplyDrag(beats, d, newT) {
     }
 }
 
+/* @pure:tempo-group-drag:start */
+// Group drag (PR 5b) — move a multi-selection of downbeats rigidly by one Δt.
+// The clamp keeps the WHOLE group together: it is the tightest headroom of any
+// selected pole against its nearest UNSELECTED downbeat (± minGap), so no pole
+// can cross a fixed neighbour. A selected pole with no unselected neighbour on
+// a side is bounded by the song start (0) / `duration`. Locked and non-selected
+// downbeats are treated as fixed, so they constrain (and defend) the move.
+// Returns the clamped Δt actually applicable for `deltaT`.
+export function _tempoGroupDragClampPure(beats, selIdxs, deltaT, minGap = MIN_MEASURE, duration = 0) {
+    if (!Array.isArray(beats) || !Array.isArray(selIdxs) || !selIdxs.length) return 0;
+    const sel = new Set(selIdxs);
+    let headRight = Infinity, headLeft = Infinity;
+    for (const i of sel) {
+        if (!beats[i] || beats[i].measure <= 0) continue;
+        // Nearest UNSELECTED downbeat to the right — the fixed pole this one
+        // must stay `minGap` behind; none ⇒ the song end (duration).
+        let rt = -1;
+        for (let j = i + 1; j < beats.length; j++) {
+            if (beats[j].measure > 0 && !sel.has(j)) { rt = j; break; }
+        }
+        const hiBound = rt >= 0
+            ? beats[rt].time - minGap
+            : Math.max(beats[i].time, duration || beats[beats.length - 1].time);
+        headRight = Math.min(headRight, hiBound - beats[i].time);
+        // Nearest UNSELECTED downbeat to the left; none ⇒ the song start (0).
+        let lf = -1;
+        for (let j = i - 1; j >= 0; j--) {
+            if (beats[j].measure > 0 && !sel.has(j)) { lf = j; break; }
+        }
+        const loBound = lf >= 0 ? beats[lf].time + minGap : 0;
+        headLeft = Math.min(headLeft, beats[i].time - loBound);
+    }
+    if (!Number.isFinite(headRight)) headRight = 0;
+    if (!Number.isFinite(headLeft)) headLeft = 0;
+    return deltaT >= 0
+        ? Math.min(deltaT, Math.max(0, headRight))
+        : Math.max(deltaT, -Math.max(0, headLeft));
+}
+
+// Apply a group drag to a COPY of `beats` (never mutates the input). Every
+// selected+unselectable-excluded downbeat shifts by the clamped Δt; each
+// measure span then re-spaces its interior proportionally between its
+// (possibly moved) downbeats — so a span between two selected poles rigid-
+// shifts for free, and a span at the selection's edge re-spaces against its
+// fixed outside pole. A leading pickup / trailing tail rigid-shifts only when
+// its bounding downbeat moved. Locked poles are dropped from the group (they
+// stay put and act as fixed neighbours). Equal length in/out — a TempoMapCmd.
+export function _tempoApplyGroupDragPure(beats, selIdxs, deltaT, minGap = MIN_MEASURE, duration = 0) {
+    const out = (beats || []).map(b => ({ ...b }));
+    if (!Array.isArray(beats) || !Array.isArray(selIdxs) || !selIdxs.length) return out;
+    const sel = new Set(selIdxs.filter(i => beats[i] && beats[i].measure > 0 && !beats[i].locked));
+    if (!sel.size) return out;
+    const delta = _tempoGroupDragClampPure(beats, [...sel], deltaT, minGap, duration);
+    for (const i of sel) out[i].time = beats[i].time + delta;
+    const dbs = [];
+    for (let i = 0; i < beats.length; i++) if (beats[i].measure > 0) dbs.push(i);
+    if (!dbs.length) return out;
+    // Leading pickup: rigid-shift iff the first downbeat moved.
+    if (sel.has(dbs[0])) for (let i = 0; i < dbs[0]; i++) out[i].time = beats[i].time + delta;
+    // Interior spans: proportional re-space between the (new) bounding times.
+    for (let s = 0; s + 1 < dbs.length; s++) {
+        const a = dbs[s], b = dbs[s + 1];
+        const oldSpan = beats[b].time - beats[a].time;
+        for (let k = a + 1; k < b; k++) {
+            const frac = oldSpan > 0 ? (beats[k].time - beats[a].time) / oldSpan : (k - a) / (b - a);
+            out[k].time = out[a].time + frac * (out[b].time - out[a].time);
+        }
+    }
+    // Trailing tail: rigid-shift iff the last downbeat moved.
+    const last = dbs[dbs.length - 1];
+    if (sel.has(last)) for (let i = last + 1; i < beats.length; i++) out[i].time = beats[i].time + delta;
+    return out;
+}
+/* @pure:tempo-group-drag:end */
+
 // Metric modulation prompt + apply for the selected barline. New tempo
 // = current × ratio, from the selected measure to the next tempo change
 // (the uniform-run boundary — hand-authored downstream tempo is a natural
@@ -2371,7 +2762,32 @@ export function _tempoOnsetSnapPure(rawT, onsets, tol, loBound, hiBound) {
 
 export function _tempoMapOnDragMove(x) {
     const dg = S.drag;
-    if (!dg || dg.type !== 'tempo-sync') return;
+    if (!dg) return;
+    // Group drag (PR 5b): rigid Δt over the whole selection, rebuilt from the
+    // original grid each move (no compounding), clamped so the group can't
+    // cross a fixed neighbour. Finalized by the shared _tempoMapOnDragEnd.
+    if (dg.type === 'tempo-group') {
+        if (!dg.moved && Math.abs(x - dg.startX) < 3) return;
+        dg.moved = true;
+        const deltaT = xToTime(x) - dg.startTime;
+        S.beats = _tempoApplyGroupDragPure(dg.origBeats, dg.selIdxs, deltaT, MIN_MEASURE, S.duration || 0);
+        host.draw();
+        return;
+    }
+    // Tempo-zone boundary drag (P2-3 confirm): pre-commit — reshapes only the
+    // transient proposal (the pure clamps both neighbours to a minimum span);
+    // nothing reaches S.beats or history until Confirm & refine. Same 3px
+    // click-vs-drag threshold as the other two kinds, and it matters MORE here:
+    // the handle is narrow and the reshape is pre-commit, so a jitter-nudge on
+    // an intended click would silently move the boundary with no undo to
+    // recover it (Ctrl+Z only reaches committed grids).
+    if (dg.type === 'segment-boundary') {
+        if (!dg.moved && Math.abs(x - dg.startX) < 3) return;
+        dg.moved = true;
+        _zonesDragBoundary(dg.bIdx, xToTime(x));
+        return;
+    }
+    if (dg.type !== 'tempo-sync') return;
     if (!dg.moved && Math.abs(x - dg.startX) < 3) return;
     dg.moved = true;
     const d = dg.beatIdx;
@@ -2393,7 +2809,11 @@ export function _tempoMapOnDragMove(x) {
     dg.snappedT = null;
     if (S.snapMode === 'onset' && !(orig[d] && orig[d].locked)) {
         const tol = _tempoOnsetSnapTolPure(xToTime(1) - xToTime(0), ONSET_SNAP_PX, ONSET_SNAP_MAX_S);
-        const res = _tempoOnsetSnapPure(rawT, _ensureOnsets(), tol, loBound, hiBound);
+        // rawT and the barlines are CHART time, so the snap must compare against
+        // CHART-time onsets — _ensureOnsetsShifted() (matching Suggest-fit), not the
+        // buffer-time _ensureOnsets(): with the audio shifted the two diverge and the
+        // barline would snap to the un-shifted attack (issue #254).
+        const res = _tempoOnsetSnapPure(rawT, _ensureOnsetsShifted(), tol, loBound, hiBound);
         newT = res.t;
         if (res.snapped) dg.snappedT = newT;
     }
@@ -2406,10 +2826,11 @@ export function _tempoMapOnDragMove(x) {
 export function _tempoMapOnDragEnd() {
     const dg = S.drag;
     S.drag = null;
-    // Finalizes both drag kinds — a moved pole ('tempo-sync') and a moved
-    // individual beat ('tempo-beat') — identically: same revert-then-exec,
-    // same equal-count invariant, one undoable TempoMapCmd.
-    if (!dg || (dg.type !== 'tempo-sync' && dg.type !== 'tempo-beat')) return;
+    // Finalizes every time-only tempo drag — a moved pole ('tempo-sync'), a
+    // moved individual beat ('tempo-beat'), and a moved multi-selection
+    // ('tempo-group') — identically: same revert-then-exec, same equal-count
+    // invariant, one undoable TempoMapCmd.
+    if (!dg || (dg.type !== 'tempo-sync' && dg.type !== 'tempo-beat' && dg.type !== 'tempo-group')) return;
     if (!dg.moved) { host.draw(); return; }  // a click-select, not a drag
     const newBeats = S.beats.map(b => ({ ...b }));
     S.beats = dg.origBeats;  // revert — TempoMapCmd.exec re-applies it
@@ -2423,10 +2844,17 @@ export function _tempoMapOnDragEnd() {
         host.draw();
         return;
     }
-    S.history.exec(new TempoMapCmd(dg.origBeats, newBeats, 'drag'));
-    // Confirm an onset snap so the user knows the barline landed on a real attack
-    // (only set on a tempo-sync drag under Snap = Onset; silent otherwise).
-    if (dg.snappedT != null) setStatus(`Barline snapped to a detected attack at ${dg.snappedT.toFixed(2)}s.`);
+    const isGroup = dg.type === 'tempo-group';
+    S.history.exec(new TempoMapCmd(dg.origBeats, newBeats, isGroup ? 'group-drag' : 'drag'));
+    if (isGroup) {
+        const n = dg.selIdxs ? dg.selIdxs.length : 0;
+        setStatus(`Moved ${n} barline${n === 1 ? '' : 's'} together — notes ride the grid.`);
+    } else if (dg.snappedT != null) {
+        // Confirm an onset snap so the user knows the barline landed on a real
+        // attack (only set on a tempo-sync drag under Snap = Onset; silent
+        // otherwise — and never on a group drag, which doesn't onset-snap).
+        setStatus(`Barline snapped to a detected attack at ${dg.snappedT.toFixed(2)}s.`);
+    }
     host.draw();
 }
 

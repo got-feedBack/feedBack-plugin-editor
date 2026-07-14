@@ -19,9 +19,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of "guessing". A trailing march that never re-confirms keeps the
   floor and is still dropped, exactly as before; a barline you locked confirms
   at full trust.
+### Added
+
+- **The note-entry caret now previews the note you're about to type.** In String
+  view with nothing selected, the dashed cell that marks the entry point earns
+  its note shape: it's sized to the current note value (the snap step, so the box
+  is exactly the footprint a typed note will fill), sits on the caret's string
+  lane, and ghosts the fret it will carry — the caret shows *which* note lands
+  and *how long*, not just *where*. Typed notes are placed at that same length so
+  consecutive entries tile the grid instead of stacking as zero-length notes. The
+  preview is a persisted view pref: **Tempo/Grid ▸ Snap ▸ Note-entry preview** toggles
+  it off (and back on) for mouse-first charters who find the cell distracting.
+- **Clicking the ruler snaps the playhead to the grid, Logic-style.** A scrub
+  click on the timeline ruler now lands the playhead on the nearest beat /
+  subdivision when snap is on (so the entry caret sits on a real note position),
+  instead of seeking to the raw pixel time. Hold **Alt** while clicking for a
+  free, un-snapped scrub.
+- **Song Fit ▸ Re-sync from this bar on…** The drift rescue, right where you'd
+  look for it. The classic trap: you set a constant tempo from a tab, but the
+  band actually plays a hair slower — the chart lines up perfectly at the
+  start and drifts further off the deeper you get. Now park the playhead
+  where things stop matching, open **Song Fit**, pick **Re-sync from this bar
+  on…**, and the editor jumps into the Tempo Map and immediately shows its
+  suggested barline corrections from that bar forward as ghost markers — you
+  click to accept as far as it looks right. Nothing commits until you accept,
+  Esc dismisses, and as always the audio never moves: barlines re-fit to the
+  recording and your notes ride along.
 
 ### Fixed
 
+- **"Shift Audio…" now survives saving and reopening.** The recording-vs-chart
+  shift was sent with every save but the backend silently dropped it, so a
+  carefully aligned song came back misaligned on the next open — reading as
+  lost work. The shift is now persisted into the pack (a manifest extension
+  key, invisible to and ignored by anything that doesn't know it) and restored
+  on load, through plain saves, Save As, and first builds alike. Sliding the
+  shift back to zero removes it from the pack again, so unshifted songs stay
+  byte-identical to before.
+- **Inspector technique edits are undoable now.** Toggling a technique flag
+- **Resnap selection now works with Snap toggled off — and snaps both edges.**
+  "Resnap selection to grid" (Edit menu / its shortcut) honoured the live Snap
+  toggle, so with snapping off it silently moved nothing — which read as the
+  feature not existing at all ("I miss a way to snap the selected notes to the
+  grid"). An explicit quantize now always snaps, using whatever **subdivision
+  you have selected** — the same guidelines the grid draws, like the piano-roll
+  grid in a DAW. And it snaps **both edges**: note starts quantise to the
+  nearest guideline, and a sustained note's end edge follows — never collapsing
+  onto its start (it keeps at least one subdivision), while zero-length chips
+  are never inflated. One undoable step, and the status line now always tells
+  you what happened, including "already on the grid."
 - **Inspector technique edits are undoable now.** Toggling a technique flag
   (Palm Mute, Hammer-On, Tap, …) or setting a bend/slide value from the
   inspector panel used to mutate the note in place with no undo — so Ctrl+Z
@@ -49,6 +95,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scan for tempo zones — now with a confirm bar you can adjust.** **Tempo/Grid
+  ▸ Scan for tempo zones…** reads the recording, finds the handful of *tempo
+  intents* it plays — e.g. "3 tempo zones: 120 bpm · 140 bpm · rit 140→90" — and
+  paints them as colored bands on the Tempo Map timeline with a confirm bar
+  docked above. Before anything commits you can **drag a zone boundary** onto
+  the real change (both neighbours keep a minimum span), **split** the selected
+  zone at the playhead, **merge** it with the next (the join is described by its
+  own endpoints — a real rit never flattens into a lie), cycle its **kind**
+  (steady / ramp / unmapped — an unmapped zone lays no barlines), or **type its
+  BPM**. A zone whose pulse read as shaky is marked with a "?" so you know where
+  to look. Esc dismisses the whole proposal untouched; nothing changes until you
+  confirm. Under the hood the pulse is located by autocorrelating the detected
+  onsets with an octave guard + tempo prior (so it doesn't read double-time or
+  half-time).
+- **Confirm & refine — the zones become a grid snapped to the recording.** The
+  confirm bar's main action seeds a barline grid from your adjusted zones (each
+  zone's downbeat phase seeded from the kick/bass onsets), then runs the
+  assisted barline fit **inside each zone** — bounded at the zone's edges, with
+  the zone's tempo holding the fit on course so it can never run away chasing a
+  fill the way a whole-song march can. The result lands as **one undoable
+  step**: notes keep their exact timing against the recording, and a single
+  Ctrl+Z restores the previous grid. **Single tempo instead** is the escape
+  hatch when a steady song over-segments — one uniform grid at the zones'
+  duration-weighted tempo.
+- **Heal uneven beat spacing.** Hand re-syncs and old imports can leave a
+  measure's *interior* beats in a pathological shape — sub-beats piled a few
+  milliseconds apart next to a seconds-wide hole — which garbles the metronome,
+  snapping, and every per-beat view, even though the barlines themselves are
+  right. A new **Tempo/Grid ▸ Heal uneven beat spacing** action finds those
+  measures (any beat gap under 30% or over 300% of the measure's even spacing)
+  and re-spaces their interior beats evenly between the barlines. **Barlines
+  never move** — they're your authored truth; the beats between them are
+  bookkeeping — and **notes keep their exact timing** against the recording.
+  One undoable step, and it **names the measures it healed** so a bar you meant
+  to be wildly uneven (a held grand pause reads the same as a corrupt gap) is
+  one Ctrl+Z away; if the grid is healthy it says so and touches nothing.
+- **Command palette (Ctrl+K).** Press **Ctrl+K** (or View ▸ Command palette)
+- **Command palette (Ctrl+K).** Press **Ctrl+K** (or Help ▸ Command palette)
+  and just type what you want to do — every editor command and menu action is
+  searchable in one place, each shown with its live keyboard shortcut for your
+  active profile. Arrow keys select, Enter runs, Esc closes. If you've ever
+  known the editor *probably* has something but couldn't find which menu it
+  lives in, this is the answer: type "snap", "tempo", "export", "guide" and
+  the matching commands surface instantly, fuzzy matching included.
+- **Two new shortcut profiles: Logical and Cableton.** If your hands already
+  know a DAW, the editor can meet them there. **Logical** (Logic-style) puts
+  the metronome on **K**, quantize on **Q**, steps the playhead by beat with
+  **`,` / `.`**, loops the selection with **C**, creates a section with
+  **Alt+'** (the marker key). **Cableton** (Ableton-style) quantizes with
+  **Ctrl+U**, narrows/widens the grid with **Ctrl+1 / Ctrl+2**, toggles snap
+  with **Ctrl+4**, clicks with **O**, follows playback with **Ctrl+Shift+F**,
+  and loops the selection with **Ctrl+L**. Everything a profile doesn't remap
+  keeps its FeedBack key, so editor-specific commands (techniques, tempo
+  mapping, string moves) work identically everywhere — and where a DAW key
+  displaces a FeedBack one, the displaced command *relocates* (Logical: pick
+  direction moves to **Shift+K**, guide claps to **Ctrl+Shift+C**; Cableton:
+  pop moves to **Ctrl+Shift+P**, select-matching to **Ctrl+Shift+L**) and the
+  shortcut panel shows its new key — no command ever loses its keyboard, and
+  no chord is ever double-bound. Logic's Repeat (**Cmd/Ctrl+R**) is
+  deliberately *not* bound: the desktop app's own Reload accelerator owns that
+  chord and would reload the editor out from under you; duplicate stays on
+  **Ctrl+D** in every profile. The old EOF profile is still here as **Legacy
+  (EOF)**. Switch in Help ▸ Shortcut profile, the Shortcuts panel, or the
+  toolbar select; the shortcut panel always shows the keys for whichever
+  profile is live.
+- **Loop toggle and Song Fit are real commands now.** "Toggle loop playback
+  for the selected region" and "Song Fit" joined the command registry, so both
+  are reachable from anywhere commands are listed, Song Fit gained a menu home
+  (**Tempo/Grid ▸ Song Fit**), and profiles can bind keys to them (Logical's C
+  and Cableton's Ctrl+L drive the loop toggle).
 - **Scan for tempo zones (preview).** A new **Tempo/Grid ▸ Scan for tempo zones**
   action reads the recording and reports the handful of *tempo intents* it finds
   — e.g. "3 tempo zones detected: 120 bpm · 140 bpm · rit 140→90". It's the first
@@ -59,16 +175,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Under the hood it locates the pulse by autocorrelating the detected onsets with
   an octave guard + tempo prior (so it doesn't read double-time or half-time),
   and it gets sharper once the banded onset detection lands.
+- **Scan now catches a grid running at double or half the real tempo.**
+  Drum-heavy songs are routinely charted at exactly twice or half the real
+  pulse (double-kick reads fast, half-time backbeats read slow) — and once
+  that happens, no amount of per-bar fixing can repair it. When Scan's
+  detected zones sit at about 2× or ½ your grid's tempo, the confirm bar now
+  shows a one-click **Double grid tempo** / **Halve grid tempo** rescue:
+  barlines merge or split onto the real pulse while the audio and every note
+  stay exactly where they are. One undoable step; ordinary drift never
+  triggers it (the check is deliberately tight), and after the fix Scan can
+  be run again to confirm the zones agree.
 - **Apply a rough map from the detected tempo zones.** After Scan shows the
   zones, **Tempo/Grid ▸ Apply rough map** turns them into an actual beat grid —
   a barline grid at each zone's tempo, with its downbeat phase seeded from the
   onsets so bar 1 has a fighting chance of not landing on the backbeat (it gets
   properly reliable once the banded onset detection lands). Your notes keep their
   exact timing against the recording (they ride the audio), and it's a single
-  **Undo** away, so it's safe to try. From there, open Tempo Map and run **Suggest
-  barline fit** on a zone to snap its barlines tight to the recording. (The
-  drag-to-adjust confirm bar — nudge a boundary, split/merge a zone — is coming;
-  for now it's Scan to review, Apply to commit.)
+  **Undo** away, so it's safe to try. (This is the quick no-questions path; the
+  Scan confirm bar's **Confirm & refine** is the reviewed one — it also snaps
+  each zone's barlines to the recording.)
 - **Map Health — see where the grid drifts from the recording.** A new **Map
   Health** toggle (Tempo/Grid menu) paints a thin colour strip under the ruler,
   one span per bar, showing how well the beat grid agrees with the notes the
@@ -86,6 +211,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **G** proposes a barline fit to the recording from that bar on. (Green and grey
   bars aren't actionable, so clicking them just scrubs as usual.)
   glance whether the automatic tempo map can be trusted.
+- **Grid-health readout in the transport display.** While Map Health is on
+  (the same Tempo/Grid toggle), the transport LCD gains a small **Grid** cell
+  showing what percent of the song's judgeable bars agree with the recording —
+  green when everything lines up, amber or red when bars are drifting, and a
+  neutral dash when there's nothing to judge yet (it never fakes a 100%).
+  Bars with nothing to measure — silent or sustained — don't count for or
+  against the score, same as the strip. **Click the percent** and the editor
+  jumps straight to the worst drifting bar with the fix armed, exactly like
+  clicking that bar in the strip — handy when the strip itself is scrolled out
+  of view. Turn Map Health off and the cell tucks itself away; the transport's
+  Customize row can also hide it independently.
 - **Audition speed — slow the recording down for practice, pitch preserved.** A
   new speed control in the transport bar (**100% / 75% / 50%**) plays the
   reference slower without dropping its pitch, so you can hear a fast run or a
@@ -96,6 +232,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference ride a pitch-preserving path, kept in lock-step with the transport
   clock. (Slow-only, ≤100% — this is a practice slow-downer, not a varispeed; the
   recording itself is never stretched or warped.)
+- **Audition trainer — loop a passage and let the speed climb.** A new **Step↑**
+  toggle in the transport bar turns the loop + audition speed into a real
+  practice trainer: select a bar range, turn Loop on, arm the trainer, and it
+  plays the passage slowed — then **steps the speed up** (50% → 75% → 100%)
+  after every three completed passes, telling you where you are ("Trainer: pass
+  2/3 at 75%"). Reaching full speed disarms it with due congratulations. If you
+  have a **count-in** armed, the pre-roll clicks precede *every* pass at the
+  slowed tempo, so your hands are ready when the loop comes around. While
+  slowed, the **metronome subdivides finer** — 8ths at 75%, 16ths at 50% — and
+  the click stays **locked to the grid** at every speed: you hear your
+  micro-timing against the intended pulse, never against a wobbling click.
 - **Playability lint now catches finger conflicts.** Once notes carry fret-hand
   fingers (from Suggest Fingers, or by hand), the advisory lint flags a chord
   that asks **one finger to hold two different frets at the same time** — a shape
@@ -132,6 +279,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dragging notes is now magnetic, not locked.** With snapping on, a dragged
+  note (or a sustained note's end edge) **sticks** to the nearest grid
+  guideline while you're close to it — and if you keep pulling past the snap
+  point, it **releases** and follows your pointer exactly, so small off-grid
+  adjustments no longer need a modifier key. The magnet is a small
+  screen-space radius, which makes it zoom-aware the way a DAW piano roll is:
+  zoom in and the magnet covers less time, giving you finer control for free —
+  and however dense the grid gets, the middle of every gap between guidelines
+  stays free, so pulling past a snap point always releases instead of stepping
+  you into the next one. Alt-drag still means fully free from the first pixel,
+  clicks still place notes on the grid, and the explicit "Resnap selection"
+  remains a full quantize.
 - **Onset detection now hears frequency, not just loudness.** The little amber
   attack markers (the onset strip, and what note-drags snap to) used to come from
   a broadband "the recording got louder" test, which went blind on the events
@@ -148,8 +307,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so turning the onset strip on never stutters even on a long recording. Every
   attack now also carries its per-band strength, which the upcoming automatic
   tempo-mapping uses to find the beat.
-  as an automatic fallback. Every attack now also carries its per-band strength,
-  which the upcoming automatic tempo-mapping uses to find the beat.
 - **Resolving positions now shapes chords as one coherent grip.** When you run
   "Resolve positions" over an anchor window, simultaneous notes (a chord) used
   to be placed one at a time, each grabbing its own lowest free fret — which
@@ -158,9 +315,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **together**, choosing the tightest fret-hand shape (smallest fret span,
   distinct strings, open strings free) that fits the hand, pulled toward the
   anchor / previous note. A cluster with no playable grip falls back to the old
-  per-note behaviour, so nothing that resolved before stops resolving — and the
-  refusals stay honest: a note that could be played open **or** fretted is still
-  refused for you to decide, never quietly voiced open to tighten the shape.
+  per-note behaviour, so nothing that resolved before stops resolving.
+- **Chord grips may now use open strings — each one flagged for your review.**
+  When a chord note could be played open **or** fretted, the grip resolver used
+  to refuse the whole chord rather than choose for you. It now takes the open
+  when that makes the tightest hand shape — opens are how real chord voicings
+  use the neck — but the choice is never confirmed behind your back: the status
+  line counts the flagged opens ("2 open voicings to review"), the confirm sweep
+  walks you to each one, and **Accept all deliberately skips them** (exactly
+  like refused notes), so an open the machine picked only becomes part of your
+  chart after you've looked at it. A lone note that could go either way is still
+  refused outright — outside a chord shape there's nothing to justify the
+  machine deciding.
 - **Flattening a variable tempo map now names both directions** instead of a
   bare confirm. Typing a BPM for a song with multiple tempos opens a small in-app
   dialog: **Conform notes to the new tempo** (notes keep their bar:beat positions
@@ -410,6 +576,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   LCD transport display stays dark (it reads as a hardware readout), while the
   category buttons keep their semantic colors. `window.editorSetTheme(name)` /
   `editorCycleTheme()` drive it.
+
+- **Drag a whole barline selection at once** in Tempo Map mode. Grab any pole in
+  a multi-selection and the entire group slides together by one offset — the
+  spans *between* selected barlines shift rigidly (their tempo is preserved),
+  while the spans at the selection's edges re-space against the fixed barline
+  just outside it, exactly like a single pole drag. The group stops as soon as
+  any member would collide with a fixed neighbour, so it can never reorder the
+  grid, and notes ride the move. **Locked barlines are excluded** — they stay
+  put and act as fixed anchors the group re-spaces around (the status says how
+  many stayed), since a lock's whole job is to defend a hand-verified time. One
+  undoable step (Move N barlines together).
 
 - **Pitched GM guide voices** (DAW workspace 1.2/1.5). The guide can now play
   the charted notes as a real General-MIDI instrument instead of the clap:

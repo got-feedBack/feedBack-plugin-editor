@@ -2429,6 +2429,10 @@ export async function editorBuild() {
                 // them), and ship the imported drum_tab so it's persisted.
                 target_format: S.format === 'sloppak' ? 'sloppak' : '',
                 drum_tab: (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab : null,
+                // Audio placement shift ("Shift Audio…") — persisted into the
+                // built pack's manifest (read back on load via data.audio_shift)
+                // so the alignment survives the first build, not just re-saves.
+                audio_shift: Number(S.audioShift) || 0,
                 metadata: {
                     title: S.title,
                     artist: S.artist,
