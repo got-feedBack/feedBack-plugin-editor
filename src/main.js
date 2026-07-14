@@ -128,7 +128,7 @@ import { _transportBarTick, initTransportBar } from './transport-bar.js';
 import {
     MIN_MEASURE, TempoGridCmd, TempoMapCmd, TempoOffsetCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
     _tempoFlattenToBpmPure, _tempoPivotTimePure,
-    _tempoHasMultipleMeasureBpmsPure, _tempoMapDraw, _tempoMapOnDragEnd, _tempoMeasureBeatCount,
+    _tempoHasMultipleMeasureBpmsPure, _tempoHoldMeasures, _tempoMapDraw, _tempoMapOnDragEnd, _tempoMeasureBeatCount,
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
     _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
     _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones,
@@ -1452,7 +1452,7 @@ window.editorSongFit = _editorSongFit;
 window.editorSetBPM = async (val) => {
     const newBPM = parseFloat(val);
     if (!newBPM || newBPM <= 0 || S.beats.length < 2) return;
-    if (!S.tempoMapMode && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01)) {
+    if (!S.tempoMapMode && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01, _tempoHoldMeasures())) {
         // Variable tempo map + the inline BPM box (outside Tempo Map mode): the
         // per-measure editor can only fix ONE measure, so offer the whole-song
         // flatten escape hatch. Same conform/rebuild dialog Song Fit uses.

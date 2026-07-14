@@ -107,6 +107,97 @@ def _coerce_audio_shift(value, invalid=0.0):
     return shift if math.isfinite(shift) else invalid
 
 
+_TEMPO_MARK_KINDS = {"meter", "hold"}
+_TEMPO_MARK_PROVENANCE = {"confirmed", "detected", "suggested", "imported", "carried"}
+
+
+def _coerce_tempo_marks(value):
+    """`editor_tempo_marks` as a sanitized list of authored tempo/meter marks.
+
+    P2-5: the editor's sparse authored-intent layer (hold/fermata bars, meter
+    groupings, provenance), measure-keyed, persisted as a manifest extension
+    key exactly like `audio_shift` (feedpak retention rule: unknown manifest
+    keys are preserved; spec issue #51 is on hold, this shape is the working
+    prototype). Invalid entries are DROPPED, never raised on — this field is
+    supplementary intent, and failing a save/load over it would cost real
+    note edits. One mark per (measure, kind); measure-sorted for stable
+    round-trips (byte-identical repeated saves).
+    """
+    if not isinstance(value, list):
+        return []
+    out, seen = [], set()
+    for m in value[:2000]:
+        if not isinstance(m, dict):
+            continue
+        try:
+            measure = int(m.get("measure"))
+        except (TypeError, ValueError):
+            continue
+        kind = m.get("kind")
+        if measure < 1 or kind not in _TEMPO_MARK_KINDS or (measure, kind) in seen:
+            continue
+        entry = {"measure": measure, "kind": kind}
+        if kind == "meter":
+            try:
+                num = int(m.get("num"))
+                den = int(m.get("den"))
+            except (TypeError, ValueError):
+                continue
+            if not (1 <= num <= 32) or den not in (2, 4, 8, 16):
+                continue
+            entry["num"] = num
+            entry["den"] = den
+            grouping = m.get("grouping")
+            if isinstance(grouping, list) and grouping:
+                try:
+                    parts = [int(v) for v in grouping]
+                except (TypeError, ValueError):
+                    continue
+                if any(v < 1 for v in parts) or sum(parts) != num:
+                    continue
+                entry["grouping"] = parts
+        else:  # hold
+            try:
+                factor = float(m.get("factor", 2))
+            except (TypeError, ValueError):
+                factor = 2.0
+            if not (math.isfinite(factor) and 1 < factor <= 16):
+                factor = 2.0
+            entry["factor"] = factor
+        if m.get("provenance") in _TEMPO_MARK_PROVENANCE:
+            entry["provenance"] = m["provenance"]
+        seen.add((measure, kind))
+        out.append(entry)
+    out.sort(key=lambda e: (e["measure"], e["kind"]))
+    return out
+
+
+def _parse_tempo_marks(data: dict):
+    """Validated `tempo_marks` from a request body (the audio_shift contract).
+
+    Absent → `_FIELD_ABSENT` (older client — leave the persisted value
+    alone). A non-list → `_FIELD_ABSENT` too (garbage gets no authority to
+    erase marks a newer client saved). An empty list is a genuine "no marks"
+    command and REMOVES the manifest key.
+    """
+    if "tempo_marks" not in data:
+        return _FIELD_ABSENT
+    value = data.get("tempo_marks")
+    if not isinstance(value, list):
+        return _FIELD_ABSENT
+    return _coerce_tempo_marks(value)
+
+
+def _apply_tempo_marks(manifest: dict, marks) -> None:
+    """Write/remove the `editor_tempo_marks` manifest extension key."""
+    if marks is _FIELD_ABSENT:
+        return
+    if marks:
+        manifest["editor_tempo_marks"] = marks
+    else:
+        manifest.pop("editor_tempo_marks", None)
+
+
 def _parse_audio_shift(data: dict):
     """Validated `audio_shift` (seconds) from a request body.
 
@@ -3725,6 +3816,10 @@ def setup(app, context):
             _manifest_shift = _coerce_audio_shift(loaded.manifest.get("audio_shift"))
             if _manifest_shift:
                 result["audio_shift"] = _manifest_shift
+            # Authored tempo/meter marks (P2-5) — same extension-key contract.
+            _manifest_marks = _coerce_tempo_marks(loaded.manifest.get("editor_tempo_marks"))
+            if _manifest_marks:
+                result["tempo_marks"] = _manifest_marks
             # Surface the parsed drum_tab (if any) so the editor frontend can
             # show a "drums present" indicator and the +Drums modal can offer
             # Replace vs Cancel rather than silently overwriting. getattr
@@ -3883,6 +3978,8 @@ def setup(app, context):
         # and REMOVES the manifest key (a shift slid back to 0 must not leave
         # residue in the pack).
         audio_shift = _parse_audio_shift(data)
+        # Authored tempo/meter marks (P2-5) — same absent-vs-empty contract.
+        tempo_marks = _parse_tempo_marks(data)
         # Merge session metadata (album/year captured at archive load
         # time) with anything the frontend sent. `_buildSaveBody` ships
         # `{title, artist}` on every save path; this merge keeps the
@@ -4300,6 +4397,7 @@ def setup(app, context):
             # alignment the charter set; the frontend restores it from
             # `data.audio_shift` on load.
             _apply_audio_shift(manifest, audio_shift)
+            _apply_tempo_marks(manifest, tempo_marks)
 
             _write_song_timeline_sidecar(source_dir, manifest, beats, sections)
 
@@ -4390,6 +4488,9 @@ def setup(app, context):
         _req_shift = _parse_audio_shift(data)
         if _req_shift is not _FIELD_ABSENT and _req_shift:
             meta["audio_shift"] = _req_shift
+        _req_marks = _parse_tempo_marks(data)
+        if _req_marks is not _FIELD_ABSENT and _req_marks:
+            meta["tempo_marks"] = _req_marks
 
         audio_file = session.get("audio_file") or ""
         if not audio_file or not Path(audio_file).exists():
@@ -7103,6 +7204,9 @@ def setup(app, context):
         _req_shift = _parse_audio_shift(data)
         if _req_shift is not _FIELD_ABSENT and _req_shift:
             meta["audio_shift"] = _req_shift
+        _req_marks = _parse_tempo_marks(data)
+        if _req_marks is not _FIELD_ABSENT and _req_marks:
+            meta["tempo_marks"] = _req_marks
         audio_url = data.get("audio_url", "")
         art_path = data.get("art_path", "")
         preview_path = data.get("preview_path", "")
@@ -7459,6 +7563,7 @@ def setup(app, context):
             # §4 ignored-but-preserved): the recording slid vs a fixed chart.
             # Written only when nonzero so unshifted packs stay byte-identical.
             _apply_audio_shift(manifest, _coerce_audio_shift(meta.get("audio_shift")))
+            _apply_tempo_marks(manifest, _coerce_tempo_marks(meta.get("tempo_marks")))
 
             # Spec-complete optional metadata (feedpak §5.1) — written only when
             # present so packs without them stay minimal. String scalars,
