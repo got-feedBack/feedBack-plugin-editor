@@ -22,7 +22,7 @@ globalThis.document = globalThis.document || {
 globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setItem: () => {} };
 globalThis.window = globalThis.window || globalThis;
 
-const { DRUM_PIECE_GM_NOTE, _gmDrumFilePure, _gmDrumVarPure } = await import('../src/gm-guide.js');
+const { DRUM_PIECE_GM_NOTE, _drumHitGainPure, _gmDrumFilePure, _gmDrumVarPure } = await import('../src/gm-guide.js');
 const { GM_DRUM_MAP } = await import('../src/drum-pad-strip.js');
 const { DRUM_COMPACT_LANES } = await import('../src/drum.js');
 
@@ -64,6 +64,21 @@ t('every voiced one-shot is vendored — the kit needs zero network', () => {
         assert.ok(existsSync(p), `${f} is vendored`);
         assert.ok(statSync(p).size > 5_000, `${f} is a real one-shot`);
     }
+});
+
+t('hit velocity carries — ghost notes stay quiet under accents', () => {
+    // The changelog promises "hit velocity carries"; the kit must honor the
+    // authored per-hit velocity (drumTab `.v`), not play every hit flat.
+    // Pre-fix the voice gain was a constant 0.75*scale — this pins the carry.
+    const ghost = _drumHitGainPure(35, 1);   // DRUM_GHOST_VELOCITY
+    const accent = _drumHitGainPure(120, 1);
+    assert.ok(ghost < accent, 'a ghost note is quieter than an accent');
+    assert.ok(ghost < 0.4 && accent > 0.9, `ghost=${ghost} accent=${accent} span the range`);
+    // Default velocity (missing/NaN → 100) lands near the old fixed 0.75 level.
+    assert.ok(Math.abs(_drumHitGainPure(undefined, 1) - 100 / 127) < 1e-9, 'default = 100/127');
+    assert.strictEqual(_drumHitGainPure(NaN, 1), _drumHitGainPure(100, 1));
+    // The part/guide scale still multiplies through (band target vs guide bus).
+    assert.ok(Math.abs(_drumHitGainPure(100, 0.5) - _drumHitGainPure(100, 1) * 0.5) < 1e-9, 'scale multiplies');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -23,9 +23,9 @@ import { timeOf } from './beats.js';
 import { DPR, canvas } from './canvas.js';
 import { timeToX } from './geometry.js';
 import {
-    DRUM_PIECE_GM_NOTE, _gmEventsInWindowPure, _gmGuideModePure, _gmKindPure,
-    _gmSanitizeEventsPure, _gmVoiceDurationPure, editorGmVoiceFor, ensureGmDrum,
-    ensureGmPreset, gmDrumReady, gmDrumVoiceAt, gmPresetReady, gmVoiceAt,
+    DRUM_PIECE_GM_NOTE, _drumHitGainPure, _gmEventsInWindowPure, _gmGuideModePure,
+    _gmKindPure, _gmSanitizeEventsPure, _gmVoiceDurationPure, editorGmVoiceFor,
+    ensureGmDrum, ensureGmPreset, gmDrumReady, gmDrumVoiceAt, gmPresetReady, gmVoiceAt,
 } from './gm-guide.js';
 import { host } from './host.js';
 import { _pickOnsetsPure, _spectralFluxOnsetsPlan, _spectralFluxStep } from './onsets.js';
@@ -1505,7 +1505,9 @@ function _drumKitVoicesInWindow(from, to, target, scale) {
         const note = DRUM_PIECE_GM_NOTE[h.p];
         const when = _guideChartToCtxPure(h.t, S.playStartWall, S.playStartTime, _auditionRate());
         if (note && gmDrumReady(note)) {
-            const v = gmDrumVoiceAt(S.audioCtx, tgt, note, when, 0.75 * (Number.isFinite(scale) ? scale : 1));
+            // Authored velocity carries (ghost notes stay quiet, accents ring);
+            // gmDrumVoiceAt clamps the floor. See _drumHitGainPure.
+            const v = gmDrumVoiceAt(S.audioCtx, tgt, note, when, _drumHitGainPure(h.v, scale));
             if (v) { _guideVoices.push(v); continue; }
         }
         if (note) ensureGmDrum(note, S.audioCtx);   // tick while it loads
@@ -1690,7 +1692,6 @@ function _guideTick() {
                 }
             }
         }
-        if (_bandFiredKeys.size > 4096) _bandFiredKeys.clear();   // bounded scratch
     } else if (claps && host.partClapState().audible) {
         // Pitched GM mode (DAW 1.2): same charted times, instrument voices.
         // Falls back to the clap whenever the preset isn't ready (loading,
@@ -1763,6 +1764,10 @@ function _guideTick() {
         const nowCtx = S.audioCtx.currentTime;
         _guideVoices = _guideVoices.filter(v => v.until > nowCtx);
     }
+    // Cross-tick dedupe keys accrue on every voiced path — band parts AND the
+    // drum-edit guide (#282). The window only advances, so old keys are dead;
+    // bound the scratch set here so it covers both (safe: never re-fires).
+    if (_bandFiredKeys.size > 4096) _bandFiredKeys.clear();
 }
 
 // ── Audition trainer — loop-and-step-up (P2-10) ──────────────────────

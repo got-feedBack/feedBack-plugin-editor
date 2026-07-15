@@ -120,6 +120,16 @@ export const DRUM_PIECE_GM_NOTE = Object.freeze({
     ride: 51, ride_bell: 53, bell: 56,
 });
 
+// Per-hit drum gain: the authored velocity (drumTab hit `.v`, 0–127, default
+// 100 — see drum.js) normalized to 0–1, then scaled by the part/guide level.
+// Carries the chart's dynamics into the kit — ghost notes (v=35 ≈ 0.28) stay
+// quiet under accents instead of every hit playing flat. gmDrumVoiceAt clamps
+// the 0.05 floor. Default v=100 → 0.79, ~the old fixed 0.75 level.
+export function _drumHitGainPure(v, scale) {
+    const norm = (Number.isFinite(v) ? v : 100) / 127;
+    return norm * (Number.isFinite(scale) ? scale : 1);
+}
+
 // Source order: 'auto' walks plugin → org → cdn; a valid pinned source is
 // honored alone; garbage degrades to auto (never to silence).
 export function _gmSourceOrderPure(sourcePref) {
