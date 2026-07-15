@@ -71,6 +71,14 @@ export const host = {
     /** Parts-view mousedown / dblclick routing (parts view lives in main.js). */
     partsViewOnMouseDown: () => {},
     partsViewOnDblClick: () => {},
+    /** Arm a transcription target (arrangement / drums) from the Tracks area. */
+    selectTrackSessionTarget: () => {},
+    /** Leave the Tracks overview and open a transcription's native editor. */
+    openTrackSessionTarget: () => {},
+    /** Vertically scroll the shared track-header/canvas lane stack. */
+    scrollTrackArea: () => false,
+    /** Cached waveform for one audio source's lane ({peaks, duration} or null). */
+    trackWaveform: () => null,
     /** View-mode / part-move / key-highlight / parts-view toggles (main.js). */
     editorCycleViewMode: () => {},
     editorMovePart: () => {},

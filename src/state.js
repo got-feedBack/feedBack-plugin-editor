@@ -131,6 +131,15 @@ export const S = {
     // `editor_track_session` manifest key; references canonical song data
     // by key, never copies it. Pairing stays in stemLinks (projected).
     trackSession: { version: 2, tracks: [], removedSourceIds: [], tempoGuideSourceId: '', tempoGuideLocked: false, tempoGuideMode: 'audio' },
+    // Tracks-area view state (never pack data): the highlighted row, which
+    // audio source the selection points at, per-row lane heights, the shared
+    // header/canvas scroll, and the header column's width/viewport.
+    selectedTrackId: '',
+    focusedSourceId: 'master',
+    trackHeights: {},
+    trackScrollY: 0,
+    trackHeaderWidth: 320,
+    trackViewportHeight: 0,
     // Drag state
     drag: null, // { type, startX, startY, startTime, startString, noteIdx, origTimes, origStrings }
 

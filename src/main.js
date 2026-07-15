@@ -124,7 +124,7 @@ import { EDITOR_MENUS, initMenuBar } from './menu-bar.js';
 import { _tabViewHideIfShown, _tabViewPing, editorToggleTabView, teardownTabView } from './tab-view-live.js';
 import { initToolbars } from './toolbars.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
-import { installCreatedTrackSession } from './track-session.js';
+import { _trackSessionTargetsPure, initTrackSession, installCreatedTrackSession, refreshTrackSession, scrollTrackSessionBy } from './track-session.js';
 import { editorDismissSignpost } from './signposts.js';
 import { _editorSongFit } from './song-fit.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
@@ -173,7 +173,7 @@ import {
     lanes
     } from './lanes.js';
 import {
-    LABEL_W, setLaneMetrics } from './geometry.js';
+    LABEL_W, TIMELINE_TOP, setLaneMetrics } from './geometry.js';
 import {
     KEYS_PATTERN, _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
@@ -524,13 +524,48 @@ setHostHooks({
     mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
     // Band mode (multi-track MIDI playback): the strips are the mixer.
     partStripState: (key) => _mixerPartStripState(key),
-    partMixChanged: () => _partGainsApply(false),
+    partMixChanged: () => { _partGainsApply(false); refreshTrackSession(); },
     playAllTracksEnabled: () => editorPlayAllTracksEnabled(),
     stripUiChanged: () => _mixerPanelRefresh(),
     // Persistent track tree: create/import hands every create-time source to
     // the installer so the tree exists from the first moment, not only after
     // a save/reopen (the seam #286 reserved).
     installCreatedTrackSession: (raw, sources) => installCreatedTrackSession(raw, sources),
+    // Tracks area: arm / open a transcription target from a header cell or a
+    // canvas lane. targetIds are chart-track keys (the stemLinks dialect);
+    // _trackSessionTargetsPure maps them back to arrangement indices.
+    selectTrackSessionTarget: (targetId) => {
+        if (targetId === 'drums') return;
+        const target = _trackSessionTargetsPure(S.arrangements, S.drumTab).find(t => t.id === targetId);
+        const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
+        if (index >= 0 && index !== S.currentArr) window.editorSelectArrangement(String(index));
+    },
+    openTrackSessionTarget: (targetId) => {
+        _finalizeActiveDrag();
+        S.partsViewMode = false;
+        S.tempoMapMode = false;
+        S.tempoSel = -1;
+        if (targetId === 'drums' && S.drumTab && S.format === 'sloppak') {
+            S.drumEditMode = true;
+            S.drumSel = new Set();
+        } else {
+            S.drumEditMode = false;
+            const target = _trackSessionTargetsPure(S.arrangements, S.drumTab).find(t => t.id === targetId);
+            const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
+            if (index >= 0) window.editorSelectArrangement(String(index));
+        }
+        _refreshPartsViewButton();
+        _refreshDrumEditButton();
+        _refreshTempoMapButton();
+        draw();
+        updateStatus();
+    },
+    // Vertical wheel over the Tracks area scrolls the shared lane stack.
+    scrollTrackArea: (deltaY) => scrollTrackSessionBy(deltaY),
+    // Lane waveforms: the master mix draws from the session's decoded peaks;
+    // stems light up when the engine slice caches theirs.
+    trackWaveform: (sourceId) => (sourceId === 'master' && S.waveformPeaks && S.duration > 0
+        ? { peaks: S.waveformPeaks, duration: S.duration } : null),
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML
@@ -1021,6 +1056,10 @@ function updateArrangementSelector() {
         downBtn.classList.toggle('hidden', !canReorder);
         downBtn.disabled = !canReorder || S.currentArr >= S.arrangements.length - 1;
     }
+
+    // The Tracks header column mirrors arrangement names/count — keep it in
+    // sync with every structural rebuild (memoized; cheap when unchanged).
+    refreshTrackSession();
 }
 
 
@@ -1331,6 +1370,14 @@ function resizeCanvas() {
     // geometry.js as live `export let` bindings — everything reads them, only
     // setLaneMetrics writes them.
     setLaneMetrics(h);
+
+    // Feed the Tracks area its viewport height (drives the modest lane
+    // auto-fit shared by the header column and the canvas lanes).
+    const trackViewport = Math.max(0, h - TIMELINE_TOP);
+    if (trackViewport !== S.trackViewportHeight) {
+        S.trackViewportHeight = trackViewport;
+        refreshTrackSession();
+    }
 
     canvas.width = w * DPR;
     canvas.height = h * DPR;
@@ -2020,6 +2067,7 @@ function init() {
     initTempoList();
     window.editorToggleTempoList = editorToggleTempoList;
     initStemTracks();
+    initTrackSession();
     window.editorToggleStemTracks = editorToggleStemTracks;
     window.editorSoloMyStem = editorSoloMyStem;
     // Registry commands run through `editorRunShortcutCommand` — the SAME

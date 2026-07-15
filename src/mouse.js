@@ -652,6 +652,13 @@ export function onDblClick(e) {
 
 export function onWheel(e) {
     e.preventDefault();
+    // Tracks area: a vertical-dominant wheel scrolls the shared lane stack
+    // (header column + canvas lanes together); a horizontal-dominant swipe
+    // still pans the timeline.
+    if (S.partsViewMode && !e.ctrlKey && Math.abs(e.deltaY) >= Math.abs(e.deltaX || 0)) {
+        host.scrollTrackArea(e.deltaY);
+        return;
+    }
     if (e.ctrlKey) {
         // Ctrl+scroll = zoom
         const { x } = getMousePos(e);
@@ -662,8 +669,10 @@ export function onWheel(e) {
         S.scrollX = timeBefore - (x - LABEL_W) / S.zoom;
         S.scrollX = _editorClampScrollX(S.scrollX);
     } else {
-        // Scroll = pan
-        S.scrollX = _editorClampScrollX(S.scrollX + e.deltaY / S.zoom * 2);
+        // Scroll = pan: a horizontal-dominant swipe pans by deltaX, a plain
+        // vertical wheel keeps panning by deltaY (the long-standing gesture).
+        const pan = Math.abs(e.deltaX || 0) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        S.scrollX = _editorClampScrollX(S.scrollX + pan / S.zoom * 2);
     }
     host.updateZoomDisplay();
     host.draw();

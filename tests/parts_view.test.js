@@ -19,11 +19,13 @@ if (!m) {
     console.error('FAIL: @pure:parts-view block not found in src/parts-view.js');
     process.exit(1);
 }
+// Some pures are now `export function` (the unified tracks lanes import them);
+// strip the keyword so the block still evaluates inside `new Function`.
 const api = new Function(
-    '"use strict";' + m[0]
-    + '\nreturn { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure, _partsArrKindPure };'
+    '"use strict";' + m[0].replace(/\bexport\s+function\b/g, 'function')
+    + '\nreturn { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure, _partsArrKindPure, _partsTrackRowAtYPure };'
 )();
-const { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure, _partsArrKindPure } = api;
+const { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure, _partsArrKindPure, _partsTrackRowAtYPure } = api;
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -95,6 +97,18 @@ t('kind tag is inferred from each lane\'s OWN name, independent of the armed par
     assert.strictEqual(_partsArrKindPure('Bass Synth'), 'Bass', 'unanchored keys word does not win');
     assert.strictEqual(_partsArrKindPure(''), 'Guitar', 'empty → Guitar');
     assert.strictEqual(_partsArrKindPure(null), 'Guitar', 'nullish → Guitar');
+});
+
+// ── unified-row hit test (canvas lane ↔ header cell must agree) ──────
+t('unified row hit-test follows the exact shared header layout', () => {
+    const rows = [
+        { row: { id: 'audio:master' }, y: 40, h: 56 },
+        { row: { id: 'transcription:guitar' }, y: 96, h: 72 },
+    ];
+    assert.strictEqual(_partsTrackRowAtYPure(rows, 40).id, 'audio:master', 'top edge inclusive');
+    assert.strictEqual(_partsTrackRowAtYPure(rows, 120).id, 'transcription:guitar');
+    assert.strictEqual(_partsTrackRowAtYPure(rows, 168), null, 'below the last lane → nothing');
+    assert.strictEqual(_partsTrackRowAtYPure([], 50), null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

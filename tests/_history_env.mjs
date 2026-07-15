@@ -44,11 +44,16 @@ if (typeof globalThis.document === 'undefined') {
     globalThis.document = {
         getElementById(id) {
             if (id === 'editor-status') return statusEl;
-            // classList no-ops: chrome like the signpost cues toggles classes
-            // on whatever element it finds — the fake must absorb that quietly.
+            // A faithful-enough element stand-in: chrome that finds an element
+            // by id (signpost cues, the Tracks header refresh) may toggle
+            // classes, set innerHTML, or query descendants — absorb it all
+            // quietly so a headless suite never trips over incidental DOM.
             return (_els[id] ||= {
-                id, disabled: false, value: '', textContent: '',
-                classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+                id, disabled: false, value: '', textContent: '', innerHTML: '',
+                style: {}, classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+                setAttribute() {}, getAttribute: () => null,
+                querySelector: () => null, querySelectorAll: () => [],
+                addEventListener() {}, removeEventListener() {}, appendChild() {},
             });
         },
     };
