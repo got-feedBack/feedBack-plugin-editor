@@ -1,0 +1,237 @@
+/* Slopsmith Arrangement Editor — multitrack stem manager (studio-session
+ * ingest). Import ANY number of audio tracks (a real session's multitrack,
+ * not just separated stems), rename them, reorder them, delete them — and
+ * PAIR each with the chart track being transcribed against it.
+ *
+ * The pairing (S.stemLinks: chart-track key → stem id) is the load-bearing
+ * idea: "this arrangement transcribes THAT recording track". It persists as
+ * the `editor_stem_links` manifest extension key (the audio_shift retention
+ * contract) and powers the one-keystroke transcription move: SOLO MY SOURCE
+ * TRACK (isolate the paired stem while you chart against it — the actual
+ * audio isolation rides the stem mixer once its strips land; until then the
+ * link is stored, shown, and shipped for gameplay/tools to consume).
+ *
+ * Chart-track keys reuse the mixer/view-pref rule (_partViewKeyPure: the
+ * arrangement's `id` if present, else its name) so links survive part
+ * reordering — never a bare index.
+ */
+
+import { S } from './state.js';
+import { host } from './host.js';
+import { setStatus, _editorPromptText } from './ui.js';
+import { _partViewKeyPure } from './keys.js';
+
+/* @pure:stem-tracks:start */
+// The manager's row model: one row per stem, in S.stems order, with its
+// paired chart track's display name resolved (or '' when unpaired).
+function _stemRowsPure(stems, stemLinks, arrangements) {
+    const nameByKey = new Map();
+    (arrangements || []).forEach((a) => {
+        if (a) nameByKey.set(_partViewKeyPure(a), a.name || 'track');
+    });
+    const linkedTo = (sid) => {
+        for (const [k, v] of Object.entries(stemLinks || {})) {
+            if (v === sid) return { key: k, name: nameByKey.get(k) || k };
+        }
+        return null;
+    };
+    return (stems || []).map((s2) => ({
+        id: s2.id,
+        pairedWith: linkedTo(s2.id),
+    }));
+}
+// Toggle a pairing IMMUTABLY: linking a stem to a track drops that track's
+// previous link (one source track per chart track); picking '' unlinks.
+function _stemLinkSetPure(links, arrKey, stemId) {
+    const out = {};
+    for (const [k, v] of Object.entries(links || {})) {
+        if (k !== arrKey) out[k] = v;
+    }
+    if (stemId) out[arrKey] = stemId;
+    return out;
+}
+/* @pure:stem-tracks:end */
+export { _stemLinkSetPure, _stemRowsPure };
+
+const $modal = () => document.getElementById('editor-stem-tracks-modal');
+const $list = () => document.getElementById('editor-stem-tracks-list');
+
+function _esc(t) {
+    return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function _post(url, body) {
+    const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    return data;
+}
+
+// Every endpoint answers with the authoritative {stems, stem_links} — adopt
+// them wholesale so the manager, the mixer strips, and the engine agree.
+function _adopt(data) {
+    S.stems = Array.isArray(data.stems) ? data.stems : [];
+    S.stemLinks = (data.stem_links && typeof data.stem_links === 'object') ? data.stem_links : {};
+    _render();
+    if (host.stemUiChanged) host.stemUiChanged();
+}
+
+function _render() {
+    const list = $list();
+    if (!list) return;
+    const rows = _stemRowsPure(S.stems, S.stemLinks, S.arrangements);
+    const arrOptions = (paired) => ['<option value="">— not paired —</option>']
+        .concat((S.arrangements || []).map((a) => {
+            const k = _partViewKeyPure(a);
+            const sel = paired && paired.key === k ? ' selected' : '';
+            return `<option value="${_esc(k)}"${sel}>${_esc(a.name || 'track')}</option>`;
+        })).join('');
+    list.innerHTML = rows.length
+        ? rows.map((r, i) =>
+            `<div class="flex items-center gap-2 py-1" data-stem-id="${_esc(r.id)}">`
+            + `<span class="flex flex-col leading-none">`
+            + `<button data-stem-move="up" ${i === 0 ? 'disabled' : ''} class="text-gray-500 hover:text-white disabled:opacity-30" title="Move up">▴</button>`
+            + `<button data-stem-move="down" ${i === rows.length - 1 ? 'disabled' : ''} class="text-gray-500 hover:text-white disabled:opacity-30" title="Move down">▾</button>`
+            + `</span>`
+            + `<button data-stem-rename class="flex-1 truncate text-left text-gray-200 hover:text-white" title="Rename this track">${_esc(r.id)}</button>`
+            + `<select data-stem-pair aria-label="Chart track transcribing ${_esc(r.id)}" class="bg-dark-700 text-xs rounded px-1 py-0.5 max-w-[10rem]">${arrOptions(r.pairedWith)}</select>`
+            + `<button data-stem-delete class="text-red-400 hover:text-red-300 px-1" title="Remove this track from the pack">✕</button>`
+            + `</div>`).join('')
+        : '<p class="py-2 text-gray-500">No audio tracks yet — Import adds any number of them (wav / ogg / opus / mp3 / flac).</p>';
+}
+
+async function _refreshFromOps(promise, verb) {
+    try {
+        _adopt(await promise);
+        setStatus(verb);
+    } catch (e) {
+        setStatus(`Stem ${verb ? verb.toLowerCase() : 'edit'} failed: ${e.message}`);
+    }
+}
+
+function _onListClick(e) {
+    const row = e.target instanceof Element ? e.target.closest('[data-stem-id]') : null;
+    if (!row || !S.sessionId) return;
+    const sid = row.getAttribute('data-stem-id');
+    if (e.target.closest('[data-stem-move]')) {
+        const dir = e.target.closest('[data-stem-move]').getAttribute('data-stem-move');
+        const order = (S.stems || []).map(s2 => s2.id);
+        const i = order.indexOf(sid);
+        const j = dir === 'up' ? i - 1 : i + 1;
+        if (i < 0 || j < 0 || j >= order.length) return;
+        [order[i], order[j]] = [order[j], order[i]];
+        _refreshFromOps(_post('/api/plugins/editor/stem-op',
+            { session_id: S.sessionId, op: 'reorder', order }), 'Tracks reordered.');
+    } else if (e.target.closest('[data-stem-rename]')) {
+        (async () => {
+            const raw = await _editorPromptText({
+                title: `Rename track "${sid}"`,
+                label: 'New name (letters, numbers, - and _):',
+                value: sid, placeholder: 'Guitar_L',
+            });
+            if (raw === null || raw === sid) return;
+            _refreshFromOps(_post('/api/plugins/editor/stem-op',
+                { session_id: S.sessionId, op: 'rename', id: sid, new_id: raw }),
+            `Renamed to ${raw}.`);
+        })();
+    } else if (e.target.closest('[data-stem-delete]')) {
+        _refreshFromOps(_post('/api/plugins/editor/stem-op',
+            { session_id: S.sessionId, op: 'delete', id: sid }), `Removed ${sid}.`);
+    }
+}
+
+function _onPairChange(e) {
+    const sel = e.target instanceof Element ? e.target.closest('[data-stem-pair]') : null;
+    if (!sel) return;
+    const row = sel.closest('[data-stem-id]');
+    const sid = row && row.getAttribute('data-stem-id');
+    const arrKey = sel.value;
+    if (!sid) return;
+    // Unlink every track currently pointing at this stem, then link the pick.
+    let links = { ...(S.stemLinks || {}) };
+    for (const [k, v] of Object.entries(links)) if (v === sid) delete links[k];
+    if (arrKey) links = _stemLinkSetPure(links, arrKey, sid);
+    S.stemLinks = links;
+    _render();
+    setStatus(arrKey ? `${sid} paired — saved with the song.` : `${sid} unpaired.`);
+}
+
+function _onImportPicked(e) {
+    const input = e.target;
+    if (!input || !input.files || !input.files.length || !S.sessionId) return;
+    const fd = new FormData();
+    fd.append('session_id', S.sessionId);
+    for (const f of input.files) fd.append('files', f);
+    input.value = '';
+    setStatus('Importing audio tracks…');
+    (async () => {
+        try {
+            const resp = await fetch('/api/plugins/editor/import-stems', { method: 'POST', body: fd });
+            const data = await resp.json();
+            if (data.error) throw new Error(data.error);
+            _adopt(data);
+            const n = (data.imported || []).length;
+            const skipped = (data.skipped || []).length;
+            setStatus(`Imported ${n} track${n === 1 ? '' : 's'}`
+                + (skipped ? ` (${skipped} skipped — not audio)` : '')
+                + (data.next_step === 'save' ? ' — Save writes them into the pack.'
+                    : data.next_step === 'build' ? ' — Build Song packs them in.' : '.'));
+        } catch (err) {
+            setStatus('Import failed: ' + err.message);
+        }
+    })();
+}
+
+export function editorToggleStemTracks(force) {
+    const modal = $modal();
+    if (!modal) return false;
+    const show = force === undefined ? modal.classList.contains('hidden') : !!force;
+    modal.classList.toggle('hidden', !show);
+    if (show) {
+        if (!S.sessionId) { setStatus('Open or import a song first.'); modal.classList.add('hidden'); return true; }
+        _render();
+    }
+    return true;
+}
+
+// The transcription move: solo the CURRENT track's paired source stem (the
+// stem mixer's S.stemMix rule — activates audibly once its strips land;
+// meanwhile the link itself is honest about what would happen).
+export function editorSoloMyStem() {
+    const arr = S.arrangements && S.arrangements[S.currentArr];
+    if (!arr) { setStatus('Load a song first.'); return true; }
+    const sid = (S.stemLinks || {})[_partViewKeyPure(arr)];
+    if (!sid) {
+        setStatus(`"${arr.name}" has no paired source track — pair one in File › Audio tracks…`);
+        return true;
+    }
+    if (!S.stemMix || typeof S.stemMix !== 'object') S.stemMix = {};
+    const cur = S.stemMix[sid] || {};
+    const on = !cur.solo;
+    S.stemMix[sid] = { vol: Number.isFinite(cur.vol) ? cur.vol : 100, mute: false, solo: on };
+    if (host.stemMixChanged) host.stemMixChanged();
+    setStatus(on
+        ? `Soloing ${sid} — the source track "${arr.name}" transcribes against.`
+        : `${sid} solo off.`);
+    return true;
+}
+
+export function initStemTracks() {
+    const modal = $modal();
+    if (!modal) return;
+    modal.addEventListener('click', (e) => {
+        if (e.target instanceof Element && e.target.id === 'editor-stem-tracks-close') {
+            modal.classList.add('hidden');
+            return;
+        }
+        _onListClick(e);
+    });
+    modal.addEventListener('change', (e) => {
+        if (e.target instanceof Element && e.target.id === 'editor-stem-tracks-file') _onImportPicked(e);
+        else _onPairChange(e);
+    });
+}

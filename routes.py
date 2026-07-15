@@ -241,6 +241,87 @@ def _apply_tempo_marks(manifest: dict, marks) -> None:
         manifest["editor_tempo_marks"] = marks
     else:
         manifest.pop("editor_tempo_marks", None)
+_STEM_ID_SUB_RE = re.compile(r"[^a-zA-Z0-9_-]")
+_STEM_AUDIO_EXTS = {".wav", ".ogg", ".opus", ".mp3", ".flac", ".m4a", ".aac"}
+
+
+def _stem_safe_id(name, taken):
+    """A filename → a unique, filesystem-safe stem id ('Guitar L (DI).wav' →
+    'Guitar_L__DI_', deduped against `taken`). The id IS the identity the
+    manifest, the mixer strips, and the chart links all share."""
+    base = _STEM_ID_SUB_RE.sub("_", Path(name or "").stem).strip("_")[:60] or "track"
+    sid, n = base, 2
+    while sid in taken:
+        sid = f"{base}_{n}"
+        n += 1
+    return sid
+
+
+def _stems_manifest_list(manifest):
+    """The manifest's stems as a normalized mutable copy (unknown entry
+    fields preserved — another tool's stem metadata must survive our edits)."""
+    out = []
+    for e in (manifest.get("stems") or []):
+        if isinstance(e, dict) and isinstance(e.get("id"), str) and e.get("id"):
+            out.append(dict(e))
+    return out
+
+
+def _stems_rename_pure(stems, old_id, new_id):
+    """Renamed stems list + the entry, or (None, None) when old is missing
+    or new collides. File path is NOT touched here (the endpoint moves it)."""
+    if any(e["id"] == new_id for e in stems):
+        return None, None
+    for e in stems:
+        if e["id"] == old_id:
+            e = dict(e)
+            e["id"] = new_id
+            return [dict(x) if x["id"] != old_id else e for x in stems], e
+    return None, None
+
+
+def _stems_reorder_pure(stems, order):
+    """Stems re-sorted to `order` (a full permutation of the ids) or None —
+    a partial/foreign order gets no authority to drop entries."""
+    ids = [e["id"] for e in stems]
+    if not isinstance(order, list) or sorted(order) != sorted(ids):
+        return None
+    by_id = {e["id"]: e for e in stems}
+    return [dict(by_id[i]) for i in order]
+
+
+def _coerce_stem_links(value):
+    """`editor_stem_links` as a sanitized {chart-track key → stem id} dict.
+    Same manifest-extension retention contract as `editor_tempo_marks`."""
+    if not isinstance(value, dict):
+        return {}
+    out = {}
+    for k, v in list(value.items())[:200]:
+        if isinstance(k, str) and k and isinstance(v, str) and v:
+            out[k[:120]] = v[:120]
+    return out
+
+
+def _parse_stem_links(data: dict):
+    """Absent → _FIELD_ABSENT (older client leaves persisted links alone);
+    a non-dict → _FIELD_ABSENT (garbage gets no authority to erase); an
+    empty dict is a genuine "no links" and removes the key."""
+    if "stem_links" not in data:
+        return _FIELD_ABSENT
+    value = data.get("stem_links")
+    if not isinstance(value, dict):
+        return _FIELD_ABSENT
+    return _coerce_stem_links(value)
+
+
+def _apply_stem_links(manifest: dict, links) -> None:
+    """Write/remove the `editor_stem_links` manifest extension key."""
+    if links is _FIELD_ABSENT:
+        return
+    if links:
+        manifest["editor_stem_links"] = links
+    else:
+        manifest.pop("editor_stem_links", None)
 
 
 def _parse_audio_shift(data: dict):
@@ -3838,8 +3919,14 @@ def setup(app, context):
                     result["beats"] = timeline["beats"]
                 if "sections" in timeline:
                     result["sections"] = timeline["sections"]
-            if len(_stem_urls) >= 2:
+            # >=1 (was >=2): a lone imported studio track must still reach
+            # the stem manager; the mixer STRIPS keep their own >=2 gate.
+            if len(_stem_urls) >= 1:
                 result["stems"] = _stem_urls
+            # Chart-track <-> stem pairings (multitrack transcription).
+            _links = _coerce_stem_links(loaded.manifest.get("editor_stem_links"))
+            if _links:
+                result["stem_links"] = _links
             # `lib/sloppak.load_song()` doesn't restore song.offset (the
             # sloppak format doesn't carry an explicit offset field today),
             # so song.offset is 0 here. If the manifest happens to surface
@@ -4025,6 +4112,8 @@ def setup(app, context):
         audio_shift = _parse_audio_shift(data)
         # Authored tempo/meter marks (P2-5) — same absent-vs-empty contract.
         tempo_marks = _parse_tempo_marks(data)
+        # Chart-track <-> stem pairings — the same absent-vs-empty contract.
+        stem_links = _parse_stem_links(data)
         # Merge session metadata (album/year captured at archive load
         # time) with anything the frontend sent. `_buildSaveBody` ships
         # `{title, artist}` on every save path; this merge keeps the
@@ -4443,6 +4532,7 @@ def setup(app, context):
             # `data.audio_shift` on load.
             _apply_audio_shift(manifest, audio_shift)
             _apply_tempo_marks(manifest, tempo_marks)
+            _apply_stem_links(manifest, stem_links)
 
             _write_song_timeline_sidecar(source_dir, manifest, beats, sections)
 
@@ -4536,6 +4626,9 @@ def setup(app, context):
         _req_marks = _parse_tempo_marks(data)
         if _req_marks is not _FIELD_ABSENT and _req_marks:
             meta["tempo_marks"] = _req_marks
+        _req_links = _parse_stem_links(data)
+        if _req_links is not _FIELD_ABSENT and _req_links:
+            meta["stem_links"] = _req_links
 
         audio_file = session.get("audio_file") or ""
         if not audio_file or not Path(audio_file).exists():
@@ -5438,6 +5531,223 @@ def setup(app, context):
             return result
         except Exception as e:
             return JSONResponse({"error": str(e)}, 500)
+
+    # ── Multitrack stem management (studio-session ingest) ───────────
+    # Import ANY number of audio tracks (a real session's multitrack, not
+    # just demucs's five), rename, reorder, delete — and pair each with the
+    # chart track being transcribed against it (editor_stem_links).
+
+    def _stem_session_kind(session):
+        """('sloppak', source_dir) | ('create', None) | (None, response)."""
+        if session.get("format") == "sloppak" and session.get("sloppak_state"):
+            return "sloppak", Path(session["dir"]).resolve()
+        if session.get("create_mode"):
+            return "create", None
+        return None, JSONResponse(
+            {"error": "stems can be managed on sloppak or fresh-import sessions only"}, 400)
+
+    def _stem_state_payload(session, session_id):
+        """The session's current stems + links, as the frontend consumes them."""
+        kind = "sloppak" if (session.get("format") == "sloppak" and session.get("sloppak_state")) else "create"
+        out = []
+        if kind == "sloppak":
+            source_dir = Path(session["dir"]).resolve()
+            manifest = dict(session["sloppak_state"].get("manifest") or {})
+            for e in _stems_manifest_list(manifest):
+                sid = e["id"]
+                if sid == "full":
+                    continue
+                sp = (source_dir / str(e.get("file") or "")).resolve()
+                try:
+                    sp.relative_to(source_dir)
+                except ValueError:
+                    continue
+                if not sp.exists():
+                    continue
+                safe = _STEM_ID_SUB_RE.sub("_", sid)
+                dest = STORAGE_DIR / ("editor_stem_s%s_%s%s" % (session_id[:8], safe, sp.suffix))
+                try:
+                    shutil.copy2(sp, dest)
+                except OSError:
+                    continue
+                out.append({"id": sid, "url": "%s/%s" % (STORAGE_URL, dest.name)})
+        else:
+            for e in (session.get("stem_files") or []):
+                sp = Path(e.get("path") or "")
+                if sp.exists():
+                    out.append({"id": e["id"], "url": "%s/%s" % (STORAGE_URL, sp.name)})
+        return {"stems": out, "stem_links": _coerce_stem_links(session.get("stem_links"))}
+
+    @app.post("/api/plugins/editor/import-stems")
+    async def import_stems(session_id: str = Form(...), files: list[UploadFile] = File(...)):
+        """Ingest one or more audio files as named stems of this session.
+
+        Ids come from the filenames (sanitized, deduped); the files land in
+        the sloppak's stems/ dir + manifest (zip-form persists on Save, the
+        replace-audio rule) or, for a fresh GP/MIDI import, in the session's
+        stem list which the Build packs into the new sloppak.
+        """
+        session = sessions.get(session_id)
+        if not session:
+            return JSONResponse({"error": "session not found"}, 404)
+        kind, where = _stem_session_kind(session)
+        if kind is None:
+            return where
+        session["last_touched"] = time.time()
+        imported, skipped = [], []
+        if kind == "sloppak":
+            source_dir = where
+            manifest = dict(session["sloppak_state"].get("manifest") or {})
+            stems = _stems_manifest_list(manifest)
+            taken = {e["id"] for e in stems} | {"full"}
+            stems_dir = source_dir / "stems"
+            stems_dir.mkdir(parents=True, exist_ok=True)
+            for f in files:
+                ext = (Path(f.filename or "").suffix or "").lower()
+                if ext not in _STEM_AUDIO_EXTS:
+                    skipped.append(f.filename or "?")
+                    continue
+                sid = _stem_safe_id(f.filename, taken)
+                taken.add(sid)
+                dest = (stems_dir / (sid + ext)).resolve()
+                try:
+                    dest.relative_to(source_dir)
+                except ValueError:
+                    skipped.append(f.filename or "?")
+                    continue
+                dest.write_bytes(await f.read())
+                stems.append({"id": sid, "file": "stems/" + dest.name,
+                              "codec": ext.lstrip("."), "default": "on"})
+                imported.append(sid)
+            manifest["stems"] = stems
+            (source_dir / "manifest.yaml").write_text(
+                yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
+                encoding="utf-8")
+            session["sloppak_state"]["manifest"] = manifest
+        else:
+            stem_files = list(session.get("stem_files") or [])
+            taken = {e["id"] for e in stem_files} | {"full"}
+            for f in files:
+                ext = (Path(f.filename or "").suffix or "").lower()
+                if ext not in _STEM_AUDIO_EXTS:
+                    skipped.append(f.filename or "?")
+                    continue
+                sid = _stem_safe_id(f.filename, taken)
+                taken.add(sid)
+                dest = STORAGE_DIR / ("editor_stem_s%s_%s%s" % (session_id[:8], sid, ext))
+                dest.write_bytes(await f.read())
+                stem_files.append({"id": sid, "path": str(dest)})
+                imported.append(sid)
+            session["stem_files"] = stem_files
+        payload = _stem_state_payload(session, session_id)
+        payload["imported"] = imported
+        payload["skipped"] = skipped
+        payload["next_step"] = ("none" if (kind == "sloppak"
+            and session["sloppak_state"].get("form") == "dir") else (
+            "save" if kind == "sloppak" else "build"))
+        return payload
+
+    @app.post("/api/plugins/editor/stem-op")
+    async def stem_op(data: dict):
+        """Rename / reorder / delete a stem, keeping chart links honest
+        (a rename follows the id; a delete drops its links)."""
+        session_id = data.get("session_id", "")
+        session = sessions.get(session_id)
+        if not session:
+            return JSONResponse({"error": "session not found"}, 404)
+        kind, where = _stem_session_kind(session)
+        if kind is None:
+            return where
+        session["last_touched"] = time.time()
+        op = data.get("op")
+        links = _coerce_stem_links(session.get("stem_links"))
+
+        def _sync_links(fn):
+            session["stem_links"] = {k: fn(v) for k, v in links.items() if fn(v)}
+
+        if kind == "sloppak":
+            source_dir = where
+            manifest = dict(session["sloppak_state"].get("manifest") or {})
+            stems = _stems_manifest_list(manifest)
+            if op == "rename":
+                old = data.get("id")
+                new = _stem_safe_id(data.get("new_id"),
+                                    {e["id"] for e in stems if e["id"] != old} | {"full"})
+                renamed, entry = _stems_rename_pure(stems, old, new)
+                if renamed is None:
+                    return JSONResponse({"error": "unknown stem or name taken"}, 400)
+                old_path = (source_dir / str(entry.get("file") or "")).resolve()
+                new_rel = "stems/" + new + old_path.suffix
+                try:
+                    old_path.relative_to(source_dir)
+                except ValueError:
+                    return JSONResponse({"error": "stem path escapes session dir"}, 400)
+                if old_path.exists():
+                    old_path.rename(source_dir / new_rel)
+                for e in renamed:
+                    if e["id"] == new:
+                        e["file"] = new_rel
+                stems = renamed
+                _sync_links(lambda v: new if v == old else v)
+            elif op == "reorder":
+                stems2 = _stems_reorder_pure(stems, data.get("order"))
+                if stems2 is None:
+                    return JSONResponse({"error": "order must be a full permutation"}, 400)
+                stems = stems2
+            elif op == "delete":
+                sid = data.get("id")
+                entry = next((e for e in stems if e["id"] == sid), None)
+                if entry is None:
+                    return JSONResponse({"error": "unknown stem"}, 400)
+                sp = (source_dir / str(entry.get("file") or "")).resolve()
+                try:
+                    sp.relative_to(source_dir)
+                    if sp.exists():
+                        sp.unlink()
+                except (ValueError, OSError):
+                    pass
+                stems = [e for e in stems if e["id"] != sid]
+                _sync_links(lambda v: None if v == sid else v)
+            else:
+                return JSONResponse({"error": "op must be rename|reorder|delete"}, 400)
+            manifest["stems"] = stems
+            (source_dir / "manifest.yaml").write_text(
+                yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
+                encoding="utf-8")
+            session["sloppak_state"]["manifest"] = manifest
+        else:
+            stem_files = list(session.get("stem_files") or [])
+            if op == "rename":
+                old = data.get("id")
+                new = _stem_safe_id(data.get("new_id"),
+                                    {e["id"] for e in stem_files if e["id"] != old} | {"full"})
+                hit = next((e for e in stem_files if e["id"] == old), None)
+                if hit is None:
+                    return JSONResponse({"error": "unknown stem"}, 400)
+                hit["id"] = new
+                _sync_links(lambda v: new if v == old else v)
+            elif op == "reorder":
+                order = data.get("order")
+                ids = [e["id"] for e in stem_files]
+                if not isinstance(order, list) or sorted(order) != sorted(ids):
+                    return JSONResponse({"error": "order must be a full permutation"}, 400)
+                by_id = {e["id"]: e for e in stem_files}
+                stem_files = [by_id[i] for i in order]
+            elif op == "delete":
+                sid = data.get("id")
+                hit = next((e for e in stem_files if e["id"] == sid), None)
+                if hit is None:
+                    return JSONResponse({"error": "unknown stem"}, 400)
+                try:
+                    Path(hit["path"]).unlink()
+                except OSError:
+                    pass
+                stem_files = [e for e in stem_files if e["id"] != sid]
+                _sync_links(lambda v: None if v == sid else v)
+            else:
+                return JSONResponse({"error": "op must be rename|reorder|delete"}, 400)
+            session["stem_files"] = stem_files
+        return _stem_state_payload(session, session_id)
 
     # ── Replace audio on a loaded session ────────────────────────────
 
@@ -7252,6 +7562,12 @@ def setup(app, context):
         _req_marks = _parse_tempo_marks(data)
         if _req_marks is not _FIELD_ABSENT and _req_marks:
             meta["tempo_marks"] = _req_marks
+        _req_links = _parse_stem_links(data)
+        if _req_links is not _FIELD_ABSENT and _req_links:
+            meta["stem_links"] = _req_links
+        # Create-mode imported stems ride the session into the build.
+        if session.get("stem_files"):
+            meta["stem_files"] = list(session["stem_files"])
         audio_url = data.get("audio_url", "")
         art_path = data.get("art_path", "")
         preview_path = data.get("preview_path", "")
@@ -7609,6 +7925,21 @@ def setup(app, context):
             # Written only when nonzero so unshifted packs stay byte-identical.
             _apply_audio_shift(manifest, _coerce_audio_shift(meta.get("audio_shift")))
             _apply_tempo_marks(manifest, _coerce_tempo_marks(meta.get("tempo_marks")))
+            _apply_stem_links(manifest, _coerce_stem_links(meta.get("stem_links")))
+            # Create-mode imported studio tracks: pack them under stems/ and
+            # declare them (the manifest's stems list is order-authoritative).
+            _mstems = list(manifest.get("stems") or [])
+            for _sf in (meta.get("stem_files") or []):
+                _sp = Path(_sf.get("path") or "")
+                if not _sp.exists():
+                    continue
+                (staging / "stems").mkdir(parents=True, exist_ok=True)
+                _dest = staging / "stems" / (_sf["id"] + _sp.suffix.lower())
+                shutil.copy2(_sp, _dest)
+                _mstems.append({"id": _sf["id"], "file": "stems/" + _dest.name,
+                                "codec": _sp.suffix.lower().lstrip("."), "default": "on"})
+            if _mstems:
+                manifest["stems"] = _mstems
 
             # Spec-complete optional metadata (feedpak §5.1) — written only when
             # present so packs without them stay minimal. String scalars,

@@ -24,6 +24,7 @@ import {
 } from './loop.js';
 import { _editorSongFit } from './song-fit.js';
 import { _recState } from './midi-record.js';
+import { editorSoloMyStem, editorToggleStemTracks } from './stem-tracks.js';
 import { getMousePos } from './mouse.js';
 import { _resizeSustainsForDeltaPure, notes } from './notes.js';
 import { EDITOR_PROFILE_OVERRIDES, _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure, _editorIsTypingTarget, _editorRenderShortcutPanel, _editorTableCommandForKeyPure, editorRightClickBehavior, editorShortcutProfile } from './shortcuts.js';
@@ -1041,6 +1042,8 @@ export function _editorRunEofCommand(cmd) {
     case 'toggleMetronome': return _editorToggleMetronome();
     case 'toggleMixer': return editorToggleMixerPanel();
     case 'togglePlayAllTracks': return editorTogglePlayAllTracks();
+    case 'manageStemTracks': return editorToggleStemTracks();
+    case 'soloMyStem': return editorSoloMyStem();
     case 'toggleLoopAB': return _editorToggleLoopAB();
     case 'toggleLoopRegion': return editorToggleLoopRegion();
     case 'songFit': _editorSongFit(); return true;

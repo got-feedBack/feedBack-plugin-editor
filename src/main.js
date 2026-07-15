@@ -138,6 +138,7 @@ import {
 } from './tempo.js';
 import { initTempoZones } from './tempo-zones.js';
 import { _tempoListRender, editorToggleTempoList, initTempoList } from './tempo-list.js';
+import { editorSoloMyStem, editorToggleStemTracks, initStemTracks } from './stem-tracks.js';
 import {
     drawAnchorLane,
     drawHandshapeLane, drawToneLane, editorApplyTonesModal, editorHideTonesModal,
@@ -2012,6 +2013,9 @@ function init() {
         octave: editorZonesOctaveFix, feel: editorZonesFeelFix });
     initTempoList();
     window.editorToggleTempoList = editorToggleTempoList;
+    initStemTracks();
+    window.editorToggleStemTracks = editorToggleStemTracks;
+    window.editorSoloMyStem = editorSoloMyStem;
     // Registry commands run through `editorRunShortcutCommand` — the SAME
     // by-id dispatcher the shortcut panel's buttons use, which is what the
     // palette is (a click on a command, not a keypress). Going straight to

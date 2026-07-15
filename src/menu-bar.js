@@ -70,6 +70,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'exportGp5' },
         { sep: true },
         { label: 'Replace audio…', fn: 'editorShowReplaceAudioModal' },
+        { cmd: 'manageStemTracks' },
         { label: 'Build feedpak', fn: 'editorBuild' },
     ] },
     { title: 'Edit', items: [
@@ -214,6 +215,7 @@ export const EDITOR_MENUS = Object.freeze([
         { sep: true },
         { cmd: 'toggleMetronome' },
         { cmd: 'togglePlayAllTracks' },
+        { cmd: 'soloMyStem' },
         { cmd: 'toggleGuideClap' },
         // Guide voice (DAW 1.2/1.5): what the guide toggle SOUNDS like —
         // the clap, or the charted pitches on a GM instrument. The

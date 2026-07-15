@@ -242,6 +242,24 @@
                     <tbody id="editor-tempo-list-body"></tbody>
                 </table>
             </div>
+            <!-- Multitrack stem manager (studio-session ingest): import /
+                 rename / reorder / delete audio tracks and pair each with
+                 the chart track transcribing it. src/stem-tracks.js owns it. -->
+            <div id="editor-stem-tracks-modal" class="hidden absolute inset-0 z-40 bg-black/40 backdrop-blur-[2px]">
+                <div class="mx-auto mt-16 w-[30rem] max-w-[calc(100%-2rem)] rounded-lg border border-gray-600 bg-dark-800/95 shadow-2xl text-sm" role="dialog" aria-label="Audio tracks">
+                    <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+                        <span class="text-teal-300 font-medium">Audio tracks</span>
+                        <div class="flex items-center gap-2">
+                            <label class="px-2 py-0.5 rounded bg-teal-700 text-white hover:bg-teal-600 cursor-pointer">Import…
+                                <input id="editor-stem-tracks-file" type="file" multiple accept=".wav,.ogg,.opus,.mp3,.flac,.m4a,.aac,audio/*" class="hidden">
+                            </label>
+                            <button id="editor-stem-tracks-close" class="px-1.5 rounded text-gray-400 hover:text-white hover:bg-dark-600" title="Close">&#10005;</button>
+                        </div>
+                    </div>
+                    <div id="editor-stem-tracks-list" class="px-3 py-1.5 max-h-80 overflow-y-auto text-xs"></div>
+                    <p class="px-3 pb-2 text-[10px] text-gray-500">Each track can be paired with the chart track that transcribes it — pairing powers "Solo my source track" and is saved with the song.</p>
+                </div>
+            </div>
             <div id="editor-command-palette" class="hidden absolute inset-0 z-40 bg-black/40 backdrop-blur-[2px]">
                 <div class="mx-auto mt-16 w-[36rem] max-w-[calc(100%-2rem)] rounded-lg border border-gray-600 bg-dark-800/95 shadow-2xl text-sm" role="dialog" aria-label="Command palette">
                     <input id="editor-palette-input" type="text" placeholder="Type a command… (Esc to close)" autocomplete="off" spellcheck="false"
