@@ -107,7 +107,8 @@ def _coerce_audio_shift(value, invalid=0.0):
     return shift if math.isfinite(shift) else invalid
 
 
-_TEMPO_MARK_KINDS = {"meter", "hold", "feel"}
+_TEMPO_MARK_KINDS = {"meter", "hold", "feel", "ramp"}
+_TEMPO_RAMP_CURVES = {"linear", "ease-in", "ease-out"}
 _TEMPO_FEEL_RATIOS = (0.5, 1.0, 2.0)
 _TEMPO_MARK_PROVENANCE = {"confirmed", "detected", "suggested", "imported", "carried"}
 
@@ -178,7 +179,7 @@ def _coerce_tempo_marks(value):
             if not (math.isfinite(factor) and 1 < factor <= 16):
                 factor = 2.0
             entry["factor"] = factor
-        else:  # feel (P2-8): the closed pulse-tier vocabulary
+        elif kind == "feel":  # P2-8: the closed pulse-tier vocabulary
             try:
                 ratio = float(m.get("ratio"))
             except (TypeError, ValueError):
@@ -186,6 +187,28 @@ def _coerce_tempo_marks(value):
             if ratio not in _TEMPO_FEEL_RATIOS:
                 continue
             entry["ratio"] = ratio
+        else:  # ramp (P2-7): one authored accel/rit over [measure, measureEnd]
+            # measureEnd rides the same exact-integer rule as `measure`
+            # (review #279 item 7): a bare int() truncated 8.9 to 8 (silently
+            # moving the ramp's end), accepted bool/strings, and crashed on
+            # ±inf (OverflowError is not a ValueError).
+            measure_end = _exact_int(m.get("measureEnd"))
+            try:
+                bpm_start = float(m.get("bpmStart"))
+                bpm_end = float(m.get("bpmEnd"))
+            except (TypeError, ValueError):
+                continue
+            if measure_end is None or measure_end <= measure:
+                continue
+            if not (math.isfinite(bpm_start) and 0 < bpm_start <= 1000):
+                continue
+            if not (math.isfinite(bpm_end) and 0 < bpm_end <= 1000):
+                continue
+            entry["measureEnd"] = measure_end
+            entry["bpmStart"] = round(bpm_start, 3)
+            entry["bpmEnd"] = round(bpm_end, 3)
+            curve = m.get("curve")
+            entry["curve"] = curve if curve in _TEMPO_RAMP_CURVES else "linear"
         if m.get("provenance") in _TEMPO_MARK_PROVENANCE:
             entry["provenance"] = m["provenance"]
         seen.add((measure, kind))

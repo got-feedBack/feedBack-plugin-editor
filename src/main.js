@@ -136,6 +136,7 @@ import {
     editorConfirmTempoZones, editorZonesSingleTempo, editorHealGrid, editorZonesOctaveFix
 } from './tempo.js';
 import { initTempoZones } from './tempo-zones.js';
+import { _tempoListRender, editorToggleTempoList, initTempoList } from './tempo-list.js';
 import {
     drawAnchorLane,
     drawHandshapeLane, drawToneLane, editorApplyTonesModal, editorHideTonesModal,
@@ -233,6 +234,7 @@ function drawNow() {
     // owns the timeline, and the readouts must not go stale behind it.
     updateBPMDisplay();
     updateTempoSigDisplay();
+    _tempoListRender();   // identity-keyed on S.tempoMarks — no-op unless marks changed
     // Live Tab view: the engraved score OWNS the timeline area — ping the
     // module (it shows the mount + re-renders on real changes) and skip the
     // canvas chain. The else-branch hides the mount the moment any mode
@@ -2001,6 +2003,8 @@ function init() {
     // handed over as hooks so tempo-zones.js never imports tempo.js (cycle).
     initTempoZones({ confirm: editorConfirmTempoZones, single: editorZonesSingleTempo,
         octave: editorZonesOctaveFix, feel: editorZonesFeelFix });
+    initTempoList();
+    window.editorToggleTempoList = editorToggleTempoList;
     // Registry commands run through `editorRunShortcutCommand` — the SAME
     // by-id dispatcher the shortcut panel's buttons use, which is what the
     // palette is (a click on a command, not a keypress). Going straight to

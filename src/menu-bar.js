@@ -225,6 +225,7 @@ export const EDITOR_MENUS = Object.freeze([
     { title: 'Tempo/Grid', items: [
         { cmd: 'toggleTempoMap' },
         { cmd: 'setTimeSignature' },
+        { label: 'Tempo List (authored marks)', fn: 'editorToggleTempoList' },
         { sep: true },
         { hdr: 'Barlines (Tempo Map)' },
         { cmd: 'tempoSuggestFit', needs: 'tempoMap' },

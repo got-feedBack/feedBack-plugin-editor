@@ -27,7 +27,11 @@ import { host } from './host.js';
 //   imported  — carried from the source file (GP/MIDI), unchecked vs audio
 //   carried   — interpolated across a silent/sustained zone
 const TEMPO_MARK_PROVENANCE = ['confirmed', 'detected', 'suggested', 'imported', 'carried'];
-const TEMPO_MARK_KINDS = ['meter', 'hold', 'feel'];
+const TEMPO_MARK_KINDS = ['meter', 'hold', 'feel', 'ramp'];
+// Ramp curve presets (P2-7) — the Logic curve-node analogue, but PRESETS so
+// the author never hand-tunes béziers: a rit defaults to ease-out (it
+// releases), an accel to linear.
+const TEMPO_RAMP_CURVES = ['linear', 'ease-in', 'ease-out'];
 // The feel vocabulary (P2-8): a half-/double-time section is a FEEL change
 // over a constant tempo, never a 2x tempo change. Ratio applies FROM its
 // measure until the next feel mark; 1 = back to straight time.
@@ -59,10 +63,21 @@ function _markNormPure(mark) {
         const factor = Number(mark.factor);
         // How much longer than metric the bar is held; 2 = "about twice".
         out.factor = (Number.isFinite(factor) && factor > 1 && factor <= 16) ? factor : 2;
-    } else {   // feel
+    } else if (kind === 'feel') {
         const ratio = Number(mark.ratio);
         if (!TEMPO_FEEL_RATIOS.includes(ratio)) return null;
         out.ratio = ratio;
+    } else {   // ramp (P2-7): ONE authored accel/rit over [measure, measureEnd]
+        const measureEnd = Number(mark.measureEnd);
+        const bpmStart = Number(mark.bpmStart);
+        const bpmEnd = Number(mark.bpmEnd);
+        if (!Number.isInteger(measureEnd) || measureEnd <= measure) return null;
+        if (!(Number.isFinite(bpmStart) && bpmStart > 0 && bpmStart <= 1000)) return null;
+        if (!(Number.isFinite(bpmEnd) && bpmEnd > 0 && bpmEnd <= 1000)) return null;
+        out.measureEnd = measureEnd;
+        out.bpmStart = Math.round(bpmStart * 1000) / 1000;
+        out.bpmEnd = Math.round(bpmEnd * 1000) / 1000;
+        out.curve = TEMPO_RAMP_CURVES.includes(mark.curve) ? mark.curve : 'linear';
     }
     if (TEMPO_MARK_PROVENANCE.includes(mark.provenance)) out.provenance = mark.provenance;
     return out;
@@ -109,11 +124,24 @@ function _holdMeasuresPure(marks) {
 // SURVIVING downbeats; a mark whose bar was deleted is dropped (its bar no
 // longer exists — an honest drop, never a stale key pointing at the wrong
 // bar). Same policy as S.tempoSelMulti, but remapped instead of cleared.
+// A ramp is a RANGE — both endpoints follow the renumber ATOMICALLY
+// (review #279 item 4): remapping only `measure` left `measureEnd` on the
+// pre-edit numbering, silently stretching or shearing the span. A ramp
+// whose end bar was deleted, or whose remapped span collapses
+// (measureEnd <= measure), drops whole — a half-valid range is never
+// emitted.
 function _marksRemapPure(marks, oldToNew) {
     const out = [];
     for (const m of (marks || [])) {
         const nm = oldToNew instanceof Map ? oldToNew.get(m.measure) : undefined;
-        if (Number.isInteger(nm) && nm >= 1) out.push({ ...m, measure: nm });
+        if (!Number.isInteger(nm) || nm < 1) continue;
+        if (m.kind === 'ramp') {
+            const ne = oldToNew.get(m.measureEnd);
+            if (!Number.isInteger(ne) || ne <= nm) continue;
+            out.push({ ...m, measure: nm, measureEnd: ne });
+        } else {
+            out.push({ ...m, measure: nm });
+        }
     }
     return out.sort((a, b) => (a.measure - b.measure) || (a.kind < b.kind ? -1 : 1));
 }
@@ -267,7 +295,7 @@ function _groupingAccentsByMeasurePure(marks) {
 /* @pure:tempo-marks:end */
 
 export {
-    TEMPO_FEEL_RATIOS, TEMPO_MARK_PROVENANCE, _feelAtPure, _feelRangesPure,
+    TEMPO_FEEL_RATIOS, TEMPO_MARK_PROVENANCE, TEMPO_RAMP_CURVES, _feelAtPure, _feelRangesPure,
     _groupingAccentMapPure, _groupingAccentsByMeasurePure,
     _groupingLabelPure, _groupingParsePure, _holdMeasuresPure,
     _markNormPure, _marksAtPure, _marksMeterReconcilePure, _marksRemapByTimePure,
