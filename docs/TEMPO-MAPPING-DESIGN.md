@@ -71,7 +71,9 @@ The normal workflow is seed, suggest, correct:
    continue as visibly low-confidence editable estimates instead of stopping.
 3. Show proposed barlines with confidence; do not commit them silently.
 4. Accept a range or correct the first wrong proposal.
-5. Recalculate only the unconfirmed future from that correction.
+5. Recalculate only the unconfirmed future from that correction. The active
+   barline is sufficient as the analysis anchor; locking is optional and means
+   only that a later fit must preserve that barline's authored time.
 6. At low confidence, silence, phase breaks, or likely tempo/meter changes,
    stop trusting onset snaps but continue the proposal from the most recent
    fitted interval. Never commit that inferred tail without explicit acceptance.
@@ -122,9 +124,10 @@ shows `m:ss.mmm` or SMPTE. All lanes use the ruler's single x/time conversion.
 - The tail after the last confirmed downbeat is labeled **Unmapped**.
 - Locked anchors remain visibly distinct.
 - The marker-handle band and the thin visible barline own direct movement; the
-  remaining lane body owns marquee selection. Shift-drag extends a selection
-  and Ctrl/Cmd-click toggles individual anchors. Lock/unlock is atomic across
-  the selected anchors.
+  remaining lane body owns marquee selection. The single active barline is the
+  start cursor for **G**, whether locked or unlocked. Shift-drag extends a
+  selection and Ctrl/Cmd-click toggles individual anchors. Lock/unlock is atomic
+  across the selected anchors.
 - Status text names the musical result and provides an undo path.
 - Whole-song metronome fits distinguish detected and extrapolated proposals and
   never commit without an explicit accept.

@@ -204,13 +204,22 @@ t('Accept Whole Fit commits every metronome proposal as one undoable command', (
     assert.deepStrictEqual(S.beats.map(beat => beat.time), before, 'one undo restores the entire prior map');
 });
 
-t('Whole Fit uses a marker range only to choose its start, never to truncate the song', () => {
+t('G starts at the active marker without requiring a lock or inheriting a stale range', () => {
     const beats = grid(8, 120);
     const selected = new Set([4, 8, 12]);
+    beats[8].locked = false;
     const whole = _tempoSuggestScopePure(beats, 8, selected, true);
-    assert.deepStrictEqual(whole, { anchor: 4, opts: { metronome: true } });
+    assert.deepStrictEqual(whole, { anchor: 8, opts: { metronome: true } });
     const phrase = _tempoSuggestScopePure(beats, 8, selected, false);
-    assert.deepStrictEqual(phrase, { anchor: 4, opts: { complete: true } });
+    assert.deepStrictEqual(phrase, { anchor: 8, opts: { complete: true } });
+    assert.deepStrictEqual(_tempoSuggestScopePure(beats, 12, selected, true),
+        { anchor: 12, opts: { metronome: true } }, 'the focused end of a range also wins');
+    assert.deepStrictEqual(_tempoSuggestScopePure(beats, -1, selected, true),
+        { anchor: 4, opts: { metronome: true } }, 'range start is only a no-focus fallback');
+    Object.assign(S, { tempoMapMode: true, beats, zoom: 100, scrollX: 0 });
+    assert.strictEqual(_suggestCompute(whole.anchor, onsetsAllBeats(120, 8), whole.opts), 5);
+    assert.deepStrictEqual(_suggestProposals().map(proposal => proposal.i), [12, 16, 20, 24, 28],
+        'fresh suggestions contain only barlines after the active marker');
 });
 
 t('a locked downbeat is pinned at its own time with full confidence', () => {

@@ -216,13 +216,17 @@ Three ways to set the tempo, from coarse to fine:
      reject a complete map rather than getting an unexplained early cutoff.
      Click a ghost handle to accept through it, or **Accept Whole Fit** to take
      the complete proposal as one undoable edit.
+     After undoing a bad fit, click the last trustworthy barline and press `G`
+     to reanalyze only the markers ahead. The active barline does not need to
+     be locked; locking only protects its time from later fitting operations.
    - For a clean click track, right-click its audio row and choose **Use as
      Metronome Guide**. `G` then counts that guide's beat pulses through the
      entire chart, follows click-track tempo changes, and extrapolates missing
      detections at visibly lower confidence instead of stopping. Choose
      **Accept Whole Fit** to apply every proposal as one edit; `Ctrl+Z` restores
-     the previous map. Any existing multi-selected barlines choose the starting
-     anchor but never cap `G`; it continues through the final authored barline
+     the previous map. The active barline chooses the starting anchor; a
+     multi-selection is used only when no barline has focus and never caps `G`.
+     It continues through the final authored barline
      and final measure. Click an individual ghost when you only
      want to accept through that bar.
      `G` always reloads the locked metronome guide before analysis, even when a

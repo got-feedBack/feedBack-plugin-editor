@@ -784,14 +784,16 @@ function _editorPromptTempoBpmAtSelection() {
 // anchor — the selected barline, or the first downbeat when none is selected.
 // Proposal-only; accepting is a ghost-handle click handled in tempo.js.
 export function _tempoSuggestScopePure(beats, tempoSel, tempoSelMulti, metronome) {
-    let anchor = tempoSel;
+    const active = Number.isInteger(tempoSel) && beats && beats[tempoSel]
+        && beats[tempoSel].measure > 0 ? tempoSel : -1;
+    let anchor = active;
     const range = _tempoSelRangePure(beats, tempoSelMulti);
     const opts = metronome ? { metronome: true } : { complete: true };
-    if (range) {
+    if (anchor < 0 && range) {
         anchor = range.lo;
-        // Selection chooses the authoritative starting anchor only. It never
-        // silently caps G: the user asked for a whole-song proposal and may
-        // have selected these bars merely to lock or move them.
+        // A multi-selection supplies a fallback only when there is no focused
+        // marker. The active marker is the DAW editing cursor and must win even
+        // when it is unlocked or remains inside an older range selection.
     }
     return { anchor, opts };
 }
@@ -826,8 +828,8 @@ export async function _editorTempoSuggestFit() {
         setStatus('Suggest needs the recording’s onset analysis — load audio first.');
         return true;
     }
-    // With a multi-selection, fit only the selected RANGE: anchor at its first
-    // downbeat and bound the march at its last.
+    // The focused marker is the analysis cursor. A lingering multi-selection
+    // is only a no-focus fallback and never bounds the forward fit.
     let { anchor, opts } = _tempoSuggestScopePure(
         S.beats, S.tempoSel, S.tempoSelMulti, metronome);
     if (anchor < 0 || !(S.beats[anchor] && S.beats[anchor].measure > 0)) {

@@ -78,6 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before detecting pulses. Selecting a transcription or paired audio stem can
   no longer leave the UI showing the metronome guide while analysis silently
   runs against a different active buffer.
+  **G** now starts a fresh forward analysis from the active barline whether or
+  not that marker is locked. After undoing a bad fit, selecting the last trusted
+  manual marker omits every earlier bar from the new suggestions; a lingering
+  multi-selection is only a fallback when no marker has focus.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
