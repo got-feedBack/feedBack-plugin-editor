@@ -23,8 +23,9 @@ import { timeOf } from './beats.js';
 import { DPR, canvas } from './canvas.js';
 import { timeToX } from './geometry.js';
 import {
-    _gmEventsInWindowPure, _gmGuideModePure, _gmKindPure, _gmSanitizeEventsPure,
-    _gmVoiceDurationPure, editorGmVoiceFor, ensureGmPreset, gmPresetReady, gmVoiceAt,
+    DRUM_PIECE_GM_NOTE, _gmEventsInWindowPure, _gmGuideModePure, _gmKindPure,
+    _gmSanitizeEventsPure, _gmVoiceDurationPure, editorGmVoiceFor, ensureGmDrum,
+    ensureGmPreset, gmDrumReady, gmDrumVoiceAt, gmPresetReady, gmVoiceAt,
 } from './gm-guide.js';
 import { host } from './host.js';
 import { _pickOnsetsPure, _spectralFluxOnsetsPlan, _spectralFluxStep } from './onsets.js';
@@ -1484,6 +1485,34 @@ function _bandPartPitchedEvents(idx) {
     })));
 }
 
+// Voice the drum-tab hits in [from, to) as the GM KIT through `target`
+// (null = the guide bus): each piece plays its one-shot (kick, snare, hats,
+// toms, cymbals — DRUM_PIECE_GM_NOTE), lazily loaded on first sight; a hit
+// whose sound isn't ready yet ticks instead (the never-silent rule). The
+// dedupe key is piece-scoped: kick + snare on the same millisecond BOTH
+// sound. Used by band mode (per-part gain target) and the drum-edit guide.
+function _drumKitVoicesInWindow(from, to, target, scale) {
+    const hits = (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab.hits : [];
+    if (!hits.length) return;
+    const bus = _ensureMasterBus();
+    const tgt = target || (bus && bus.guideGain);
+    if (!tgt) return;
+    for (const h of hits) {
+        if (!h || !Number.isFinite(h.t) || h.t < from || h.t >= to) continue;
+        const key = _bandFiredKeyPure('drums:' + (h.p || ''), h.t);
+        if (_bandFiredKeys.has(key)) continue;
+        _bandFiredKeys.add(key);
+        const note = DRUM_PIECE_GM_NOTE[h.p];
+        const when = _guideChartToCtxPure(h.t, S.playStartWall, S.playStartTime, _auditionRate());
+        if (note && gmDrumReady(note)) {
+            const v = gmDrumVoiceAt(S.audioCtx, tgt, note, when, 0.75 * (Number.isFinite(scale) ? scale : 1));
+            if (v) { _guideVoices.push(v); continue; }
+        }
+        if (note) ensureGmDrum(note, S.audioCtx);   // tick while it loads
+        _guideClapVoiceAt(when, tgt, Number.isFinite(scale) ? scale : 1);
+    }
+}
+
 function _guideClapVoiceAt(when, target, scale) {
     const bus = _ensureMasterBus();
     if (!bus) return;
@@ -1620,23 +1649,23 @@ function _guideTick() {
             const target = _ensurePartGain(part.key);
             if (!target) continue;
             const arr = part.idx >= 0 ? S.arrangements[part.idx] : null;
-            // Percussion claps its rhythm: the drum-grid sidecar OR a
-            // drum-encoded arrangement (a created/imported/legacy "Drums"
-            // part — no pitch, so _bandPartPitchedEvents returns []). Both
-            // route through this part's gain, so without this a drum
-            // ARRANGEMENT would voice neither GM nor clap and go silent
-            // (review #280 follow-up).
-            const clapTimes = part.key === 'drums'
-                ? (S.drumTab.hits || []).map(h => h.t)
-                : (arr && /^drums/i.test(arr.name || '') ? (arr.notes || []).map(n => n.time) : null);
-            if (clapTimes) {
-                const times = _guideSanitizeTimesPure(clapTimes);
+            // A drum-ENCODED arrangement (created/imported/legacy "Drums" part —
+            // no pitch, so _bandPartPitchedEvents returns []) claps its rhythm
+            // through this part's gain, else it voices neither GM nor clap and
+            // goes silent (review #280 follow-up; GM percussion here is a follow-up).
+            if (arr && /^drums/i.test(arr.name || '')) {
+                const times = _guideSanitizeTimesPure((arr.notes || []).map(n => n.time));
                 for (const t of _guideClapTimesInWindowPure(times, from, to)) {
                     const k = _bandFiredKeyPure(part.key, t);
                     if (_bandFiredKeys.has(k)) continue;
                     _bandFiredKeys.add(k);
                     _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime, _auditionRate()), target, 1);
                 }
+                continue;
+            }
+            // The drum-grid sidecar plays real GM percussion (review #282).
+            if (part.key === 'drums') {
+                _drumKitVoicesInWindow(from, to, target, 1);
                 continue;
             }
             const gm = editorGmVoiceFor(_gmKindPure(arr && arr.name));
@@ -1693,14 +1722,20 @@ function _guideTick() {
             }
         } else {
             if (gm !== null) ensureGmPreset(gm, S.audioCtx);   // clap while it loads
-            const times = _guideClapTimesInWindowPure(_guideSourceTimes(), from, to);
-            for (const t of times) {
-                // Cross-tick dedupe: skip an event in the same 1 ms bucket as the last
-                // clap already fired in a previous window (chord split by the boundary).
-                const key = Math.round(t * 1000);
-                if (key === _guideLastFiredKey) continue;
-                _guideLastFiredKey = key;
-                _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime, _auditionRate()));
+            if (S.drumEditMode) {
+                // The drum grid's guide is the KIT, not a tick (each piece
+                // plays its one-shot; still gated by the drum strip above).
+                _drumKitVoicesInWindow(from, to, null, host.partClapState().vol);
+            } else {
+                const times = _guideClapTimesInWindowPure(_guideSourceTimes(), from, to);
+                for (const t of times) {
+                    // Cross-tick dedupe: skip an event in the same 1 ms bucket as the last
+                    // clap already fired in a previous window (chord split by the boundary).
+                    const key = Math.round(t * 1000);
+                    if (key === _guideLastFiredKey) continue;
+                    _guideLastFiredKey = key;
+                    _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime, _auditionRate()));
+                }
             }
         }
     }
