@@ -29,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the editor never draws a connection the music doesn't have.
 ### Added
 
+- **Half-time / double-time is a FEEL now, not a fake tempo change.** A
+  half-time chorus or double-time bridge never meant the band changed tempo
+  — the *pulse tier* changed. Right-click a barline: **Half-time feel /
+  Double-time feel from here** (and **Straight time from here** to end it).
+  The tempo and every barline stay exactly put; instead, the metronome
+  accents the *felt* pulse, Map Health expects onsets on felt beats only (a
+  genuinely sparser half-time section reads green, not "missing onsets"
+  grey), and the marker lane shows a green feel chip. When **Scan** detects
+  the recording pulsing at twice/half your grid, the confirm bar now offers
+  **the feel marker as the default** ("Half-time feel") with "Actually ½/2×
+  tempo" as the explicit grid-rescue override — reading a density change as
+  an octave tempo jump was a top mapping failure mode.
+
 - **Meter groupings now teach the feel.** An authored grouping (`7/8` as
   `2+2+3`) reaches its three consumers: the **metronome accents** each
   grouping-cell start (strong-weak-strong-weak-strong-weak-weak — you hear

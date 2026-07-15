@@ -131,7 +131,7 @@ import {
     _tempoFlattenToBpmPure, _tempoPivotTimePure,
     _tempoHasMultipleMeasureBpmsPure, _tempoHoldMeasures, _tempoMapDraw, _tempoMapOnDragEnd, _tempoMeasureBeatCount,
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
-    _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
+    _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, editorZonesFeelFix,
     _tempoRemapMarksByTime, _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones,
     editorConfirmTempoZones, editorZonesSingleTempo, editorHealGrid, editorZonesOctaveFix
 } from './tempo.js';
@@ -2000,7 +2000,7 @@ function init() {
     // The zone confirm bar's two APPLY verbs live in tempo.js (TempoGridCmd),
     // handed over as hooks so tempo-zones.js never imports tempo.js (cycle).
     initTempoZones({ confirm: editorConfirmTempoZones, single: editorZonesSingleTempo,
-        octave: editorZonesOctaveFix });
+        octave: editorZonesOctaveFix, feel: editorZonesFeelFix });
     // Registry commands run through `editorRunShortcutCommand` — the SAME
     // by-id dispatcher the shortcut panel's buttons use, which is what the
     // palette is (a click on a command, not a keypress). Going straight to

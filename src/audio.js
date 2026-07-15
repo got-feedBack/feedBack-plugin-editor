@@ -33,7 +33,7 @@ import { _rollMidiForNote, _rollPitchCtx, midiToFreq } from './keys.js';
 import { _recState } from './midi-record.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
-import { _groupingAccentsLive } from './tempo-marks.js';
+import { _feelRangesLive, _groupingAccentsLive } from './tempo-marks.js';
 import {
     _composeSongDurationPure, _cursorDrawTimePure, _loopPlaybackRestartTimePure,
     _normalizeLoopRegionPure, _countInPlanPure, _transportChartTimePure,
@@ -943,7 +943,12 @@ function _guideWindowEndPure(rawTo, loopEnabled, loopEndTime) {
 // grouped bar — `2+2+3` clicks strong-weak-strong-weak-strong-weak-weak, so
 // the click teaches where the riff resets. Absent/ungrouped = downbeat-only,
 // bit-identical to the pre-grouping click.
-function _metroClicksInWindowPure(beats, from, to, accentsByMeasure) {
+// P2-8: `feelRanges` (sorted [{fromMeasure, ratio}], plain data) halves the
+// felt click under a half-time feel — accents land on every OTHER beat, the
+// pulse a drummer actually references. Double-time (ratio 2) leaves the
+// click as-is (every beat is already clicked; the marker's other consumers
+// carry the meaning). Inline walk keeps the sliced env self-contained.
+function _metroClicksInWindowPure(beats, from, to, accentsByMeasure, feelRanges) {
     if (!Array.isArray(beats) || !beats.length || !(to > from)) return [];
     let lo = 0, hi = beats.length;
     while (lo < hi) {
@@ -961,7 +966,12 @@ function _metroClicksInWindowPure(beats, from, to, accentsByMeasure) {
         const down = beats[i].measure > 0;
         if (down) { measure = beats[i].measure; pos = 0; }
         const map = (!down && accentsByMeasure) ? accentsByMeasure.get(measure) : null;
-        out.push({ t: beats[i].time, accent: down || !!(map && pos >= 0 && map[pos] === 1) });
+        let feel = 1;
+        if (feelRanges) {
+            for (const f of feelRanges) { if (f.fromMeasure <= measure) feel = f.ratio; else break; }
+        }
+        const feltAccent = feel === 0.5 && pos >= 0 && pos % 2 === 0;
+        out.push({ t: beats[i].time, accent: down || !!(map && pos >= 0 && map[pos] === 1) || feltAccent });
         pos++;
     }
     return out;
@@ -1486,7 +1496,7 @@ function _guideTick() {
         }
     }
     if (metro) {
-        const clicks = _metroClicksInWindowPure(S.beats || [], from, to, _groupingAccentsLive());
+        const clicks = _metroClicksInWindowPure(S.beats || [], from, to, _groupingAccentsLive(), _feelRangesLive());
         for (const c of clicks) {
             _metroClickVoiceAt(
                 _guideChartToCtxPure(c.t, S.playStartWall, S.playStartTime, _auditionRate()), c.accent);

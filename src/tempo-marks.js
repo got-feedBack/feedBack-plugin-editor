@@ -27,7 +27,11 @@ import { host } from './host.js';
 //   imported  — carried from the source file (GP/MIDI), unchecked vs audio
 //   carried   — interpolated across a silent/sustained zone
 const TEMPO_MARK_PROVENANCE = ['confirmed', 'detected', 'suggested', 'imported', 'carried'];
-const TEMPO_MARK_KINDS = ['meter', 'hold'];
+const TEMPO_MARK_KINDS = ['meter', 'hold', 'feel'];
+// The feel vocabulary (P2-8): a half-/double-time section is a FEEL change
+// over a constant tempo, never a 2x tempo change. Ratio applies FROM its
+// measure until the next feel mark; 1 = back to straight time.
+const TEMPO_FEEL_RATIOS = [0.5, 1, 2];
 
 // One mark, validated + normalized — or null if unusable. Unknown extra
 // fields are DROPPED (the wire surface is exactly what this returns).
@@ -51,10 +55,14 @@ function _markNormPure(mark) {
             if (g.reduce((a, b) => a + b, 0) !== num) return null;   // sum(grouping) === num
             out.grouping = g;
         }
-    } else {   // hold
+    } else if (kind === 'hold') {
         const factor = Number(mark.factor);
         // How much longer than metric the bar is held; 2 = "about twice".
         out.factor = (Number.isFinite(factor) && factor > 1 && factor <= 16) ? factor : 2;
+    } else {   // feel
+        const ratio = Number(mark.ratio);
+        if (!TEMPO_FEEL_RATIOS.includes(ratio)) return null;
+        out.ratio = ratio;
     }
     if (TEMPO_MARK_PROVENANCE.includes(mark.provenance)) out.provenance = mark.provenance;
     return out;
@@ -209,6 +217,25 @@ function _groupingLabelPure(num, den, grouping) {
     return (Array.isArray(grouping) && grouping.length) ? `${base} (${grouping.join('+')})` : base;
 }
 
+// P2-8 — the feel timeline: sorted [{fromMeasure, ratio}] steps ('each
+// applies until the next', the time_signatures rule). Consumers pointer-walk
+// or binary-search it; no feel marks = empty = straight time everywhere.
+function _feelRangesPure(marks) {
+    return (marks || [])
+        .filter(m => m.kind === 'feel')
+        .map(m => ({ fromMeasure: m.measure, ratio: m.ratio }))
+        .sort((a, b) => a.fromMeasure - b.fromMeasure);
+}
+
+// The felt ratio in effect at `measure` (1 = straight).
+function _feelAtPure(feelRanges, measure) {
+    let r = 1;
+    for (const f of (feelRanges || [])) {
+        if (f.fromMeasure <= measure) r = f.ratio; else break;
+    }
+    return r;
+}
+
 // P2-6 — the grouping's ACCENT MAP: [2,2,3] in 7 → [1,0,1,0,1,0,0] (1 marks
 // each grouping-cell start). No/invalid grouping → downbeat-only accent,
 // which is exactly the pre-grouping behavior everywhere this map is consumed
@@ -240,7 +267,8 @@ function _groupingAccentsByMeasurePure(marks) {
 /* @pure:tempo-marks:end */
 
 export {
-    TEMPO_MARK_PROVENANCE, _groupingAccentMapPure, _groupingAccentsByMeasurePure,
+    TEMPO_FEEL_RATIOS, TEMPO_MARK_PROVENANCE, _feelAtPure, _feelRangesPure,
+    _groupingAccentMapPure, _groupingAccentsByMeasurePure,
     _groupingLabelPure, _groupingParsePure, _holdMeasuresPure,
     _markNormPure, _marksAtPure, _marksMeterReconcilePure, _marksRemapByTimePure,
     _marksRemapPure, _marksRemovePure, _marksSanitizePure, _marksUpsertPure,
@@ -286,6 +314,29 @@ export function editorToggleHoldBar(measure) {
         : _marksUpsertPure(S.tempoMarks, { measure, kind: 'hold', provenance: 'confirmed' });
     S.history.exec(new TempoMarkCmd(S.tempoMarks || [], after, has ? 'remove hold' : 'hold bar'));
     return true;
+}
+
+// P2-8: declare the FELT pulse from a bar on (0.5 half-time, 2 double-time,
+// 1 back to straight). Setting the ratio already marked there clears the
+// mark instead (toggle semantics for the context menu).
+export function editorSetFeelFromBar(measure, ratio) {
+    if (!Number.isInteger(measure) || measure < 1) return false;
+    const cur = (S.tempoMarks || []).find(m => m.kind === 'feel' && m.measure === measure);
+    const after = (cur && cur.ratio === ratio)
+        ? _marksRemovePure(S.tempoMarks, measure, 'feel')
+        : _marksUpsertPure(S.tempoMarks, { measure, kind: 'feel', ratio, provenance: 'confirmed' });
+    S.history.exec(new TempoMarkCmd(S.tempoMarks || [], after,
+        ratio === 1 ? 'straight time' : ratio === 0.5 ? 'half-time feel' : 'double-time feel'));
+    return true;
+}
+
+// The memoized live feel timeline (same identity-keyed pattern as accents).
+let _feelCache = { marksRef: null, value: [] };
+export function _feelRangesLive() {
+    if (_feelCache.marksRef !== S.tempoMarks) {
+        _feelCache = { marksRef: S.tempoMarks, value: _feelRangesPure(S.tempoMarks) };
+    }
+    return _feelCache.value;
 }
 
 // Set/clear a meter grouping on a measure (num/den read from the bar).
