@@ -1,8 +1,8 @@
 // ════════════════════════════════════════════════════════════════════
 // Song creation — everything between "New…" and a loaded chart.
 //
-// The format picker, the sloppak-create modal, the roster ("what are you
-// arranging?"), the MusicBrainz metadata match, and the album-art picker. They
+// The format picker, the sloppak-create modal, the unified import roster,
+// the MusicBrainz metadata match, and the album-art picker. They
 // travel together because they are one flow over one object: `createState`,
 // which is reset when the modal opens and read by every step after it.
 //
@@ -36,6 +36,7 @@ import { _firstDownbeatTimePure, _importBar1NudgePure, _liftAllBeats, _restoreBe
 import { seedSurfacePreset, surfacePersistFor } from './toolbars.js';
 import { _editorMaybeStartTour } from './tour.js';
 import { _editorEscHtml, _installModalKeyboard, setStatus } from './ui.js';
+import { importMidiTracksIntoSession } from './import.js';
 
 
 // ════════════════════════════════════════════════════════════════════
@@ -133,15 +134,15 @@ export function editorShowCreateModal() {
     // Guitar arrangement, so the modal is immediately creatable with a title.
     createState = {
         mode: 'blank',
+        // Blank projects still use one removable compatibility seed because the
+        // current feedpak schema requires an arrangement. Imported files—not a
+        // separate role picker—define every visible track in the create UI.
         roster: ['Lead'],
-        // Provenance for the default roster: false until the user actually
-        // edits the roster UI. The MIDI-only create keys its seed-placeholder
-        // decision on THIS, not on the roster's value — an untouched default
-        // is boilerplate, but an explicitly re-built ['Lead'] is intent.
-        rosterTouched: false,
         gpPath: null, tracks: null, gpName: null, gpHasEmbedded: false, gpSyncCount: 0,
         eofFiles: null, eofName: null,
-        audioUrl: null, audioName: null, audioDuration: null, audioFile: null, midiInfo: null, midiFiles: null,
+        audioUrl: null, audioName: null, audioDuration: null, audioFile: null,
+        audioTracks: [], guideTrackId: '', youtubeSelected: true,
+        midiInfo: null, midiFiles: null, midiPath: null, midiTracks: [],
         artPath: null, previewPath: null,
         gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null, autoSyncCoupled: false,
         // GoPlayAlong sync sidecar (goplayalong.com): a <track> .xml that carries
@@ -158,7 +159,6 @@ export function editorShowCreateModal() {
     const go = document.getElementById('editor-create-go'); if (go) go.disabled = true;
     setTxt('editor-create-status');
     setTxt('editor-create-import-status');
-    setTxt('editor-create-roster-hint');
     [
         'editor-create-import', 'editor-create-yt-url', 'editor-create-art',
         'editor-create-title', 'editor-create-artist', 'editor-create-album', 'editor-create-album-artist',
@@ -171,10 +171,7 @@ export function editorShowCreateModal() {
     hide('editor-gp8-audio-banner'); hide('editor-autosync-section'); hide('editor-refine-row');
     setTxt('editor-autosync-status'); setTxt('editor-refine-status');
     setTxt('editor-create-autofill-note');
-    _populateRosterPalette();
-    _renderRosterSelected();
     renderStaged();
-    _syncYtFieldState();
     updateCreateButton();
     _updateIdentifyButton();   // disabled until a master track is staged
 }
@@ -492,7 +489,10 @@ async function _stageGpFile(file) {
         const data = await resp.json();
         if (data.error) { if (iStatus) iStatus.textContent = 'Error: ' + data.error; return; }
         createState.gpPath = data.gp_path;
-        createState.tracks = data.tracks;
+        createState.tracks = (data.tracks || []).map(track => ({
+            ...track,
+            selected: Number(track.notes) > 0,
+        }));
         createState.gpName = file.name;
         createState.gpHasEmbedded = !!data.has_embedded_audio;
         createState.gpSyncCount = data.sync_point_count || 0;
@@ -500,28 +500,8 @@ async function _stageGpFile(file) {
         // Chart slot is exclusive — a GP replaces any EOF pick. Audio untouched.
         createState.eofFiles = null;
 
-        const listEl = document.getElementById('editor-create-track-list');
-        if (listEl) listEl.innerHTML = data.tracks.map(t => {
-            const isDrums = !!(t.is_drums || t.is_percussion);
-            // Role tag (not a warning): drums used to render red, which read as
-            // an error. Each row now self-labels with a coloured role pill —
-            // amber Drums / indigo Keys / sky Bass / muted Guitar — so no legend
-            // is needed. Inline styles: core Tailwind lacks the /opacity variants.
-            const role = isDrums ? { t: 'Drums', s: 'background:rgba(245,158,11,0.16);color:#fcd34d' }
-                : t.is_piano ? { t: 'Keys', s: 'background:rgba(129,140,248,0.18);color:#c7d2fe' }
-                : t.is_bass ? { t: 'Bass', s: 'background:rgba(56,189,248,0.16);color:#7dd3fc' }
-                : { t: 'Guitar', s: 'background:#2c3040;color:#9aa0ad' };
-            const disabled = t.notes === 0;
-            const safeName = _editorEscHtml(t.name);
-            return `<label class="flex items-center gap-2 text-xs py-0.5">
-                <input type="checkbox" value="${t.index}" checked
-                    class="accent-accent" ${disabled ? 'disabled' : ''}>
-                <span class="text-gray-300 flex-1" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${safeName}</span>
-                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium" style="${role.s}">${role.t}</span>
-                <span class="text-gray-600 shrink-0">${Number(t.strings) || 0}str · ${Number(t.notes) || 0} notes</span>
-            </label>`;
-        }).join('');
         document.getElementById('editor-create-tracks')?.classList.remove('hidden');
+        renderStaged();
 
         // Reset any prior sync result, then derive the GP audio UI + autofill.
         createState.lastSync = null;
@@ -645,11 +625,10 @@ export async function _uploadAudioForMode({ mode, ytInputId, fileInputId, status
 }
 
 async function uploadCreateAudio() {
-    // Audio FILES upload on selection (Content Import → createState.audioUrl).
-    // Here we only resolve a pasted YouTube URL when no file audio is set yet.
-    if (createState.audioUrl) return true;
     const yt = ((document.getElementById('editor-create-yt-url')?.value) || '').trim();
-    if (!yt) return false;
+    if (!yt) { _syncCreateGuide(); return !!createState.audioUrl; }
+    const existing = (createState.audioTracks || []).find(track => track.id === 'youtube');
+    if (existing) { _syncCreateGuide(); return true; }
     const url = await _uploadAudioForMode({
         mode: 'youtube',
         ytInputId: 'editor-create-yt-url',
@@ -658,7 +637,13 @@ async function uploadCreateAudio() {
             || document.getElementById('editor-create-status'),
     });
     if (!url) return false;
-    createState.audioUrl = url;
+    createState.audioTracks.push({
+        id: 'youtube', name: 'YouTube audio', url, duration: null, file: null,
+        selected: createState.youtubeSelected !== false,
+    });
+    if (!createState.guideTrackId) createState.guideTrackId = 'youtube';
+    _syncCreateGuide();
+    renderStaged();
     return true;
 }
 
@@ -669,21 +654,27 @@ async function uploadCreateAudio() {
 // list). Audio + artist stay optional (draft-now, audio-later).
 export function _createGateOpen(state, flags) {
     if (!state || !flags) return false;
-    if (state.gpPath) return true;
+    if (state.gpPath) return !state.tracks || state.tracks.some(
+        track => track.selected !== false && Number(track.notes) > 0);
     if (state.eofFiles && state.eofFiles.length) return true;
     // A staged MIDI alone creates a project (like a GP file — the title is
     // defaulted from the filename at stage time, so the blank path can run).
-    if (state.midiFiles && state.midiFiles.length) return true;
-    var instruments = ['Lead', 'Rhythm', 'Keys', 'Bass', 'Drums'];
-    var hasInstrument = !!(state.roster && state.roster.some(function (r) {
-        return instruments.indexOf(r) >= 0;
-    }));
-    return !!(flags.hasTitle && hasInstrument);
+    if (state.midiFiles && state.midiFiles.length) return !state.midiTracks
+        || !state.midiTracks.length || state.midiTracks.some(
+            track => track.selected !== false && Number(track.notes) > 0);
+    return !!flags.hasTitle;
 }
 
 function _createHasAudioInput() {
-    if (createState.audioUrl) return true;
-    return !!((document.getElementById('editor-create-yt-url')?.value) || '').trim();
+    if ((createState.audioTracks || []).some(track => track && track.selected !== false)) return true;
+    return createState.youtubeSelected !== false
+        && !!((document.getElementById('editor-create-yt-url')?.value) || '').trim();
+}
+
+function _createHasPendingYoutube() {
+    const yt = ((document.getElementById('editor-create-yt-url')?.value) || '').trim();
+    return createState.youtubeSelected !== false
+        && !!(yt && !(createState.audioTracks || []).some(track => track.id === 'youtube'));
 }
 
 // The spec-complete metadata typed in the create modal, so a Guitar Pro / EOF
@@ -734,108 +725,83 @@ function _createRoleDefaultStrings(role) {
     return role === 'Bass' ? 4 : 6;
 }
 
-// ════════════════════════════════════════════════════════════════════
-// Roster — "What are you arranging?" Click a palette chip to add a role;
-// drag the selected chips to reorder. Backend canonical names: Vocals,
-// Lead, Rhythm, Keys, Bass, Drums (create_sloppak maps display labels too).
-// ════════════════════════════════════════════════════════════════════
-const _CREATE_ROSTER = [
-    { id: 'Vocals', label: 'Vocals' },
-    { id: 'Lead', label: 'Lead Guitar' },
-    { id: 'Rhythm', label: 'Rhythm Guitar' },
-    { id: 'Keys', label: 'Keys' },
-    { id: 'Bass', label: 'Bass Guitar' },
-    { id: 'Drums', label: 'Drums' },
-];
-const _CREATE_INSTRUMENTS = ['Lead', 'Rhythm', 'Keys', 'Bass', 'Drums'];
-function _rosterLabel(id) {
-    const r = _CREATE_ROSTER.find((x) => x.id === id);
-    return r ? r.label : id;
-}
-
-function _populateRosterPalette() {
-    const wrap = document.getElementById('editor-create-roster-palette');
-    if (!wrap) return;
-    wrap.replaceChildren();
-    for (const r of _CREATE_ROSTER) {
-        const inSel = createState.roster.includes(r.id);
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.textContent = (inSel ? '✓ ' : '+ ') + r.label;
-        b.className = 'px-2 py-1 rounded text-xs font-medium '
-            + (inSel ? 'bg-accent text-white' : 'bg-dark-600 text-gray-300 hover:bg-dark-500');
-        b.onclick = () => _toggleRosterRole(r.id);
-        wrap.appendChild(b);
-    }
-}
-
-function _toggleRosterRole(id) {
-    // Any add/remove (including remove-then-re-add of the default) is explicit
-    // intent — see rosterTouched in editorShowCreateModal.
-    createState.rosterTouched = true;
-    const i = createState.roster.indexOf(id);
-    if (i >= 0) createState.roster.splice(i, 1);
-    else createState.roster.push(id);
-    _populateRosterPalette();
-    _renderRosterSelected();
-    updateCreateButton();
-}
-
-let _rosterDragFrom = null;
-function _renderRosterSelected() {
-    const wrap = document.getElementById('editor-create-roster-selected');
-    if (!wrap) return;
-    wrap.replaceChildren();
-    if (!createState.roster.length) {
-        const p = document.createElement('span');
-        p.className = 'text-[11px] text-gray-600';
-        p.textContent = 'Nothing yet — click an instrument above.';
-        wrap.appendChild(p);
-    }
-    createState.roster.forEach((id, idx) => {
-        const chip = document.createElement('span');
-        chip.draggable = true;
-        chip.className = 'inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-dark-600 text-gray-200 cursor-move';
-        const name = document.createElement('span');
-        name.textContent = _rosterLabel(id);
-        chip.appendChild(name);
-        const x = document.createElement('button');
-        x.type = 'button';
-        x.textContent = '✕';
-        x.className = 'text-gray-500 hover:text-white';
-        x.onclick = (e) => { e.stopPropagation(); _toggleRosterRole(id); };
-        chip.appendChild(x);
-        chip.addEventListener('dragstart', () => { _rosterDragFrom = idx; });
-        chip.addEventListener('dragover', (e) => e.preventDefault());
-        chip.addEventListener('drop', (e) => {
-            e.preventDefault();
-            if (_rosterDragFrom === null || _rosterDragFrom === idx) return;
-            const arr = createState.roster;
-            const [moved] = arr.splice(_rosterDragFrom, 1);
-            arr.splice(idx, 0, moved);
-            _rosterDragFrom = null;
-            _renderRosterSelected();
-        });
-        wrap.appendChild(chip);
-    });
-    const hint = document.getElementById('editor-create-roster-hint');
-    if (hint) {
-        const hasInstrument = createState.roster.some((r) => _CREATE_INSTRUMENTS.includes(r));
-        const hasVocals = createState.roster.includes('Vocals');
-        hint.textContent = (hasVocals && !hasInstrument)
-            ? 'Vocals adds a lyrics track — add at least one instrument to chart against.'
-            : (hasVocals ? 'Vocals seeds an empty lyrics track (a full vocals editor is coming).' : '');
-    }
-}
-
 // Single "Content Import" browse — route by extension to the right importer.
-// Single "Content Import" browse — now MULTI-file and role-routed. Each file is
-// staged into its role slot (1 master audio, 1 chart, MIDI as an info row)
-// WITHOUT clearing the other role. That's the whole fix for "the audio falls off
-// when I then add a Guitar Pro file."
+// Every audio file becomes a source row; GP and MIDI expand into their child
+// transcription rows without clearing the audio selection.
 const _IMPORT_AUDIO = ['.mp3', '.wav', '.flac', '.ogg', '.m4a', '.opus', '.aac', '.wem'];
 const _IMPORT_GP = ['.gp3', '.gp4', '.gp5', '.gpx', '.gp'];
 const _extOf = (f) => (f.name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+
+/* @pure:create-track-table:start */
+function _createTrackRowsPure(state, youtubeUrl) {
+    const rows = [];
+    for (const track of (state && state.audioTracks) || []) {
+        rows.push({ id: String(track.id), name: String(track.name || 'Audio'), kind: 'audio',
+            selected: track.selected !== false, selectable: true, guideEligible: true });
+    }
+    if (String(youtubeUrl || '').trim()
+            && !((state && state.audioTracks) || []).some(track => track.id === 'youtube')) {
+        rows.push({ id: 'youtube', name: String(youtubeUrl).trim(), kind: 'youtube',
+            selected: !state || state.youtubeSelected !== false, selectable: true, guideEligible: true });
+    }
+    for (const track of (state && state.tracks) || []) {
+        rows.push({ id: 'gp:' + track.index, name: String(track.name || ('Track ' + track.index)),
+            kind: 'guitar-pro',
+            selected: track.selected !== false && Number(track.notes) > 0,
+            selectable: true, guideEligible: false });
+    }
+    for (const track of (state && state.midiTracks) || []) {
+        rows.push({ id: 'midi:' + track.index, name: String(track.name || ('Track ' + track.index)),
+            kind: 'midi',
+            selected: track.selected !== false && Number(track.notes) > 0,
+            selectable: true, guideEligible: false });
+    }
+    for (const [index, file] of (((state && state.eofFiles) || []).entries())) {
+        rows.push({ id: 'xml:' + index, name: String(file.name || ('XML ' + (index + 1))),
+            kind: 'xml', selected: true,
+            selectable: false, guideEligible: false });
+    }
+    if (state && state.goplayalongFile) {
+        rows.push({ id: 'sync:goplayalong', name: String(state.goplayalongFile.name || 'Sync XML'),
+            kind: 'sync', selected: true,
+            selectable: false, guideEligible: false });
+    }
+    return rows;
+}
+
+function _createGuideIdPure(rows, requested) {
+    const eligible = (rows || []).filter(row => row && row.guideEligible && row.selected !== false);
+    return eligible.some(row => row.id === requested) ? requested : (eligible[0] ? eligible[0].id : '');
+}
+
+function _createAudioPayloadPure(audioTracks, guideId) {
+    const tracks = (audioTracks || []).filter(track => track && track.url && track.selected !== false);
+    const guide = tracks.find(track => track.id === guideId) || tracks[0] || null;
+    const ordered = guide ? [guide, ...tracks.filter(track => track !== guide)] : [];
+    return {
+        audio_url: guide ? guide.url : '',
+        audio_tracks: ordered.map(track => ({
+            id: String(track.id), name: String(track.name || 'Audio'), url: String(track.url),
+            guide: track === guide,
+        })),
+    };
+}
+/* @pure:create-track-table:end */
+export { _createAudioPayloadPure, _createGuideIdPure, _createTrackRowsPure };
+
+function _syncCreateGuide() {
+    const yt = ((document.getElementById('editor-create-yt-url')?.value) || '').trim();
+    const rows = _createTrackRowsPure(createState, yt);
+    createState.guideTrackId = _createGuideIdPure(rows, createState.guideTrackId);
+    const payload = _createAudioPayloadPure(createState.audioTracks, createState.guideTrackId);
+    createState.audioUrl = payload.audio_url || null;
+    const guide = (createState.audioTracks || []).find(track => track.id === createState.guideTrackId) || null;
+    createState.audioName = guide ? guide.name : null;
+    createState.audioDuration = guide ? guide.duration : null;
+    createState.audioFile = guide ? guide.file : null;
+    _refreshGpAudioUI();
+    _updateIdentifyButton();
+}
 
 export async function editorContentImportSelected(input) {
     const files = [...(input.files || [])];
@@ -869,15 +835,10 @@ export async function editorContentImportSelected(input) {
     } else if (eofXmls.length) {
         _stageEofFiles(eofXmls);
     }
-    // Master-audio slot (one master track for now; stems later).
     if (audioFiles.length) {
-        await _stageAudio(audioFiles[0]);
-        if (audioFiles.length > 1 && status) {
-            status.textContent = 'One master track for now — used "' + audioFiles[0].name
-                + '". (Multiple stems are coming.)';
-        }
+        await _stageAudioFiles(audioFiles);
     }
-    if (midiFiles.length) _stageMidi(midiFiles);
+    if (midiFiles.length) await _stageMidi(midiFiles);
     if (unknown.length && status) {
         status.textContent = 'Skipped unsupported: ' + unknown.map((f) => f.name).join(', ')
             + ' (PowerTab & MusicXML are coming).';
@@ -889,40 +850,46 @@ export async function editorContentImportSelected(input) {
     updateCreateButton();
 }
 
-// Upload + stage the master audio track. Never touches the chart slot; couples
-// into GP auto-sync (via _refreshGpAudioUI) when a chart is present.
-async function _stageAudio(file) {
-    const iStatus = document.getElementById('editor-create-import-status');
-    if (iStatus) iStatus.textContent = 'Uploading audio…';
-    createState.audioUrl = null;
-    createState.audioName = null;
-    createState.audioDuration = null;
-    createState.audioFile = null;
+async function _uploadAudioTrack(file, sequence) {
     const form = new FormData();
     form.append('file', file);
-    let url = null, dur = null;
+    const resp = await fetch('/api/plugins/editor/upload-audio', { method: 'POST', body: form });
+    const data = await resp.json();
+    if (!data || !data.audio_url) throw new Error((data && data.error) || ('Could not upload ' + file.name));
+    return {
+        id: 'audio:' + sequence,
+        name: file.name,
+        url: data.audio_url,
+        duration: Number(data.duration) > 0 ? Number(data.duration) : null,
+        file,
+    };
+}
+
+// Upload every selected audio source concurrently. The first added source is
+// the default guide, but the table can switch that choice before Create.
+async function _stageAudioFiles(files) {
+    const iStatus = document.getElementById('editor-create-import-status');
+    if (iStatus) iStatus.textContent = `Uploading ${files.length} audio track${files.length === 1 ? '' : 's'}…`;
     try {
-        const resp = await fetch('/api/plugins/editor/upload-audio', { method: 'POST', body: form });
-        const data = await resp.json();
-        if (data && data.audio_url) { url = data.audio_url; dur = data.duration; }
-        else if (data && data.error && iStatus) iStatus.textContent = 'Error: ' + data.error;
+        const start = Math.max(0, ...(createState.audioTracks || []).map(track => {
+            const match = String(track.id || '').match(/^audio:(\d+)$/);
+            return match ? Number(match[1]) : 0;
+        })) + 1;
+        const settled = await Promise.allSettled(
+            files.map((file, index) => _uploadAudioTrack(file, start + index)));
+        const added = settled.filter(result => result.status === 'fulfilled').map(result => result.value);
+        const failed = settled.filter(result => result.status === 'rejected');
+        if (!added.length) throw failed[0].reason;
+        createState.audioTracks = [...(createState.audioTracks || []), ...added];
+        if (!createState.guideTrackId && added[0]) createState.guideTrackId = added[0].id;
+        _syncCreateGuide();
+        const titleEl = document.getElementById('editor-create-title');
+        if (titleEl && !titleEl.value.trim() && added[0]) titleEl.value = added[0].name.replace(/\.[^.]+$/, '');
+        if (iStatus) iStatus.textContent = `${added.length} audio track${added.length === 1 ? '' : 's'} added.`
+            + (failed.length ? ` ${failed.length} failed.` : '');
     } catch (e) {
         if (iStatus) iStatus.textContent = 'Upload failed: ' + e.message;
     }
-    if (url) {
-        createState.audioUrl = url;
-        createState.audioName = file.name;
-        createState.audioDuration = (Number(dur) > 0) ? Number(dur) : null;
-        // Keep the File itself so "Identify from audio" can re-POST the raw bytes
-        // to core /identify (cross-plugin: the core can't read our stored copy).
-        createState.audioFile = file;
-        const titleEl = document.getElementById('editor-create-title');
-        if (titleEl && !titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^.]+$/, '');
-        if (iStatus) iStatus.textContent = 'Master audio added.';
-    }
-    _refreshGpAudioUI();       // couple into GP auto-sync if a chart is present
-    _syncYtFieldState();
-    _updateIdentifyButton();
 }
 
 function _stageEofFiles(xmls) {
@@ -1008,7 +975,7 @@ function _midiSeedRosterPure(roster, touched) {
 /* @pure:midi-create:end */
 export { _midiDefaultTitlePure, _midiStageSlotPure, _midiSeedRosterPure };
 
-function _stageMidi(files) {
+async function _stageMidi(files) {
     // Single slot — staging again REPLACES what was staged (and the status
     // admits it) instead of silently keeping only files[0] at Create time.
     const prevName = (createState.midiFiles && createState.midiFiles[0])
@@ -1019,6 +986,23 @@ function _stageMidi(files) {
     // Keep the FILE, not just its name — Create feeds it straight into the
     // track picker so the user never has to re-pick what they just staged.
     createState.midiFiles = [file];
+    createState.midiPath = null;
+    createState.midiTracks = [];
+    try {
+        const form = new FormData();
+        form.append('file', file);
+        const resp = await fetch('/api/plugins/editor/import-midi', { method: 'POST', body: form });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        createState.midiPath = data.midi_path;
+        createState.midiTracks = (data.tracks || []).map(track => ({
+            ...track,
+            selected: Number(track.notes) > 0,
+        }));
+    } catch (error) {
+        const iStatus = document.getElementById('editor-create-import-status');
+        if (iStatus) iStatus.textContent = 'MIDI read failed: ' + error.message;
+    }
     // A MIDI alone is a real project now: default the title from the file so
     // the (title-requiring) create path can run — visible and editable.
     const titleEl = document.getElementById('editor-create-title');
@@ -1029,104 +1013,66 @@ function _stageMidi(files) {
     if (iStatus) iStatus.textContent = slot.status;
 }
 
-// Grey the YouTube field while a master-audio FILE is staged (file wins).
-function _syncYtFieldState() {
-    const yt = document.getElementById('editor-create-yt-url');
-    if (!yt) return;
-    const hasFileAudio = !!(createState.audioUrl && createState.audioName);
-    yt.disabled = hasFileAudio;
-    yt.style.opacity = hasFileAudio ? '0.5' : '';
-    yt.title = hasFileAudio ? 'Using the audio file you added — remove it to use a URL instead' : '';
+function _trackTypeLabel(kind) {
+    return kind === 'audio' ? 'Audio' : kind === 'youtube' ? 'YouTube'
+        : kind === 'guitar-pro' ? 'Guitar Pro' : kind === 'midi' ? 'MIDI'
+            : kind === 'xml' ? 'XML' : kind === 'sync' ? 'Sync' : kind;
 }
 
-// Render the staged file rows (audio master / chart / MIDI info), each with a
-// role chip + remove ✕. This is the honesty surface.
+// One honest table for imported audio sources and transcription tracks.
 function renderStaged() {
-    const wrap = document.getElementById('editor-create-staged');
+    const wrap = document.getElementById('editor-create-track-list');
     if (!wrap) return;
-    wrap.replaceChildren();
     const ytVal = ((document.getElementById('editor-create-yt-url')?.value) || '').trim();
-    const rows = [];
-    if (createState.audioUrl && createState.audioName) {
-        rows.push({ role: 'audio', chip: 'Master audio', chipStyle: 'background:rgba(64,128,224,0.18);color:#8fbaff',
-            name: createState.audioName, detail: createState.gpPath ? 'aligns the chart' : '' });
-    } else if (ytVal) {
-        rows.push({ role: 'yt', chip: 'Master audio · YouTube', chipStyle: 'background:rgba(64,128,224,0.18);color:#8fbaff',
-            name: ytVal, detail: createState.gpPath ? 'aligns the chart' : '' });
-    }
-    if (createState.gpPath) {
-        rows.push({ role: 'chart', chip: 'Chart · Guitar Pro', chipStyle: 'background:rgba(129,140,248,0.20);color:#c7d2fe',
-            name: createState.gpName || 'Guitar Pro file', detail: createState.tracks ? (createState.tracks.length + ' tracks') : '' });
-    } else if (createState.eofFiles && createState.eofFiles.length) {
-        rows.push({ role: 'chart', chip: 'Chart · RS XML', chipStyle: 'background:rgba(129,140,248,0.20);color:#c7d2fe',
-            name: createState.eofName || 'RS/EOF XML', detail: '' });
-    }
-    if (createState.goplayalongFile) {
-        rows.push({ role: 'goplayalong', chip: 'Sync · GoPlayAlong', chipStyle: 'background:rgba(52,211,153,0.18);color:#6ee7b7',
-            name: createState.goplayalongFile.name,
-            detail: createState.gpPath ? 'aligns the tab' : 'add the Guitar Pro file' });
-    }
-    if (createState.midiInfo) {
-        rows.push({ role: 'midi', chip: 'MIDI · adds after create', chipCls: 'bg-dark-600 text-gray-400',
-            name: createState.midiInfo, detail: '' });
-    }
+    const rows = _createTrackRowsPure(createState, ytVal);
+    createState.guideTrackId = _createGuideIdPure(rows, createState.guideTrackId);
     if (!rows.length) {
-        const hint = document.createElement('div');
-        hint.className = 'text-[11px] text-gray-600';
-        hint.textContent = 'Nothing added yet — audio and/or a chart are optional.';
-        wrap.appendChild(hint);
-        return;
+        wrap.innerHTML = '<div class="px-2 py-3 text-[11px] text-gray-600">Add audio, Guitar Pro, MIDI, or XML files. Every imported track will appear here.</div>';
+    } else {
+        const firstGp = rows.find(row => row.kind === 'guitar-pro');
+        const firstMidi = rows.find(row => row.kind === 'midi');
+        const firstXml = rows.find(row => row.kind === 'xml');
+        wrap.innerHTML = rows.map(row => {
+            const id = _editorEscHtml(row.id);
+            const name = _editorEscHtml(row.name);
+            const include = row.selectable === false
+                    ? '<input type="checkbox" checked disabled aria-label="Source included">'
+                    : `<input type="checkbox" data-create-select="${id}" ${row.selected ? 'checked' : ''} aria-label="Include ${name}">`;
+            const guide = row.guideEligible
+                ? `<input type="radio" name="editor-create-guide" data-create-guide="${id}" ${row.id === createState.guideTrackId ? 'checked' : ''} ${row.selected ? '' : 'disabled'} aria-label="Use ${name} as tempo guide">`
+                : '<span class="text-gray-700">—</span>';
+            const remove = row.kind === 'audio'
+                ? `<button type="button" data-create-remove="${id}" title="Remove audio track">×</button>`
+                : row.kind === 'youtube'
+                    ? '<button type="button" data-create-remove="yt" title="Remove YouTube source">×</button>'
+                    : row === firstGp
+                        ? '<button type="button" data-create-remove="chart" title="Remove Guitar Pro file">×</button>'
+                        : row === firstMidi
+                            ? '<button type="button" data-create-remove="midi" title="Remove MIDI file">×</button>'
+                            : row === firstXml
+                                ? '<button type="button" data-create-remove="chart" title="Remove XML files">×</button>'
+                                : row.kind === 'sync'
+                                    ? '<button type="button" data-create-remove="goplayalong" title="Remove sync file">×</button>' : '';
+            return `<div class="editor-create-track-row"><span>${include}</span>`
+                + `<span class="editor-create-track-name" title="${name}">${name}</span>`
+                + `<span class="editor-create-track-type">${_trackTypeLabel(row.kind)}</span>`
+                + `<span class="editor-create-track-guide">${guide}</span><span>${remove}</span></div>`;
+        }).join('');
     }
-    for (const r of rows) {
-        const row = document.createElement('div');
-        row.className = 'flex items-center gap-2 bg-dark-800 rounded px-2 py-1 text-xs';
-        const chip = document.createElement('span');
-        chip.className = 'px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 ' + (r.chipCls || '');
-        if (r.chipStyle) chip.style.cssText = r.chipStyle;
-        chip.textContent = r.chip;
-        row.appendChild(chip);
-        const name = document.createElement('span');
-        name.className = 'text-gray-300 flex-1';
-        name.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
-        name.textContent = r.name;
-        row.appendChild(name);
-        if (r.detail) {
-            const d = document.createElement('span');
-            d.className = 'text-gray-600 shrink-0';
-            d.textContent = r.detail;
-            row.appendChild(d);
-        }
-        const x = document.createElement('button');
-        x.type = 'button';
-        x.className = 'text-gray-500 hover:text-white shrink-0';
-        x.textContent = '✕';
-        x.title = 'Remove';
-        x.onclick = () => window.editorStagedRemove(r.role);
-        row.appendChild(x);
-        wrap.appendChild(row);
-    }
-    // Honest one-liner: the preview clip is auto-made from the master audio (no
-    // upload). Shown only when there IS a master audio to make it from.
-    const hasMaster = !!(createState.audioUrl && createState.audioName)
-        || !!((document.getElementById('editor-create-yt-url')?.value) || '').trim();
-    if (hasMaster) {
-        const pv = document.createElement('div');
-        pv.className = 'text-[11px] text-gray-600';
-        pv.textContent = 'Preview clip: auto-made from your master audio.';
-        wrap.appendChild(pv);
-    }
+    document.getElementById('editor-create-tracks')?.classList.remove('hidden');
 }
 
 export function editorStagedRemove(role) {
-    if (role === 'audio') {
-        createState.audioUrl = null; createState.audioName = null; createState.audioDuration = null;
-        createState.audioFile = null;
-        _refreshGpAudioUI();        // un-couple: restore embedded/manual GP audio UI
-        _syncYtFieldState();
-        _updateIdentifyButton();
+    role = String(role || '');
+    if (role.startsWith('audio:')) {
+        createState.audioTracks = (createState.audioTracks || []).filter(track => track.id !== role);
+        if (createState.guideTrackId === role) createState.guideTrackId = '';
+        _syncCreateGuide();
     } else if (role === 'yt') {
         const yt = document.getElementById('editor-create-yt-url'); if (yt) yt.value = '';
-        _syncYtFieldState();
+        createState.audioTracks = (createState.audioTracks || []).filter(track => track.id !== 'youtube');
+        if (createState.guideTrackId === 'youtube') createState.guideTrackId = '';
+        _syncCreateGuide();
     } else if (role === 'chart') {
         createState.gpPath = null; createState.tracks = null; createState.eofFiles = null;
         createState.gpName = null; createState.eofName = null; createState.gpHasEmbedded = false;
@@ -1140,6 +1086,8 @@ export function editorStagedRemove(role) {
     } else if (role === 'midi') {
         createState.midiInfo = null;
         createState.midiFiles = null;
+        createState.midiPath = null;
+        createState.midiTracks = [];
     }
     const iStatus = document.getElementById('editor-create-import-status');
     if (iStatus) iStatus.textContent = '';
@@ -1150,7 +1098,9 @@ export function editorStagedRemove(role) {
 export function editorYtUrlInput() {
     // A YouTube URL is an alternative audio source (resolved at Create). It
     // doesn't gate the button (audio is optional) but should show in the list.
-    _syncYtFieldState();
+    createState.youtubeSelected = true;
+    if (!createState.guideTrackId) createState.guideTrackId = 'youtube';
+    _syncCreateGuide();
     renderStaged();
     updateCreateButton();
 }
@@ -1753,6 +1703,34 @@ export function initCreate() {
             if (note) note.textContent = '';
         }
     });
+    host.addGlobalListener(document, 'change', (e) => {
+        const guideId = e.target && e.target.getAttribute?.('data-create-guide');
+        if (guideId) {
+            createState.guideTrackId = guideId;
+            _syncCreateGuide();
+            renderStaged();
+            return;
+        }
+        const rowId = e.target && e.target.getAttribute?.('data-create-select');
+        if (!rowId) return;
+        const [kind, rawIndex] = rowId.split(':');
+        const list = kind === 'gp' ? createState.tracks : kind === 'midi' ? createState.midiTracks
+            : kind === 'audio' ? createState.audioTracks : null;
+        const track = kind === 'audio'
+            ? (list || []).find(item => String(item.id) === rowId)
+            : (list || []).find(item => String(item.index) === rawIndex);
+        if (track) track.selected = !!e.target.checked;
+        if (rowId === 'youtube') createState.youtubeSelected = !!e.target.checked;
+        if (kind === 'audio' || rowId === 'youtube') {
+            _syncCreateGuide();
+            renderStaged();
+        }
+        updateCreateButton();
+    });
+    host.addGlobalListener(document, 'click', (e) => {
+        const role = e.target && e.target.getAttribute?.('data-create-remove');
+        if (role) editorStagedRemove(role);
+    });
 }
 
 
@@ -1907,28 +1885,28 @@ async function _editorDoMidiCreate() {
         titleEl.value = _midiDefaultTitlePure(
             createState.midiFiles[0] && createState.midiFiles[0].name);
     }
-    // The blank-create backend requires >=1 seeded arrangement. Whether the
-    // modal's roster is boilerplate is a PROVENANCE question, not a value
-    // one: rosterTouched flips the moment the user edits the roster UI, so an
-    // untouched default is replaced with a flagged placeholder the import
-    // cleans up, while an explicitly-built roster — even one equal to the
-    // default ['Lead'] — is real intent and stays (their parts + the MIDI
-    // tracks).
-    const seedPlan = _midiSeedRosterPure(createState.roster, createState.rosterTouched);
+    // The backend still needs one temporary arrangement before the selected
+    // MIDI tracks can be appended. The removed roster UI can no longer turn
+    // that compatibility seed into user-authored intent.
+    const seedPlan = _midiSeedRosterPure(createState.roster, false);
     createState.roster = seedPlan.roster;
     const seeded = seedPlan.seeded;
     const file = createState.midiFiles[0];
     await _editorDoBlankCreate();
     if (!S.sessionId || !S.arrangements.length) return;   // create failed — its status stands
-    // Bind the seed flag to THIS session. If the user cancels the picker
-    // below (no import), _maybeRemoveMidiSeed never runs and the flag survives
-    // on shared S — loadCDLC doesn't clear it — so without the session tag a
-    // later import on a DIFFERENT song would delete that song's arrangement 0.
+    // Bind the seed flag to THIS session (review #284). If the user cancels the
+    // picker below (no import), _maybeRemoveMidiSeed never runs and the flag
+    // survives on shared S — loadCDLC doesn't clear it — so without the session
+    // tag a later import on a DIFFERENT song would delete that song's arrangement 0.
     if (seeded) { S._midiSeedArrIdx = 0; S._midiSeedSession = S.sessionId; }
-    // Feed the staged file straight into the existing track picker (the one
-    // surface that already knows channels/pairs/drums) — no re-pick.
-    if (typeof window.editorShowAddKeysModal === 'function'
-        && typeof window._editorKeysHandleFile === 'function') {
+    const picked = (createState.midiTracks || []).filter(track => track.selected !== false && Number(track.notes) > 0);
+    if (createState.midiPath && picked.length) {
+        await importMidiTracksIntoSession(createState.midiPath, picked,
+            document.getElementById('editor-create-status'));
+    } else if (typeof window.editorShowAddKeysModal === 'function'
+            && typeof window._editorKeysHandleFile === 'function') {
+        // Compatibility fallback for a core that could not list the MIDI at
+        // stage time. The normal path imports exactly what the unified table selected.
         window.editorShowAddKeysModal();
         window._editorKeysHandleFile(file);
     }
@@ -1967,7 +1945,7 @@ export async function editorDoCreate() {
     if (_gpAudioMode !== 'embedded' && _gpAudioMode !== 'autosync') {
         // Audio (a Content Import file already uploaded, or a pasted YouTube URL)
         // is optional for a GP import; attach it when present.
-        if (_createHasAudioInput() && !createState.audioUrl) {
+        if (_createHasAudioInput() && (!createState.audioUrl || _createHasPendingYoutube())) {
             const ok = await uploadCreateAudio();
             if (!ok) { btn.disabled = false; return; }
             // A pasted YouTube URL is master audio just like a staged file — but
@@ -1983,8 +1961,14 @@ export async function editorDoCreate() {
     }
 
     // Get selected track indices
-    const checkboxes = document.querySelectorAll('#editor-create-track-list input[type=checkbox]:checked:not(:disabled)');
-    const trackIndices = [...checkboxes].map(cb => parseInt(cb.value));
+    const trackIndices = (createState.tracks || [])
+        .filter(track => track.selected !== false && Number(track.notes) > 0)
+        .map(track => Number(track.index));
+    if ((createState.tracks || []).length && !trackIndices.length) {
+        status.textContent = 'Select at least one Guitar Pro track.';
+        btn.disabled = false;
+        return;
+    }
 
     // Auto-sync: align tab to audio before conversion if user supplied audio.
     // Only carry a prior sync offset forward in autosync mode — in embedded /
@@ -2133,6 +2117,8 @@ export async function editorDoCreate() {
             body: JSON.stringify({
                 gp_path: createState.gpPath,
                 audio_url: _convertAudioUrl,
+                audio_tracks: _createAudioPayloadPure(
+                    createState.audioTracks, createState.guideTrackId).audio_tracks,
                 // Only 'embedded' changes backend behaviour; omit the field
                 // otherwise to keep the API surface tight.
                 ...(_gpAudioMode === 'embedded' ? { audio_mode: 'embedded' } : {}),
@@ -2189,21 +2175,15 @@ async function _editorDoBlankCreate() {
         if (btn) btn.disabled = false;
         return;
     }
-    // Defence in depth: _createGateOpen() already refuses to enable the button
-    // without one, but the roster is what the server seeds arrangements from and
-    // it rejects an empty list.
+    // The backend still requires one arrangement, so the modal carries a fixed
+    // compatibility seed that imported transcription tracks replace or join.
     const roster = (createState.roster || []).slice();
-    if (!roster.some((r) => _CREATE_INSTRUMENTS.includes(r))) {
-        if (status) status.textContent = 'Add at least one instrument to arrange (Lead, Rhythm, Bass, Keys, or Drums).';
-        if (btn) btn.disabled = false;
-        return;
-    }
     if (btn) btn.disabled = true;
     // Audio is optional (draft-now, audio-later): only resolve a pasted YouTube
     // URL here — file audio was uploaded already on selection. With none, the
     // server creates an audio-less work-in-progress pack (`stems: []`) and the
     // author supplies audio later via Replace Audio.
-    if (!createState.audioUrl && _createHasAudioInput()) {
+    if (_createHasAudioInput() && (!createState.audioUrl || _createHasPendingYoutube())) {
         if (status) status.textContent = 'Uploading audio…';
         const ok = await uploadCreateAudio();
         if (!ok) { if (btn) btn.disabled = false; return; }
@@ -2221,6 +2201,7 @@ async function _editorDoBlankCreate() {
             if (dd.art_path) createState.artPath = dd.art_path;
         } catch (_) { /* art just won't be baked if the upload fails */ }
     }
+    const audioPayload = _createAudioPayloadPure(createState.audioTracks, createState.guideTrackId);
     const meta = {
         title,
         // Optional for a draft; the server writes "" through as-is.
@@ -2231,11 +2212,12 @@ async function _editorDoBlankCreate() {
         // The same helper the Guitar Pro and EOF paths use, so every create route
         // carries the spec-complete metadata the modal collects.
         ..._createExtendedMeta(),
-        // "What are you arranging?" — the roster the user built. The server seeds
-        // one arrangement per role. `initial_arrangement` + `init_drum_tab` are
-        // its documented BACK-COMPAT shape for older clients; do not send them.
+        // One hidden compatibility seed keeps audio-only drafts valid until the
+        // first imported transcription is appended. It is not a user-facing
+        // "arrangement role" choice.
         arrangements: roster,
-        audio_url: createState.audioUrl,
+        audio_url: audioPayload.audio_url,
+        audio_tracks: audioPayload.audio_tracks,
     };
     if (createState.artPath) meta.art_path = createState.artPath;
     const fd = new FormData();
@@ -2338,6 +2320,10 @@ export async function editorApplyCreateResult(data) {
     S.drumTabDirty = !!S.drumTab;
     S.drumEditMode = false;
     S.drumSel = new Set();
+    // The DAW track-session feature is stacked independently. Its host hook is
+    // inert on this branch, but when present it receives every create-time
+    // source immediately so stems do not appear only after a save/reopen.
+    host.installCreatedTrackSession(data.track_session, data.audio_sources || []);
     const _importHasDrums = !!(S.drumTab && (S.drumTab.hits || []).length);
     const _importHasKeys = (S.arrangements || []).some(
         a => KEYS_PATTERN.test(a.name || ''));
@@ -2405,7 +2391,7 @@ async function _editorDoEofCreate() {
     try {
         // Audio is optional for EOF (the chart opens regardless), but upload it
         // when supplied so the editor can play in sync.
-        if (!createState.audioUrl && _createHasAudioInput()) {
+        if (_createHasAudioInput() && (!createState.audioUrl || _createHasPendingYoutube())) {
             status.textContent = 'Uploading audio…';
             await uploadCreateAudio();   // sets createState.audioUrl on success
         }
@@ -2414,6 +2400,8 @@ async function _editorDoEofCreate() {
         const form = new FormData();
         for (const f of createState.eofFiles) form.append('files', f, f.name);
         form.append('audio_url', createState.audioUrl || '');
+        form.append('audio_tracks', JSON.stringify(_createAudioPayloadPure(
+            createState.audioTracks, createState.guideTrackId).audio_tracks));
         form.append('title', document.getElementById('editor-create-title').value || '');
         form.append('artist', document.getElementById('editor-create-artist').value || '');
         form.append('album', document.getElementById('editor-create-album').value || '');
@@ -2536,6 +2524,8 @@ export async function editorBuild() {
                 beats: S.beats,
                 sections: S.sections,
                 audio_url: createState.audioUrl || '',
+                audio_tracks: _createAudioPayloadPure(
+                    createState.audioTracks, createState.guideTrackId).audio_tracks,
                 art_path: createState.artPath || '',
                 preview_path: createState.previewPath || '',
                 // Drums and piano "Keys" arrangements can only live in a

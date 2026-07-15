@@ -51,6 +51,7 @@ setHostHooks({
     updateTimeDisplay: () => {},
     updateBPMDisplay: () => {},
     draw: () => {},
+    installCreatedTrackSession: (...args) => calls.push(['tracks', ...args]),
 });
 
 let pass = 0, fail = 0;
@@ -85,6 +86,8 @@ await t('audio-less import stops processes, clears buffer, disposes old session'
     assert.strictEqual(S.waveformPeaks, null, 'stale waveform dropped');
     assert.strictEqual(S.drag, null, 'active drag abandoned');
     assert.strictEqual(S.sessionId, 'new-session', 'new session installed');
+    assert.ok(calls.some(c => Array.isArray(c) && c[0] === 'tracks'),
+        'create-time track session handed to the DAW layer');
 
     const disposed = fetchCalls.find(c => String(c.url).includes('/session/close'));
     assert.ok(disposed, 'old backend session disposed');

@@ -396,6 +396,45 @@ async function _maybeRemoveMidiSeed() {
     host.updateStatus();
 }
 
+// Create-window MIDI path: the unified table already listed and selected the
+// file's tracks, so import those exact rows without reopening a second picker.
+export async function importMidiTracksIntoSession(midiPath, pickedList, statusEl = null) {
+    if (!midiPath || !S.sessionId || !Array.isArray(pickedList) || !pickedList.length) return false;
+    if (statusEl) statusEl.textContent = 'Importing selected MIDI tracks…';
+    try {
+        const resp = await fetch('/api/plugins/editor/import-keys-midi', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                midi_path: midiPath,
+                audio_offset: host.effectiveAudioOffset(),
+                tracks: pickedList.map(track => ({
+                    index: Number(track.index) || 0,
+                    channel_filter: track.channel_filter == null ? null : Number(track.channel_filter),
+                })),
+            }),
+        });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        const arrangements = Array.isArray(data.arrangements)
+            ? data.arrangements : (data.arrangement ? [data.arrangement] : []);
+        arrangements.forEach((arr, index) => {
+            const source = pickedList[index];
+            if (arr && source) arr.name = _midiKeysArrNamePure(source.name, source.index);
+        });
+        for (const arrangement of arrangements) {
+            if (!await _editorAppendKeysArrangement(arrangement, statusEl)) return false;
+        }
+        await _maybeRemoveMidiSeed();
+        _maybeOfferMidiTempoMap(data.tempo_map);
+        if (statusEl) statusEl.textContent = `${arrangements.length} MIDI track${arrangements.length === 1 ? '' : 's'} imported.`;
+        return arrangements.length > 0;
+    } catch (error) {
+        if (statusEl) statusEl.textContent = 'MIDI import failed: ' + error.message;
+        return false;
+    }
+}
+
 // Read a File as base64 (no data: prefix) for endpoints that take inline bytes.
 function _editorFileToBase64(file) {
     return new Promise((resolve, reject) => {

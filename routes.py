@@ -14,6 +14,92 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 from xml.dom import minidom
 
+
+def _coerce_create_audio_tracks(value):
+    """Normalize the create modal's ordered audio-source list.
+
+    Exactly one source is the guide/master and is returned first. Invalid rows
+    are ignored; display names become stable, collision-safe manifest stem ids.
+    """
+    rows = []
+    used = set()
+    if not isinstance(value, list):
+        return rows
+    for raw in value[:128]:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "Audio").strip()[:160] or "Audio"
+        url = raw.get("url")
+        if not isinstance(url, str) or not url.strip():
+            continue
+        base = re.sub(r"[^a-z0-9_-]+", "_", Path(name).stem.lower()).strip("_") or "audio"
+        stem_id = base
+        suffix = 2
+        while stem_id in used or stem_id == "full":
+            stem_id = f"{base}_{suffix}"
+            suffix += 1
+        used.add(stem_id)
+        rows.append({"id": stem_id, "name": name, "url": url.strip(),
+                     "guide": bool(raw.get("guide"))})
+    guide_index = next((i for i, row in enumerate(rows) if row["guide"]), 0 if rows else -1)
+    for i, row in enumerate(rows):
+        row["guide"] = i == guide_index
+    if guide_index > 0:
+        rows.insert(0, rows.pop(guide_index))
+    return rows
+
+
+def _copy_create_audio_tracks(stems_dir, audio_file, audio_tracks):
+    """Copy non-guide create sources into ``stems/`` and return manifest rows."""
+    stems_dir = Path(stems_dir)
+    master = Path(audio_file).resolve() if audio_file else None
+    manifest_rows = []
+    used = {"full"}
+    for raw in audio_tracks or []:
+        if not isinstance(raw, dict):
+            continue
+        source = Path(str(raw.get("path") or ""))
+        if not source.exists() or (master and source.resolve() == master):
+            continue
+        base = re.sub(r"[^a-z0-9_-]+", "_", str(
+            raw.get("id") or source.stem).lower()).strip("_") or "audio"
+        stem_id = base
+        suffix = 2
+        while stem_id in used:
+            stem_id = f"{base}_{suffix}"
+            suffix += 1
+        used.add(stem_id)
+        ext = source.suffix.lower() or ".bin"
+        filename = f"{stem_id}{ext}"
+        shutil.copy2(source, stems_dir / filename)
+        manifest_rows.append({
+            "id": stem_id,
+            "name": str(raw.get("name") or source.stem)[:160],
+            "file": f"stems/{filename}",
+        })
+    return manifest_rows
+
+
+def _create_audio_sources(audio_url, audio_tracks):
+    """Shape create-time sources for the DAW track-session installer."""
+    if not audio_url:
+        return []
+    rows = list(audio_tracks or [])
+    sources = [{
+        "id": "master",
+        "name": rows[0]["name"] if rows else "Master Mix",
+        "kind": "master",
+        "url": audio_url,
+    }]
+    for track in rows[1:]:
+        sources.append({
+            "id": "stem:" + track["id"],
+            "name": track["name"],
+            "kind": "stem",
+            "url": track["url"],
+        })
+    return sources
+
 import base64
 
 from fastapi import UploadFile, File, Form
@@ -4815,6 +4901,17 @@ def setup(app, context):
         if audio_url is not None and not isinstance(audio_url, str):
             return JSONResponse({"error": "audio_url must be a string"}, 400)
         audio_url = (audio_url or "").strip()
+        create_audio_tracks = _coerce_create_audio_tracks(meta_in.get("audio_tracks"))
+        if create_audio_tracks:
+            # The selected Master/Guide is order-authoritative and drives the
+            # legacy full-mix path; every remaining row is preserved as a stem.
+            audio_url = create_audio_tracks[0]["url"]
+        resolved_create_tracks = []
+        for track in create_audio_tracks[1:]:
+            resolved = _resolve_storage_url(track["url"])
+            if not resolved or not Path(resolved).exists():
+                return JSONResponse({"error": f"audio track '{track['name']}' is unavailable"}, 400)
+            resolved_create_tracks.append({**track, "path": str(resolved)})
         # Draft-now, audio-later: audio is OPTIONAL. With neither an upload nor a
         # pre-uploaded audio_url we still create a work-in-progress pack (empty
         # `stems: []`); the author supplies real audio later via Replace Audio.
@@ -5308,6 +5405,9 @@ def setup(app, context):
                     preview_path=preview_clip,
                     fail_if_exists=True,
                     duration_override=audio_duration,
+                    audio_tracks=resolved_create_tracks,
+                    audio_guide_name=(create_audio_tracks[0]["name"]
+                                      if create_audio_tracks else ""),
                 )
 
             try:
@@ -6408,6 +6508,9 @@ def setup(app, context):
 
         gp_path = data.get("gp_path", "")
         audio_url = data.get("audio_url", "")
+        create_audio_tracks = _coerce_create_audio_tracks(data.get("audio_tracks"))
+        if create_audio_tracks and data.get("audio_mode") != "embedded":
+            audio_url = create_audio_tracks[0]["url"]
         audio_path = data.get("audio_path", "")  # local path in container
         # Auto-sync may provide a pre-computed offset; use it if present. Reject
         # a malformed/non-finite explicit value rather than silently using 0.0
@@ -6713,10 +6816,16 @@ def setup(app, context):
                 # the session so /build persists it too (not just blank projects).
                 **_extended_manifest_meta(data),
             },
+            "audio_tracks": create_audio_tracks,
             "last_touched": time.time(),
         }
         result["session_id"] = session_id
         result["create_mode"] = True
+        if create_audio_tracks:
+            result["audio_tracks"] = create_audio_tracks
+        if result.get("audio_url"):
+            result["audio_sources"] = _create_audio_sources(
+                result["audio_url"], create_audio_tracks)
 
         # Drum tracks: the converter emits them as RS-note "Drums"
         # arrangements (the drum branch packs the GM percussion MIDI as
@@ -6796,6 +6905,7 @@ def setup(app, context):
         album: str = Form(""),
         year: str = Form(""),
         extended_meta: str = Form(""),
+        audio_tracks: str = Form(""),
     ):
         """Import EOF (Editor on Fire) arrangement XML into a create session.
 
@@ -6817,6 +6927,11 @@ def setup(app, context):
             _ext_meta = json.loads(extended_meta) if extended_meta.strip() else {}
         except (ValueError, TypeError):
             _ext_meta = {}
+        try:
+            _audio_tracks = _coerce_create_audio_tracks(
+                json.loads(audio_tracks) if audio_tracks.strip() else [])
+        except (ValueError, TypeError):
+            _audio_tracks = []
 
         tmp = tempfile.mkdtemp(prefix="slopsmith_xmlproj_")
         try:
@@ -6920,10 +7035,16 @@ def setup(app, context):
                     # blank-create and GP-import paths.
                     **_extended_manifest_meta(_ext_meta),
                 },
+                "audio_tracks": _audio_tracks,
                 "last_touched": time.time(),
             }
             result["session_id"] = session_id
             result["create_mode"] = True
+            if _audio_tracks:
+                result["audio_tracks"] = _audio_tracks
+            if result.get("audio_url"):
+                result["audio_sources"] = _create_audio_sources(
+                    result["audio_url"], _audio_tracks)
             return result
         except Exception as e:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -7684,7 +7805,11 @@ def setup(app, context):
         # Create-mode imported stems ride the session into the build.
         if session.get("stem_files"):
             meta["stem_files"] = list(session["stem_files"])
+        build_audio_tracks = _coerce_create_audio_tracks(
+            data.get("audio_tracks") or session.get("audio_tracks"))
         audio_url = data.get("audio_url", "")
+        if build_audio_tracks:
+            audio_url = build_audio_tracks[0]["url"]
         art_path = data.get("art_path", "")
         preview_path = data.get("preview_path", "")
         # Drum tab (from a GP drum-track import or the +Drums modal).
@@ -7710,6 +7835,12 @@ def setup(app, context):
             audio_file = str(resolved) if resolved else ""
             if not audio_file or not Path(audio_file).exists():
                 raise RuntimeError("No audio file available for build")
+            extra_audio_tracks = []
+            for track in build_audio_tracks[1:]:
+                track_path = _resolve_storage_url(track["url"])
+                if not track_path or not Path(track_path).exists():
+                    raise RuntimeError(f"Audio track '{track['name']}' is unavailable")
+                extra_audio_tracks.append({**track, "path": str(track_path)})
 
             dlc_dir = get_dlc_dir()
             if not dlc_dir:
@@ -7730,6 +7861,9 @@ def setup(app, context):
                 meta=meta,
                 output_path=output,
                 drum_tab=drum_tab if isinstance(drum_tab, dict) else None,
+                audio_tracks=extra_audio_tracks,
+                audio_guide_name=(build_audio_tracks[0]["name"]
+                                  if build_audio_tracks else ""),
             )
 
         try:
@@ -7832,7 +7966,9 @@ def setup(app, context):
                           lyrics: list | None = None,
                           preview_path: str = "",
                           fail_if_exists: bool = False,
-                          duration_override: float | None = None) -> str:
+                          duration_override: float | None = None,
+                          audio_tracks: list | None = None,
+                          audio_guide_name: str = "") -> str:
         """Stage a sloppak at `output_path` from the in-memory edit state.
 
         Shared between the create-mode build path (output_path derived
@@ -7917,6 +8053,15 @@ def setup(app, context):
                         _ogg_dest.unlink(missing_ok=True)
                         stem_filename = f"full{audio_ext}"
                         shutil.copy2(audio_file, stems_dir / stem_filename)
+
+            manifest_stems = []
+            if stem_filename:
+                master_entry = {"id": "full", "file": f"stems/{stem_filename}"}
+                if audio_guide_name:
+                    master_entry["name"] = str(audio_guide_name)[:160]
+                manifest_stems.append(master_entry)
+            manifest_stems.extend(_copy_create_audio_tracks(
+                stems_dir, audio_file, audio_tracks))
 
             used_ids: set[str] = set()
             manifest_arrangements = []
@@ -8013,10 +8158,7 @@ def setup(app, context):
                 # Draft packs (no audio yet) carry an empty stems list — the
                 # loader tolerates it (audio_url resolves to null) and Replace
                 # Audio fills it in later.
-                "stems": (
-                    [{"id": "full", "file": f"stems/{stem_filename}"}]
-                    if stem_filename else []
-                ),
+                "stems": manifest_stems,
                 "arrangements": manifest_arrangements,
             }
             if year:

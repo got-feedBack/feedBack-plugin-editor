@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the editor never draws a connection the music doesn't have.
 ### Added
 
+- **New Song now uses one DAW-style track roster.** The separate “What are you
+  arranging?” palette is gone. Add audio, Guitar Pro, MIDI, or XML from one
+  **Add File** control and every imported track appears in one table. Multiple
+  audio files upload and persist as separate stems instead of silently keeping
+  only the first; one exclusive **Guide** selector chooses the audio
+  source used for tempo mapping. Guitar Pro and MIDI child tracks are selected
+  in the same table instead of a second picker.
+
 - **A MIDI file is a project now.** Dropping a `.mid`/`.midi` into New Song
   used to dead-end: the file was noted, then forgotten, and Create stayed
   disabled. Now a staged MIDI alone enables Create (the title pre-fills from
