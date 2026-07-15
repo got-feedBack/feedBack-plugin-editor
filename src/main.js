@@ -169,7 +169,7 @@ import {
     lanes
     } from './lanes.js';
 import {
-    LABEL_W, setLaneMetrics } from './geometry.js';
+    LABEL_W, TIMELINE_TOP, setLaneMetrics } from './geometry.js';
 import {
     KEYS_PATTERN, _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
@@ -1319,6 +1319,11 @@ function resizeCanvas() {
     // geometry.js as live `export let` bindings — everything reads them, only
     // setLaneMetrics writes them.
     setLaneMetrics(h);
+    const trackViewport = Math.max(0, h - TIMELINE_TOP);
+    if (S.trackViewportHeight !== trackViewport) {
+        S.trackViewportHeight = trackViewport;
+        refreshTrackSession();
+    }
 
     canvas.width = w * DPR;
     canvas.height = h * DPR;

@@ -4,6 +4,8 @@ import {
     _trackSessionLaneHeightPure,
     _trackSessionLaneLayoutPure,
     _trackSessionDropPlacementPure,
+    _trackSessionDensityPure,
+    _trackSessionFittedHeightsPure,
     _trackSessionMoveBeforePure,
     _trackSessionMovePure,
     _trackSessionNormalizePure,
@@ -75,13 +77,13 @@ test('track display names rename independently of stable identities', () => {
     assert.strictEqual(rows.find(row => row.id === 'transcription:guitar').mixKey, 'arr:0');
 });
 
-test('right-click rename supports tracks and folders through an inline editor', () => {
+test('right-click rename builds a prefilled editor for the track-list name cell', () => {
     const trackMarkup = _trackRenameEditorMarkupPure('audio:stem:0', 'Drums & Percussion');
     const folderMarkup = _trackRenameEditorMarkupPure('folder:1', 'Rhythm');
     for (const markup of [trackMarkup, folderMarkup]) {
         assert.match(markup, /data-track-rename-input/);
-        assert.match(markup, /data-track-action="rename-save"/);
-        assert.match(markup, /data-track-action="rename-cancel"/);
+        assert.match(markup, /editor-track-inline-rename/);
+        assert.doesNotMatch(markup, /rename-save|rename-cancel/);
     }
     assert.match(trackMarkup, /Drums &amp; Percussion/);
     const session = { ...base, tracks: [{ id: 'folder:1', type: 'folder', name: 'Old', parentId: '' }] };
@@ -133,6 +135,21 @@ test('one lane layout drives matching header and canvas row geometry', () => {
     assert.strictEqual(_trackSessionLaneHeightPure({}, 'missing'), 56);
     assert.strictEqual(_trackSessionLaneHeightPure({ x: 999 }, 'x'), 160);
     assert.strictEqual(_trackSessionLaneHeightPure({ x: 2 }, 'x'), 28);
+});
+
+test('track-header density preserves the safe identity and M/S hierarchy', () => {
+    assert.strictEqual(_trackSessionDensityPure(176), 'compact');
+    assert.strictEqual(_trackSessionDensityPure(229), 'compact');
+    assert.strictEqual(_trackSessionDensityPure(230), 'normal');
+    assert.strictEqual(_trackSessionDensityPure(399), 'normal');
+    assert.strictEqual(_trackSessionDensityPure(400), 'wide');
+});
+
+test('tall track areas auto-fit rows modestly and keep explicit proportions', () => {
+    const rows = [{ id: 'a' }, { id: 'b' }];
+    assert.deepStrictEqual(_trackSessionFittedHeightsPure(rows, {}, 300), { a: 88, b: 88 }, 'automatic bonus caps at 32px');
+    assert.deepStrictEqual(_trackSessionFittedHeightsPure(rows, { a: 80, b: 40 }, 140), { a: 90, b: 50 });
+    assert.deepStrictEqual(_trackSessionFittedHeightsPure(rows, { a: 80, b: 40 }, 100), { a: 80, b: 40 }, 'no shrink below authored height');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

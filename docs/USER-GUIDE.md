@@ -141,8 +141,9 @@ The left **Tracks** pane is a DAW-style session list: it places the **Master
 Mix**, available audio stems, and each transcription together. Use **+ Folder**
 only when you need it, then drag a track onto the folder to nest it or drag it
 before another track to reorder the session. Right-click any track and choose
-**Rename**, edit the inline name, then press **Enter** or **Save**. The same
-command renames folders. Folders are organization only; they never alter the
+**Rename** to edit the current name directly in that left-pane row. Press
+**Enter** or click away to save; **Escape** cancels. The same command renames
+folders. Folders are organization only; they never alter the
 song, tempo map, or export.
 
 Drag a track or folder near a row's upper or lower edge to place it before or
@@ -156,6 +157,13 @@ draw their condensed string, piano-roll, or drum events, and folder rows span
 both sides. Drag the thin lower boundary of any header to resize that track;
 the **− / +** controls resize all tracks. Vertical scrolling moves headers and
 lanes together. There is no separate Parts window or second track-name gutter.
+
+Drag the vertical divider beside the Tracks pane to change header width. The
+compact layout always preserves track type, name, Mute, and Solo; it hides the
+pairing selector first, then the fader and secondary guide action. Widening the
+pane restores those controls. When the workspace is taller than the track
+stack, rows expand modestly on both sides instead of leaving all spare height
+at the bottom.
 
 Each transcription can choose an audio reference from its row. Select that
 transcription and the editor switches its audible waveform/onset reference to

@@ -197,6 +197,26 @@ function _trackSessionLaneHeightPure(heights, trackId) {
         ? Math.max(TRACK_LANE_MIN, Math.min(TRACK_LANE_MAX, Math.round(value)))
         : TRACK_LANE_DEFAULT;
 }
+function _trackSessionDensityPure(width) {
+    const value = Number(width) || 0;
+    return value < 230 ? 'compact' : value < 400 ? 'normal' : 'wide';
+}
+function _trackSessionFittedHeightsPure(rows, heights, viewportHeight) {
+    const fitted = {};
+    let total = 0;
+    for (const row of (rows || [])) {
+        fitted[row.id] = _trackSessionLaneHeightPure(heights, row.id);
+        total += fitted[row.id];
+    }
+    const spare = Math.max(0, (Number(viewportHeight) || 0) - total);
+    if (!rows || !rows.length || spare <= 0) return fitted;
+    // Logic-style auto-fit, deliberately modest: use spare height to improve
+    // readability but cap the automatic bonus so a two-track song does not
+    // turn into two enormous empty slabs.
+    const bonus = Math.min(32, Math.floor(spare / rows.length));
+    for (const row of rows) fitted[row.id] = Math.min(TRACK_LANE_MAX, fitted[row.id] + bonus);
+    return fitted;
+}
 function _trackSessionLaneLayoutPure(rows, heights, scrollY = 0, top = 40) {
     const out = [];
     let y = Number(top) || 0;
@@ -211,17 +231,30 @@ function _trackSessionLaneLayoutPure(rows, heights, scrollY = 0, top = 40) {
 function _trackRenameEditorMarkupPure(trackId, currentName) {
     const id = _editorEscHtml(trackId);
     const name = _editorEscHtml(currentName);
-    return `<div class="editor-track-rename-editor"><input data-track-rename-input value="${name}" aria-label="New track or folder name">`
-        + `<button data-track-action="rename-save" data-track-id="${id}">Save</button>`
-        + `<button data-track-action="rename-cancel">Cancel</button></div>`;
+    return `<input class="editor-track-inline-rename" data-track-rename-input data-track-id="${id}" value="${name}" aria-label="New track or folder name">`;
 }
 /* @pure:track-session:end */
 
-export { _trackRenameEditorMarkupPure, _trackSessionCreateFolderPure, _trackSessionDropPlacementPure, _trackSessionLaneHeightPure, _trackSessionLaneLayoutPure, _trackSessionMoveBeforePure, _trackSessionMovePure, _trackSessionNormalizePure, _trackSessionPairPure, _trackSessionRenamePure, _trackSessionRowsPure, _trackSessionSourcesPure, _trackSessionTargetsPure };
+export { _trackRenameEditorMarkupPure, _trackSessionCreateFolderPure, _trackSessionDensityPure, _trackSessionDropPlacementPure, _trackSessionFittedHeightsPure, _trackSessionLaneHeightPure, _trackSessionLaneLayoutPure, _trackSessionMoveBeforePure, _trackSessionMovePure, _trackSessionNormalizePure, _trackSessionPairPure, _trackSessionRenamePure, _trackSessionRowsPure, _trackSessionSourcesPure, _trackSessionTargetsPure };
 
 let lastRender = '';
 let draggedId = '';
+let renamingTrackId = '';
 const panel = () => document.getElementById('editor-track-session');
+
+function applyTrackHeaderWidth(width, persist = false) {
+    const value = Math.max(176, Math.min(576, Math.round(Number(width) || 320)));
+    S.trackHeaderWidth = value;
+    const el = panel();
+    if (el) {
+        el.style.width = value + 'px';
+        el.setAttribute('data-track-density', _trackSessionDensityPure(value));
+    }
+    if (persist) {
+        try { localStorage.setItem('editorTrackHeaderWidth', String(value)); } catch (_) { /* storage blocked */ }
+    }
+    return value;
+}
 
 export function installTrackSession(raw, sources) {
     S.audioSources = _trackSessionSourcesPure(sources);
@@ -266,6 +299,7 @@ function render() {
     const el = panel();
     if (!el) return;
     const { model, rows, sources } = _trackSessionRowsPure(S.trackSession, S.audioSources, S.arrangements, S.drumTab);
+    const fittedHeights = _trackSessionFittedHeightsPure(rows, S.trackHeights, S.trackViewportHeight);
     const sourceOptions = selected => ['<option value="">Master mix (inherit)</option>'].concat(sources.map(source => `<option value="${_editorEscHtml(source.id)}"${source.id === selected ? ' selected' : ''}>${_editorEscHtml(source.name)}</option>`)).join('');
     const guide = sources.find(source => source.id === model.tempoGuideSourceId) || sources[0];
     const mixControls = row => {
@@ -276,20 +310,25 @@ function render() {
             + `<input class="editor-track-fader" type="range" min="0" max="106" step="0.1" value="${st.vol}" data-track-action="mix-vol" data-mix-key="${key}" aria-label="${_editorEscHtml(row.name)} fader level">`;
     };
     const resizeGrip = row => `<span class="editor-track-resize" data-track-action="resize" data-track-id="${_editorEscHtml(row.id)}" title="Drag to resize track"></span>`;
+    const trackName = (row, markup) => renamingTrackId === row.id
+        ? _trackRenameEditorMarkupPure(row.id, row.name)
+        : markup;
     el.innerHTML = `<div class="editor-track-session-head"><strong>Tracks</strong><button data-track-action="folder" title="Create optional folder">+ Folder</button><span class="editor-track-guide-label">Guide</span><button class="editor-track-guide-source" data-track-action="guide-cycle" title="Cycle tempo guide">${_editorEscHtml(guide.name)}</button><button data-track-action="guide-lock" aria-pressed="${model.tempoGuideLocked}" title="Lock tempo guide">${model.tempoGuideLocked ? '🔒' : '🔓'}</button><button data-track-action="zoom-out" title="Reduce all track heights">−</button><button data-track-action="zoom-in" title="Increase all track heights">+</button></div><div class="editor-track-session-list">${rows.map(row => {
         const trackId = _editorEscHtml(row.id); const name = _editorEscHtml(row.name); const indent = Math.min(5, row.depth) * 14;
-        const height = _trackSessionLaneHeightPure(S.trackHeights, row.id);
+        const height = fittedHeights[row.id];
         const style = `--track-indent:${indent}px;--track-row-height:${height}px`;
-        if (row.type === 'folder') return `<div class="editor-track-row editor-track-folder" draggable="true" data-track-id="${trackId}" style="${style}"><button data-track-action="collapse" data-track-id="${trackId}">${row.collapsed ? '›' : '⌄'}</button><span>${name}</span>${resizeGrip(row)}</div>`;
-        if (row.type === 'audio') return `<div class="editor-track-row${row.sourceId === model.tempoGuideSourceId ? ' editor-track-guide' : ''}" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.sourceKind === 'master' ? 'MIX' : 'AUD'}</span><button class="editor-track-name" data-track-action="source-select" data-source-id="${_editorEscHtml(row.sourceId)}" title="Select audio track">${name}</button>${mixControls(row)}<button data-track-action="guide-set" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use for tempo">${row.sourceId === model.tempoGuideSourceId ? '★' : '☆'}</button>${resizeGrip(row)}</div>`;
-        return `<div class="editor-track-row editor-track-transcription" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.targetId === DRUM_TARGET_ID ? 'DRM' : 'MIDI'}</span><button class="editor-track-name" data-track-action="select" data-target-id="${_editorEscHtml(row.targetId)}">${name}</button>${mixControls(row)}<select data-track-action="pair" data-track-id="${trackId}" aria-label="Audio reference for ${name}">${sourceOptions(row.pairedSourceId)}</select>${resizeGrip(row)}</div>`;
+        if (row.type === 'folder') return `<div class="editor-track-row editor-track-folder" draggable="true" data-track-id="${trackId}" style="${style}"><button data-track-action="collapse" data-track-id="${trackId}">${row.collapsed ? '›' : '⌄'}</button>${trackName(row, `<span class="editor-track-name">${name}</span>`)}${resizeGrip(row)}</div>`;
+        if (row.type === 'audio') return `<div class="editor-track-row${row.sourceId === model.tempoGuideSourceId ? ' editor-track-guide' : ''}" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.sourceKind === 'master' ? 'MIX' : 'AUD'}</span>${trackName(row, `<button class="editor-track-name" data-track-action="source-select" data-source-id="${_editorEscHtml(row.sourceId)}" title="Select audio track">${name}</button>`)}${mixControls(row)}<button data-track-action="guide-set" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use for tempo">${row.sourceId === model.tempoGuideSourceId ? '★' : '☆'}</button>${resizeGrip(row)}</div>`;
+        return `<div class="editor-track-row editor-track-transcription" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.targetId === DRUM_TARGET_ID ? 'DRM' : 'MIDI'}</span>${trackName(row, `<button class="editor-track-name" data-track-action="select" data-target-id="${_editorEscHtml(row.targetId)}">${name}</button>`)}${mixControls(row)}<select data-track-action="pair" data-track-id="${trackId}" aria-label="Audio reference for ${name}">${sourceOptions(row.pairedSourceId)}</select>${resizeGrip(row)}</div>`;
     }).join('')}</div>`;
     const list = el.querySelector('.editor-track-session-list');
     if (list) list.scrollTop = Math.max(0, Number(S.trackScrollY) || 0);
+    const renameInput = el.querySelector('[data-track-rename-input]');
+    if (renameInput) { renameInput.focus(); renameInput.select(); }
 }
 
 export function refreshTrackSession() {
-    const key = JSON.stringify([S.trackSession, S.audioSources, S.partMix, S.trackHeights,
+    const key = JSON.stringify([S.trackSession, S.audioSources, S.partMix, S.trackHeights, S.trackViewportHeight,
         (S.arrangements || []).map(a => a && [a.id, a.name]), S.drumTab && S.drumTab.name]);
     if (key === lastRender) return;
     lastRender = key; render();
@@ -299,6 +338,31 @@ export function initTrackSession() {
     const el = panel();
     if (!el || el.__trackSessionWired) return;
     el.__trackSessionWired = true;
+    let storedWidth = null;
+    try { storedWidth = localStorage.getItem('editorTrackHeaderWidth'); } catch (_) { /* storage blocked */ }
+    applyTrackHeaderWidth(storedWidth || S.trackHeaderWidth);
+    const splitter = document.getElementById('editor-track-session-splitter');
+    if (splitter && !splitter.__trackSplitterWired) {
+        splitter.__trackSplitterWired = true;
+        splitter.addEventListener('pointerdown', event => {
+            event.preventDefault();
+            const startX = event.clientX; const startWidth = S.trackHeaderWidth;
+            splitter.classList.add('is-dragging');
+            const move = moveEvent => {
+                applyTrackHeaderWidth(startWidth + moveEvent.clientX - startX);
+                host.resizeCanvas();
+            };
+            const up = () => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                splitter.classList.remove('is-dragging');
+                applyTrackHeaderWidth(S.trackHeaderWidth, true);
+                host.resizeCanvas();
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up, { once: true });
+        });
+    }
     el.addEventListener('click', event => {
         const control = event.target && event.target.closest ? event.target.closest('[data-track-action]') : null;
         if (!control) return;
@@ -314,21 +378,10 @@ export function initTrackSession() {
             const trackId = control.getAttribute('data-track-id') || '';
             const current = (S.trackSession.tracks || []).find(track => track.id === trackId);
             const menu = control.closest('.editor-track-context-menu');
-            if (!menu || !current) return;
-            menu.innerHTML = _trackRenameEditorMarkupPure(trackId, current.name || '');
-            const input = menu.querySelector('[data-track-rename-input]');
-            if (input) { input.focus(); input.select(); }
-            return;
-        }
-        if (action === 'rename-save') {
-            const menu = control.closest('.editor-track-context-menu');
-            const input = menu && menu.querySelector('[data-track-rename-input]');
-            if (applyTrackRename(control.getAttribute('data-track-id') || '', input ? input.value : '')) menu.remove();
-            return;
-        }
-        if (action === 'rename-cancel') {
-            const menu = control.closest('.editor-track-context-menu');
+            if (!current) return;
             if (menu) menu.remove();
+            renamingTrackId = trackId;
+            lastRender = ''; refreshTrackSession();
             return;
         }
         if (action === 'folder') commit(_trackSessionCreateFolderPure(S.trackSession, S.audioSources, S.arrangements, S.drumTab, 'Folder'), 'Folder added — drag tracks to arrange the session.');
@@ -415,10 +468,18 @@ export function initTrackSession() {
         const input = event.target && event.target.matches && event.target.matches('[data-track-rename-input]') ? event.target : null;
         if (!input || (event.key !== 'Enter' && event.key !== 'Escape')) return;
         event.preventDefault();
-        const menu = input.closest('.editor-track-context-menu');
-        if (event.key === 'Escape') { if (menu) menu.remove(); return; }
-        const save = menu && menu.querySelector('[data-track-action="rename-save"]');
-        if (save && applyTrackRename(save.getAttribute('data-track-id') || '', input.value)) menu.remove();
+        const trackId = input.getAttribute('data-track-id') || '';
+        const value = input.value;
+        renamingTrackId = ''; lastRender = '';
+        if (event.key === 'Enter') { if (!applyTrackRename(trackId, value)) refreshTrackSession(); }
+        else refreshTrackSession();
+    });
+    el.addEventListener('focusout', event => {
+        const input = event.target && event.target.matches && event.target.matches('[data-track-rename-input]') ? event.target : null;
+        if (!input || !renamingTrackId) return;
+        const trackId = input.getAttribute('data-track-id') || ''; const value = input.value;
+        renamingTrackId = ''; lastRender = '';
+        if (!applyTrackRename(trackId, value)) refreshTrackSession();
     });
     el.addEventListener('change', event => {
         const select = event.target && event.target.matches && event.target.matches('[data-track-action="pair"]') ? event.target : null;

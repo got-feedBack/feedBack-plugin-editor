@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The drawer's explicit hidden selector now outranks its flex layout rule, so
   startup, Mix-toggle close, and X-close actually remove the mixer and bus
   strips instead of only changing button state.
+  The Tracks pane divider is horizontally resizable and progressively reveals
+  controls: type/name/Mute/Solo are the compact safety floor, followed by the
+  fader and then pairing/guide details. Taller workspaces modestly auto-fit
+  the shared header/lane heights. Right-click Rename now edits the prefilled
+  name directly in its track or folder row instead of inside the context menu.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns

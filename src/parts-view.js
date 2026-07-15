@@ -14,7 +14,7 @@ import { _downbeatTimes } from './loop.js';
 import { _recState } from './midi-record.js';
 import { getMousePos } from './mouse.js';
 import { S } from './state.js';
-import { _trackSessionLaneLayoutPure, _trackSessionRowsPure } from './track-session.js';
+import { _trackSessionFittedHeightsPure, _trackSessionLaneLayoutPure, _trackSessionRowsPure } from './track-session.js';
 import { _refreshTempoMapButton } from './tempo.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
@@ -174,7 +174,8 @@ function _unifiedRows() {
 export function _partsViewDraw(w, h) {
     host.drawTimelineHeader(w);
     const rows = _unifiedRows();
-    const { lanes } = _trackSessionLaneLayoutPure(rows, S.trackHeights, S.trackScrollY, TIMELINE_TOP);
+    const fitted = _trackSessionFittedHeightsPure(rows, S.trackHeights, S.trackViewportHeight);
+    const { lanes } = _trackSessionLaneLayoutPure(rows, fitted, S.trackScrollY, TIMELINE_TOP);
     const downbeats = _downbeatTimes();
     for (let p = 0; p < lanes.length; p++) {
         const { row, y: y0, h: laneH } = lanes[p];
@@ -229,7 +230,8 @@ export function _partsViewOnMouseDown(e, x, y) {
         return;
     }
     const rows = _unifiedRows();
-    const layout = _trackSessionLaneLayoutPure(rows, S.trackHeights, S.trackScrollY, TIMELINE_TOP).lanes;
+    const fitted = _trackSessionFittedHeightsPure(rows, S.trackHeights, S.trackViewportHeight);
+    const layout = _trackSessionLaneLayoutPure(rows, fitted, S.trackScrollY, TIMELINE_TOP).lanes;
     const row = _partsTrackRowAtYPure(layout, y);
     if (!row || row.type === 'folder') return;
     if (row.type === 'audio') {

@@ -109,5 +109,12 @@ t('the mixer drawer hidden state overrides its flex display rule', () => {
     assert.match(block('#plugin-editor .editor-mixer-drawer.hidden'), /display:\s*none/);
 });
 
+t('responsive track headers preserve identity controls and progressively hide detail', () => {
+    assert.match(block('#plugin-editor #editor-track-session-splitter'), /cursor:\s*ew-resize/);
+    assert.match(block('#plugin-editor #editor-track-session[data-track-density="normal"] .editor-track-row select,'), /display:\s*none/);
+    assert.match(block('#plugin-editor #editor-track-session[data-track-density="compact"] .editor-track-fader,'), /display:\s*none/);
+    assert.match(block('#plugin-editor #editor-track-session[data-track-density="wide"] .editor-track-name'), /min-width:\s*7rem/);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

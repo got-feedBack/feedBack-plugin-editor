@@ -76,6 +76,8 @@ export const S = {
     // workspace lanes. Heights are view state (not authored song data).
     trackHeights: {},
     trackScrollY: 0,
+    trackHeaderWidth: 320,
+    trackViewportHeight: 0,
 
     // Tempo Map mode — EOF-style: drag the song-wide beat grid's measure
     // downbeats ("sync points") to fit it to the audio; BPM is derived
