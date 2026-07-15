@@ -164,7 +164,7 @@ function _renderParts(container) {
     container.innerHTML = parts.map(p => {
         const st = _mixerPartStatePure(S.partMix, p.key);
         const name = _editorEscHtml(p.name);
-        return `<div class="editor-mixer-strip" data-mix-row="${p.key}">`
+        return `<div class="editor-mixer-strip ${p.kind === 'transcription' ? 'editor-mixer-transcription-strip' : 'editor-mixer-audio-strip'}" data-mix-row="${p.key}">`
             + `<span class="editor-mixer-strip-type">${p.kind === 'audio' ? 'AUDIO' : 'MIDI'}</span>`
             + `<div class="editor-mixer-ms-row">`
             + _msBtn(p.key, 'mute', st.mute, 'M', 'Mute track')
@@ -292,6 +292,11 @@ export function mixerTogglePart(key, act) {
 function _wire(panel) {
     if (panel.__mixerWired) return;
     panel.__mixerWired = true;
+    const close = document.getElementById('editor-mixer-close');
+    if (close && !close.__mixerCloseWired) {
+        close.__mixerCloseWired = true;
+        close.addEventListener('click', () => editorToggleMixerPanel(false));
+    }
     panel.addEventListener('click', (e) => {
         const btn = e.target && e.target.closest ? e.target.closest('[data-mix-act="mute"],[data-mix-act="solo"]') : null;
         if (!btn) return;
@@ -356,8 +361,7 @@ export function initMixerPanel() {
     const panel = _panel();
     if (!panel) return;
     _wire(panel);
-    let raw = null;
-    try { raw = localStorage.getItem('editorMixerPanel'); } catch (_) { /* storage blocked */ }
-    if (_mixerOpenFromStoredPure(raw)) editorToggleMixerPanel(true);
-    else _refreshMixerButtons(false);
+    // A project always opens with maximum track-area space. The Mix button is
+    // a view toggle for this screen, not a persisted launch preference.
+    editorToggleMixerPanel(false);
 }

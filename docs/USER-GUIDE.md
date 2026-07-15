@@ -145,6 +145,11 @@ before another track to reorder the session. Right-click any track and choose
 command renames folders. Folders are organization only; they never alter the
 song, tempo map, or export.
 
+Drag a track or folder near a row's upper or lower edge to place it before or
+after that row. Drop in the center of a folder to nest it; moving a folder
+carries its children. Transcription rows use a light green tint in both the
+Tracks area and Mixer, while audio rows retain the blue/cyan treatment.
+
 The header list and timeline are one Tracks area. Every header row has exactly
 one matching horizontal lane: audio rows draw waveforms, transcription rows
 draw their condensed string, piano-roll, or drum events, and folder rows span

@@ -140,32 +140,39 @@ function _trackSessionPairPure(session, trackId, sourceId, rawSources, arrangeme
     return model;
 }
 
-function _trackSessionMoveBeforePure(session, movedId, beforeId, rawSources, arrangements, drumTab) {
+function _trackSessionMovePure(session, movedId, targetId, placement, rawSources, arrangements, drumTab) {
     const model = _trackSessionNormalizePure(session, rawSources, arrangements, drumTab);
     const from = model.tracks.findIndex(t => t.id === movedId);
-    const before = model.tracks.findIndex(t => t.id === beforeId);
-    if (from < 0 || before < 0 || from === before) return model;
-    const moved = model.tracks[from]; const destination = model.tracks[before];
-    // Dropping on a folder makes it the optional parent. Refuse a folder into
-    // one of its own descendants; otherwise that whole branch would disappear.
-    if (destination.type === 'folder') {
-        let parent = destination.parentId;
-        while (parent) {
-            if (parent === moved.id) return model;
-            parent = (model.tracks.find(track => track.id === parent) || {}).parentId || '';
-        }
-        moved.parentId = destination.id;
-        model.tracks.splice(from, 1);
-        let insertAt = model.tracks.findIndex(track => track.id === destination.id) + 1;
-        while (insertAt < model.tracks.length && model.tracks[insertAt].parentId === destination.id) insertAt++;
-        model.tracks.splice(insertAt, 0, moved);
-        return model;
+    const target = model.tracks.findIndex(t => t.id === targetId);
+    if (from < 0 || target < 0 || from === target) return model;
+    const moved = model.tracks[from]; const destination = model.tracks[target];
+    const place = placement === 'inside' && destination.type === 'folder'
+        ? 'inside' : placement === 'after' ? 'after' : 'before';
+    const nextParent = place === 'inside' ? destination.id : destination.parentId;
+    // Moving a folder carries its branch. Never let its new parent be itself
+    // or one of its descendants, even when reordering against a nested row.
+    let parent = nextParent;
+    while (parent) {
+        if (parent === moved.id) return model;
+        parent = (model.tracks.find(track => track.id === parent) || {}).parentId || '';
     }
-    moved.parentId = destination.parentId;
+    moved.parentId = nextParent;
     model.tracks.splice(from, 1);
-    const revisedBefore = model.tracks.findIndex(track => track.id === beforeId);
-    model.tracks.splice(revisedBefore, 0, moved);
+    const revisedTarget = model.tracks.findIndex(track => track.id === targetId);
+    model.tracks.splice(revisedTarget + (place === 'before' ? 0 : 1), 0, moved);
     return model;
+}
+
+function _trackSessionMoveBeforePure(session, movedId, targetId, rawSources, arrangements, drumTab) {
+    const target = _trackSessionNormalizePure(session, rawSources, arrangements, drumTab).tracks.find(t => t.id === targetId);
+    return _trackSessionMovePure(session, movedId, targetId, target && target.type === 'folder' ? 'inside' : 'before', rawSources, arrangements, drumTab);
+}
+
+function _trackSessionDropPlacementPure(pointerY, rowTop, rowHeight, isFolder) {
+    const h = Math.max(1, Number(rowHeight) || 1);
+    const ratio = Math.max(0, Math.min(1, ((Number(pointerY) || 0) - (Number(rowTop) || 0)) / h));
+    if (isFolder && ratio >= .25 && ratio <= .75) return 'inside';
+    return ratio < .5 ? 'before' : 'after';
 }
 
 function _trackSessionCreateFolderPure(session, rawSources, arrangements, drumTab, name) {
@@ -210,7 +217,7 @@ function _trackRenameEditorMarkupPure(trackId, currentName) {
 }
 /* @pure:track-session:end */
 
-export { _trackRenameEditorMarkupPure, _trackSessionCreateFolderPure, _trackSessionLaneHeightPure, _trackSessionLaneLayoutPure, _trackSessionMoveBeforePure, _trackSessionNormalizePure, _trackSessionPairPure, _trackSessionRenamePure, _trackSessionRowsPure, _trackSessionSourcesPure, _trackSessionTargetsPure };
+export { _trackRenameEditorMarkupPure, _trackSessionCreateFolderPure, _trackSessionDropPlacementPure, _trackSessionLaneHeightPure, _trackSessionLaneLayoutPure, _trackSessionMoveBeforePure, _trackSessionMovePure, _trackSessionNormalizePure, _trackSessionPairPure, _trackSessionRenamePure, _trackSessionRowsPure, _trackSessionSourcesPure, _trackSessionTargetsPure };
 
 let lastRender = '';
 let draggedId = '';
@@ -418,9 +425,36 @@ export function initTrackSession() {
         if (!select) return;
         commit(_trackSessionPairPure(S.trackSession, select.getAttribute('data-track-id') || '', select.value || '', S.audioSources, S.arrangements, S.drumTab), select.value ? 'Paired transcription with audio reference.' : 'Transcription inherits master mix.');
     });
+    const clearDropTarget = () => {
+        for (const row of el.querySelectorAll('.editor-track-drop-before,.editor-track-drop-after,.editor-track-drop-inside')) {
+            row.classList.remove('editor-track-drop-before', 'editor-track-drop-after', 'editor-track-drop-inside');
+        }
+    };
+    const dropInfo = event => {
+        const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null;
+        if (!row) return null;
+        const rect = row.getBoundingClientRect();
+        const track = (S.trackSession.tracks || []).find(item => item.id === row.getAttribute('data-track-id'));
+        return { row, id: row.getAttribute('data-track-id') || '', placement: _trackSessionDropPlacementPure(event.clientY, rect.top, rect.height, track && track.type === 'folder') };
+    };
     el.addEventListener('dragstart', event => { const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null; draggedId = row ? row.getAttribute('data-track-id') || '' : ''; });
-    el.addEventListener('dragover', event => { if (draggedId) event.preventDefault(); });
-    el.addEventListener('drop', event => { event.preventDefault(); const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null; const before = row ? row.getAttribute('data-track-id') || '' : ''; if (draggedId && before && draggedId !== before) commit(_trackSessionMoveBeforePure(S.trackSession, draggedId, before, S.audioSources, S.arrangements, S.drumTab), 'Track order saved with the song.'); draggedId = ''; });
+    el.addEventListener('dragover', event => {
+        if (!draggedId) return;
+        event.preventDefault(); clearDropTarget();
+        const info = dropInfo(event);
+        if (info && info.id !== draggedId) info.row.classList.add('editor-track-drop-' + info.placement);
+    });
+    el.addEventListener('dragleave', event => { if (!el.contains(event.relatedTarget)) clearDropTarget(); });
+    el.addEventListener('dragend', () => { draggedId = ''; clearDropTarget(); });
+    el.addEventListener('drop', event => {
+        event.preventDefault();
+        const info = dropInfo(event); clearDropTarget();
+        if (draggedId && info && info.id && draggedId !== info.id) {
+            commit(_trackSessionMovePure(S.trackSession, draggedId, info.id, info.placement,
+                S.audioSources, S.arrangements, S.drumTab), 'Track and folder order saved with the song.');
+        }
+        draggedId = '';
+    });
 }
 
 export function scrollTrackSessionBy(deltaY) {

@@ -44,6 +44,7 @@ function makeEl(id) {
 }
 const els = {};
 for (const id of ['editor-mixer-panel', 'editor-mixer-parts', 'editor-mixer-btn', 'editor-tp-mixer',
+    'editor-mixer-close',
     'editor-mix-ref', 'editor-mix-ref-val', 'editor-mix-guide', 'editor-mix-guide-val',
     'editor-mix-click', 'editor-mix-click-val', 'editor-mix-master', 'editor-mix-master-val', 'editor-status']) {
     els[id] = makeEl(id);
@@ -191,12 +192,21 @@ t('toggle opens/closes the panel, persists the pref, and lights both Mix buttons
     assert.strictEqual(els['editor-mixer-btn'].getAttribute('aria-pressed'), 'false');
 });
 
-t('init restores the persisted open state', () => {
+t('init always starts closed even when the previous project left the mixer open', () => {
     store.set('editorMixerPanel', '1');
-    els['editor-mixer-panel'].classList.add('hidden');
+    els['editor-mixer-panel'].classList.remove('hidden');
     initMixerPanel();
-    assert.strictEqual(els['editor-mixer-panel'].classList.contains('hidden'), false);
-    editorToggleMixerPanel(false);
+    assert.strictEqual(els['editor-mixer-panel'].classList.contains('hidden'), true);
+    assert.strictEqual(store.get('editorMixerPanel'), '0');
+});
+
+t('title-bar close button explicitly hides an open mixer', () => {
+    editorToggleMixerPanel(true);
+    const handlers = els['editor-mixer-close'].listeners.click || [];
+    assert.strictEqual(handlers.length, 1);
+    handlers[0]({ target: els['editor-mixer-close'] });
+    assert.strictEqual(els['editor-mixer-panel'].classList.contains('hidden'), true);
+    assert.strictEqual(els['editor-mixer-btn'].getAttribute('aria-pressed'), 'false');
 });
 
 t('bus and master faders seed from host.mixUiState on open', () => {
@@ -217,8 +227,11 @@ t('strips render one row per part; the refresh is memoized until state changes',
     Object.assign(S, {
         arrangements: [{ name: 'Lead <Guitar>' }, { name: 'Bass' }],
         drumTab: { hits: [{ t: 0.5 }] }, partMix: {}, currentArr: 0,
+        audioSources: [{ id: 'master', name: 'Master Mix', kind: 'master' }],
     });
     editorToggleMixerPanel(true);
+    assert.match(els['editor-mixer-parts'].innerHTML, /editor-mixer-transcription-strip/);
+    assert.match(els['editor-mixer-parts'].innerHTML, /editor-mixer-audio-strip/);
     const html = els['editor-mixer-parts'].innerHTML;
     assert.ok(html.includes('Lead &lt;Guitar&gt;'), 'part name rendered (escaped)');
     assert.ok(html.includes('data-mix-part="arr:1"'), 'second strip');
@@ -235,7 +248,7 @@ t('strips render one row per part; the refresh is memoized until state changes',
     _mixerPanelRefresh();
     assert.ok(els['editor-mixer-parts'].innerHTML.includes('aria-pressed="true"'), 're-rendered with the mute lit');
     editorToggleMixerPanel(false);
-    S.partMix = {};
+    S.partMix = {}; S.audioSources = [];
 });
 
 // ── Delegated listeners: click/input drive S.partMix, never stack ────

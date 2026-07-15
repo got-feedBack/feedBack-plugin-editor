@@ -3,7 +3,9 @@ import {
     _trackRenameEditorMarkupPure,
     _trackSessionLaneHeightPure,
     _trackSessionLaneLayoutPure,
+    _trackSessionDropPlacementPure,
     _trackSessionMoveBeforePure,
+    _trackSessionMovePure,
     _trackSessionNormalizePure,
     _trackSessionPairPure,
     _trackSessionRenamePure,
@@ -82,6 +84,43 @@ test('right-click rename supports tracks and folders through an inline editor', 
         assert.match(markup, /data-track-action="rename-cancel"/);
     }
     assert.match(trackMarkup, /Drums &amp; Percussion/);
+    const session = { ...base, tracks: [{ id: 'folder:1', type: 'folder', name: 'Old', parentId: '' }] };
+    const renamed = _trackSessionRenamePure(session, 'folder:1', 'Band', sources, arrangements, null);
+    assert.strictEqual(renamed.tracks.find(track => track.id === 'folder:1').name, 'Band');
+});
+
+test('tracks and folders reorder before/after or nest at the folder center', () => {
+    const session = {
+        ...base,
+        tracks: [
+            { id: 'folder:1', type: 'folder', name: 'One', parentId: '' },
+            { id: 'folder:2', type: 'folder', name: 'Two', parentId: '' },
+            { id: 'audio:master', type: 'audio', sourceId: 'master', parentId: '' },
+            { id: 'transcription:guitar', type: 'transcription', targetId: 'guitar', parentId: '', pairedSourceId: '' },
+        ],
+    };
+    const after = _trackSessionMovePure(session, 'folder:1', 'folder:2', 'after', sources, arrangements, null);
+    assert.deepStrictEqual(_trackSessionRowsPure(after, sources, arrangements, null).rows.slice(0, 2).map(row => row.id), ['folder:2', 'folder:1']);
+    const nested = _trackSessionMovePure(session, 'audio:master', 'folder:1', 'inside', sources, arrangements, null);
+    assert.strictEqual(nested.tracks.find(track => track.id === 'audio:master').parentId, 'folder:1');
+    const before = _trackSessionMovePure(session, 'transcription:guitar', 'audio:master', 'before', sources, arrangements, null);
+    assert.ok(before.tracks.findIndex(track => track.id === 'transcription:guitar') < before.tracks.findIndex(track => track.id === 'audio:master'));
+    assert.strictEqual(_trackSessionDropPlacementPure(102, 100, 40, false), 'before');
+    assert.strictEqual(_trackSessionDropPlacementPure(138, 100, 40, false), 'after');
+    assert.strictEqual(_trackSessionDropPlacementPure(120, 100, 40, true), 'inside');
+});
+
+test('moving a folder into its descendant is refused and keeps the tree intact', () => {
+    const session = {
+        ...base,
+        tracks: [
+            { id: 'folder:1', type: 'folder', name: 'Parent', parentId: '' },
+            { id: 'folder:2', type: 'folder', name: 'Child', parentId: 'folder:1' },
+        ],
+    };
+    const refused = _trackSessionMovePure(session, 'folder:1', 'folder:2', 'inside', sources, arrangements, null);
+    assert.strictEqual(refused.tracks.find(track => track.id === 'folder:1').parentId, '');
+    assert.strictEqual(refused.tracks.find(track => track.id === 'folder:2').parentId, 'folder:1');
 });
 
 test('one lane layout drives matching header and canvas row geometry', () => {

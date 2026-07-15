@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as their timeline lanes, share one vertical scroll position, and resize
   together from the row boundary. Each decoded audio source draws in its own
   waveform lane; MIDI/string/drum transcriptions remain visible alongside it.
+  The Mixer now starts closed for every project and its title-bar close button
+  is wired to the same explicit close path as the Mix toggle state.
+  Track and folder drag/drop now distinguishes reorder-before, reorder-after,
+  and nest-inside-folder zones, carries folder children, and rejects cycles.
+  Transcription headers and mixer strips share a subtle green tint so MIDI,
+  string, and drum data remain distinct from blue/cyan audio tracks.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
