@@ -31,6 +31,7 @@ const {
 } = await import('../src/tempo-marks.js');
 const {
     _tempoMeasureBpmsPure, _tempoMarkersPure, _tempoInsertSyncPoint, _tempoDeleteSyncPoint,
+    editorZonesOctaveFix,
 } = await import('../src/tempo.js');
 const { _suggestFitPure } = await import('../src/tempo-suggest.js');
 const { S } = await import('../src/state.js');
@@ -234,6 +235,31 @@ t('an insert that leaves a grouping still honest keeps it (no spurious drop)', (
     assert.ok(mk, 'the still-honest grouping survives the renumber');
     assert.strictEqual(mk.measure, 4, 'it followed its bar (3 → 4)');
     assert.deepStrictEqual(mk.grouping, [2, 2]);
+});
+
+t('the octave-fix grid rescue carries marks by time (holds/groupings follow their bar, undo restores)', () => {
+    // Scan's one-click octave rescue re-lays the WHOLE grid at double the beat
+    // rate — a wholesale rebuild that re-TIMES bars (4/4 stays 4/4) and adds
+    // bars before t=4, so old bar 3 becomes bar 5. Pre-fix it exec'd its
+    // TempoGridCmd with no .marks, so a hold on bar 3 stayed pinned to bar 3 —
+    // now the wrong musical moment — and undo never restored it.
+    seedGrid([
+        { measure: 1, kind: 'meter', num: 4, den: 4, grouping: [2, 2], provenance: 'confirmed' },
+        { measure: 3, kind: 'hold', factor: 2 },
+    ]);
+    S.sessionId = 'test';
+    const before = S.tempoMarks;
+    assert.strictEqual(editorZonesOctaveFix('double'), true);
+    assert.notStrictEqual(S.tempoMarks, before,
+        'the rescue command carried a marks snapshot (pre-fix: cmd.marks null → array untouched)');
+    const hold = S.tempoMarks.find(m => m.kind === 'hold');
+    assert.strictEqual(hold.measure, 5, 'the hold followed its downbeat time (bar 3 → bar 5)');
+    const meter = S.tempoMarks.find(m => m.kind === 'meter');
+    assert.ok(meter && meter.measure === 1, 'the still-honest bar-1 grouping stays (bars remain 4 beats)');
+    assert.deepStrictEqual(meter.grouping, [2, 2]);
+    S.history.doUndo();
+    assert.strictEqual(S.tempoMarks, before,
+        'one undo restores grid AND the exact pre-edit marks array, by reference');
 });
 
 // The undoable TempoMarkCmd is what the verbs go through — one more direct

@@ -807,8 +807,10 @@ export function editorZonesOctaveFix(dir) {
         return true;
     }
     _zonesDismiss();
-    S.history.exec(new TempoGridCmd(S.beats, rescued,
-        dir === 'double' ? 'double grid tempo' : 'halve grid tempo', S.tempoSel, -1));
+    const cmd = new TempoGridCmd(S.beats, rescued,
+        dir === 'double' ? 'double grid tempo' : 'halve grid tempo', S.tempoSel, -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats, rescued);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     setStatus(dir === 'double'
