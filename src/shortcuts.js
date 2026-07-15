@@ -121,6 +121,9 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
     { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', cableton: 'Ctrl+Shift+L', eof: 'Ctrl+L' } },
     { id: 'duplicateSelection', label: 'Duplicate selection to next position', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+D', eof: 'Ctrl+D' } },
+    { id: 'copySelection', label: 'Copy selection', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+C', eof: 'Ctrl+C' } },
+    { id: 'cutSelection', label: 'Cut selection', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+X', eof: 'Shift+Del' } },
+    { id: 'pasteAtPlayhead', label: 'Paste at playhead', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+V', eof: 'Ctrl+V' } },
     { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+R', logical: 'Q', cableton: 'Ctrl+U', eof: 'Shift+R' } },
     { id: 'addSection', label: 'Add section at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+M', logical: "Alt+'", eof: 'Shift+S' } },
     { id: 'addPhrase', label: 'Add phrase at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+P', eof: 'Shift+P' } },
@@ -237,6 +240,9 @@ export function _editorEofCommandForKeyPure(e, mode) {
     if (ctrl && key === 'b') return 'bend';
     if (ctrl && key === 'f') return 'editFret';
     if (ctrl && key === 'h') return 'toggleNaturalHarmonic';
+    if (ctrl && key === 'c') return 'copySelection';
+    if (ctrl && key === 'v') return 'pasteAtPlayhead';
+    if (shift && e.key === 'Delete') return 'cutSelection';
     if (ctrl && key === 'l') return 'selectLike';
     if (ctrl && key === 'm') return 'togglePalmMute';
     if (ctrl && key === 's') return 'save';
@@ -432,6 +438,9 @@ export function _editorFeedbackCommandForKeyPure(e, mode) {
     if (ctrl && (key === '+' || key === '=')) return 'fretUp';
     if (ctrl && key === '-') return 'fretDown';
     if (shift && key === 'f') return 'setAnchor';
+    if (ctrl && key === 'c') return 'copySelection';
+    if (ctrl && key === 'x') return 'cutSelection';
+    if (ctrl && key === 'v') return 'pasteAtPlayhead';
     if (ctrl && key === 'l') return 'selectLike';
     if (shift && key === 'r') return 'resnapSelection';
     if (shift && key === 'm') return 'addSection';
