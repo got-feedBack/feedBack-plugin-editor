@@ -29,7 +29,9 @@ const {
     TempoMarkCmd, _groupingParsePure, _holdMeasuresPure, _markNormPure,
     _marksRemapPure, _marksSanitizePure, _marksUpsertPure, editorToggleHoldBar,
 } = await import('../src/tempo-marks.js');
-const { _tempoMeasureBpmsPure, _tempoMarkersPure } = await import('../src/tempo.js');
+const {
+    _tempoMeasureBpmsPure, _tempoMarkersPure, _tempoInsertSyncPoint, _tempoDeleteSyncPoint,
+} = await import('../src/tempo.js');
 const { _suggestFitPure } = await import('../src/tempo-suggest.js');
 const { S } = await import('../src/state.js');
 const { EditHistory } = await import('../src/history.js');
@@ -176,6 +178,64 @@ t('the suggest march CARRIES a held bar - grid position kept, no onset snap', ()
     assert.strictEqual(carried.carried, true);
     assert.strictEqual(carried.time, beats[holdEnd].time, 'kept at the GRID position, not snapped');
     assert.ok(withHold.proposals.length >= 3, 'the march continues past the hold');
+});
+
+// Insert/delete a sync point renumbers measures — the marks REMAP, and a
+// grouping whose bar was split/merged out from under it must reconcile (drop)
+// in the SAME command, or it renders "2/4 (2+2)" and feeds a stale accent map
+// (the review-#276-item-3 lie, reached by the topology path instead of the
+// time-sig path).
+function fourFourGrid() {
+    const beats = []; let t0 = 0;
+    for (let m = 1; m <= 4; m++) {
+        for (let b = 0; b < 4; b++) beats.push({ time: t0 + 0.5 * b, measure: b === 0 ? m : -1, den: 4 });
+        t0 += 2;
+    }
+    beats.push({ time: t0, measure: 5, den: 4 });
+    return beats;
+}
+function seedGrid(marks) {
+    Object.assign(S, {
+        beats: fourFourGrid(), duration: 10, tempoMarks: marks, history: new EditHistory(),
+        arrangements: [], currentArr: 0, tempoSel: -1, tempoSelMulti: null, sel: new Set(),
+    });
+}
+
+t('inserting a sync point that splits a grouped bar drops the stale grouping (same undo)', () => {
+    seedGrid([
+        { measure: 2, kind: 'meter', num: 4, den: 4, grouping: [2, 2], provenance: 'confirmed' },
+        { measure: 4, kind: 'hold', factor: 2 },
+    ]);
+    const before = S.tempoMarks;
+    _tempoInsertSyncPoint(3.0);   // splits bar 2 (t=2..4) into two 2-beat bars
+    assert.ok(!S.tempoMarks.some(m => m.kind === 'meter'),
+        'a 2+2 grouping cannot describe the now-2-beat bar — it drops with the edit');
+    assert.ok(S.tempoMarks.some(m => m.kind === 'hold'), 'the unrelated hold survives (remapped)');
+    // One undo restores grid AND marks together, by reference.
+    S.history.doUndo();
+    assert.strictEqual(S.tempoMarks, before, 'undo restores the exact pre-edit marks array');
+    assert.ok(S.tempoMarks.some(m => m.kind === 'meter'), 'the grouping is back after undo');
+});
+
+t('deleting a sync point that merges into a grouped bar drops the stale grouping', () => {
+    // Grouping [2,2] on bar 1 (4 beats). Delete bar 2's downbeat → bar 1 grows
+    // to 8 beats; [2,2] no longer sums.
+    seedGrid([{ measure: 1, kind: 'meter', num: 4, den: 4, grouping: [2, 2] }]);
+    const bar2 = S.beats.findIndex(b => b.measure === 2);
+    _tempoDeleteSyncPoint(bar2);
+    assert.ok(!S.tempoMarks.some(m => m.kind === 'meter'),
+        'bar 1 grew past 4 beats — the [2,2] grouping drops rather than lie');
+});
+
+t('an insert that leaves a grouping still honest keeps it (no spurious drop)', () => {
+    // Grouping on bar 3; splitting bar 1 renumbers bar 3 → 4 but never touches
+    // its beat count, so the grouping stays valid and only its measure moves.
+    seedGrid([{ measure: 3, kind: 'meter', num: 4, den: 4, grouping: [2, 2] }]);
+    _tempoInsertSyncPoint(1.0);   // splits bar 1
+    const mk = S.tempoMarks.find(m => m.kind === 'meter');
+    assert.ok(mk, 'the still-honest grouping survives the renumber');
+    assert.strictEqual(mk.measure, 4, 'it followed its bar (3 → 4)');
+    assert.deepStrictEqual(mk.grouping, [2, 2]);
 });
 
 t('TempoMarkCmd swaps the exact before/after arrays', () => {

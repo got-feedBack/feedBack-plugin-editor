@@ -1501,14 +1501,44 @@ function _tempoRenumberMeasures(beats) {
     return oldToNew;
 }
 
+// After a renumber, drop any authored meter GROUPING that no longer sums to
+// the bar numerator it now spans in the NEW grid. Inserting or deleting a
+// barline splits or merges a bar UNDER a grouping mark: a 2+2 mark stranded
+// on a bar the split cut to 2 beats would render as 2/4 (2+2) and feed a
+// four-slot accent map to every consumer — the exact stale-accent lie the
+// time-sig reconcile (review #276 item 3) prevents, reached by a different
+// edit path. Bare meter marks and holds are untouched; the open final bar
+// (no closing downbeat, so no exact numerator) is left alone. Returns the
+// input array BY IDENTITY when nothing drops, so the caller can tell whether
+// a snapshot is needed.
+function _marksReconcileGroupingsAgainst(marks, newBeats) {
+    if (!Array.isArray(marks) || !marks.length || !Array.isArray(newBeats)) return marks;
+    const db = [];
+    for (let i = 0; i < newBeats.length; i++) if (newBeats[i] && newBeats[i].measure > 0) db.push(i);
+    const numByMeasure = new Map();
+    for (let k = 0; k + 1 < db.length; k++) numByMeasure.set(newBeats[db[k]].measure, db[k + 1] - db[k]);
+    let changed = false;
+    const out = marks.filter(mk => {
+        if (mk.kind !== 'meter' || !Array.isArray(mk.grouping) || !mk.grouping.length) return true;
+        const num = numByMeasure.get(mk.measure);
+        if (num === undefined) return true;   // open last bar: no exact numerator to check
+        const ok = mk.grouping.reduce((a, b) => a + b, 0) === num;
+        if (!ok) changed = true;
+        return ok;
+    });
+    return changed ? out : marks;
+}
+
 // The measure-keyed marks follow a renumber via the SURVIVING downbeats'
-// old->new map (a deleted bar's marks drop — never a stale key). Callers
-// that renumber inside a TempoGridCmd pass the result through the command's
-// marks snapshot so undo restores both sides together.
-function _tempoRemapMarksForRenumber(oldToNew) {
+// old->new map (a deleted bar's marks drop — never a stale key), then any
+// grouping whose bar was split/merged out from under it is reconciled against
+// the new grid. Callers that renumber inside a TempoGridCmd pass the result
+// through the command's marks snapshot so undo restores both sides together.
+function _tempoRemapMarksForRenumber(oldToNew, newBeats) {
     if (!S.tempoMarks || !S.tempoMarks.length) return null;
     const before = S.tempoMarks;
-    const after = _marksRemapPure(before, oldToNew);
+    const remapped = _marksRemapPure(before, oldToNew);
+    const after = _marksReconcileGroupingsAgainst(remapped, newBeats);
     return { before, after };
 }
 
@@ -1620,7 +1650,7 @@ export function _tempoInsertSyncPoint(time) {
     newBeats[bestS].measure = 1;  // placeholder; renumbered next
     const insRemap = _tempoRenumberMeasures(newBeats);
     const insCmd = new TempoGridCmd(oldBeats, newBeats, 'insert');
-    insCmd.marks = _tempoRemapMarksForRenumber(insRemap);
+    insCmd.marks = _tempoRemapMarksForRenumber(insRemap, newBeats);
     S.history.exec(insCmd);
     S.tempoSel = bestS;
     host.draw();
@@ -1640,7 +1670,7 @@ export function _tempoDeleteSyncPoint(beatIdx) {
     newBeats[beatIdx].measure = -1;  // demote to sub-beat
     const delRemap = _tempoRenumberMeasures(newBeats);
     const delCmd = new TempoGridCmd(oldBeats, newBeats, 'delete');
-    delCmd.marks = _tempoRemapMarksForRenumber(delRemap);
+    delCmd.marks = _tempoRemapMarksForRenumber(delRemap, newBeats);
     S.history.exec(delCmd);
     S.tempoSel = -1;
     host.draw();
