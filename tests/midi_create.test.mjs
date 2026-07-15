@@ -50,11 +50,11 @@ t('unpacked track names are keys-safe — the kind stays keys whatever the track
 });
 
 t('the seed placeholder is removed ONLY when provably untouched', () => {
-    const seed = { name: 'Keys', notes: [], chords: [] };
+    const seed = { name: 'Lead', notes: [], chords: [] };
     assert.strictEqual(_midiSeedRemovablePure(seed, 0, 0, 2), true);
     assert.strictEqual(_midiSeedRemovablePure(seed, 0, 0, 1), false, 'never the last part');
     assert.strictEqual(_midiSeedRemovablePure({ ...seed, notes: [{}] }, 0, 0, 2), false, 'user work stays');
-    assert.strictEqual(_midiSeedRemovablePure({ ...seed, name: 'Keys — Lead' }, 0, 0, 2), false, 'renamed = not the seed');
+    assert.strictEqual(_midiSeedRemovablePure({ ...seed, name: 'Lead 2' }, 0, 0, 2), false, 'renamed = not the seed');
     assert.strictEqual(_midiSeedRemovablePure(seed, 1, 0, 2), false, 'wrong index');
     assert.strictEqual(_midiSeedRemovablePure(seed, 0, undefined, 2), false, 'no flag = no cleanup');
 });

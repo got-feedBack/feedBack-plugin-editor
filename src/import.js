@@ -352,7 +352,7 @@ export async function editorDoAddKeys() {
 // seeded name, zero notes — anything else is user work and stays.
 function _midiSeedRemovablePure(arr, idx, flagIdx, total) {
     return !!(Number.isInteger(flagIdx) && idx === flagIdx && total > 1
-        && arr && arr.name === 'Keys'
+        && arr && arr.name === 'Lead'
         && (!arr.notes || arr.notes.length === 0)
         && (!arr.chords || arr.chords.length === 0));
 }

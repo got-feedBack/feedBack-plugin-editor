@@ -1869,7 +1869,10 @@ async function _editorDoMidiCreate() {
     let seeded = false;
     const r = createState.roster || [];
     if (!r.length || (r.length === 1 && r[0] === 'Lead')) {
-        createState.roster = ['Keys'];
+        // 'Lead' (not Keys): the blank-create backend accepts Lead/Rhythm/
+        // Bass rosters only today — the placeholder is removed post-import
+        // anyway, so its instrument never matters.
+        createState.roster = ['Lead'];
         seeded = true;
     }
     const file = createState.midiFiles[0];
