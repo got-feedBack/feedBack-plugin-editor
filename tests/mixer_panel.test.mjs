@@ -62,7 +62,8 @@ globalThis.window = globalThis.window || globalThis;
 
 const {
     _mixerPartsPure, _mixerPartStatePure, _mixerAnySoloPure, _mixerPartAudiblePure,
-    _mixerClapStatePure, _mixerOpenFromStoredPure, _mixerMeterNextPure, _mixerClapState, _mixerPartStripState,
+    _mixerClapStatePure, _mixerOpenFromStoredPure, _mixerMeterNextPure, _mixerGainForFaderPure,
+    _mixerFaderLabelPure, _mixerClapState, _mixerPartStripState,
     _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel,
 } = await import('../src/mixer-panel.js');
 const { S } = await import('../src/state.js');
@@ -93,13 +94,23 @@ t('one strip per arrangement, keyed by index, drums appended only with hits', ()
     ]);
 });
 
-t('strip state defaults to audible unity; volume clamps into [0, 100]', () => {
+t('strip state defaults to audible unity and permits +6 dB headroom', () => {
     assert.deepStrictEqual(_mixerPartStatePure({}, 'arr:0'), { vol: 100, mute: false, solo: false });
     assert.deepStrictEqual(_mixerPartStatePure(null, 'arr:0'), { vol: 100, mute: false, solo: false });
-    assert.strictEqual(_mixerPartStatePure({ 'arr:0': { vol: 250 } }, 'arr:0').vol, 100);
+    assert.strictEqual(_mixerPartStatePure({ 'arr:0': { vol: 250 } }, 'arr:0').vol, 106);
     assert.strictEqual(_mixerPartStatePure({ 'arr:0': { vol: -5 } }, 'arr:0').vol, 0);
     assert.strictEqual(_mixerPartStatePure({ 'arr:0': { vol: 'junk' } }, 'arr:0').vol, 100);
     assert.strictEqual(_mixerPartStatePure({ 'arr:0': { mute: 1, solo: 0 } }, 'arr:0').mute, true);
+});
+
+t('fader law preserves legacy gain below unity and maps its top to +6 dB', () => {
+    assert.strictEqual(_mixerGainForFaderPure(0), 0);
+    assert.strictEqual(_mixerGainForFaderPure(50), 0.5);
+    assert.strictEqual(_mixerGainForFaderPure(100), 1);
+    assert.ok(Math.abs(_mixerGainForFaderPure(106) - 10 ** (6 / 20)) < 1e-9);
+    assert.strictEqual(_mixerFaderLabelPure(50), '−6.0 dB');
+    assert.strictEqual(_mixerFaderLabelPure(100), '+0.0 dB');
+    assert.strictEqual(_mixerFaderLabelPure(106), '+6.0 dB');
 });
 
 t('audibility: no solo → everything unmuted sounds; mute always wins', () => {
@@ -193,7 +204,7 @@ t('bus and master faders seed from host.mixUiState on open', () => {
     host.mixUiState = () => ({ pcts: { ref: 80, guide: 15, click: 5, master: 70 }, blip: false });
     editorToggleMixerPanel(true);
     assert.strictEqual(els['editor-mix-ref'].value, '80');
-    assert.strictEqual(els['editor-mix-guide-val'].textContent, '15%');
+    assert.strictEqual(els['editor-mix-guide-val'].textContent, '−16.5 dB');
     assert.strictEqual(els['editor-mix-click'].value, '5');
     assert.strictEqual(els['editor-mix-master'].value, '70');
     host.mixUiState = prev;

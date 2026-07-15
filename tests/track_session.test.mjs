@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 import {
+    _trackRenameEditorMarkupPure,
     _trackSessionMoveBeforePure,
     _trackSessionNormalizePure,
     _trackSessionPairPure,
@@ -68,6 +69,17 @@ test('track display names rename independently of stable identities', () => {
     const rows = _trackSessionRowsPure(renamed, sources, arrangements, null).rows;
     assert.strictEqual(rows.find(row => row.id === 'transcription:guitar').name, 'Lead DI');
     assert.strictEqual(rows.find(row => row.id === 'transcription:guitar').mixKey, 'arr:0');
+});
+
+test('right-click rename supports tracks and folders through an inline editor', () => {
+    const trackMarkup = _trackRenameEditorMarkupPure('audio:stem:0', 'Drums & Percussion');
+    const folderMarkup = _trackRenameEditorMarkupPure('folder:1', 'Rhythm');
+    for (const markup of [trackMarkup, folderMarkup]) {
+        assert.match(markup, /data-track-rename-input/);
+        assert.match(markup, /data-track-action="rename-save"/);
+        assert.match(markup, /data-track-action="rename-cancel"/);
+    }
+    assert.match(trackMarkup, /Drums &amp; Percussion/);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

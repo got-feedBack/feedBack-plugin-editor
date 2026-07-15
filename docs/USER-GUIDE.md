@@ -141,8 +141,9 @@ The left **Tracks** pane is a DAW-style session list: it places the **Master
 Mix**, available audio stems, and each transcription together. Use **+ Folder**
 only when you need it, then drag a track onto the folder to nest it or drag it
 before another track to reorder the session. Right-click any track and choose
-**Rename**. Folders are organization only; they never alter the song, tempo
-map, or export.
+**Rename**, edit the inline name, then press **Enter** or **Save**. The same
+command renames folders. Folders are organization only; they never alter the
+song, tempo map, or export.
 
 Each transcription can choose an audio reference from its row. Select that
 transcription and the editor switches its audible waveform/onset reference to
@@ -156,8 +157,12 @@ source never time-stretches or moves the samples: the musical ruler is still
 fitted to the selected fixed recording. Every non-folder row has **M**, **S**,
 and a fader; those controls share state with the matching vertical channel
 strip in **Mixer** (`Shift+C`). The drawer ends with a dedicated **Master**
-output strip. Note adds and pitch edits are silent; use explicit pitch audition
-when you want to hear a note.
+output strip. Normal transport playback starts every available audio source in
+sample-aligned sync; select or pair a source to change the editing reference,
+not to silence the other stems. Mixer faders read in dB, place unity at
+**0.0 dB**, and provide **+6 dB** of headroom. The adjacent calibrated meters
+show held dBFS peaks and turn red above 0 dBFS. Note adds and pitch edits are
+silent; use explicit pitch audition when you want to hear a note.
 
 ---
 

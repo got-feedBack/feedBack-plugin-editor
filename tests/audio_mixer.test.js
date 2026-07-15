@@ -34,8 +34,8 @@ const busBlock = extract('audio-bus');
 // ── Pure math ────────────────────────────────────────────────────────
 const P = new Function(
     '"use strict";' + mixBlock
-    + '\nreturn { MIX_DEFAULT_PCT, _mixPctFromStoredPure, _mixGainForPctPure,'
-    + ' _mixFirstPlayStartGainPure, _mixDragChangedPitchPure, _mixMeterLevelPure };'
+    + '\nreturn { MIX_DEFAULT_PCT, _mixPctFromStoredPure, _mixGainForPctPure, _mixFaderLabelPure,'
+    + ' _mixFirstPlayStartGainPure, _mixDragChangedPitchPure, _mixMeterLevelPure, _mixMeterPeakDbPure };'
 )();
 
 // ── Stateful env: real bus + blip code over stub ctx/localStorage ────
@@ -109,17 +109,21 @@ function t(name, fn) {
 t('stored percents parse with clamping; junk falls back', () => {
     assert.strictEqual(P._mixPctFromStoredPure('42', 100), 42);
     assert.strictEqual(P._mixPctFromStoredPure('-5', 100), 0);
-    assert.strictEqual(P._mixPctFromStoredPure('250', 100), 100);
+    assert.strictEqual(P._mixPctFromStoredPure('250', 100), 106);
     assert.strictEqual(P._mixPctFromStoredPure(null, 35), 35);
     assert.strictEqual(P._mixPctFromStoredPure('abc', 25), 25);
 });
 
-t('percent → gain is linear, clamped, NaN-safe', () => {
+t('legacy positions retain linear gain through unity; top travel supplies +6 dB', () => {
     assert.strictEqual(P._mixGainForPctPure(0), 0);
     assert.strictEqual(P._mixGainForPctPure(35), 0.35);
     assert.strictEqual(P._mixGainForPctPure(100), 1);
-    assert.strictEqual(P._mixGainForPctPure(150), 1);
+    assert.ok(Math.abs(P._mixGainForPctPure(106) - 10 ** (6 / 20)) < 1e-9);
+    assert.strictEqual(P._mixGainForPctPure(150), P._mixGainForPctPure(106));
     assert.strictEqual(P._mixGainForPctPure(NaN), 0);
+    assert.strictEqual(P._mixFaderLabelPure(0), '−∞ dB');
+    assert.strictEqual(P._mixFaderLabelPure(100), '+0.0 dB');
+    assert.strictEqual(P._mixFaderLabelPure(106), '+6.0 dB');
 });
 
 t('meter converts sample RMS into a clamped -60..0 dBFS display level', () => {
@@ -127,6 +131,12 @@ t('meter converts sample RMS into a clamped -60..0 dBFS display level', () => {
     assert.ok(Math.abs(P._mixMeterLevelPure(new Float32Array([0.1, -0.1])) - (40 / 60)) < 1e-6);
     assert.strictEqual(P._mixMeterLevelPure(new Float32Array([1, -1])), 1);
     assert.strictEqual(P._mixMeterLevelPure(null), 0);
+});
+
+t('peak readout reports real dBFS, including overs above digital full scale', () => {
+    assert.strictEqual(P._mixMeterPeakDbPure(new Float32Array(8)), -Infinity);
+    assert.ok(Math.abs(P._mixMeterPeakDbPure(new Float32Array([0.5, -0.25])) + 6.0206) < 0.001);
+    assert.ok(P._mixMeterPeakDbPure(new Float32Array([1.25])) > 0);
 });
 
 t('first-play start gain: reduced but never inaudible, never above target', () => {
@@ -192,8 +202,8 @@ t('master fader persists and ramps the final output gain', () => {
 t('fader input clamps out-of-range values before persisting', () => {
     const env = makeEnv();
     env._ensureRefGain();
-    assert.strictEqual(env._mixSetBusGain('ref', '9999'), 100);
-    assert.strictEqual(env.ls.map.get('editorMixRef'), '100');
+    assert.strictEqual(env._mixSetBusGain('ref', '9999'), 106);
+    assert.strictEqual(env.ls.map.get('editorMixRef'), '106');
 });
 
 t('first-play fade ramps the reference up once, then never again', () => {

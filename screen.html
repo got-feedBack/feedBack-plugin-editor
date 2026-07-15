@@ -335,28 +335,32 @@
                 <div class="editor-mixer-utility-strips" aria-label="Utility buses">
                     <label class="editor-mixer-strip editor-mixer-bus-strip" title="Active recording or stem source">
                         <span class="editor-mixer-strip-type">BUS</span><span class="editor-mixer-bus-name">SOURCE</span>
-                        <div class="editor-mixer-channel"><div class="editor-mixer-meter" data-meter-key="bus:ref" aria-hidden="true"><span></span></div>
-                        <input id="editor-mix-ref" class="editor-mixer-fader" type="range" min="0" max="100" value="100" aria-label="Source volume" oninput="editorSetMixLevel('ref', this.value)"></div>
-                        <span id="editor-mix-ref-val" class="editor-mixer-value">100%</span>
+                        <div class="editor-mixer-channel"><div class="editor-mixer-meter-group"><div class="editor-mixer-meter" data-meter-key="bus:ref" aria-hidden="true"><span></span></div>
+                        <div class="editor-mixer-db-scale" aria-hidden="true"><i>0</i><i>−6</i><i>−12</i><i>−24</i><i>−48</i><i>−∞</i></div><output class="editor-mixer-db-readout" data-meter-readout="bus:ref">−∞</output></div>
+                        <input id="editor-mix-ref" class="editor-mixer-fader" type="range" min="0" max="106" step="0.1" value="100" aria-label="Source fader level" oninput="editorSetMixLevel('ref', this.value)"></div>
+                        <span id="editor-mix-ref-val" class="editor-mixer-value">+0.0 dB</span>
                     </label>
                     <label class="editor-mixer-strip editor-mixer-bus-strip" title="Transcription guide voice">
                         <span class="editor-mixer-strip-type">BUS</span><span class="editor-mixer-bus-name">GUIDE</span>
-                        <div class="editor-mixer-channel"><div class="editor-mixer-meter" data-meter-key="bus:guide" aria-hidden="true"><span></span></div>
-                        <input id="editor-mix-guide" class="editor-mixer-fader" type="range" min="0" max="100" value="35" aria-label="Guide volume" oninput="editorSetMixLevel('guide', this.value)"></div>
-                        <span id="editor-mix-guide-val" class="editor-mixer-value">35%</span>
+                        <div class="editor-mixer-channel"><div class="editor-mixer-meter-group"><div class="editor-mixer-meter" data-meter-key="bus:guide" aria-hidden="true"><span></span></div>
+                        <div class="editor-mixer-db-scale" aria-hidden="true"><i>0</i><i>−6</i><i>−12</i><i>−24</i><i>−48</i><i>−∞</i></div><output class="editor-mixer-db-readout" data-meter-readout="bus:guide">−∞</output></div>
+                        <input id="editor-mix-guide" class="editor-mixer-fader" type="range" min="0" max="106" step="0.1" value="35" aria-label="Guide fader level" oninput="editorSetMixLevel('guide', this.value)"></div>
+                        <span id="editor-mix-guide-val" class="editor-mixer-value">−9.1 dB</span>
                     </label>
                     <label class="editor-mixer-strip editor-mixer-bus-strip" title="Metronome click">
                         <span class="editor-mixer-strip-type">BUS</span><span class="editor-mixer-bus-name">CLICK</span>
-                        <div class="editor-mixer-channel"><div class="editor-mixer-meter" data-meter-key="bus:click" aria-hidden="true"><span></span></div>
-                        <input id="editor-mix-click" class="editor-mixer-fader" type="range" min="0" max="100" value="25" aria-label="Click volume" oninput="editorSetMixLevel('click', this.value)"></div>
-                        <span id="editor-mix-click-val" class="editor-mixer-value">25%</span>
+                        <div class="editor-mixer-channel"><div class="editor-mixer-meter-group"><div class="editor-mixer-meter" data-meter-key="bus:click" aria-hidden="true"><span></span></div>
+                        <div class="editor-mixer-db-scale" aria-hidden="true"><i>0</i><i>−6</i><i>−12</i><i>−24</i><i>−48</i><i>−∞</i></div><output class="editor-mixer-db-readout" data-meter-readout="bus:click">−∞</output></div>
+                        <input id="editor-mix-click" class="editor-mixer-fader" type="range" min="0" max="106" step="0.1" value="25" aria-label="Click fader level" oninput="editorSetMixLevel('click', this.value)"></div>
+                        <span id="editor-mix-click-val" class="editor-mixer-value">−12.0 dB</span>
                     </label>
                 </div>
                 <label class="editor-mixer-strip editor-mixer-master-strip" title="Final output level">
                     <span class="editor-mixer-strip-type">OUTPUT</span><span class="editor-mixer-bus-name">MASTER</span>
-                    <div class="editor-mixer-channel"><div class="editor-mixer-meter editor-mixer-master-meter" data-meter-key="bus:master" aria-hidden="true"><span></span></div>
-                    <input id="editor-mix-master" class="editor-mixer-fader" type="range" min="0" max="100" value="100" aria-label="Master output volume" oninput="editorSetMixLevel('master', this.value)"></div>
-                    <span id="editor-mix-master-val" class="editor-mixer-value">100%</span>
+                    <div class="editor-mixer-channel"><div class="editor-mixer-meter-group"><div class="editor-mixer-meter editor-mixer-master-meter" data-meter-key="bus:master" aria-hidden="true"><span></span></div>
+                    <div class="editor-mixer-db-scale" aria-hidden="true"><i>0</i><i>−6</i><i>−12</i><i>−24</i><i>−48</i><i>−∞</i></div><output class="editor-mixer-db-readout" data-meter-readout="bus:master">−∞</output></div>
+                    <input id="editor-mix-master" class="editor-mixer-fader" type="range" min="0" max="106" step="0.1" value="100" aria-label="Master output fader level" oninput="editorSetMixLevel('master', this.value)"></div>
+                    <span id="editor-mix-master-val" class="editor-mixer-value">+0.0 dB</span>
                 </label>
             </div>
         </div>        <!-- Inspector panel — populated by `_renderInspector` whenever the

@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   strips, source/guide/click buses, and a dedicated final Master bus. Track
   names retain usable space beside their controls, and Parts view no longer
   repeats a second name gutter inside the timeline.
+  Transport playback now starts every decoded audio source on the same audio
+  clock frame instead of playing only the selected guide. Per-track mute,
+  solo, and level affect those live sources and drive their own meter strips.
+  Meters show held dBFS peaks beside a calibrated scale, while faders retain
+  their saved pre-unity response and add +6 dB of headroom above 0 dB. Track
+  and folder rename uses an in-app editor (Save/Cancel or Enter/Escape), so it
+  works in the desktop shell without relying on a browser prompt.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns

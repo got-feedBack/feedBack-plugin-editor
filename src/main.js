@@ -44,7 +44,7 @@ import {
     _abApplyRefGain, _editBlipAt, _editorToggleGuideClap,
     _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip,
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
-    editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio, activateTrackAudioSource, audioMixerMeterLevels,
+    editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio, activateTrackAudioSource, audioMixerMeterLevels, syncAudioTrackSources, applyAudioTrackMix,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
     editorToggleAuditionTrainer,
 } from './audio.js';
@@ -508,7 +508,7 @@ setHostHooks({
     tempoResolvedMeasureIdx: (...a) => _tempoResolvedMeasureIdx(...a),
     partClapState: _mixerClapState,
     partStripState: key => _mixerPartStripState(key),
-    partMixChanged: () => { refreshTrackSession(); _abApplyRefGain(); },
+    partMixChanged: () => { refreshTrackSession(); applyAudioTrackMix(); _abApplyRefGain(); },
     selectTrackSessionTarget: (targetId) => {
         if (targetId === 'drums' && S.drumTab) {
             S.drumEditMode = true; S.partsViewMode = false; host.draw(); return;
@@ -519,6 +519,7 @@ setHostHooks({
     selectTrackSessionSource: (sourceId) => activateTrackAudioSource(sourceId),
     mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
     mixerMeterLevels: audioMixerMeterLevels,
+    syncAudioTrackSources,
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML

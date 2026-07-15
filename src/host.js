@@ -201,6 +201,8 @@ export const host = {
     mixUiState: () => ({ pcts: { ref: 100, guide: 35, click: 25 }, blip: true }),
     /** Post-fader Web Audio meter levels, normalized to [0, 1]. */
     mixerMeterLevels: () => ({ ref: 0, guide: 0, click: 0, master: 0 }),
+    /** Preload synchronized audio channels into the transport. */
+    syncAudioTrackSources: () => {},
 };
 
 export function setHostHooks(hooks) { Object.assign(host, hooks); }

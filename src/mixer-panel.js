@@ -55,16 +55,28 @@ export function _mixerPartsPure(arrangements, drumTab, audioSources = []) {
     }
     return parts;
 }
+const MIXER_FADER_MAX = 106;
 // A part's strip state, defaulted and clamped: an absent entry is an audible
-// part at full volume, and a corrupted volume can never boost past 100.
+// part at unity. Positions 101..106 are +1..+6 dB of intentional headroom.
 export function _mixerPartStatePure(partMix, key) {
     const m = (partMix && typeof partMix === 'object') ? partMix[key] : null;
     const v = m ? Number(m.vol) : NaN;
     return {
-        vol: Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 100,
+        vol: Number.isFinite(v) ? Math.max(0, Math.min(MIXER_FADER_MAX, v)) : 100,
         mute: !!(m && m.mute),
         solo: !!(m && m.solo),
     };
+}
+export function _mixerGainForFaderPure(position) {
+    const p = Math.max(0, Math.min(MIXER_FADER_MAX, Number(position) || 0));
+    if (p <= 100) return p / 100;
+    return 10 ** ((p - 100) / 20);
+}
+export function _mixerFaderLabelPure(position) {
+    const gain = _mixerGainForFaderPure(position);
+    if (!(gain > 0)) return '−∞ dB';
+    const db = 20 * Math.log10(gain);
+    return (db >= 0 ? '+' : '−') + Math.abs(db).toFixed(1) + ' dB';
 }
 export function _mixerAnySoloPure(partMix) {
     if (!partMix || typeof partMix !== 'object') return false;
@@ -85,7 +97,7 @@ export function _mixerClapStatePure(partMix, drumEditMode, currentArr) {
     const key = drumEditMode ? 'drums' : 'arr:' + (Number(currentArr) || 0);
     return {
         audible: _mixerPartAudiblePure(partMix, key),
-        vol: _mixerPartStatePure(partMix, key).vol / 100,
+        vol: _mixerGainForFaderPure(_mixerPartStatePure(partMix, key).vol),
     };
 }
 // Panel open-state pref round-trip ('1'/'0'; anything else = closed).
@@ -100,6 +112,11 @@ export function _mixerMeterNextPure(previous, input, elapsedMs) {
     if (next >= prev) return next;
     return Math.max(next, prev - Math.max(0, Number(elapsedMs) || 0) / 700);
 }
+export function _mixerDbLabelPure(db) {
+    const value = Number(db);
+    if (!Number.isFinite(value) || value <= -60) return '−∞';
+    return (value > -10 ? value.toFixed(1) : Math.round(value).toString()) + ' dB';
+}
 /* @pure:mixer-panel:end */
 
 // The host-hook target audio.js consults per scheduled clap voice.
@@ -112,7 +129,7 @@ export function _mixerClapState() {
 export function _mixerPartStripState(key) {
     return {
         audible: _mixerPartAudiblePure(S.partMix, key),
-        vol: _mixerPartStatePure(S.partMix, key).vol / 100,
+        vol: _mixerGainForFaderPure(_mixerPartStatePure(S.partMix, key).vol),
     };
 }
 
@@ -123,6 +140,15 @@ let _lastKey = '';
 let _meterFrame = 0;
 let _meterLastAt = 0;
 const _meterShown = Object.create(null);
+const _meterPeakDb = Object.create(null);
+const _meterPeakAt = Object.create(null);
+
+function _meterMarkup(key, extraClass = '') {
+    return `<div class="editor-mixer-meter-group">`
+        + `<div class="editor-mixer-meter ${extraClass}" data-meter-key="${key}" aria-hidden="true"><span></span></div>`
+        + `<div class="editor-mixer-db-scale" aria-hidden="true"><i>0</i><i>−6</i><i>−12</i><i>−24</i><i>−48</i><i>−∞</i></div>`
+        + `<output class="editor-mixer-db-readout" data-meter-readout="${key}">−∞</output></div>`;
+}
 
 function _msBtn(key, act, pressed, label, title) {
     return `<button data-mix-part="${key}" data-mix-act="${act}" aria-pressed="${pressed}"`
@@ -145,13 +171,22 @@ function _renderParts(container) {
             + _msBtn(p.key, 'solo', st.solo, 'S', 'Solo track')
             + `</div>`
             + `<div class="editor-mixer-channel">`
-            + `<div class="editor-mixer-meter" data-meter-key="${p.key}" aria-hidden="true"><span></span></div>`
-            + `<input type="range" min="0" max="100" value="${st.vol}" data-mix-part="${p.key}" data-mix-act="vol"`
-            + ` aria-label="${name} volume percent" class="editor-mixer-fader"></div>`
-            + `<span data-mix-val="${p.key}" class="editor-mixer-value">${st.vol}%</span>`
+            + _meterMarkup(p.key)
+            + `<input type="range" min="0" max="106" step="0.1" value="${st.vol}" data-mix-part="${p.key}" data-mix-act="vol"`
+            + ` aria-label="${name} fader level" class="editor-mixer-fader"></div>`
+            + `<span data-mix-val="${p.key}" class="editor-mixer-value">${_mixerFaderLabelPure(st.vol)}</span>`
             + `<span class="editor-mixer-strip-name" title="${name}">${name}</span>`
             + `</div>`;
     }).join('');
+}
+
+function _meterPeakForKey(key, levels) {
+    if (key === 'bus:ref') return levels.peaks && levels.peaks.ref;
+    if (key === 'bus:guide') return levels.peaks && levels.peaks.guide;
+    if (key === 'bus:click') return levels.peaks && levels.peaks.click;
+    if (key === 'bus:master') return levels.peaks && levels.peaks.master;
+    if (levels.trackPeaks && Number.isFinite(levels.trackPeaks[key])) return levels.trackPeaks[key];
+    return -Infinity;
 }
 
 function _meterInputForKey(key, levels) {
@@ -159,6 +194,7 @@ function _meterInputForKey(key, levels) {
     if (key === 'bus:guide') return levels.guide;
     if (key === 'bus:click') return levels.click;
     if (key === 'bus:master') return levels.master;
+    if (key.startsWith('audio:') && levels.tracks && Number.isFinite(levels.tracks[key])) return levels.tracks[key];
     if (key === 'audio:' + (S.activeAudioSourceId || 'master')) return levels.ref;
     const activePart = S.drumEditMode ? 'drums' : 'arr:' + (Number(S.currentArr) || 0);
     return key === activePart ? levels.guide : 0;
@@ -178,6 +214,19 @@ function _meterTick(at) {
         _meterShown[key] = shown;
         const fill = meter.querySelector('span');
         if (fill && fill.style) fill.style.height = (shown * 100).toFixed(1) + '%';
+        const peak = _meterPeakForKey(key, levels);
+        if (Number.isFinite(peak) && (!Number.isFinite(_meterPeakDb[key]) || peak >= _meterPeakDb[key]
+                || at - (_meterPeakAt[key] || 0) >= 1500)) {
+            _meterPeakDb[key] = peak;
+            _meterPeakAt[key] = at;
+        } else if (at - (_meterPeakAt[key] || 0) >= 3000) {
+            _meterPeakDb[key] = -Infinity;
+        }
+        const readout = panel.querySelector(`[data-meter-readout="${key}"]`);
+        if (readout) {
+            readout.textContent = _mixerDbLabelPure(_meterPeakDb[key]);
+            readout.classList.toggle('is-clipping', Number(_meterPeakDb[key]) > 0);
+        }
     }
     if (typeof requestAnimationFrame === 'function') _meterFrame = requestAnimationFrame(_meterTick);
 }
@@ -202,7 +251,7 @@ function _renderBuses() {
         const slider = document.getElementById(id);
         const label = document.getElementById(id + '-val');
         if (slider) slider.value = String(ui.pcts[bus]);
-        if (label) label.textContent = ui.pcts[bus] + '%';
+        if (label) label.textContent = _mixerFaderLabelPure(ui.pcts[bus]);
     }
 
 }
@@ -260,7 +309,7 @@ function _wire(panel) {
         const key = el.getAttribute('data-mix-part');
         mixerSetPart(key, { vol: Number(el.value) });
         const val = panel.querySelector(`[data-mix-val="${key}"]`);
-        if (val) val.textContent = _mixerPartStatePure(S.partMix, key).vol + '%';
+        if (val) val.textContent = _mixerFaderLabelPure(_mixerPartStatePure(S.partMix, key).vol);
     });
 }
 

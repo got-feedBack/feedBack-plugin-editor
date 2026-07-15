@@ -49,6 +49,9 @@ let audioLoadGeneration = 0;
 // track session. Only one buffer is active in the transport at a time: this is
 // intentional reference switching, not a second stem-mixing graph.
 const trackAudioCache = new Map();
+const playingTrackSources = new Map();
+const trackGainNodes = new Map();
+let trackPreloadGeneration = 0;
 
 function _installDecodedAudio(decoded, url, sourceId, preserveTimeline) {
     S.audioBuffer = decoded;
@@ -60,8 +63,33 @@ function _installDecodedAudio(decoded, url, sourceId, preserveTimeline) {
 }
 
 export function resetTrackAudioCache() {
+    _stopTrackAudioSources();
+    trackPreloadGeneration++;
     trackAudioCache.clear();
+    for (const gain of trackGainNodes.values()) {
+        try { gain.disconnect(); } catch (_) {}
+    }
+    trackGainNodes.clear();
     S.activeAudioSourceId = 'master';
+}
+
+export async function syncAudioTrackSources(sources) {
+    const generation = ++trackPreloadGeneration;
+    const ctx = _ensureAudioCtx();
+    if (!ctx) return;
+    await Promise.all((sources || []).map(async source => {
+        if (!source || !source.id || !source.url) return;
+        const cached = trackAudioCache.get(source.id);
+        if (cached && cached.url === source.url) return;
+        try {
+            const response = await fetch(source.url);
+            if (!response.ok) return;
+            const decoded = await ctx.decodeAudioData(await response.arrayBuffer());
+            if (generation === trackPreloadGeneration) {
+                trackAudioCache.set(source.id, { url: source.url, buffer: decoded });
+            }
+        } catch (_) { /* one unavailable stem must not block the session */ }
+    }));
 }
 
 export async function activateTrackAudioSource(sourceId) {
@@ -603,7 +631,8 @@ export function _startAudioSourceAtCursor(preRoll = 0) {
         // Pitch-preserving slow path: the reference rides the MediaElement, so
         // the sample-accurate BufferSource is silenced. Both feed the SAME
         // _refGain, so the mixer fader / A-B mute / first-play fade still apply.
-        if (S.audioSource) { try { S.audioSource.stop(); } catch (_) {} S.audioSource = null; }
+        if (typeof _stopTrackAudioSources === 'function') _stopTrackAudioSources();
+        else if (S.audioSource) { try { S.audioSource.stop(); } catch (_) {} S.audioSource = null; }
         _mixApplyFirstPlayFade();
         if (!_startRefMediaAt(st, preRoll)) {
             // Slow path unavailable (no <audio> ctor, or the context refused a
@@ -618,23 +647,82 @@ export function _startAudioSourceAtCursor(preRoll = 0) {
     }
     if (!slow && st.play) {
         _stopRefMedia();   // rate 1 → the slow-path element must be silent
-        S.audioSource = S.audioCtx.createBufferSource();
-        S.audioSource.buffer = S.audioBuffer;
-        // Reference recording stays on a transparent path to destination — its
-        // mixer fader is a plain gain (unity by default): the guide-clap limiter
-        // must never color the recording, even when claps are off. Only the
-        // guide/click voices sum through the limiter (see _ensureMasterBus).
-        const refGain = _ensureRefGain();
-        if (refGain) S.audioSource.connect(refGain);
-        else S.audioSource.connect(S.audioCtx.destination);
+        const started = typeof _startTrackAudioSources === 'function'
+            ? _startTrackAudioSources(preRoll) : 0;
+        if (!started) {
+            S.audioSource = S.audioCtx.createBufferSource();
+            S.audioSource.buffer = S.audioBuffer;
+            const refGain = _ensureRefGain();
+            S.audioSource.connect(refGain || S.audioCtx.destination);
+            const when = (preRoll > 0 || st.delay > 0) ? S.audioCtx.currentTime + preRoll + st.delay : 0;
+            S.audioSource.start(when, st.offset);
+        }
         _mixApplyFirstPlayFade();
-        const when = (preRoll > 0 || st.delay > 0) ? S.audioCtx.currentTime + preRoll + st.delay : 0;
-        S.audioSource.start(when, st.offset);
     } else if (!st.play) {
         _stopRefMedia();
         S.audioSource = null;
     }
     _anchorTransportAtCursor(preRoll);
+}
+
+function _ensureTrackGain(sourceId) {
+    if (trackGainNodes.has(sourceId)) return trackGainNodes.get(sourceId);
+    if (!S.audioCtx) return null;
+    const gain = S.audioCtx.createGain();
+    const state = host.partStripState('audio:' + sourceId);
+    gain.gain.value = state && state.audible !== false
+        ? Math.max(0, Math.min(1, Number(state.vol) || 0)) : 0;
+    gain.connect(_ensureRefGain() || S.audioCtx.destination);
+    _attachMeterTap(gain, 'track:audio:' + sourceId);
+    trackGainNodes.set(sourceId, gain);
+    return gain;
+}
+
+export function applyAudioTrackMix(immediate = false) {
+    if (!S.audioCtx) return;
+    for (const [sourceId, gain] of trackGainNodes) {
+        const state = host.partStripState('audio:' + sourceId);
+        const value = state && state.audible !== false
+            ? Math.max(0, Math.min(1, Number(state.vol) || 0)) : 0;
+        if (immediate) gain.gain.value = value;
+        else gain.gain.setTargetAtTime(value, S.audioCtx.currentTime, 0.02);
+    }
+}
+
+function _stopTrackAudioSources() {
+    for (const source of playingTrackSources.values()) {
+        try { source.stop(); } catch (_) {}
+    }
+    playingTrackSources.clear();
+    S.audioSource = null;
+}
+
+function _startTrackAudioSources(preRoll) {
+    _stopTrackAudioSources();
+    const sources = (S.audioSources || []).filter(source => source && source.id);
+    if (!sources.length) return 0;
+    if (S.audioBuffer && S.activeAudioSourceId) {
+        trackAudioCache.set(S.activeAudioSourceId, { url: S.audioUrl || '', buffer: S.audioBuffer });
+    }
+    let started = 0;
+    for (const source of sources) {
+        const cached = trackAudioCache.get(source.id);
+        if (!cached || !cached.buffer) continue;
+        const placement = _audioBufferStartPure(
+            S.cursorTime, (Number(S.audioShift) || 0) + (Number(source.offset) || 0), cached.buffer.duration);
+        if (!placement.play) continue;
+        const node = S.audioCtx.createBufferSource();
+        node.buffer = cached.buffer;
+        node.connect(_ensureTrackGain(source.id) || _ensureRefGain() || S.audioCtx.destination);
+        const when = (preRoll > 0 || placement.delay > 0)
+            ? S.audioCtx.currentTime + preRoll + placement.delay : 0;
+        node.start(when, placement.offset);
+        playingTrackSources.set(source.id, node);
+        if (source.id === S.activeAudioSourceId) S.audioSource = node;
+        started++;
+    }
+    applyAudioTrackMix(true);
+    return started;
 }
 
 // Undoable audio placement shift. Song-scoped (it's not tied to one arrangement)
@@ -709,10 +797,7 @@ export function _composeSongDuration() {
 }
 
 export function _restartPlaybackAt(t) {
-    if (S.audioSource) {
-        try { S.audioSource.stop(); } catch (_) {}
-        S.audioSource = null;
-    }
+    _stopTrackAudioSources();
     S.cursorTime = Math.max(0, Math.min(_audioTimelineDuration() || Infinity, t));
     // Compose mode re-anchors the clock without a BufferSource — the guide/
     // click scheduler is the only sound (charrette §1.7).
@@ -779,10 +864,7 @@ export function startPlayback() {
     _guideTimerSync();
 }
 export function stopPlayback() {
-    if (S.audioSource) {
-        try { S.audioSource.stop(); } catch (_) {}
-        S.audioSource = null;
-    }
+    _stopTrackAudioSources();
     _stopRefMedia();
     S.playing = false;
     updatePlayIcon();
@@ -1091,22 +1173,32 @@ export function editorMetronomeEnabled() {
 }
 
 /* @pure:audio-mixer:start */
-// Mixer math for the 3-fader popover (recording / guide / click) and the
-// edit-preview blip gating. Fader percents live in editor prefs (never the
-// pack) and map linearly onto bus gain, so 100% = the bus's design ceiling
-// (unity) — nothing here can boost a bus past the shipped headroom.
+// Mixer math for the source / guide / click / master buses. Existing fader
+// prefs use 0..100, with 100 at unity. Preserve that contract and extend the
+// top six positions as +1..+6 dB: old sessions stay bit-for-bit compatible,
+// while the new top travel has the same +6 dB headroom as a Logic fader.
 const MIX_DEFAULT_PCT = Object.freeze({ ref: 100, guide: 35, click: 25, master: 100 });
-// Parse a stored fader percent: corrupted values clamp into [0, 100] and
+const MIX_FADER_MAX = 106;
+// Parse a stored fader position: corrupted values clamp into [0, 106] and
 // non-numeric ones fall back, so a bad pref can never blast a bus.
 function _mixPctFromStoredPure(raw, fallbackPct) {
-    const n = parseInt(raw, 10);
+    if (raw === null || raw === undefined || raw === '') return fallbackPct;
+    const n = Number(raw);
     if (!Number.isFinite(n)) return fallbackPct;
-    return Math.max(0, Math.min(100, n));
+    return Math.max(0, Math.min(MIX_FADER_MAX, n));
 }
 function _mixGainForPctPure(pct) {
     const p = Number(pct);
     if (!Number.isFinite(p)) return 0;
-    return Math.max(0, Math.min(100, p)) / 100;
+    const position = Math.max(0, Math.min(MIX_FADER_MAX, p));
+    if (position <= 100) return position / 100;
+    return 10 ** ((position - 100) / 20);
+}
+function _mixFaderLabelPure(position) {
+    const gain = _mixGainForPctPure(position);
+    if (!(gain > 0)) return '−∞ dB';
+    const db = 20 * Math.log10(gain);
+    return (db >= 0 ? '+' : '−') + Math.abs(db).toFixed(1) + ' dB';
 }
 // Convert time-domain samples to a DAW-style meter position. The visible
 // range is -60 dBFS..0 dBFS; silence and invalid samples stay pinned at zero.
@@ -1121,6 +1213,15 @@ export function _mixMeterLevelPure(samples) {
     if (!(rms > 0)) return 0;
     const db = 20 * Math.log10(rms);
     return Math.max(0, Math.min(1, (db + 60) / 60));
+}
+export function _mixMeterPeakDbPure(samples) {
+    if (!samples || !samples.length) return -Infinity;
+    let peak = 0;
+    for (let i = 0; i < samples.length; i++) {
+        const sample = Math.abs(Number(samples[i]));
+        if (Number.isFinite(sample) && sample > peak) peak = sample;
+    }
+    return peak > 0 ? 20 * Math.log10(peak) : -Infinity;
 }
 // First play of a session starts the recording below target and ramps up
 // (~0.35 s): an unexpectedly hot recording is reached, never jumped to.
@@ -1172,13 +1273,25 @@ function _attachMeterTap(node, key) {
 }
 
 export function audioMixerMeterLevels() {
-    const levels = { ref: 0, guide: 0, click: 0, master: 0 };
-    for (const key of Object.keys(levels)) {
+    const levels = {
+        ref: 0, guide: 0, click: 0, master: 0,
+        tracks: {}, peaks: {}, trackPeaks: {},
+    };
+    for (const key of ['ref', 'guide', 'click', 'master']) {
         const analyser = _meterAnalysers[key];
         if (!analyser || typeof analyser.getFloatTimeDomainData !== 'function') continue;
         const samples = new Float32Array(analyser.fftSize || 256);
         analyser.getFloatTimeDomainData(samples);
         levels[key] = _mixMeterLevelPure(samples);
+        levels.peaks[key] = _mixMeterPeakDbPure(samples);
+    }
+    for (const [key, analyser] of Object.entries(_meterAnalysers)) {
+        if (!key.startsWith('track:') || !analyser || typeof analyser.getFloatTimeDomainData !== 'function') continue;
+        const samples = new Float32Array(analyser.fftSize || 256);
+        analyser.getFloatTimeDomainData(samples);
+        const trackKey = key.slice(6);
+        levels.tracks[trackKey] = _mixMeterLevelPure(samples);
+        levels.trackPeaks[trackKey] = _mixMeterPeakDbPure(samples);
     }
     return levels;
 }
@@ -1237,15 +1350,10 @@ export function _mixLoadPct() {
 // reference still never sums through the guide limiter (see the bus comment
 // above). This only adds user volume control; unity by default.
 let _refGain = null;
-function _activeAudioStripGain() {
-    const strip = host.partStripState('audio:' + (S.activeAudioSourceId || 'master'));
-    if (!strip || strip.audible === false) return 0;
-    return Math.max(0, Math.min(1, Number(strip.vol) || 0));
-}
 function _ensureRefGain() {
     if (_refGain || !S.audioCtx) return _refGain;
     _refGain = S.audioCtx.createGain();
-    _refGain.gain.value = _mixGainForPctPure(_mixLoadPct().ref) * _activeAudioStripGain();
+    _refGain.gain.value = _mixGainForPctPure(_mixLoadPct().ref);
     const bus = _ensureMasterBus();
     _refGain.connect(bus ? bus.masterGain : S.audioCtx.destination);
     _attachMeterTap(_refGain, 'ref');
@@ -1261,7 +1369,7 @@ let _mixFirstPlayDone = false;
 function _mixApplyFirstPlayFade() {
     if (_mixFirstPlayDone || !_refGain || !S.audioCtx) return;
     _mixFirstPlayDone = true;
-    const target = _mixGainForPctPure(_mixLoadPct().ref) * _activeAudioStripGain();
+    const target = _mixGainForPctPure(_mixLoadPct().ref);
     const now = S.audioCtx.currentTime;
     _refGain.gain.setValueAtTime(_mixFirstPlayStartGainPure(target), now);
     _refGain.gain.linearRampToValueAtTime(target, now + 0.35);
@@ -1689,10 +1797,9 @@ export function _abDisarm() {
 export function _abApplyRefGain() {
     const rg = _ensureRefGain();
     if (!rg || !S.audioCtx) return;
-    const stripGain = _activeAudioStripGain();
     const target = _abRefTargetPure(
         _abActive(), !!S.playing, _abPhase,
-        _mixGainForPctPure(_mixLoadPct().ref) * stripGain);
+        _mixGainForPctPure(_mixLoadPct().ref));
     // Same ~20 ms ramp as every mixer move — a phase flip is never a pop.
     rg.gain.setTargetAtTime(target, S.audioCtx.currentTime, 0.02);
 }
@@ -1818,7 +1925,7 @@ export function editorSetMixLevel(bus, val) {
     const label = document.getElementById(
         (bus === 'ref' ? 'editor-mix-ref' : bus === 'guide' ? 'editor-mix-guide'
             : bus === 'click' ? 'editor-mix-click' : 'editor-mix-master') + '-val');
-    if (label) label.textContent = p + '%';
+    if (label) label.textContent = _mixFaderLabelPure(p);
 }
 
 export function editorSetEditBlip() {
@@ -1853,7 +1960,7 @@ export function initAudio() {
 export function teardownAudio() {
     cancelAudioLoad();
     _cancelOnsetJob();
-    try { if (S.audioSource) { S.audioSource.stop(); S.audioSource = null; } } catch (_) { /* already stopped */ }
+    _stopTrackAudioSources();
     _stopRefMedia();
     try { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } } catch (_) { /* no frame queued */ }
     S.playing = false;
