@@ -300,12 +300,13 @@ export async function editorDoAddKeys() {
             arrangements = Array.isArray(data.arrangements)
                 ? data.arrangements
                 : (data.arrangement ? [data.arrangement] : []);
-            if (pickedList.length > 1) {
-                arrangements.forEach((arr, i) => {
-                    const picked = pickedList[i];
-                    if (arr && picked) arr.name = _midiKeysArrNamePure(picked.name, picked.index);
-                });
-            }
+            // EVERY selection — including a single track — carries its source
+            // name (review #284 item 20: a lone import must not fall back to
+            // a generic server-side 'Keys').
+            arrangements.forEach((arr, i) => {
+                const picked = pickedList[i];
+                if (arr && picked) arr.name = _midiKeysArrNamePure(picked.name, picked.index);
+            });
         } else {
             const resp = await fetch('/api/plugins/editor/import-keys', {
                 method: 'POST',
