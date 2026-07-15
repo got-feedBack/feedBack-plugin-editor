@@ -139,6 +139,7 @@ function _panel() { return document.getElementById('editor-mixer-panel'); }
 let _lastKey = '';
 let _meterFrame = 0;
 let _meterLastAt = 0;
+let _mixerCloseTimer = 0;
 const _meterShown = Object.create(null);
 const _meterPeakDb = Object.create(null);
 const _meterPeakAt = Object.create(null);
@@ -297,6 +298,9 @@ function _wire(panel) {
         close.__mixerCloseWired = true;
         close.addEventListener('click', () => editorToggleMixerPanel(false));
     }
+    panel.addEventListener('animationend', (e) => {
+        if (e.target === panel && e.animationName === 'editor-mixer-fall') _finishMixerClose(panel);
+    });
     panel.addEventListener('click', (e) => {
         const btn = e.target && e.target.closest ? e.target.closest('[data-mix-act="mute"],[data-mix-act="solo"]') : null;
         if (!btn) return;
@@ -323,7 +327,9 @@ function _wire(panel) {
 // or the part list itself changed. No-op while the panel is hidden.
 export function _mixerPanelRefresh() {
     const panel = _panel();
-    if (!panel || panel.classList.contains('hidden')) { _lastKey = ''; return; }
+    if (!panel || panel.classList.contains('hidden') || panel.classList.contains('editor-mixer-closing')) {
+        _lastKey = ''; return;
+    }
     const container = document.getElementById('editor-mixer-parts');
     if (!container) return;
     const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.audioSources);
@@ -335,13 +341,29 @@ export function _mixerPanelRefresh() {
 
 // The one toggle every entry point routes through: View ▸ Panels ▸ Mixer,
 // the toolbar Mix button, the transport Mix button, and Shift+C.
-export function editorToggleMixerPanel(force) {
+function _finishMixerClose(panel, force = false) {
+    if (!force && !panel.classList.contains('editor-mixer-closing')) return;
+    if (_mixerCloseTimer) { clearTimeout(_mixerCloseTimer); _mixerCloseTimer = 0; }
+    panel.classList.remove('editor-mixer-closing');
+    panel.classList.add('hidden');
+    host.scheduleCanvasResize?.();
+}
+
+function _mixerReducedMotion() {
+    try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; }
+    catch (_) { return false; }
+}
+
+export function editorToggleMixerPanel(force, instant = false) {
     const panel = _panel();
     if (!panel) return false;
-    const show = force === undefined ? panel.classList.contains('hidden') : !!force;
-    panel.classList.toggle('hidden', !show);
+    const closed = panel.classList.contains('hidden') || panel.classList.contains('editor-mixer-closing');
+    const show = force === undefined ? closed : !!force;
     try { localStorage.setItem('editorMixerPanel', show ? '1' : '0'); } catch (_) { /* storage blocked */ }
     if (show) {
+        if (_mixerCloseTimer) { clearTimeout(_mixerCloseTimer); _mixerCloseTimer = 0; }
+        panel.classList.remove('editor-mixer-closing');
+        panel.classList.remove('hidden');
         _wire(panel);
         _renderBuses();
         _lastKey = '';
@@ -349,9 +371,17 @@ export function editorToggleMixerPanel(force) {
         _startMeters();
     } else {
         _stopMeters();
+        if (instant || panel.classList.contains('hidden') || _mixerReducedMotion()) {
+            _finishMixerClose(panel, true);
+        } else if (!panel.classList.contains('editor-mixer-closing')) {
+            panel.classList.add('editor-mixer-closing');
+            // animationend is authoritative; this covers teardown or a
+            // visibility change swallowing that event.
+            _mixerCloseTimer = setTimeout(() => _finishMixerClose(panel), 240);
+        }
     }
     _refreshMixerButtons(show);
-    host.scheduleCanvasResize?.();
+    if (show) host.scheduleCanvasResize?.();
     return true;
 }
 
@@ -363,5 +393,5 @@ export function initMixerPanel() {
     _wire(panel);
     // A project always opens with maximum track-area space. The Mix button is
     // a view toggle for this screen, not a persisted launch preference.
-    editorToggleMixerPanel(false);
+    editorToggleMixerPanel(false, true);
 }

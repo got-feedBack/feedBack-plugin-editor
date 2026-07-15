@@ -107,6 +107,8 @@ t('guide prose colors are theme tokens, not dark-only hardcoded inks', () => {
 
 t('the mixer drawer hidden state overrides its flex display rule', () => {
     assert.match(block('#plugin-editor .editor-mixer-drawer.hidden'), /display:\s*none/);
+    assert.match(block('#plugin-editor .editor-mixer-drawer.editor-mixer-closing'), /editor-mixer-fall/);
+    assert.match(css, /@keyframes\s+editor-mixer-fall\s*\{[^}]*translateY\(0\)[\s\S]*translateY\(100%\)/);
 });
 
 t('responsive track headers preserve identity controls and progressively hide detail', () => {

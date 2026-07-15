@@ -187,9 +187,15 @@ t('toggle opens/closes the panel, persists the pref, and lights both Mix buttons
     assert.strictEqual(els['editor-mixer-btn'].getAttribute('aria-pressed'), 'true');
     assert.strictEqual(els['editor-tp-mixer'].getAttribute('aria-pressed'), 'true');
     editorToggleMixerPanel(false);
-    assert.strictEqual(els['editor-mixer-panel'].classList.contains('hidden'), true);
+    assert.strictEqual(els['editor-mixer-panel'].classList.contains('hidden'), false,
+        'drawer remains rendered during its exit animation');
+    assert.strictEqual(els['editor-mixer-panel'].classList.contains('editor-mixer-closing'), true);
     assert.strictEqual(store.get('editorMixerPanel'), '0');
     assert.strictEqual(els['editor-mixer-btn'].getAttribute('aria-pressed'), 'false');
+    const ends = els['editor-mixer-panel'].listeners.animationend || [];
+    ends[0]({ target: els['editor-mixer-panel'], animationName: 'editor-mixer-fall' });
+    assert.strictEqual(els['editor-mixer-panel'].classList.contains('hidden'), true,
+        'drawer hides only after sliding below the viewport');
 });
 
 t('init always starts closed even when the previous project left the mixer open', () => {
@@ -205,8 +211,21 @@ t('title-bar close button explicitly hides an open mixer', () => {
     const handlers = els['editor-mixer-close'].listeners.click || [];
     assert.strictEqual(handlers.length, 1);
     handlers[0]({ target: els['editor-mixer-close'] });
+    assert.strictEqual(els['editor-mixer-panel'].classList.contains('editor-mixer-closing'), true);
+    const ends = els['editor-mixer-panel'].listeners.animationend || [];
+    ends[0]({ target: els['editor-mixer-panel'], animationName: 'editor-mixer-fall' });
     assert.strictEqual(els['editor-mixer-panel'].classList.contains('hidden'), true);
     assert.strictEqual(els['editor-mixer-btn'].getAttribute('aria-pressed'), 'false');
+});
+
+t('reopening during the slide-down ignores a stale close animation event', () => {
+    editorToggleMixerPanel(true);
+    editorToggleMixerPanel(false);
+    editorToggleMixerPanel(true);
+    const ends = els['editor-mixer-panel'].listeners.animationend || [];
+    ends[0]({ target: els['editor-mixer-panel'], animationName: 'editor-mixer-fall' });
+    assert.strictEqual(els['editor-mixer-panel'].classList.contains('hidden'), false);
+    assert.strictEqual(els['editor-mixer-panel'].classList.contains('editor-mixer-closing'), false);
 });
 
 t('bus and master faders seed from host.mixUiState on open', () => {

@@ -564,7 +564,11 @@ html.fb-immersive #plugin-editor .editor-root {
     animation: editor-mixer-rise .18s ease-out both;
 }
 #plugin-editor .editor-mixer-drawer.hidden { display: none; }
+#plugin-editor .editor-mixer-drawer.editor-mixer-closing {
+    animation: editor-mixer-fall .18s ease-in both; pointer-events: none;
+}
 @keyframes editor-mixer-rise { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes editor-mixer-fall { from { transform: translateY(0); } to { transform: translateY(100%); } }
 #plugin-editor .editor-mixer-titlebar {
     height: 2rem; flex: none; display: flex; align-items: center; justify-content: space-between;
     padding: 0 .75rem; border-bottom: 1px solid #374151; color: #d1d5db; font-weight: 700;

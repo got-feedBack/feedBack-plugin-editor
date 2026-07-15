@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fader and then pairing/guide details. Taller workspaces modestly auto-fit
   the shared header/lane heights. Right-click Rename now edits the prefilled
   name directly in its track or folder row instead of inside the context menu.
+  Closing the Mixer now reverses its drawer motion and slides below the
+  workspace before hiding; startup stays instantly closed and reduced-motion
+  users skip the animation.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
