@@ -46,7 +46,7 @@ export function _editorKeySigPure(e) {
 const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'save', label: 'Save project', group: 'File', status: 'ready', keys: { feedback: 'Ctrl+S', eof: 'F2 / Ctrl+S' } },
     { id: 'toggleWaveform', label: 'Show/hide waveform', group: 'View', status: 'ready', keys: { feedback: 'W', eof: 'F5' } },
-    { id: 'toggleGuideClap', label: 'Toggle guide claps', group: 'Preview', status: 'ready', keys: { feedback: 'C', logical: 'Ctrl+Shift+C', eof: 'C' } },
+    { id: 'toggleGuideClap', label: 'Toggle guide voices', group: 'Preview', status: 'ready', keys: { feedback: 'C', logical: 'Ctrl+Shift+C', eof: 'C' } },
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', logical: 'K', cableton: 'O', eof: '' } },
     { id: 'toggleMixer', label: 'Toggle Mixer panel', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
     { id: 'togglePlayAllTracks', label: 'Play all tracks (band mode)', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },

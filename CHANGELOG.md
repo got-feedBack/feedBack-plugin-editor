@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the editor never draws a connection the music doesn't have.
 ### Added
 
+- **Import a Guitar Pro or MIDI file, press play, hear music.** Chart-only
+  sessions (no recording) now sound out of the box: the guide is ON by
+  default there, **every track plays its instrument** (band mode defaults on
+  too), and the guide voice is always a real instrument — the old "clap"
+  tick is gone as a choice and survives only as a split-second stand-in
+  while a sound loads. The default instrument sounds (grand piano, clean
+  electric guitar, fingered bass — FluidR3, MIT) now **ship inside the
+  plugin** (~2 MB), so the first play needs no internet. Songs with a
+  recording keep today's quiet defaults, and any choice you make on the
+  toggles is remembered over the defaults, both ways.
+
 - **Play all tracks — the chart plays as a band, mixed by the Mixer.** The
   new **All tracks** toggle in the Mixer header (also in the Transport menu
   and the command palette) makes EVERY track voice its instrument at once —
