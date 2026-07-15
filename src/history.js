@@ -4,8 +4,8 @@
 // The 47 command classes still live in src/main.js — they are interleaved with
 // the feature code that constructs them, and each reaches deep into it. Only
 // the stack itself lifts cleanly. Every command is duck-typed: `exec()`,
-// `rollback()`, and the three opt-out flags this file reads (`songScope`,
-// `pitchPreserving`, `suggestResolved`).
+// `rollback()`, the three edit-lock opt-outs (`songScope`, `pitchPreserving`,
+// `suggestResolved`), and `sessionNeutral` for undoable editor preferences.
 //
 // Browser surface: `document.getElementById` in _ui(), for the toolbar's
 // undo/redo buttons.
@@ -58,7 +58,7 @@ export class EditHistory {
         this.undo.push(cmd);
         if (this.undo.length > MAX_UNDO) this.undo.shift();
         this.redo = [];
-        this._afterEdit();
+        this._afterEdit(cmd);
         this._ui();
     }
 
@@ -76,7 +76,7 @@ export class EditHistory {
         // part the rollback would actually touch.
         if (_locked(c)) return;
         this.undo.pop(); c.rollback(); this.redo.push(c);
-        this._afterEdit(); this._ui(); host.draw(); host.updateStatus();
+        this._afterEdit(c); this._ui(); host.draw(); host.updateStatus();
     }
 
     doRedo() {
@@ -90,7 +90,7 @@ export class EditHistory {
         // without this a redo-heavy session could grow it past the bound that
         // exec()/doUndo already enforce. Oldest drops first, mirroring exec().
         if (this.undo.length > MAX_UNDO) this.undo.shift();
-        this._afterEdit(); this._ui(); host.draw(); host.updateStatus();
+        this._afterEdit(c); this._ui(); host.draw(); host.updateStatus();
     }
 
     // #18: drop the whole stack when the model is rebuilt under us (the save /
@@ -148,13 +148,16 @@ export class EditHistory {
         return { undone, label, foundCheckpoint: true };
     }
 
-    _afterEdit() {
+    _afterEdit(cmd = null) {
         // Bump the shared edit generation: the section-coverage, chord-display
         // and drum-lint memos all key on it. An in-place note-time move keeps
         // the notes array's identity and length, so their cheap cache keys
         // can't see it — this bump is what forces a recompute.
         bumpEditGen();
-        markSessionDirty();
+        // Editor-only preference commands (for example tempo anchor locks)
+        // belong in Undo but are not serialized into the pack. They still
+        // invalidate proposal caches, but must not create a false Save prompt.
+        if (!(cmd && cmd.sessionNeutral)) markSessionDirty();
         // Keep the keys viewport in sync with the current note range so
         // multi-octave authoring works without manual range control.
         // expandOnly=true so adding a note outside the current viewport

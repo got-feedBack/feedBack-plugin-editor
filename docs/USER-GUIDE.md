@@ -231,6 +231,11 @@ Three ways to set the tempo, from coarse to fine:
    - **Beat-lock**: lock a barline you've hand-verified so later automatic
      re-fits (Sync, Suggest, modulation) leave its time alone. Your manual edits
      are always kept — locking just protects a bar from the *next* auto-fit.
+     Drag across the body of the Tempo Map lane to marquee-select barlines;
+     hold **Shift** while dragging to add another range, or **Ctrl/Cmd-click**
+     marker handles to toggle individual barlines. Press **S** or right-click
+     any selected marker to lock/unlock the whole selection. Drag the small
+     handles along the top edge when you want to move a marker instead.
 
 ### Offset (audio alignment)
 

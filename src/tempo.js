@@ -54,6 +54,7 @@ import { _signpostFirstLock, _signpostNote } from './signposts.js';
 
 const TEMPO_HUD_H = 26;        // bottom strip height in tempo-map mode
 const TEMPO_POLE_HALF = 6;     // barline pole grab half-width (px)
+const TEMPO_HANDLE_H = 14;     // direct pole/sub-beat edits live only in this top band
 const SUGGEST_HANDLE_TOP = 16; // ghost handle band offset (below pole handles)
 const SUGGEST_HANDLE_H = 11;   // ghost handle band height
 
@@ -1060,6 +1061,13 @@ export function _tempoSyncAtX(x, y) {
     return best;
 }
 
+// The body of the tempo lane is marquee territory. Direct pole and sub-beat
+// drags are intentionally limited to the visible handle band at its top, so a
+// dense/zoomed-out grid cannot consume every possible marquee start point.
+export function _tempoDirectEditBandPure(y, gridTop) {
+    return Number(y) >= Number(gridTop) && Number(y) <= Number(gridTop) + TEMPO_HANDLE_H;
+}
+
 // Sub-beat hit-test — the per-beat rubato drag's target. Same vertical
 // band as the poles, tighter tolerance so a pole always wins when both
 // are within reach.
@@ -1267,8 +1275,22 @@ export function _tempoMapOnMouseDown(e, x, y) {
     }
 
     // Click a sync-point pole to select it and start a drag.
-    const hit = _tempoSyncAtX(x, y);
+    const gridTop = TIMELINE_TOP + WAVEFORM_H;
+    const directEdit = _tempoDirectEditBandPure(y, gridTop);
+    const hit = directEdit ? _tempoSyncAtX(x, y) : -1;
     if (hit >= 0) {
+        // Ctrl/Cmd-click toggles one pole without beginning a drag — the DAW
+        // complement to Shift-click range selection and body-lane marquee.
+        if (e.ctrlKey || e.metaKey) {
+            S.tempoSelMulti = _tempoToggleDownbeatSelectionPure(S.tempoSelMulti, hit);
+            S.tempoSel = S.tempoSelMulti.has(hit)
+                ? hit
+                : ([...S.tempoSelMulti].pop() ?? -1);
+            _tapTempo = null;
+            host.draw();
+            setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
+            return;
+        }
         // Shift+click extends a contiguous range of downbeats from the current
         // focus to the clicked pole into the multi-selection (PR 5a). No drag.
         if (e.shiftKey && S.tempoSel >= 0 && S.beats[S.tempoSel] && S.beats[S.tempoSel].measure > 0) {
@@ -1330,7 +1352,7 @@ export function _tempoMapOnMouseDown(e, x, y) {
     // No pole under the cursor — try an individual (sub-)beat tick for a
     // rubato drag: re-time one beat inside its measure without touching
     // the downbeats. Essential for hand-syncing accel/rit within a bar.
-    const beatHit = _tempoSubBeatAtX(x, y);
+    const beatHit = directEdit ? _tempoSubBeatAtX(x, y) : -1;
     if (beatHit >= 0) {
         _tapTempo = null;
         if (S.tempoSelMulti) S.tempoSelMulti.clear();
@@ -1401,6 +1423,13 @@ export function _tempoMapOnContextMenu(e) {
         + `data-action="${action}"${title ? ` title="${title}"` : ''}>${label}</button>`;
     let html = '';
     if (onPole >= 0) {
+        // A right-click outside the current group selects only the clicked
+        // barline. Inside the group it preserves the whole selection, matching
+        // track and region context menus in a DAW.
+        if (!S.tempoSelMulti || !S.tempoSelMulti.has(onPole)) {
+            S.tempoSelMulti = new Set();
+        }
+        S.tempoSel = onPole;
         const cur = _tempoMeasureBeatCount(onPole);
         html += `<div class="px-3 py-1 text-xs text-gray-500">Measure: ${cur} beats</div>`;
         const m = _tempoMeasures().find(mm => mm.i === onPole) || null;
@@ -1417,10 +1446,12 @@ export function _tempoMapOnContextMenu(e) {
             if (cur > 1) html += mkBtn('pickup', 'Set pickup (partial first bar — for music that starts before beat 1)…');
         }
         html += '<div class="border-t border-gray-700 my-1"></div>';
-        html += mkBtn('togglelock',
-            (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
-            '', LOCK_TOOLTIP);
         const nSelected = S.tempoSelMulti ? S.tempoSelMulti.size : 0;
+        const lockPlan = _tempoLockPlanPure(S.beats, onPole, S.tempoSelMulti);
+        const lockVerb = lockPlan && lockPlan.locked ? 'Lock' : 'Unlock';
+        html += mkBtn('togglelock', nSelected > 1
+            ? `${lockVerb} ${nSelected} selected barlines`
+            : `${lockVerb} barline`, '', LOCK_TOOLTIP);
         if (nSelected > 1) {
             html += '<div class="border-t border-gray-700 my-1"></div>';
             html += mkBtn('half-range', 'Half-time the range', '', 'Merge pairs of bars — audio positions hold; notes keep their times');
@@ -1448,7 +1479,7 @@ export function _tempoMapOnContextMenu(e) {
             else if (a === 'flatten-range') _tempoFlattenRange();
             else if (a === 'delete-multi') _tempoDeleteSelection();
             else if (a === 'delete') _tempoDeleteSyncPoint(onPole);
-            else if (a === 'togglelock') { S.tempoSel = onPole; _editorToggleSyncLock(); }
+            else if (a === 'togglelock') _editorToggleSyncLock();
             else if (a === 'insert') _tempoInsertSyncPoint(xToTime(x));
             else if (a === 'bpmedit') _tempoPromptMeasureBpm(onPole);
             else if (a === 'tsedit') _tempoPromptTimeSignature(onPole);
@@ -1614,6 +1645,21 @@ export function _tempoMarqueeDownbeatsPure(beats, tLo, tHi) {
     return out;
 }
 
+export function _tempoToggleDownbeatSelectionPure(indices, index) {
+    const next = new Set(indices || []);
+    if (next.has(index)) next.delete(index);
+    else next.add(index);
+    return next;
+}
+
+export function _tempoMarqueeSelectionPure(beats, existing, tStart, tEnd, additive) {
+    const indices = additive ? new Set(existing || []) : new Set();
+    const hits = _tempoMarqueeDownbeatsPure(beats, tStart, tEnd);
+    for (const i of hits) indices.add(i);
+    const focus = hits.length ? (tEnd >= tStart ? hits[hits.length - 1] : hits[0]) : -1;
+    return { indices, focus };
+}
+
 // Selected downbeats grouped into contiguous downbeat runs, ignoring sub-beats
 // and invalid indices. Used by the canvas wash so disjoint selections don't
 // paint one large min/max slab across unselected bars.
@@ -1649,10 +1695,11 @@ export function _tempoMarqueeOnEnd() {
         host.draw();
         return;
     }
-    if (!dg.shift) S.tempoSelMulti.clear();
-    for (const i of _tempoMarqueeDownbeatsPure(S.beats, xToTime(dg.startX), xToTime(dg.curX))) {
-        S.tempoSelMulti.add(i);
-    }
+    const result = _tempoMarqueeSelectionPure(S.beats, S.tempoSelMulti,
+        xToTime(dg.startX), xToTime(dg.curX), dg.shift);
+    S.tempoSelMulti = result.indices;
+    if (result.focus >= 0) S.tempoSel = result.focus;
+    else if (!dg.shift) S.tempoSel = -1;
     host.draw();
     setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
 }
@@ -2506,6 +2553,14 @@ export function _applyBeatLocksPure(beats, lockedTimes, tol) {
     }
     return beats;
 }
+
+export function _tempoLockPlanPure(beats, focus, selected) {
+    const valid = i => Number.isInteger(i) && beats && beats[i] && beats[i].measure > 0;
+    const multi = [...new Set(selected || [])].filter(valid).sort((a, b) => a - b);
+    const indices = multi.length ? multi : (valid(focus) ? [focus] : []);
+    if (!indices.length) return null;
+    return { indices, locked: !indices.every(i => !!beats[i].locked) };
+}
 /* @pure:beat-lock:end */
 
 // Persist the current locked sync points for this song (editor-pref).
@@ -2516,6 +2571,32 @@ function _saveBeatLocks() {
         if (times.length) localStorage.setItem(key, JSON.stringify(times));
         else localStorage.removeItem(key);
     } catch (_) { /* localStorage unavailable */ }
+}
+
+export class TempoLockCmd {
+    constructor(beats, indices, locked) {
+        this.entries = (indices || []).filter(i => beats && beats[i] && beats[i].measure > 0)
+            .map(i => ({ index: i, time: beats[i].time, before: beats[i].locked, after: !!locked }));
+        this.label = locked ? 'lock barlines' : 'unlock barlines';
+        this.songScope = true;
+        this.sessionNeutral = true;
+    }
+    _apply(field) {
+        for (const entry of this.entries) {
+            let beat = S.beats[entry.index];
+            if (!beat || Math.abs(beat.time - entry.time) > 0.02) {
+                beat = S.beats.find(item => item && Math.abs(item.time - entry.time) <= 0.02);
+            }
+            if (!beat || beat.measure <= 0) continue;
+            const value = entry[field];
+            if (value === undefined) delete beat.locked;
+            else beat.locked = !!value;
+        }
+        _saveBeatLocks();
+        host.draw();
+    }
+    exec() { this._apply('after'); }
+    rollback() { this._apply('before'); }
 }
 // Re-attach persisted locks onto S.beats after a load (times match the pack).
 export function _restoreBeatLocks() {
@@ -2542,22 +2623,21 @@ export function _lockStatusTextPure(locked) {
 // Toggle the lock on the selected barline: a locked anchor's time is held by
 // later global tempo re-fits (see _respaceWithLocksPure). Editor-pref, persisted.
 export function _editorToggleSyncLock() {
-    if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map barline to lock.');
+    const plan = S.tempoMapMode
+        ? _tempoLockPlanPure(S.beats, S.tempoSel, S.tempoSelMulti) : null;
+    if (!plan) {
+        setStatus('Select one or more Tempo Map barlines to lock.');
         return true;
     }
-    const b = S.beats[S.tempoSel];
-    if (!b) return true;
-    b.locked = !b.locked;
-    _saveBeatLocks();
-    host.draw();
-    // A lock toggle is not a history command, so record the moment as a
-    // checkpoint on the current top-of-undo — Ctrl+Alt+Z can rewind to it.
-    if (S.history) S.history.checkpoint(b.locked ? 'Lock barline' : 'Unlock barline');
+    const cmd = new TempoLockCmd(S.beats, plan.indices, plan.locked);
+    if (S.history) S.history.exec(cmd);
+    else cmd.exec();
     // First-win cue #1 (charrette §3.4): the first time a barline is locked to
     // the recording — a correctness milestone, not an action count.
-    if (b.locked) _signpostFirstLock();
-    setStatus(_lockStatusTextPure(b.locked));
+    if (plan.locked) _signpostFirstLock();
+    setStatus(plan.indices.length === 1
+        ? _lockStatusTextPure(plan.locked)
+        : `${plan.locked ? 'Locked' : 'Unlocked'} ${plan.indices.length} selected barlines.`);
     return true;
 }
 

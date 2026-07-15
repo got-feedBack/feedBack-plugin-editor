@@ -11,8 +11,10 @@ import assert from 'node:assert';
 import { S } from '../src/state.js';
 import { EditHistory } from '../src/history.js';
 import {
-    TempoGridCmd, _tempoDeletableBarlineIndicesPure, _tempoDeleteBarlinesPure, _tempoDeleteSelection,
-    _tempoMarqueeDownbeatsPure, _tempoSelectedDownbeatRunsPure, _tempoSelectDownbeatRange,
+    TempoGridCmd, _editorToggleSyncLock, _tempoDeletableBarlineIndicesPure,
+    _tempoDeleteBarlinesPure, _tempoDeleteSelection, _tempoDirectEditBandPure,
+    _tempoLockPlanPure, _tempoMarqueeDownbeatsPure, _tempoMarqueeSelectionPure,
+    _tempoSelectedDownbeatRunsPure, _tempoSelectDownbeatRange, _tempoToggleDownbeatSelectionPure,
 } from '../src/tempo.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 
@@ -37,6 +39,7 @@ function seed() {
     seedState({ arrangements: [mkArr()], currentArr: 0, sessionId: 's1', beats: grid(), sections: [], duration: 16, history: new EditHistory() });
     S.tempoSelMulti = new Set();
     S.tempoSel = -1;
+    S.tempoMapMode = true;
 }
 
 // ── marquee hit math (pure) ──────────────────────────────────────────
@@ -46,6 +49,66 @@ t('_tempoMarqueeDownbeatsPure returns only downbeats in the time range', () => {
     assert.deepStrictEqual(_tempoMarqueeDownbeatsPure(b, 8.5, 3.5), [4, 8], 'order-independent');
     assert.deepStrictEqual(_tempoMarqueeDownbeatsPure(b, 1.2, 3.9), [], 'a sub-beat-only span selects nothing');
     assert.deepStrictEqual(_tempoMarqueeDownbeatsPure(b, -1, 99), [0, 4, 8, 12], 'a wide span = all downbeats');
+});
+
+t('the lane body stays available for marquee selection below the marker handles', () => {
+    assert.strictEqual(_tempoDirectEditBandPure(100, 100), true);
+    assert.strictEqual(_tempoDirectEditBandPure(114, 100), true);
+    assert.strictEqual(_tempoDirectEditBandPure(115, 100), false);
+    assert.strictEqual(_tempoDirectEditBandPure(200, 100), false);
+});
+
+t('_tempoMarqueeSelectionPure replaces or extends selection and focuses the drag end', () => {
+    const b = grid();
+    let result = _tempoMarqueeSelectionPure(b, new Set([0]), 3.5, 8.5, false);
+    assert.deepStrictEqual([...result.indices], [4, 8]);
+    assert.strictEqual(result.focus, 8, 'forward drag focuses its last hit');
+    result = _tempoMarqueeSelectionPure(b, new Set([0]), 8.5, 3.5, true);
+    assert.deepStrictEqual([...result.indices], [0, 4, 8]);
+    assert.strictEqual(result.focus, 4, 'reverse drag focuses its last hit');
+});
+
+t('Ctrl/Cmd-style selection toggles individual downbeats without mutating the original set', () => {
+    const selected = new Set([4]);
+    const added = _tempoToggleDownbeatSelectionPure(selected, 8);
+    assert.deepStrictEqual([...added], [4, 8]);
+    assert.deepStrictEqual([...selected], [4], 'source selection is unchanged');
+    assert.deepStrictEqual([..._tempoToggleDownbeatSelectionPure(added, 4)], [8]);
+});
+
+t('_tempoLockPlanPure applies one state to the whole selected group', () => {
+    const b = grid();
+    b[4].locked = true;
+    assert.deepStrictEqual(_tempoLockPlanPure(b, 0, new Set([4, 8])), {
+        indices: [4, 8], locked: true,
+    }, 'a mixed group locks all members');
+    b[8].locked = true;
+    assert.deepStrictEqual(_tempoLockPlanPure(b, 0, new Set([4, 8])), {
+        indices: [4, 8], locked: false,
+    }, 'an all-locked group unlocks all members');
+    assert.deepStrictEqual(_tempoLockPlanPure(b, 12, new Set()), {
+        indices: [12], locked: true,
+    }, 'single focus remains supported');
+});
+
+t('_editorToggleSyncLock toggles a marquee selection as one undoable, session-neutral edit', () => {
+    seed();
+    S.tempoSel = 8;
+    S.tempoSelMulti = new Set([4, 8]);
+    S.beats[4].locked = true;
+    S.beats[8].locked = true;
+    S.sessionDirty = false;
+    const before = S.beats.map(b => b.locked);
+    _editorToggleSyncLock();
+    assert.strictEqual(S.beats[4].locked, false);
+    assert.strictEqual(S.beats[8].locked, false);
+    assert.strictEqual(S.history.undo.length, 1, 'one command unlocks the group');
+    assert.strictEqual(S.sessionDirty, false, 'editor preference does not dirty the feedpak');
+    S.history.doUndo();
+    assert.deepStrictEqual(S.beats.map(b => b.locked), before, 'undo restores every prior lock state');
+    S.history.doRedo();
+    assert.strictEqual(S.beats[4].locked, false);
+    assert.strictEqual(S.beats[8].locked, false);
 });
 
 // ── bulk-delete transform (pure) ─────────────────────────────────────

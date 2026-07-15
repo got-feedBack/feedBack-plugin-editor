@@ -114,6 +114,9 @@ shows `m:ss.mmm` or SMPTE. All lanes use the ruler's single x/time conversion.
 - Tempo/meter changes have sparse labeled markers.
 - The tail after the last confirmed downbeat is labeled **Unmapped**.
 - Locked anchors remain visibly distinct.
+- The marker-handle band owns direct barline movement; the lane body owns
+  marquee selection. Shift-drag extends a selection and Ctrl/Cmd-click toggles
+  individual anchors. Lock/unlock is atomic across the selected anchors.
 - Status text names the musical result and provides an undo path.
 - Whole-song metronome fits distinguish detected and extrapolated proposals and
   never commit without an explicit accept.
