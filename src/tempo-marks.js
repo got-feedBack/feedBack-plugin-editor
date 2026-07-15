@@ -110,6 +110,71 @@ function _marksRemapPure(marks, oldToNew) {
     return out.sort((a, b) => (a.measure - b.measure) || (a.kind < b.kind ? -1 : 1));
 }
 
+// Topology edits with NO surviving-downbeat old→new map (pickup, halve/double
+// range, multi-delete, heal, and the wholesale rebuilds — zones apply, rough
+// map, flatten, MIDI tempo map) remap by TIME instead: marks follow the MUSIC.
+// Each mark rides its old bar's downbeat time into whichever new bar's span
+// [downbeat, nextDownbeat) contains that moment (epsilon on the lower edge —
+// grid times are rounded, so a boundary moment belongs to the bar whose
+// downbeat it is). Only the anchor `measure` remaps; every other field (e.g. a
+// ramp's `measureEnd`, P2-7) rides the spread untouched.
+//   - old bar missing from oldBeats, or the moment falls before the new
+//     grid's first bar ≥ 1 (a new pickup bar 0) or past its final beat →
+//     the mark DROPS (honest drop, never a stale key);
+//   - two same-kind marks landing on one new bar (halve-range merging two
+//     marked bars): better provenance wins (TEMPO_MARK_PROVENANCE order —
+//     authored 'confirmed' beats every machine tier, unknown ranks last);
+//     equal tiers → the EARLIER old bar wins, the loser drops.
+// Returns the input array BY IDENTITY when nothing changes, so callers can
+// skip the command snapshot (same convention as _marksMeterReconcilePure).
+const _MARK_TIME_EPS = 1e-6;
+function _marksRemapByTimePure(marks, oldBeats, newBeats) {
+    if (!Array.isArray(marks)) return [];
+    if (!marks.length || !Array.isArray(oldBeats) || !Array.isArray(newBeats)) return marks;
+    const oldTimeByMeasure = new Map();
+    for (const b of oldBeats) {
+        if (b && b.measure > 0 && Number.isFinite(b.time) && !oldTimeByMeasure.has(b.measure)) {
+            oldTimeByMeasure.set(b.measure, b.time);
+        }
+    }
+    const downs = [];          // new downbeats, in grid (= time) order
+    let end = -Infinity;       // the new grid's final beat — the last bar's span closes there
+    for (const b of newBeats) {
+        if (!b || !Number.isFinite(b.time)) continue;
+        if (b.time > end) end = b.time;
+        if (b.measure > 0) downs.push(b);
+    }
+    const rank = m => {
+        const r = TEMPO_MARK_PROVENANCE.indexOf(m.provenance);
+        return r < 0 ? TEMPO_MARK_PROVENANCE.length : r;
+    };
+    const byKey = new Map();   // `${measure}|${kind}` → { mark, oldMeasure }
+    let changed = false;
+    for (const m of marks) {
+        const t = oldTimeByMeasure.get(m.measure);
+        let nm = null;
+        if (t !== undefined && t <= end + _MARK_TIME_EPS) {
+            for (let k = downs.length - 1; k >= 0; k--) {
+                if (t >= downs[k].time - _MARK_TIME_EPS) { nm = downs[k].measure; break; }
+            }
+        }
+        if (!Number.isInteger(nm) || nm < 1) { changed = true; continue; }
+        if (nm !== m.measure) changed = true;
+        const key = `${nm}|${m.kind}`;
+        const prev = byKey.get(key);
+        if (prev) {
+            changed = true;
+            const wins = rank(m) < rank(prev.mark)
+                || (rank(m) === rank(prev.mark) && m.measure < prev.oldMeasure);
+            if (!wins) continue;
+        }
+        byKey.set(key, { mark: { ...m, measure: nm }, oldMeasure: m.measure });
+    }
+    if (!changed) return marks;
+    return [...byKey.values()].map(e => e.mark)
+        .sort((a, b) => (a.measure - b.measure) || (a.kind < b.kind ? -1 : 1));
+}
+
 // A bar's time signature changed under an authored meter mark (review #276
 // item 3): keep the grouping only if it still honestly describes the new bar
 // (sums to the new numerator — e.g. a den-only 7/8 → 7/4 change), retagging
@@ -147,8 +212,8 @@ function _groupingLabelPure(num, den, grouping) {
 
 export {
     TEMPO_MARK_PROVENANCE, _groupingLabelPure, _groupingParsePure, _holdMeasuresPure,
-    _markNormPure, _marksAtPure, _marksMeterReconcilePure, _marksRemapPure,
-    _marksRemovePure, _marksSanitizePure, _marksUpsertPure,
+    _markNormPure, _marksAtPure, _marksMeterReconcilePure, _marksRemapByTimePure,
+    _marksRemapPure, _marksRemovePure, _marksSanitizePure, _marksUpsertPure,
 };
 
 // One undoable command per marker edit. Marks don't move beats in this

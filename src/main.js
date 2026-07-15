@@ -131,7 +131,7 @@ import {
     _tempoHasMultipleMeasureBpmsPure, _tempoHoldMeasures, _tempoMapDraw, _tempoMapOnDragEnd, _tempoMeasureBeatCount,
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
     _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
-    _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones,
+    _tempoRemapMarksByTime, _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones,
     editorConfirmTempoZones, editorZonesSingleTempo, editorHealGrid, editorZonesOctaveFix
 } from './tempo.js';
 import { initTempoZones } from './tempo-zones.js';
@@ -1440,7 +1440,9 @@ async function _editorFlattenSongToBpm(newBPM, opts = {}) {
     } else {
         // Rebuild grid only: seconds hold, beats re-lift (TempoGridCmd) —
         // today's flatten, for when the notes already sit on the recording.
-        S.history.exec(new TempoGridCmd(oldBeats, flat, 'flatten'));
+        const cmd = new TempoGridCmd(oldBeats, flat, 'flatten');
+        cmd.marks = _tempoRemapMarksByTime(oldBeats, flat);
+        S.history.exec(cmd);
         setStatus(`Beat grid rebuilt to a constant ${newBPM.toFixed(2)} BPM — notes kept their times. Undo restores the map.`);
     }
     updateBPMDisplay();

@@ -39,7 +39,7 @@ import { lanes } from './lanes.js';
 import { S, editGen } from './state.js';
 import {
     _groupingParsePure, _holdMeasuresPure, _marksAtPure, _marksMeterReconcilePure,
-    _marksRemapPure, editorSetMeterGrouping, editorToggleHoldBar,
+    _marksRemapByTimePure, _marksRemapPure, editorSetMeterGrouping, editorToggleHoldBar,
 } from './tempo-marks.js';
 import {
     _suggestActive, _suggestApplyPure, _suggestAvgConf, _suggestDismiss,
@@ -841,8 +841,10 @@ export function editorConfirmTempoZones() {
     const { beats: refined, refined: nRefined } = _segmentRefineGridPure(seeded, onsets, segments);
     const firstDown = refined.findIndex(b => b.measure > 0);
     _zonesDismiss();
-    S.history.exec(new TempoGridCmd(S.beats || [], refined, 'tempo zones (refined)',
-        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    const cmd = new TempoGridCmd(S.beats || [], refined, 'tempo zones (refined)',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats || [], refined);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     const n = segments.length;
@@ -876,8 +878,10 @@ export function editorZonesSingleTempo() {
     }
     const firstDown = seeded.findIndex(b => b.measure > 0);
     _zonesDismiss();
-    S.history.exec(new TempoGridCmd(S.beats || [], seeded, 'tempo zones (single tempo)',
-        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    const cmd = new TempoGridCmd(S.beats || [], seeded, 'tempo zones (single tempo)',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats || [], seeded);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     setStatus(`Applied one steady tempo (${Math.round(single[0].bpmStart)} BPM) across the mapped span — Undo restores.`);
@@ -908,8 +912,10 @@ export function editorApplyTempoZones() {
         return true;
     }
     const firstDown = rough.beats.findIndex(b => b.measure > 0);
-    S.history.exec(new TempoGridCmd(S.beats || [], rough.beats, 'segment-first rough map',
-        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    const cmd = new TempoGridCmd(S.beats || [], rough.beats, 'segment-first rough map',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats || [], rough.beats);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     const n = rough.segments.length;
@@ -1181,7 +1187,9 @@ export function editorHealGrid() {
         return true;
     }
     const healed = _gridHealPure(S.beats);
-    S.history.exec(new TempoGridCmd(S.beats, healed, 'heal uneven beats', S.tempoSel, S.tempoSel));
+    const cmd = new TempoGridCmd(S.beats, healed, 'heal uneven beats', S.tempoSel, S.tempoSel);
+    cmd.marks = _tempoRemapMarksByTime(S.beats, healed);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     // NAME the measures, don't just count them. The scan cannot tell a corrupt
@@ -1542,6 +1550,22 @@ function _tempoRemapMarksForRenumber(oldToNew, newBeats) {
     return { before, after };
 }
 
+// The remap for topology edits with NO surviving-downbeat old→new map —
+// pickup, halve/double-range, multi-delete, heal, and the wholesale rebuilds
+// (zones apply/refine, rough map, flatten, MIDI tempo map): the marks follow
+// the MUSIC. Each rides its old bar's downbeat TIME into whichever new bar
+// contains that moment (_marksRemapByTimePure), then any grouping stranded on
+// a merged/re-metered bar reconciles against the new grid. Returns the
+// TempoGridCmd marks snapshot, or null when nothing changes (no marks, or
+// every mark keeps its number) so callers can leave cmd.marks unset.
+export function _tempoRemapMarksByTime(oldBeats, newBeats) {
+    if (!S.tempoMarks || !S.tempoMarks.length) return null;
+    const before = S.tempoMarks;
+    const after = _marksReconcileGroupingsAgainst(
+        _marksRemapByTimePure(before, oldBeats, newBeats), newBeats);
+    return after === before ? null : { before, after };
+}
+
 // A time-signature edit and the bar's authored meter mark must move as ONE
 // undoable command (review #276 item 3) — changing 7/8 (2+2+3) to 4/4 while
 // the mark survived displayed "4/4 (2+2+3)" and fed a seven-slot accent map
@@ -1777,8 +1801,10 @@ export function _tempoDeleteSelection() {
         : (S.tempoSel >= 0 ? [S.tempoSel] : []);
     const res = _tempoDeleteBarlinesPure(beats, sel);
     if (!res) { setStatus("Select interior barlines to delete — the first and last can't be removed."); return; }
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), res.beats,
-        res.count > 1 ? 'delete-barlines' : 'delete'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), res.beats,
+        res.count > 1 ? 'delete-barlines' : 'delete');
+    cmd.marks = _tempoRemapMarksByTime(beats, res.beats);
+    S.history.exec(cmd);
     S.tempoSel = -1;
     if (S.tempoSelMulti) S.tempoSelMulti.clear();
     host.draw();
@@ -1859,7 +1885,9 @@ export function _tempoHalveRange() {
     if (!range) { setStatus('Select a range of barlines (2+) to halve.'); return; }
     const res = _tempoHalveRangePure(S.beats, range.lo, range.hi);
     if (!res) { setStatus('Need at least two bars in the range to halve.'); return; }
-    S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'halve-range'));
+    const cmd = new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'halve-range');
+    cmd.marks = _tempoRemapMarksByTime(S.beats, res.beats);
+    S.history.exec(cmd);
     S.tempoSel = -1; if (S.tempoSelMulti) S.tempoSelMulti.clear();
     host.draw();
     setStatus(`Half-time: merged ${res.merged} barline${res.merged === 1 ? '' : 's'} — audio positions hold`
@@ -1871,7 +1899,9 @@ export function _tempoDoubleRange() {
     if (!range) { setStatus('Select a range of barlines (2+) to double.'); return; }
     const res = _tempoDoubleRangePure(S.beats, range.lo, range.hi);
     if (!res) { setStatus('Nothing to split — the range has no bars with an interior beat.'); return; }
-    S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'double-range'));
+    const cmd = new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'double-range');
+    cmd.marks = _tempoRemapMarksByTime(S.beats, res.beats);
+    S.history.exec(cmd);
     S.tempoSel = -1; if (S.tempoSelMulti) S.tempoSelMulti.clear();
     host.draw();
     setStatus(`Double-time: split ${res.split} bar${res.split === 1 ? '' : 's'} — audio positions hold`
@@ -2038,7 +2068,9 @@ export async function _tempoPromptPickup() {
     const newBeats = _tempoSetPickupPure(beats, count);
     if (!newBeats) { setStatus(`Pickup must be 1–${barLen - 1} beats.`); return true; }
     _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'pickup'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'pickup');
+    cmd.marks = _tempoRemapMarksByTime(beats, newBeats);
+    S.history.exec(cmd);
     host.updateTempoSigDisplay();
     host.draw();
     setStatus(`Pickup set: ${count} beat${count === 1 ? '' : 's'} — the partial bar displays as bar 0`);
