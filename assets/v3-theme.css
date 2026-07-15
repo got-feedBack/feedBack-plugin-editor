@@ -564,9 +564,10 @@ html.fb-immersive #plugin-editor .editor-root {
 }
 #plugin-editor [data-mix-act="mute"][aria-pressed="true"], #plugin-editor [data-track-action="mix-mute"][aria-pressed="true"] { background: #b45309; color: #fff; border-color: #f59e0b; }
 #plugin-editor [data-mix-act="solo"][aria-pressed="true"], #plugin-editor [data-track-action="mix-solo"][aria-pressed="true"] { background: #ca8a04; color: #111827; border-color: #fde047; }
-#plugin-editor .editor-mixer-meter { width: .55rem; flex: 1; min-height: 3rem; border-radius: 2px; background: #030712; position: relative; overflow: hidden; }
-#plugin-editor .editor-mixer-meter span { position: absolute; left: 1px; right: 1px; bottom: 1px; height: 38%; background: linear-gradient(to top,#22c55e 70%,#eab308 86%,#ef4444); }
-#plugin-editor .editor-mixer-fader { width: 5.8rem; height: 1rem; transform: rotate(-90deg); margin: 2.35rem 0; accent-color: #22d3ee; }
+#plugin-editor .editor-mixer-channel { flex: 1; min-height: 6.2rem; display: flex; align-items: center; justify-content: center; gap: .25rem; }
+#plugin-editor .editor-mixer-meter { width: .55rem; height: 5.7rem; flex: none; border-radius: 2px; background: #030712; position: relative; overflow: hidden; box-shadow: inset 0 0 0 1px #374151; }
+#plugin-editor .editor-mixer-meter span { position: absolute; left: 1px; right: 1px; bottom: 1px; height: 0; transition: height 45ms linear; background: linear-gradient(to top,#22c55e 0 72%,#eab308 72% 88%,#ef4444 88%); }
+#plugin-editor .editor-mixer-fader { width: 5.8rem; height: 1rem; transform: rotate(-90deg); margin: 0 -2.25rem; accent-color: #22d3ee; }
 #plugin-editor .editor-mixer-value { font: 9px/1 monospace; color: #9ca3af; }
 #plugin-editor .editor-mixer-strip-name, #plugin-editor .editor-mixer-bus-name { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 10px; color: #e5e7eb; }
 #plugin-editor .editor-mixer-bus-strip { background: linear-gradient(#283142,#151b27); }

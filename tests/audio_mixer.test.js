@@ -35,7 +35,7 @@ const busBlock = extract('audio-bus');
 const P = new Function(
     '"use strict";' + mixBlock
     + '\nreturn { MIX_DEFAULT_PCT, _mixPctFromStoredPure, _mixGainForPctPure,'
-    + ' _mixFirstPlayStartGainPure, _mixDragChangedPitchPure };'
+    + ' _mixFirstPlayStartGainPure, _mixDragChangedPitchPure, _mixMeterLevelPure };'
 )();
 
 // ── Stateful env: real bus + blip code over stub ctx/localStorage ────
@@ -120,6 +120,13 @@ t('percent → gain is linear, clamped, NaN-safe', () => {
     assert.strictEqual(P._mixGainForPctPure(100), 1);
     assert.strictEqual(P._mixGainForPctPure(150), 1);
     assert.strictEqual(P._mixGainForPctPure(NaN), 0);
+});
+
+t('meter converts sample RMS into a clamped -60..0 dBFS display level', () => {
+    assert.strictEqual(P._mixMeterLevelPure(new Float32Array(8)), 0);
+    assert.ok(Math.abs(P._mixMeterLevelPure(new Float32Array([0.1, -0.1])) - (40 / 60)) < 1e-6);
+    assert.strictEqual(P._mixMeterLevelPure(new Float32Array([1, -1])), 1);
+    assert.strictEqual(P._mixMeterLevelPure(null), 0);
 });
 
 t('first-play start gain: reduced but never inaudible, never above target', () => {

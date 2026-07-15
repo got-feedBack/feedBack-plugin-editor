@@ -62,7 +62,7 @@ globalThis.window = globalThis.window || globalThis;
 
 const {
     _mixerPartsPure, _mixerPartStatePure, _mixerAnySoloPure, _mixerPartAudiblePure,
-    _mixerClapStatePure, _mixerOpenFromStoredPure, _mixerClapState, _mixerPartStripState,
+    _mixerClapStatePure, _mixerOpenFromStoredPure, _mixerMeterNextPure, _mixerClapState, _mixerPartStripState,
     _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel,
 } = await import('../src/mixer-panel.js');
 const { S } = await import('../src/state.js');
@@ -160,6 +160,13 @@ t('open-state pref round-trip', () => {
     assert.strictEqual(_mixerOpenFromStoredPure('yes'), false);
 });
 
+t('meter ballistics attack immediately and release over about 700ms', () => {
+    assert.strictEqual(_mixerMeterNextPure(0.2, 0.8, 16), 0.8);
+    assert.strictEqual(_mixerMeterNextPure(0.8, 0.1, 350), 0.30000000000000004);
+    assert.strictEqual(_mixerMeterNextPure(0.8, 0, 700), 0);
+    assert.strictEqual(_mixerMeterNextPure(2, -1, 70), 0.9);
+});
+
 t('toggle opens/closes the panel, persists the pref, and lights both Mix buttons', () => {
     Object.assign(S, { arrangements: [{ name: 'Lead', notes: [] }], drumTab: null, partMix: {}, currentArr: 0 });
     assert.strictEqual(editorToggleMixerPanel(true), true);
@@ -206,6 +213,8 @@ t('strips render one row per part; the refresh is memoized until state changes',
     assert.ok(html.includes('data-mix-part="arr:1"'), 'second strip');
     assert.ok(html.includes('data-mix-part="drums"'), 'drums strip');
     assert.ok(html.includes('data-mix-act="solo"'), 'solo button');
+    assert.ok(html.includes('data-meter-key="arr:0"'), 'live meter is keyed to the strip');
+    assert.ok(html.includes('editor-mixer-channel'), 'meter and fader share one channel well');
     // Memo: same state → no re-render (a sentinel survives the call).
     els['editor-mixer-parts'].innerHTML = 'SENTINEL';
     _mixerPanelRefresh();

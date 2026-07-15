@@ -1108,6 +1108,20 @@ function _mixGainForPctPure(pct) {
     if (!Number.isFinite(p)) return 0;
     return Math.max(0, Math.min(100, p)) / 100;
 }
+// Convert time-domain samples to a DAW-style meter position. The visible
+// range is -60 dBFS..0 dBFS; silence and invalid samples stay pinned at zero.
+export function _mixMeterLevelPure(samples) {
+    if (!samples || !samples.length) return 0;
+    let sum = 0;
+    for (let i = 0; i < samples.length; i++) {
+        const sample = Number(samples[i]);
+        if (Number.isFinite(sample)) sum += sample * sample;
+    }
+    const rms = Math.sqrt(sum / samples.length);
+    if (!(rms > 0)) return 0;
+    const db = 20 * Math.log10(rms);
+    return Math.max(0, Math.min(1, (db + 60) / 60));
+}
 // First play of a session starts the recording below target and ramps up
 // (~0.35 s): an unexpectedly hot recording is reached, never jumped to.
 // Quiet targets keep a small audible floor so the fade is never mistaken
@@ -1136,6 +1150,39 @@ export function _mixDragChangedPitchPure(dstrings, dfrets) {
 // the limiter never colors loud / brickwalled reference recordings, whether
 // or not guide claps are ever used.
 let _masterBus = null;
+const _meterAnalysers = Object.create(null);
+let _meterSilentSink = null;
+
+function _attachMeterTap(node, key) {
+    const ctx = S.audioCtx;
+    if (!node || !ctx || typeof ctx.createAnalyser !== 'function' || _meterAnalysers[key]) return;
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.65;
+    // A zero-gain destination branch keeps Chromium processing the analyser
+    // without adding a second audible copy to the program output.
+    if (!_meterSilentSink && typeof ctx.createGain === 'function') {
+        _meterSilentSink = ctx.createGain();
+        _meterSilentSink.gain.value = 0;
+        _meterSilentSink.connect(ctx.destination);
+    }
+    node.connect(analyser);
+    if (_meterSilentSink) analyser.connect(_meterSilentSink);
+    _meterAnalysers[key] = analyser;
+}
+
+export function audioMixerMeterLevels() {
+    const levels = { ref: 0, guide: 0, click: 0, master: 0 };
+    for (const key of Object.keys(levels)) {
+        const analyser = _meterAnalysers[key];
+        if (!analyser || typeof analyser.getFloatTimeDomainData !== 'function') continue;
+        const samples = new Float32Array(analyser.fftSize || 256);
+        analyser.getFloatTimeDomainData(samples);
+        levels[key] = _mixMeterLevelPure(samples);
+    }
+    return levels;
+}
+
 function _ensureMasterBus() {
     if (_masterBus || !S.audioCtx) return _masterBus;
     const ctx = S.audioCtx;
@@ -1159,6 +1206,9 @@ function _ensureMasterBus() {
     limiter.connect(masterGain);
     masterGain.connect(ctx.destination);
     _masterBus = { guideGain, clickGain, limiter, masterGain };
+    _attachMeterTap(guideGain, 'guide');
+    _attachMeterTap(clickGain, 'click');
+    _attachMeterTap(masterGain, 'master');
     return _masterBus;
 }
 
@@ -1198,6 +1248,7 @@ function _ensureRefGain() {
     _refGain.gain.value = _mixGainForPctPure(_mixLoadPct().ref) * _activeAudioStripGain();
     const bus = _ensureMasterBus();
     _refGain.connect(bus ? bus.masterGain : S.audioCtx.destination);
+    _attachMeterTap(_refGain, 'ref');
     return _refGain;
 }
 

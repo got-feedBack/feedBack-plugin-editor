@@ -92,6 +92,14 @@ export function _mixerClapStatePure(partMix, drumEditMode, currentArr) {
 export function _mixerOpenFromStoredPure(raw) {
     return raw === '1';
 }
+// Fast attack, ~700 ms linear release. This keeps drum transients readable
+// while avoiding the distracting flicker of drawing raw analyser frames.
+export function _mixerMeterNextPure(previous, input, elapsedMs) {
+    const prev = Math.max(0, Math.min(1, Number(previous) || 0));
+    const next = Math.max(0, Math.min(1, Number(input) || 0));
+    if (next >= prev) return next;
+    return Math.max(next, prev - Math.max(0, Number(elapsedMs) || 0) / 700);
+}
 /* @pure:mixer-panel:end */
 
 // The host-hook target audio.js consults per scheduled clap voice.
@@ -112,6 +120,9 @@ function _panel() { return document.getElementById('editor-mixer-panel'); }
 
 // ── Strip rendering (memoized — never rides the draw loop) ───────────
 let _lastKey = '';
+let _meterFrame = 0;
+let _meterLastAt = 0;
+const _meterShown = Object.create(null);
 
 function _msBtn(key, act, pressed, label, title) {
     return `<button data-mix-part="${key}" data-mix-act="${act}" aria-pressed="${pressed}"`
@@ -133,13 +144,55 @@ function _renderParts(container) {
             + _msBtn(p.key, 'mute', st.mute, 'M', 'Mute track')
             + _msBtn(p.key, 'solo', st.solo, 'S', 'Solo track')
             + `</div>`
-            + `<div class="editor-mixer-meter" aria-hidden="true"><span></span></div>`
+            + `<div class="editor-mixer-channel">`
+            + `<div class="editor-mixer-meter" data-meter-key="${p.key}" aria-hidden="true"><span></span></div>`
             + `<input type="range" min="0" max="100" value="${st.vol}" data-mix-part="${p.key}" data-mix-act="vol"`
-            + ` aria-label="${name} volume percent" class="editor-mixer-fader">`
+            + ` aria-label="${name} volume percent" class="editor-mixer-fader"></div>`
             + `<span data-mix-val="${p.key}" class="editor-mixer-value">${st.vol}%</span>`
             + `<span class="editor-mixer-strip-name" title="${name}">${name}</span>`
             + `</div>`;
     }).join('');
+}
+
+function _meterInputForKey(key, levels) {
+    if (key === 'bus:ref') return levels.ref;
+    if (key === 'bus:guide') return levels.guide;
+    if (key === 'bus:click') return levels.click;
+    if (key === 'bus:master') return levels.master;
+    if (key === 'audio:' + (S.activeAudioSourceId || 'master')) return levels.ref;
+    const activePart = S.drumEditMode ? 'drums' : 'arr:' + (Number(S.currentArr) || 0);
+    return key === activePart ? levels.guide : 0;
+}
+
+function _meterTick(at) {
+    _meterFrame = 0;
+    const panel = _panel();
+    if (!panel || panel.classList.contains('hidden')) return;
+    const elapsed = _meterLastAt ? Math.min(100, at - _meterLastAt) : 16;
+    _meterLastAt = at;
+    const levels = host.mixerMeterLevels();
+    const meters = panel.querySelectorAll ? panel.querySelectorAll('[data-meter-key]') : [];
+    for (const meter of meters) {
+        const key = meter.getAttribute('data-meter-key');
+        const shown = _mixerMeterNextPure(_meterShown[key], _meterInputForKey(key, levels), elapsed);
+        _meterShown[key] = shown;
+        const fill = meter.querySelector('span');
+        if (fill && fill.style) fill.style.height = (shown * 100).toFixed(1) + '%';
+    }
+    if (typeof requestAnimationFrame === 'function') _meterFrame = requestAnimationFrame(_meterTick);
+}
+
+function _startMeters() {
+    if (!_meterFrame && typeof requestAnimationFrame === 'function') {
+        _meterLastAt = 0;
+        _meterFrame = requestAnimationFrame(_meterTick);
+    }
+}
+
+function _stopMeters() {
+    if (_meterFrame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(_meterFrame);
+    _meterFrame = 0;
+    _meterLastAt = 0;
 }
 // Seed the bus faders + blip checkbox from their prefs (owned by audio.js,
 // read through the host hook so this module stays audio-import-free).
@@ -239,6 +292,9 @@ export function editorToggleMixerPanel(force) {
         _renderBuses();
         _lastKey = '';
         _mixerPanelRefresh();
+        _startMeters();
+    } else {
+        _stopMeters();
     }
     _refreshMixerButtons(show);
     host.scheduleCanvasResize?.();

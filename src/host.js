@@ -199,6 +199,8 @@ export const host = {
      * through here so it stays audio-import-free.
      */
     mixUiState: () => ({ pcts: { ref: 100, guide: 35, click: 25 }, blip: true }),
+    /** Post-fader Web Audio meter levels, normalized to [0, 1]. */
+    mixerMeterLevels: () => ({ ref: 0, guide: 0, click: 0, master: 0 }),
 };
 
 export function setHostHooks(hooks) { Object.assign(host, hooks); }

@@ -44,7 +44,7 @@ import {
     _abApplyRefGain, _editBlipAt, _editorToggleGuideClap,
     _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip,
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
-    editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio, activateTrackAudioSource,
+    editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio, activateTrackAudioSource, audioMixerMeterLevels,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
     editorToggleAuditionTrainer,
 } from './audio.js';
@@ -518,6 +518,7 @@ setHostHooks({
     },
     selectTrackSessionSource: (sourceId) => activateTrackAudioSource(sourceId),
     mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
+    mixerMeterLevels: audioMixerMeterLevels,
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML
