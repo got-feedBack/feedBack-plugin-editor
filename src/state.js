@@ -125,6 +125,12 @@ export const S = {
     stems: [],
     stemLinks: {},
     stemMix: {},
+    // Persistent first-class track tree (src/track-session.js): ordered
+    // audio + transcription rows with optional folders, non-destructive
+    // source removals, and the tempo-guide role. Persisted as the
+    // `editor_track_session` manifest key; references canonical song data
+    // by key, never copies it. Pairing stays in stemLinks (projected).
+    trackSession: { version: 2, tracks: [], removedSourceIds: [], tempoGuideSourceId: '', tempoGuideLocked: false, tempoGuideMode: 'audio' },
     // Drag state
     drag: null, // { type, startX, startY, startTime, startString, noteIdx, origTimes, origStrings }
 

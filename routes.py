@@ -427,6 +427,96 @@ def _apply_stem_links(manifest: dict, links) -> None:
         manifest.pop("editor_stem_links", None)
 
 
+def _track_session_id(value):
+    """An opaque, bounded track-session identifier or an empty string.
+    Chart-track keys are arrangement NAMES today (`_partViewKeyPure`), so any
+    printable string passes — only control characters and unbounded length
+    are rejected (the same latitude `_coerce_stem_links` keys already get)."""
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    if not value or len(value) > 160:
+        return ""
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        return ""
+    return value
+
+
+def _coerce_track_session(value, invalid=_FIELD_ABSENT):
+    """Sanitize the persistent track tree stored as `editor_track_session`.
+
+    The tree intentionally carries only identity/order relationships —
+    track rows referencing sources ('master' / bare stem ids) and chart
+    tracks (stemLinks' keys), optional folders, non-destructive source
+    removals, and the tempo-guide role. No filesystem paths, no display
+    HTML, no tempo data; rows are resolved against the freshly-loaded song
+    on the client (unknown references drop, new song parts append)."""
+    if not isinstance(value, dict) or not isinstance(value.get("tracks"), list):
+        return invalid
+    out, seen = [], set()
+    for raw in value["tracks"][:300]:
+        if not isinstance(raw, dict):
+            continue
+        tid = _track_session_id(raw.get("id"))
+        kind = raw.get("type")
+        if not tid or tid in seen or kind not in ("folder", "audio", "transcription"):
+            continue
+        parent_id = _track_session_id(raw.get("parentId"))
+        if kind == "folder":
+            out.append({"id": tid, "type": kind,
+                        "name": str(raw.get("name") or "Folder")[:120],
+                        "parentId": parent_id, "collapsed": bool(raw.get("collapsed"))})
+        elif kind == "audio":
+            source_id = _track_session_id(raw.get("sourceId"))
+            if not source_id:
+                continue
+            out.append({"id": tid, "type": kind, "sourceId": source_id,
+                        "name": str(raw.get("name") or "")[:120],
+                        "parentId": parent_id})
+        else:
+            target_id = _track_session_id(raw.get("targetId"))
+            if not target_id:
+                continue
+            out.append({"id": tid, "type": kind, "targetId": target_id,
+                        "name": str(raw.get("name") or "")[:120],
+                        "parentId": parent_id})
+        seen.add(tid)
+    removed_sources = []
+    raw_removed_sources = value.get("removedSourceIds", [])
+    if not isinstance(raw_removed_sources, list):
+        raw_removed_sources = []
+    for raw_id in raw_removed_sources:
+        source_id = _track_session_id(raw_id)
+        if source_id and source_id not in removed_sources:
+            removed_sources.append(source_id)
+    guide = _track_session_id(value.get("tempoGuideSourceId"))
+    guide_mode = "metronome" if value.get("tempoGuideMode") == "metronome" else "audio"
+    return {"version": 2, "tracks": out, "removedSourceIds": removed_sources,
+            "tempoGuideSourceId": guide, "tempoGuideLocked": bool(value.get("tempoGuideLocked")),
+            "tempoGuideMode": guide_mode}
+
+
+def _parse_track_session(data: dict):
+    """Absent → _FIELD_ABSENT (older client leaves the persisted tree alone);
+    explicit null → None (default tree, REMOVE the key); malformed →
+    _FIELD_ABSENT (garbage gets no authority to erase)."""
+    if "track_session" not in data:
+        return _FIELD_ABSENT
+    if data.get("track_session") is None:
+        return None
+    return _coerce_track_session(data.get("track_session"), invalid=_FIELD_ABSENT)
+
+
+def _apply_track_session(manifest: dict, session) -> None:
+    """Write/remove the `editor_track_session` manifest extension key."""
+    if session is _FIELD_ABSENT:
+        return
+    if session:
+        manifest["editor_track_session"] = session
+    else:
+        manifest.pop("editor_track_session", None)
+
+
 def _stem_links_from_form(raw):
     """Multipart twin of `_parse_stem_links`: import-stems is a Form POST, so
     the frontend's stem_links snapshot arrives as a JSON-encoded string.
@@ -4066,6 +4156,11 @@ def setup(app, context):
             _links = _coerce_stem_links(loaded.manifest.get("editor_stem_links"))
             if _links:
                 result["stem_links"] = _links
+            # Persistent track tree (identity/order/folders/guide role).
+            _tree = _coerce_track_session(
+                loaded.manifest.get("editor_track_session"), invalid=None)
+            if _tree:
+                result["track_session"] = _tree
             # `lib/sloppak.load_song()` doesn't restore song.offset (the
             # sloppak format doesn't carry an explicit offset field today),
             # so song.offset is 0 here. If the manifest happens to surface
@@ -4257,6 +4352,9 @@ def setup(app, context):
         tempo_marks = _parse_tempo_marks(data)
         # Chart-track <-> stem pairings — the same absent-vs-empty contract.
         stem_links = _parse_stem_links(data)
+        # Persistent track tree — absent preserves, null removes (default
+        # tree), a sanitized dict replaces.
+        track_session = _parse_track_session(data)
         # Merge session metadata (album/year captured at archive load
         # time) with anything the frontend sent. `_buildSaveBody` ships
         # `{title, artist}` on every save path; this merge keeps the
@@ -4676,6 +4774,7 @@ def setup(app, context):
             _apply_audio_shift(manifest, audio_shift)
             _apply_tempo_marks(manifest, tempo_marks)
             _apply_stem_links(manifest, stem_links)
+            _apply_track_session(manifest, track_session)
 
             _write_song_timeline_sidecar(source_dir, manifest, beats, sections)
 
@@ -4776,6 +4875,9 @@ def setup(app, context):
         _req_links = _parse_stem_links(data)
         if _req_links is not _FIELD_ABSENT and _req_links:
             meta["stem_links"] = _req_links
+        _req_tree = _parse_track_session(data)
+        if _req_tree is not _FIELD_ABSENT and _req_tree:
+            meta["track_session"] = _req_tree
 
         audio_file = session.get("audio_file") or ""
         if not audio_file or not Path(audio_file).exists():
@@ -7802,6 +7904,9 @@ def setup(app, context):
         _req_links = _parse_stem_links(data)
         if _req_links is not _FIELD_ABSENT and _req_links:
             meta["stem_links"] = _req_links
+        _req_tree = _parse_track_session(data)
+        if _req_tree is not _FIELD_ABSENT and _req_tree:
+            meta["track_session"] = _req_tree
         # Create-mode imported stems ride the session into the build.
         if session.get("stem_files"):
             meta["stem_files"] = list(session["stem_files"])
@@ -8184,6 +8289,8 @@ def setup(app, context):
             _apply_audio_shift(manifest, _coerce_audio_shift(meta.get("audio_shift")))
             _apply_tempo_marks(manifest, _coerce_tempo_marks(meta.get("tempo_marks")))
             _apply_stem_links(manifest, _coerce_stem_links(meta.get("stem_links")))
+            _apply_track_session(
+                manifest, _coerce_track_session(meta.get("track_session"), invalid=None))
             # Create-mode imported studio tracks: pack them under stems/ and
             # declare them (the manifest's stems list is order-authoritative).
             _mstems = list(manifest.get("stems") or [])

@@ -20,6 +20,7 @@ import {
 } from './session-lifecycle.js';
 import { _liftAllBeats, _restoreBeatLocks, _stripBeatsFromSaveBody } from './tempo.js';
 import { _tourResetForLoad } from './tour.js';
+import { installTrackSession, trackSessionSavePayload } from './track-session.js';
 import { _resetSignpostCounters } from './signposts.js';
 import { surfaceMigrateFilename, surfaceOnSongLoaded } from './toolbars.js';
 import { _editorEscHtml, setStatus } from './ui.js';
@@ -181,6 +182,11 @@ export async function loadCDLC(filename, options = {}) {
         }
         // Freshly loaded from disk — not dirty until the user edits it.
         S.drumTabDirty = false;
+        // Persistent track tree — adopted after arrangements/stems/drumTab so
+        // normalization sees the full loaded song. data.audio_url rides in
+        // explicitly: S.audioUrl still points at the PREVIOUS song here
+        // (loadAudio runs later), and the master row must not depend on it.
+        installTrackSession(data.track_session, data.audio_url || '');
         // Exit drum-edit mode on song change so we don't carry a stale
         // selection into a sloppak whose hits[] is different.
         S.drumEditMode = false;
@@ -552,6 +558,11 @@ function _buildSaveBody(forceFullSnapshot) {
         tempo_marks: S.tempoMarks || [],
         // Chart-track <-> stem pairings — persisted as editor_stem_links.
         stem_links: S.stemLinks || {},
+        // Persistent track tree — the editor_track_session manifest key.
+        // null = "tree is entirely default": the backend removes the key so
+        // untouched packs stay byte-identical (absent ≠ null, older-client
+        // absence must never erase a persisted tree).
+        track_session: trackSessionSavePayload(),
         // Always ship title/artist so archive saves persist in-session
         // metadata edits too. Backend merges with session metadata
         // (album/year captured at load time) so all four fields
