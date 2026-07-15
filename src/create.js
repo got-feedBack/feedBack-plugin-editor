@@ -1861,11 +1861,14 @@ async function _editorDoMidiCreate() {
         titleEl.value = _midiDefaultTitlePure(
             createState.midiFiles[0] && createState.midiFiles[0].name);
     }
-    // The blank-create backend requires >=1 seeded arrangement; if the user
-    // hasn't picked any, seed a Keys placeholder and FLAG it so the track
-    // import can clean it up once real parts exist.
+    // The blank-create backend requires >=1 seeded arrangement. The modal's
+    // untouched default roster (['Lead']) is boilerplate, not intent — a MIDI
+    // project's parts come from the FILE, so replace it with a flagged Keys
+    // placeholder the import cleans up. A user-modified roster is real intent
+    // and stays (their parts + the MIDI tracks).
     let seeded = false;
-    if (!createState.roster || !createState.roster.length) {
+    const r = createState.roster || [];
+    if (!r.length || (r.length === 1 && r[0] === 'Lead')) {
         createState.roster = ['Keys'];
         seeded = true;
     }
