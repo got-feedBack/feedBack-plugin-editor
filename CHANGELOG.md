@@ -29,6 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the editor never draws a connection the music doesn't have.
 ### Added
 
+- **Hold / fermata bars and meter groupings — the chart can finally say what
+  the band meant.** Right-click a barline in the Tempo Map: **"Hold /
+  fermata this bar"** marks a bar the band holds out (a big rock ending, a
+  pause before the last chorus). A held bar stops reading as a bogus tempo
+  collapse: it's excluded from tempo statistics, the marker lane shows one
+  amber **hold** chip instead of two spurious BPM chips, and tempo
+  suggestions carry straight across it instead of chasing onsets inside the
+  pause. **"Meter grouping…"** records how a compound bar is *felt* — `7/8`
+  as `2+2+3` vs `3+2+2` — and the marker lane says so. Both are real edits
+  (one undo step each), survive save → reopen (stored in the pack, invisible
+  to apps that don't know them), follow their bar when barlines are inserted
+  or deleted, and carry **provenance** — hand-set marks are recorded as
+  human-confirmed, the foundation for keeping your verified work through
+  future automatic re-fits.
 - **Cut, and real Copy/Paste commands.** Copy and paste existed but were
   hidden hardwired keys — invisible in the Edit menu, the shortcut panel, and
   anywhere else you'd look, with no Cut at all. All three are first-class

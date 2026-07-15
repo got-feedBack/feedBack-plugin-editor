@@ -23,6 +23,7 @@
 // ════════════════════════════════════════════════════════════════════
 import { timeToX } from './geometry.js';
 import { S, editGen } from './state.js';
+import { _holdMeasuresPure } from './tempo-marks.js';
 
 /* @pure:tempo-suggest:start */
 // Downbeat indices at or after `fromIdx` (fromIdx itself first).
@@ -209,6 +210,18 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
             stretch = 1; stretchHist.length = 0; misses = 0;
             continue;
         }
+        // A HELD bar (P2-5 fermata): its span is non-metric BY DECLARATION —
+        // never window-snap inside it (the onsets there are the sustained
+        // chord, not a pulse) and never let its giant interval near the
+        // stretch median. The downbeat ENDING the hold is carried at its
+        // grid position and the drift bookkeeping resets — like a lock, but
+        // without claiming human confidence (provenance: carried).
+        if (o.holdMeasures && o.holdMeasures.has(beats[prevDownIdx].measure)) {
+            proposals.push({ i: d, time: beats[d].time, conf: 0.5, locked: false, carried: true });
+            prevDownIdx = d; prevOld = beats[d].time; prevNew = beats[d].time;
+            stretch = 1; stretchHist.length = 0; misses = 0;
+            continue;
+        }
         const predicted = prevNew + gridInt * stretch;
         const win = _suggestBeatWinPure(gridInt, beatsInBar, winFrac, minWin);
         const missesBefore = misses;
@@ -377,7 +390,11 @@ export function _suggestCompute(anchorIdx, onsets, opts) {
     const list = onsets || (_sug && _sug.onsets) || null;
     if (!list || !list.length) { _sug = null; return 0; }
     const useOpts = opts || (onsets ? undefined : (_sug && _sug.opts)) || undefined;
-    const { proposals, stopReason, stopDetail } = _suggestFitPure(S.beats, list, anchorIdx, useOpts);
+    // Held bars are carried, never fitted (P2-5) — the fermata's span is
+    // authored as non-metric. Never mutate the remembered opts object (the
+    // regenerate path reuses it): spread the hold set in fresh each compute.
+    const fitOpts = { ...(useOpts || {}), holdMeasures: _holdMeasuresPure(S.tempoMarks) };
+    const { proposals, stopReason, stopDetail } = _suggestFitPure(S.beats, list, anchorIdx, fitOpts);
     _sug = { anchorIdx, proposals, stopReason, stopDetail, onsets: list, opts: useOpts, gen: editGen };
     return proposals.length;
 }

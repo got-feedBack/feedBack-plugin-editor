@@ -38,6 +38,10 @@ import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S, editGen } from './state.js';
 import {
+    _groupingParsePure, _holdMeasuresPure, _marksAtPure, _marksMeterReconcilePure,
+    _marksRemapByTimePure, _marksRemapPure, editorSetMeterGrouping, editorToggleHoldBar,
+} from './tempo-marks.js';
+import {
     _suggestActive, _suggestApplyPure, _suggestAvgConf, _suggestDismiss,
     _suggestHitAt, _suggestHudTextPure, _suggestProposals, _suggestRegenerateFrom,
     _suggestStopReason, _suggestStopDetail,
@@ -803,8 +807,10 @@ export function editorZonesOctaveFix(dir) {
         return true;
     }
     _zonesDismiss();
-    S.history.exec(new TempoGridCmd(S.beats, rescued,
-        dir === 'double' ? 'double grid tempo' : 'halve grid tempo', S.tempoSel, -1));
+    const cmd = new TempoGridCmd(S.beats, rescued,
+        dir === 'double' ? 'double grid tempo' : 'halve grid tempo', S.tempoSel, -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats, rescued);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     setStatus(dir === 'double'
@@ -837,8 +843,10 @@ export function editorConfirmTempoZones() {
     const { beats: refined, refined: nRefined } = _segmentRefineGridPure(seeded, onsets, segments);
     const firstDown = refined.findIndex(b => b.measure > 0);
     _zonesDismiss();
-    S.history.exec(new TempoGridCmd(S.beats || [], refined, 'tempo zones (refined)',
-        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    const cmd = new TempoGridCmd(S.beats || [], refined, 'tempo zones (refined)',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats || [], refined);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     const n = segments.length;
@@ -872,8 +880,10 @@ export function editorZonesSingleTempo() {
     }
     const firstDown = seeded.findIndex(b => b.measure > 0);
     _zonesDismiss();
-    S.history.exec(new TempoGridCmd(S.beats || [], seeded, 'tempo zones (single tempo)',
-        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    const cmd = new TempoGridCmd(S.beats || [], seeded, 'tempo zones (single tempo)',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats || [], seeded);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     setStatus(`Applied one steady tempo (${Math.round(single[0].bpmStart)} BPM) across the mapped span — Undo restores.`);
@@ -904,8 +914,10 @@ export function editorApplyTempoZones() {
         return true;
     }
     const firstDown = rough.beats.findIndex(b => b.measure > 0);
-    S.history.exec(new TempoGridCmd(S.beats || [], rough.beats, 'segment-first rough map',
-        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    const cmd = new TempoGridCmd(S.beats || [], rough.beats, 'segment-first rough map',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats || [], rough.beats);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     const n = rough.segments.length;
@@ -983,7 +995,7 @@ export function _refreshTempoMapButton() {
     // The grid is song-wide and round-trips through archive + sloppak, so
     // the button is NOT format-gated — only a beat grid is required.
     const hasGrid = !!(S.beats && S.beats.length >= 2);
-    const hasMultipleBpms = hasGrid && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01);
+    const hasMultipleBpms = hasGrid && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01, _tempoHoldMeasures());
     const sig = `${!!S.sessionId}|${hasGrid}|${!!S.tempoMapMode}|${hasMultipleBpms}`;
     if (sig === _tempoMapBtnState) return;
     _tempoMapBtnState = sig;
@@ -1178,7 +1190,9 @@ export function editorHealGrid() {
         return true;
     }
     const healed = _gridHealPure(S.beats);
-    S.history.exec(new TempoGridCmd(S.beats, healed, 'heal uneven beats', S.tempoSel, S.tempoSel));
+    const cmd = new TempoGridCmd(S.beats, healed, 'heal uneven beats', S.tempoSel, S.tempoSel);
+    cmd.marks = _tempoRemapMarksByTime(S.beats, healed);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     // NAME the measures, don't just count them. The scan cannot tell a corrupt
@@ -1388,6 +1402,14 @@ export function _tempoMapOnContextMenu(e) {
             if (cur > 1) html += mkBtn('pickup', 'Set pickup (partial first bar — for music that starts before beat 1)…');
         }
         html += '<div class="border-t border-gray-700 my-1"></div>';
+        // Authored marks (P2-5): fermata + meter grouping on this bar.
+        const _mMeasure = S.beats[onPole] ? S.beats[onPole].measure : -1;
+        const _mMarks = _marksAtPure(S.tempoMarks, _mMeasure);
+        html += mkBtn('holdbar',
+            _mMarks.some(mm => mm.kind === 'hold') ? 'Remove hold / fermata' : 'Hold / fermata this bar',
+            '', 'A held bar: excluded from tempo stats and suggestions instead of reading as a huge tempo drop');
+        html += mkBtn('grouping', 'Meter grouping…', '',
+            'How a compound bar is felt, e.g. 7/8 as 2+2+3 — drives the marker label (and the click, next slice)');
         html += mkBtn('togglelock',
             (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
             '', LOCK_TOOLTIP);
@@ -1414,6 +1436,16 @@ export function _tempoMapOnContextMenu(e) {
             const a = btn.dataset.action;
             if (a === 'bar1here') { _tempoSetBar1Here(); return; }
             if (a === 'pickup') { _tempoPromptPickup(); return; }
+            if (a === 'holdbar') {
+                const mm = S.beats[onPole] ? S.beats[onPole].measure : -1;
+                if (editorToggleHoldBar(mm)) {
+                    setStatus(_tempoHoldMeasures().has(mm)
+                        ? `Bar ${mm} held (fermata) — excluded from tempo stats and suggestions.`
+                        : `Bar ${mm} hold removed.`);
+                }
+                return;
+            }
+            if (a === 'grouping') { _tempoPromptGrouping(onPole); return; }
             if (a === 'half-range') _tempoHalveRange();
             else if (a === 'double-range') _tempoDoubleRange();
             else if (a === 'flatten-range') _tempoFlattenRange();
@@ -1432,6 +1464,32 @@ export function _tempoMapOnContextMenu(e) {
     menu.classList.remove('hidden');
 }
 
+// Prompt for a meter grouping on the bar at downbeat index `d` (P2-5).
+async function _tempoPromptGrouping(d) {
+    const b = S.beats[d];
+    if (!b || b.measure <= 0) return;
+    const num = _tempoMeasureBeatCount(d);
+    const den = _tempoMeasureDenominator(d);
+    const cur = _marksAtPure(S.tempoMarks, b.measure).find(mm => mm.kind === 'meter');
+    const raw = await _editorPromptText({
+        title: `Meter grouping — bar ${b.measure} (${num}/${den})`,
+        label: `How the bar is felt, as parts summing to ${num} (empty clears):`,
+        value: cur && cur.grouping ? cur.grouping.join('+') : '',
+        placeholder: num === 7 ? '2+2+3' : '3+3+2',
+    });
+    if (raw === null) return;
+    const grouping = _groupingParsePure(raw, num);
+    if (grouping === null) {
+        setStatus(`That doesn't sum to ${num} — try something like ${num === 7 ? '2+2+3' : '3+3+2'}.`);
+        return;
+    }
+    editorSetMeterGrouping(b.measure, num, den, grouping);
+    setStatus(grouping.length
+        ? `Bar ${b.measure} felt as ${num}/${den} (${grouping.join('+')}).`
+        : `Bar ${b.measure} grouping cleared.`);
+    host.draw();
+}
+
 // ── Insert / delete sync points ─────────────────────────────────────
 //
 // Marking inside the mapped range promotes the nearest interior beat. Marking
@@ -1442,12 +1500,92 @@ export function _tempoMapOnContextMenu(e) {
 // Renumber every downbeat sequentially, preserving the first one's number.
 function _tempoRenumberMeasures(beats) {
     let m = null;
+    const oldToNew = new Map();
     for (const b of beats) {
         if (b.measure > 0) {
-            m = (m === null) ? b.measure : m + 1;
-            b.measure = m;
+            const next = (m === null) ? b.measure : m + 1;
+            if (!oldToNew.has(b.measure)) oldToNew.set(b.measure, next);
+            m = next;
+            b.measure = next;
         }
     }
+    return oldToNew;
+}
+
+// After a renumber, drop any authored meter GROUPING that no longer sums to
+// the bar numerator it now spans in the NEW grid. Inserting or deleting a
+// barline splits or merges a bar UNDER a grouping mark: a 2+2 mark stranded
+// on a bar the split cut to 2 beats would render as 2/4 (2+2) and feed a
+// four-slot accent map to every consumer — the exact stale-accent lie the
+// time-sig reconcile (review #276 item 3) prevents, reached by a different
+// edit path. Bare meter marks and holds are untouched; the open final bar
+// (no closing downbeat, so no exact numerator) is left alone. Returns the
+// input array BY IDENTITY when nothing drops, so the caller can tell whether
+// a snapshot is needed.
+function _marksReconcileGroupingsAgainst(marks, newBeats) {
+    if (!Array.isArray(marks) || !marks.length || !Array.isArray(newBeats)) return marks;
+    const db = [];
+    for (let i = 0; i < newBeats.length; i++) if (newBeats[i] && newBeats[i].measure > 0) db.push(i);
+    const numByMeasure = new Map();
+    for (let k = 0; k + 1 < db.length; k++) numByMeasure.set(newBeats[db[k]].measure, db[k + 1] - db[k]);
+    let changed = false;
+    const out = marks.filter(mk => {
+        if (mk.kind !== 'meter' || !Array.isArray(mk.grouping) || !mk.grouping.length) return true;
+        const num = numByMeasure.get(mk.measure);
+        if (num === undefined) return true;   // open last bar: no exact numerator to check
+        const ok = mk.grouping.reduce((a, b) => a + b, 0) === num;
+        if (!ok) changed = true;
+        return ok;
+    });
+    return changed ? out : marks;
+}
+
+// The measure-keyed marks follow a renumber via the SURVIVING downbeats'
+// old->new map (a deleted bar's marks drop — never a stale key), then any
+// grouping whose bar was split/merged out from under it is reconciled against
+// the new grid. Callers that renumber inside a TempoGridCmd pass the result
+// through the command's marks snapshot so undo restores both sides together.
+function _tempoRemapMarksForRenumber(oldToNew, newBeats) {
+    if (!S.tempoMarks || !S.tempoMarks.length) return null;
+    const before = S.tempoMarks;
+    const remapped = _marksRemapPure(before, oldToNew);
+    const after = _marksReconcileGroupingsAgainst(remapped, newBeats);
+    return { before, after };
+}
+
+// The remap for topology edits with NO surviving-downbeat old→new map —
+// pickup, halve/double-range, multi-delete, heal, and the wholesale rebuilds
+// (zones apply/refine, rough map, flatten, MIDI tempo map): the marks follow
+// the MUSIC. Each rides its old bar's downbeat TIME into whichever new bar
+// contains that moment (_marksRemapByTimePure), then any grouping stranded on
+// a merged/re-metered bar reconciles against the new grid. Returns the
+// TempoGridCmd marks snapshot, or null when nothing changes (no marks, or
+// every mark keeps its number) so callers can leave cmd.marks unset.
+export function _tempoRemapMarksByTime(oldBeats, newBeats) {
+    if (!S.tempoMarks || !S.tempoMarks.length) return null;
+    const before = S.tempoMarks;
+    const after = _marksReconcileGroupingsAgainst(
+        _marksRemapByTimePure(before, oldBeats, newBeats), newBeats);
+    return after === before ? null : { before, after };
+}
+
+// A time-signature edit and the bar's authored meter mark must move as ONE
+// undoable command (review #276 item 3) — changing 7/8 (2+2+3) to 4/4 while
+// the mark survived displayed "4/4 (2+2+3)" and fed a seven-slot accent map
+// to consumers. Reads the EFFECTIVE new signature straight off the new grid
+// (so the clamp in _tempoSetBeatsPerMeasurePure can never desynchronize it)
+// and returns the TempoGridCmd marks snapshot, or null when the bar carries
+// no mark that needs to change.
+function _tempoReconcileMeterMarkForTimesig(newBeats, d) {
+    const b = newBeats[d];
+    if (!b || b.measure < 1 || !S.tempoMarks || !S.tempoMarks.length) return null;
+    let ndb = newBeats.length;
+    for (let i = d + 1; i < newBeats.length; i++) {
+        if (newBeats[i].measure > 0) { ndb = i; break; }
+    }
+    const after = _marksMeterReconcilePure(
+        S.tempoMarks, b.measure, ndb - d, _tempoNormalizeDenominatorPure(b.den));
+    return after === S.tempoMarks ? null : { before: S.tempoMarks, after };
 }
 
 /* @pure:tempo-barline-append:start */
@@ -1537,8 +1675,10 @@ export function _tempoInsertSyncPoint(time) {
     const oldBeats = beats.map(b => ({ ...b }));
     const newBeats = beats.map(b => ({ ...b }));
     newBeats[bestS].measure = 1;  // placeholder; renumbered next
-    _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(oldBeats, newBeats, 'insert'));
+    const insRemap = _tempoRenumberMeasures(newBeats);
+    const insCmd = new TempoGridCmd(oldBeats, newBeats, 'insert');
+    insCmd.marks = _tempoRemapMarksForRenumber(insRemap, newBeats);
+    S.history.exec(insCmd);
     S.tempoSel = bestS;
     host.draw();
 }
@@ -1555,8 +1695,10 @@ export function _tempoDeleteSyncPoint(beatIdx) {
     const oldBeats = beats.map(b => ({ ...b }));
     const newBeats = beats.map(b => ({ ...b }));
     newBeats[beatIdx].measure = -1;  // demote to sub-beat
-    _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(oldBeats, newBeats, 'delete'));
+    const delRemap = _tempoRenumberMeasures(newBeats);
+    const delCmd = new TempoGridCmd(oldBeats, newBeats, 'delete');
+    delCmd.marks = _tempoRemapMarksForRenumber(delRemap, newBeats);
+    S.history.exec(delCmd);
     S.tempoSel = -1;
     host.draw();
 }
@@ -1662,8 +1804,10 @@ export function _tempoDeleteSelection() {
         : (S.tempoSel >= 0 ? [S.tempoSel] : []);
     const res = _tempoDeleteBarlinesPure(beats, sel);
     if (!res) { setStatus("Select interior barlines to delete — the first and last can't be removed."); return; }
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), res.beats,
-        res.count > 1 ? 'delete-barlines' : 'delete'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), res.beats,
+        res.count > 1 ? 'delete-barlines' : 'delete');
+    cmd.marks = _tempoRemapMarksByTime(beats, res.beats);
+    S.history.exec(cmd);
     S.tempoSel = -1;
     if (S.tempoSelMulti) S.tempoSelMulti.clear();
     host.draw();
@@ -1744,7 +1888,9 @@ export function _tempoHalveRange() {
     if (!range) { setStatus('Select a range of barlines (2+) to halve.'); return; }
     const res = _tempoHalveRangePure(S.beats, range.lo, range.hi);
     if (!res) { setStatus('Need at least two bars in the range to halve.'); return; }
-    S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'halve-range'));
+    const cmd = new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'halve-range');
+    cmd.marks = _tempoRemapMarksByTime(S.beats, res.beats);
+    S.history.exec(cmd);
     S.tempoSel = -1; if (S.tempoSelMulti) S.tempoSelMulti.clear();
     host.draw();
     setStatus(`Half-time: merged ${res.merged} barline${res.merged === 1 ? '' : 's'} — audio positions hold`
@@ -1756,7 +1902,9 @@ export function _tempoDoubleRange() {
     if (!range) { setStatus('Select a range of barlines (2+) to double.'); return; }
     const res = _tempoDoubleRangePure(S.beats, range.lo, range.hi);
     if (!res) { setStatus('Nothing to split — the range has no bars with an interior beat.'); return; }
-    S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'double-range'));
+    const cmd = new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'double-range');
+    cmd.marks = _tempoRemapMarksByTime(S.beats, res.beats);
+    S.history.exec(cmd);
     S.tempoSel = -1; if (S.tempoSelMulti) S.tempoSelMulti.clear();
     host.draw();
     setStatus(`Double-time: split ${res.split} bar${res.split === 1 ? '' : 's'} — audio positions hold`
@@ -1923,7 +2071,9 @@ export async function _tempoPromptPickup() {
     const newBeats = _tempoSetPickupPure(beats, count);
     if (!newBeats) { setStatus(`Pickup must be 1–${barLen - 1} beats.`); return true; }
     _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'pickup'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'pickup');
+    cmd.marks = _tempoRemapMarksByTime(beats, newBeats);
+    S.history.exec(cmd);
     host.updateTempoSigDisplay();
     host.draw();
     setStatus(`Pickup set: ${count} beat${count === 1 ? '' : 's'} — the partial bar displays as bar 0`);
@@ -1935,19 +2085,23 @@ export function _tempoSetBeatsPerMeasure(d, newCount) {
     const newBeats = _tempoSetBeatsPerMeasurePure(beats, d, newCount, S.duration, _r3);
     if (!newBeats) return;
     _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig');
+    cmd.marks = _tempoReconcileMeterMarkForTimesig(newBeats, d);
+    S.history.exec(cmd);
     host.updateTempoSigDisplay();
     host.draw();
 }
 
-function _tempoSetTimeSignature(d, numerator, denominator) {
+export function _tempoSetTimeSignature(d, numerator, denominator) {
     const beats = S.beats || [];
     let newBeats = _tempoSetBeatsPerMeasurePure(beats, d, numerator, S.duration, _r3);
     if (!newBeats) return false;
     newBeats = _tempoSetDenominatorOnBeatsPure(newBeats, d, denominator);
     if (!newBeats) return false;
     _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig');
+    cmd.marks = _tempoReconcileMeterMarkForTimesig(newBeats, d);
+    S.history.exec(cmd);
     host.updateTempoSigDisplay();
     host.draw();
     return true;
@@ -2000,9 +2154,14 @@ export class TempoGridCmd {
         // imported MIDI's tempo map right after a drums import (active part
         // still fretted-in-roll) would be silently blocked.
         this.songScope = true;
+        // Authored measure-keyed marks (P2-5): a topology edit that renumbers
+        // measures carries {before, after} snapshots so undo restores marks
+        // and beats TOGETHER. null = this command doesn't touch marks.
+        this.marks = null;
     }
     exec() {
         S.beats = this.newBeats.map(b => ({ ...b }));
+        if (this.marks) S.tempoMarks = this.marks.after;
         if (Number.isInteger(this.newSelection)) S.tempoSel = this.newSelection;
         // Topology changed: barline indices shifted, so the multi-selection (PR
         // 5a) can't be remapped safely — drop it rather than point at stale beats.
@@ -2021,6 +2180,7 @@ export class TempoGridCmd {
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
+        if (this.marks) S.tempoMarks = this.marks.before;
         if (Number.isInteger(this.oldSelection)) S.tempoSel = this.oldSelection;
         if (S.tempoSelMulti) S.tempoSelMulti.clear();   // topology reverted — drop the stale set
         // Seconds are unchanged; re-lift beats back onto the old indexing.
@@ -2036,13 +2196,17 @@ export class TempoGridCmd {
 export const MIN_MEASURE = 0.05;  // s — minimum gap a dragged downbeat keeps
 
 /* @pure:tempo-map-bpm:start */
-export function _tempoMeasureBpmsPure(beats, round) {
+export function _tempoMeasureBpmsPure(beats, round, skipMeasures) {
     if (!Array.isArray(beats) || beats.length < 2) return [];
     const r = typeof round === 'function' ? round : (v => v);
     const bpms = [];
     for (let d = 0; d < beats.length; d++) {
         const b = beats[d];
         if (!b || b.measure <= 0) continue;
+        // Held/fermata bars (P2-5): a hold's giant interval is not a tempo -
+        // it poisons every stat downstream (medians, flatten choices, Song
+        // Fit's readout). Callers pass the hold set to keep stats honest.
+        if (skipMeasures && skipMeasures.has(b.measure)) continue;
         let ndb = -1;
         for (let i = d + 1; i < beats.length; i++) {
             if (beats[i] && beats[i].measure > 0) { ndb = i; break; }
@@ -2056,9 +2220,9 @@ export function _tempoMeasureBpmsPure(beats, round) {
     return bpms;
 }
 
-export function _tempoHasMultipleMeasureBpmsPure(beats, tolerance) {
+export function _tempoHasMultipleMeasureBpmsPure(beats, tolerance, skipMeasures) {
     const tol = Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.01;
-    const bpms = _tempoMeasureBpmsPure(beats, v => Math.round(v * 1000) / 1000);
+    const bpms = _tempoMeasureBpmsPure(beats, v => Math.round(v * 1000) / 1000, skipMeasures);
     if (bpms.length < 2) return false;
     const first = bpms[0];
     return bpms.some(bpm => Math.abs(bpm - first) > tol);
@@ -2072,11 +2236,21 @@ export function _tempoHasMultipleMeasureBpmsPure(beats, tolerance) {
 // numerator (beats/bar) or `den` changes. Bar 1 gets a baseline of each. A
 // trailing partial final bar never emits a spurious meter change.
 // Returns [{ i, time, measure, kind: 'tempo'|'meter', label }], time-sorted.
-export function _tempoMarkersPure(beats, tolerance) {
+export function _tempoMarkersPure(beats, tolerance, marks) {
     const out = [];
     if (!Array.isArray(beats) || beats.length < 2) return out;
     const tol = Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.01;
     const r3 = v => Math.round(v * 1000) / 1000;
+    // Authored marks (P2-5) supersede the derived chips on their measure:
+    // a hold suppresses the spurious tempo-drop chip (and deliberately does
+    // NOT update the run tempo, so the re-entry bar matches the old run and
+    // emits nothing either); an authored grouping re-labels the meter chip.
+    const holdByMeasure = new Map();
+    const meterByMeasure = new Map();
+    for (const mk of (marks || [])) {
+        if (mk.kind === 'hold') holdByMeasure.set(mk.measure, mk);
+        if (mk.kind === 'meter') meterByMeasure.set(mk.measure, mk);
+    }
     const db = [];
     for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) db.push(i);
     if (!db.length) return out;
@@ -2092,12 +2266,25 @@ export function _tempoMarkersPure(beats, tolerance) {
             ? r3((num * 60) / (beats[nextI].time - beats[i].time))
             : runBpm;   // last (open) measure reuses the run's tempo
         const measure = beats[i].measure;
-        if (bpm !== null && (runBpm === null || Math.abs(bpm - runBpm) > tol)) {
+        const held = holdByMeasure.get(measure);
+        if (held) {
+            out.push({ i, time: beats[i].time, measure, kind: 'hold', authored: true,
+                provenance: held.provenance, label: 'hold' });
+        } else if (bpm !== null && (runBpm === null || Math.abs(bpm - runBpm) > tol)) {
             out.push({ i, time: beats[i].time, measure, kind: 'tempo', label: `${_tempoFmtBpm(bpm)} BPM` });
             runBpm = bpm;
         }
+        const authoredMeter = meterByMeasure.get(measure);
         const meterChanged = runNum === null || num !== runNum || den !== runDen;
-        if (meterChanged) {
+        if (authoredMeter) {
+            // ONE authored chip (grouped label), even when nothing changed -
+            // the grouping IS the information.
+            const g = authoredMeter.grouping;
+            out.push({ i, time: beats[i].time, measure, kind: 'meter', authored: true,
+                provenance: authoredMeter.provenance,
+                label: (Array.isArray(g) && g.length) ? `${num}/${den} (${g.join('+')})` : `${num}/${den}` });
+            runNum = num; runDen = den;
+        } else if (meterChanged) {
             out.push({ i, time: beats[i].time, measure, kind: 'meter', label: `${num}/${den}` });
             runNum = num; runDen = den;
         }
@@ -2111,10 +2298,24 @@ function _tempoFmtBpm(bpm) {
 
 // editGen-memoized marker list for the ruler paint (recomputes only when an
 // edit bumps editGen or S.beats is reassigned by a grid command).
-let _markerCache = { gen: -1, beatsRef: null, value: [] };
+// The held-measure set every BPM consumer shares — memoized on the marks
+// array identity (S.tempoMarks is swapped immutably on every edit).
+let _holdSetCache = { marksRef: null, value: new Set() };
+export function _tempoHoldMeasures() {
+    if (_holdSetCache.marksRef !== S.tempoMarks) {
+        _holdSetCache = { marksRef: S.tempoMarks, value: _holdMeasuresPure(S.tempoMarks) };
+    }
+    return _holdSetCache.value;
+}
+
+let _markerCache = { gen: -1, beatsRef: null, marksRef: null, value: [] };
 export function _tempoMarkers() {
-    if (_markerCache.gen === editGen && _markerCache.beatsRef === S.beats) return _markerCache.value;
-    _markerCache = { gen: editGen, beatsRef: S.beats, value: _tempoMarkersPure(S.beats, 0.01) };
+    if (_markerCache.gen === editGen && _markerCache.beatsRef === S.beats
+        && _markerCache.marksRef === S.tempoMarks) return _markerCache.value;
+    _markerCache = {
+        gen: editGen, beatsRef: S.beats, marksRef: S.tempoMarks,
+        value: _tempoMarkersPure(S.beats, 0.01, S.tempoMarks),
+    };
     return _markerCache.value;
 }
 

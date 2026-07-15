@@ -377,11 +377,22 @@ export function drawRuler(w) {
         const row = (Math.abs(x - mkLastX) < 44) ? Math.min(mkRow + 1, 2) : 0;
         mkLastX = x; mkRow = row;
         const isTempo = mk.kind === 'tempo';
+        const isHold = mk.kind === 'hold';
         const cy = top + 1 + row * 8.5;
         const tw = ctx.measureText(mk.label).width;
-        ctx.fillStyle = isTempo ? 'rgba(56,189,248,0.16)' : 'rgba(167,139,250,0.16)';
+        ctx.fillStyle = isHold ? 'rgba(245,158,11,0.20)'
+            : isTempo ? 'rgba(56,189,248,0.16)' : 'rgba(167,139,250,0.16)';
         ctx.fillRect(x + 2, cy, tw + 5, 8);
-        ctx.fillStyle = isTempo ? '#7dd3fc' : '#c4b5fd';
+        // AUTHORED chips (P2-5) read as deliberate: a solid outline derived
+        // chips don't get. Confirmed provenance = solid; anything else dashed.
+        if (mk.authored) {
+            ctx.strokeStyle = isHold ? '#f59e0b' : '#a78bfa';
+            ctx.lineWidth = 0.75;
+            if (mk.provenance && mk.provenance !== 'confirmed') ctx.setLineDash([2, 2]);
+            ctx.strokeRect(x + 2, cy, tw + 5, 8);
+            ctx.setLineDash([]);
+        }
+        ctx.fillStyle = isHold ? '#fbbf24' : isTempo ? '#7dd3fc' : '#c4b5fd';
         ctx.fillText(mk.label, x + 4, cy + 0.5);
     }
 

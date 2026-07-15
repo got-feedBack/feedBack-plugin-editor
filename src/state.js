@@ -80,6 +80,11 @@ export const S = {
     // on empty grid, or Ctrl+A add here. Index-based, so it is CLEARED (never
     // remapped) on any topology change (TempoGridCmd) and on mode exit.
     tempoSelMulti: new Set(),
+    // Authored tempo/meter marks (P2-5): sparse intent the grid can't express
+    // (hold/fermata, meter grouping), MEASURE-keyed, swapped immutably by
+    // TempoMarkCmd / TempoGridCmd — see src/tempo-marks.js. Never fields on
+    // S.beats entries; persisted via the editor_tempo_marks manifest key.
+    tempoMarks: [],
 
     // View
     scrollX: 0,   // seconds

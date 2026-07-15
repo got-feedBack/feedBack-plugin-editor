@@ -9,7 +9,7 @@
 import { S, markSessionDirty } from './state.js';
 import { _editorEscHtml, setStatus } from './ui.js';
 import { ReplaceArrangementChartCmd } from './commands.js';
-import { TempoGridCmd } from './tempo.js';
+import { TempoGridCmd, _tempoRemapMarksByTime } from './tempo.js';
 import { DRUM_PIECE_META, DRUM_PIECE_ORDER, _drumImportHitPure } from './drum.js';
 import { KEYS_PATTERN, _uniqueKeysName, updatePianoRange } from './keys.js';
 import { flattenChords } from './chords.js';
@@ -856,7 +856,9 @@ export function _maybeOfferMidiTempoMap(tempoMap, onDone) {
     applyBtn.onclick = () => {
         const sel = modal.querySelector('input[name="midi-tempo-choice"]:checked');
         if (sel && sel.value === 'midi' && midiBeats.length) {
-            S.history.exec(new TempoGridCmd(S.beats, midiBeats, 'MIDI tempo map'));
+            const cmd = new TempoGridCmd(S.beats, midiBeats, 'MIDI tempo map');
+            cmd.marks = _tempoRemapMarksByTime(S.beats, midiBeats);
+            S.history.exec(cmd);
             host.draw();
             setStatus(`Applied the MIDI tempo map (${_midiTempoSummaryPure(tempoMap)}) — save to persist`);
         }
