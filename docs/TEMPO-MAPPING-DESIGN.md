@@ -96,6 +96,10 @@ through the final authored barline. Because the canonical grid's final measure
 is open, accepting that last proposal carries the most recent fitted interval
 through its remaining interior beats rather than leaving the last bar at the
 old tempo.
+Locked barlines preserve their own authored source time but do not alter the
+metronome pulse cursor. A lock is not evidence of a missing or extra beat; the
+authored beat count continues across it so one stale lock cannot phase-shift
+every later proposal.
 The guide identity, not the currently focused transcription/audio reference,
 owns analysis. Every metronome **G** action must activate and await the locked
 guide source before reading onsets; selecting a paired stem must never silently

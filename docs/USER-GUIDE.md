@@ -231,6 +231,9 @@ Three ways to set the tempo, from coarse to fine:
      want to accept through that bar.
      `G` always reloads the locked metronome guide before analysis, even when a
      transcription selection has temporarily switched audition to its paired stem.
+     A locked barline keeps its own time, but it no longer changes which guide
+     pulse later bars count from. This prevents one stale lock from shifting the
+     remainder of a fresh fit by a beat.
    - **`Shift+B` — Tap tempo**: tap along and the selected barline takes your
      tempo.
    - **`B` — Set BPM** for the selected barline; **`M` — metric modulation**
@@ -249,6 +252,8 @@ Three ways to set the tempo, from coarse to fine:
      handles along the top edge—or the thin barline itself—when you want to
      move a marker instead. **Ctrl/Cmd+A** selects every barline; there is no
      limit on the number or disjoint groups that can be locked together.
+     Unsaved projects keep locks only for that editing session; they do not
+     inherit a shared blank-project lock set from another new song.
 
 ### Offset (audio alignment)
 

@@ -141,7 +141,7 @@ t('an explicit metronome guide maps the whole pulse train across tempo changes',
     });
 });
 
-t('metronome fitting consolidates one click transient and re-anchors at locked bars', () => {
+t('metronome fitting consolidates one click transient and pins locked bars', () => {
     const g = grid(6, 120);
     g[12].time = 6.1;
     g[12].locked = true;
@@ -152,6 +152,18 @@ t('metronome fitting consolidates one click transient and re-anchors at locked b
     assert.ok(locked && locked.locked);
     assert.strictEqual(locked.time, 6.1);
     assert.strictEqual(proposals.at(-1).i, 20, 'duplicate detector hits do not consume extra beats');
+});
+
+t('a stale locked bar holds its time without shifting the forward click phase', () => {
+    const g = grid(6, 120);
+    g[8].time = 4.5;                         // one click late, but intentionally locked
+    g[8].locked = true;
+    const { proposals } = _suggestMetronomeFitPure(g, onsetsAllBeats(120, 6), 0);
+    assert.strictEqual(proposals.find(proposal => proposal.i === 8).time, 4.5,
+        'the lock itself remains authoritative');
+    assert.strictEqual(proposals.find(proposal => proposal.i === 12).time, 6.0,
+        'the next bar resumes authored pulse count instead of inheriting a one-beat phase error');
+    assert.strictEqual(proposals.find(proposal => proposal.i === 16).time, 8.0);
 });
 
 t('a drifting smart-metronome pulse train maps exactly in half-time bar feel', () => {

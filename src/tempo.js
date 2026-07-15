@@ -2574,7 +2574,7 @@ export function _respaceWithLocksPure(oldBeats, newBeats) {
 // save/reload — the pack rebuilds the grid to the same times); on load we
 // re-attach `locked` to the beats whose time matches (±tol).
 export function _beatLockStorageKeyPure(filename) {
-    return 'editorBeatLocks:' + (filename || '');
+    return filename ? 'editorBeatLocks:' + filename : null;
 }
 export function _beatLockParsePure(raw) {
     let arr = null;
@@ -2612,6 +2612,10 @@ function _saveBeatLocks() {
     const times = S.beats.filter(b => b && b.locked).map(b => Math.round(b.time * 1000) / 1000);
     const key = _beatLockStorageKeyPure(S.filename);
     try {
+        if (!key) {
+            localStorage.removeItem('editorBeatLocks:');
+            return;
+        }
         if (times.length) localStorage.setItem(key, JSON.stringify(times));
         else localStorage.removeItem(key);
     } catch (_) { /* localStorage unavailable */ }
@@ -2645,6 +2649,11 @@ export class TempoLockCmd {
 // Re-attach persisted locks onto S.beats after a load (times match the pack).
 export function _restoreBeatLocks() {
     const key = _beatLockStorageKeyPure(S.filename);
+    if (!key) {
+        try { localStorage.removeItem('editorBeatLocks:'); } catch (_) {}
+        _applyBeatLocksPure(S.beats, [], 0.02);
+        return;
+    }
     let raw = null;
     try { raw = localStorage.getItem(key); } catch (_) {}
     _applyBeatLocksPure(S.beats, _beatLockParsePure(raw), 0.02);

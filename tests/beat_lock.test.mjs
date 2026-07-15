@@ -23,8 +23,10 @@
  */
 import assert from 'node:assert';
 import { beatOf as _beatOf, timeOf as _timeOf } from '../src/beats.js';
+import { S } from '../src/state.js';
 import {
     _applyBeatLocksPure, _beatLockParsePure, _beatLockStorageKeyPure, _respaceWithLocksPure,
+    _restoreBeatLocks,
 } from '../src/tempo.js';
 
 // beatOf / timeOf (the beat-primary converter) — used to prove the sync path
@@ -178,10 +180,24 @@ t('sync reprojects SECTION times onto the warped grid under a lock (FIX A)', () 
 });
 
 // ── 2. persistence pures ─────────────────────────────────────────────────────
-t('_beatLockStorageKeyPure keys by filename (empty ⇒ bare prefix)', () => {
+t('_beatLockStorageKeyPure keys saved songs and isolates unsaved projects', () => {
     assert.strictEqual(_beatLockStorageKeyPure('song.sloppak'), 'editorBeatLocks:song.sloppak');
-    assert.strictEqual(_beatLockStorageKeyPure(''), 'editorBeatLocks:');
-    assert.strictEqual(_beatLockStorageKeyPure(null), 'editorBeatLocks:');
+    assert.strictEqual(_beatLockStorageKeyPure(''), null);
+    assert.strictEqual(_beatLockStorageKeyPure(null), null);
+});
+
+t('an unsaved project clears legacy blank-key locks instead of inheriting them', () => {
+    const priorStorage = globalThis.localStorage;
+    const removed = [];
+    globalThis.localStorage = {
+        getItem: () => '[1]', removeItem: key => removed.push(key), setItem: () => {},
+    };
+    S.filename = '';
+    S.beats = grid([0, 1, 2], [1]);
+    _restoreBeatLocks();
+    assert.deepStrictEqual(S.beats.map(beat => !!beat.locked), [false, false, false]);
+    assert.deepStrictEqual(removed, ['editorBeatLocks:']);
+    globalThis.localStorage = priorStorage;
 });
 
 t('_beatLockParsePure is defensive (junk/array-shape/bad-values all drop out)', () => {

@@ -227,14 +227,25 @@ export function _suggestMetronomeFitPure(beats, onsets, fromIdx, opts) {
         if (toIdx !== null && down > toIdx) break;
         const beatsInBar = down - prevDown;
         if (beatsInBar < 1) break;
+        const targetPulse = pulseIndex + beatsInBar;
         if (beats[down].locked) {
-            const reanchor = nearestPulse(beats[down].time, pulseIndex);
-            if (reanchor >= 0) pulseIndex = reanchor;
+            // A lock preserves this barline's authored source time; it does
+            // not authorize an implicit missing/extra beat. Keep advancing by
+            // the chart's authored beat count so one stale lock cannot shift
+            // every later suggestion onto the wrong click phase.
+            const availableTarget = Math.min(targetPulse, pulses.length - 1);
+            for (let i = pulseIndex + 1; i <= availableTarget; i++) {
+                const gap = pulses[i].t - pulses[i - 1].t;
+                if (gap > 0) {
+                    recentGaps.push(gap);
+                    if (recentGaps.length > 12) recentGaps.shift();
+                }
+            }
+            pulseIndex = targetPulse;
             proposals.push({ i: down, time: beats[down].time, conf: 1, locked: true });
             prevDown = down; prevTime = beats[down].time;
             continue;
         }
-        const targetPulse = pulseIndex + beatsInBar;
         let time; let conf; let inferred = false;
         if (targetPulse < pulses.length) {
             for (let i = pulseIndex + 1; i <= targetPulse; i++) {

@@ -82,6 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not that marker is locked. After undoing a bad fit, selecting the last trusted
   manual marker omits every earlier bar from the new suggestions; a lingering
   multi-selection is only a fallback when no marker has focus.
+  Locked barlines still preserve their own time, but no longer redirect the
+  metronome pulse cursor and phase-shift every later suggestion. Unsaved projects
+  also stop sharing the legacy blank-filename lock key, preventing stale locks
+  from leaking between newly created songs.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
