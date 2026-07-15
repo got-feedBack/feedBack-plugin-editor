@@ -217,8 +217,10 @@ Three ways to set the tempo, from coarse to fine:
      entire chart, follows click-track tempo changes, and extrapolates missing
      detections at visibly lower confidence instead of stopping. Choose
      **Accept Whole Fit** to apply every proposal as one edit; `Ctrl+Z` restores
-     the previous map. Click an individual ghost when you only want to accept
-     through that bar.
+     the previous map. Any existing multi-selected barlines choose the starting
+     anchor but do not cap Metronome Guide mode; it continues through the final
+     authored barline and final measure. Click an individual ghost when you only
+     want to accept through that bar.
    - **`Shift+B` — Tap tempo**: tap along and the selected barline takes your
      tempo.
    - **`B` — Set BPM** for the selected barline; **`M` — metric modulation**

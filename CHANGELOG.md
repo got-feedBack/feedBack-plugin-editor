@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its pulses across the whole chart, follows click-track tempo changes, marks
   extrapolated gaps at lower confidence, and **Accept Whole Fit** commits every
   proposal as one undoable tempo-map edit.
+  Metronome-guide Whole Fit now ignores stale barline multi-selection endpoints
+  and carries the fitted interval through the open final measure, so an earlier
+  range selection cannot silently truncate the song tail.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns

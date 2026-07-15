@@ -31,6 +31,7 @@ const { S, bumpEditGen } = await import('../src/state.js');
 const { timeToX } = await import('../src/geometry.js');
 const { EditHistory } = await import('../src/history.js');
 const { editorAcceptWholeTempoFit } = await import('../src/tempo.js');
+const { _tempoSuggestScopePure } = await import('../src/input.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -160,6 +161,16 @@ t('Accept Whole Fit commits every metronome proposal as one undoable command', (
     assert.deepStrictEqual(S.beats.map(beat => beat.time), before, 'one undo restores the entire prior map');
 });
 
+t('metronome Whole Fit ignores a stale marker-range endpoint', () => {
+    const beats = grid(8, 120);
+    const selected = new Set([4, 8, 12]);
+    const whole = _tempoSuggestScopePure(beats, 8, selected, true);
+    assert.deepStrictEqual(whole, { anchor: 4, opts: { metronome: true } });
+    const phrase = _tempoSuggestScopePure(beats, 8, selected, false);
+    assert.deepStrictEqual(phrase, { anchor: 4, opts: { toIdx: 12 } },
+        'ordinary phrase fitting remains selection-bounded');
+});
+
 t('a locked downbeat is pinned at its own time with full confidence', () => {
     const g = grid(12, 120);
     g[5 * 4].locked = true;                  // lock bar 6's downbeat
@@ -200,6 +211,18 @@ t('apply honors a pinned lock (proposal at own time = no movement)', () => {
     const out = _suggestApplyPure(g, proposals, 8);
     assert.strictEqual(out[8].time, 4.0);
     assert.strictEqual(out[8].locked, true, 'lock flag survives');
+});
+
+t('accepting the final downbeat carries the fitted tempo through the open final measure', () => {
+    const g = grid(4, 120);
+    const out = _suggestApplyPure(g, [
+        { i: 4, time: 2.4, conf: .9 },
+        { i: 8, time: 4.8, conf: .9 },
+        { i: 12, time: 7.2, conf: .9 },
+    ], 12);
+    assert.ok(Math.abs(out[13].time - 7.8) < 1e-9);
+    assert.ok(Math.abs(out[15].time - 9.0) < 1e-9,
+        'the final authored beat no longer stays on the old tempo');
 });
 
 t('HUD text reports count, confidence, and the stopped-early hint', () => {

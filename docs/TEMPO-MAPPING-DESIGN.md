@@ -85,7 +85,12 @@ including click-track tempo changes. Missing detections are extrapolated from
 the recent pulse interval and must carry lower confidence. The result remains a
 proposal: **Accept Whole Fit** commits it as one undoable command, and individual
 accept-through remains available. Merely naming a file “click” never enables
-this policy; the user must opt in on the audio track.
+this policy; the user must opt in on the audio track. A barline multi-selection
+does not bound this mode: it chooses the starting anchor and the proposal runs
+through the final authored barline. Because the canonical grid's final measure
+is open, accepting that last proposal carries the most recent fitted interval
+through its remaining interior beats rather than leaving the last bar at the
+old tempo.
 
 ## Pitch-Preserving Slow Playback
 

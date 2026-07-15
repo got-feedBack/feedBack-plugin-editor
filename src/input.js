@@ -783,6 +783,20 @@ function _editorPromptTempoBpmAtSelection() {
 // Assisted mapping (G): propose an onset fit for the downbeats ahead of the
 // anchor — the selected barline, or the first downbeat when none is selected.
 // Proposal-only; accepting is a ghost-handle click handled in tempo.js.
+export function _tempoSuggestScopePure(beats, tempoSel, tempoSelMulti, metronome) {
+    let anchor = tempoSel;
+    const range = _tempoSelRangePure(beats, tempoSelMulti);
+    const opts = metronome ? { metronome: true } : undefined;
+    if (range) {
+        anchor = range.lo;
+        // A selected range is useful for ordinary phrase re-fit, but an
+        // explicitly-declared click guide means "from here through the song".
+        // Stale marker selections must never silently cap Whole Fit.
+        if (!metronome) return { anchor, opts: { toIdx: range.hi } };
+    }
+    return { anchor, opts };
+}
+
 function _editorTempoSuggestFit() {
     if (!S.tempoMapMode) {
         setStatus('Enter Tempo Map (T) first — Suggest fits the barlines to the recording.');
@@ -795,11 +809,9 @@ function _editorTempoSuggestFit() {
     }
     // With a multi-selection, fit only the selected RANGE: anchor at its first
     // downbeat and bound the march at its last.
-    let anchor = S.tempoSel;
-    let opts = S.trackSession && S.trackSession.tempoGuideMode === 'metronome'
-        ? { metronome: true } : undefined;
-    const range = _tempoSelRangePure(S.beats, S.tempoSelMulti);
-    if (range) { anchor = range.lo; opts = { ...(opts || {}), toIdx: range.hi }; }
+    const metronome = !!(S.trackSession && S.trackSession.tempoGuideMode === 'metronome');
+    let { anchor, opts } = _tempoSuggestScopePure(
+        S.beats, S.tempoSel, S.tempoSelMulti, metronome);
     if (anchor < 0 || !(S.beats[anchor] && S.beats[anchor].measure > 0)) {
         anchor = S.beats.findIndex(b => b && b.measure > 0);
     }
@@ -811,10 +823,9 @@ function _editorTempoSuggestFit() {
     _zonesDismiss();   // one proposal surface at a time — G replaces the zone bands
     const n = _suggestCompute(anchor, onsets, opts);
     host.draw();
-    const metronome = !!(opts && opts.metronome);
     setStatus(n
         ? (metronome
-            ? `Metronome guide mapped ${n} barline${n === 1 ? '' : 's'} through the chart — review, then Accept Whole Fit or click a ghost to accept through it`
+            ? `Metronome guide mapped all ${n} remaining barline${n === 1 ? '' : 's'} and the final measure — review, then Accept Whole Fit or click a ghost to accept through it`
             : opts
             ? `Suggested a fit for the selected range (${n} barline${n === 1 ? '' : 's'}) — click a ghost handle to accept through it; Esc dismisses`
             : `Suggested ${n} barline${n === 1 ? '' : 's'} ahead of the anchor — click a ghost handle to accept through it; Esc dismisses`)

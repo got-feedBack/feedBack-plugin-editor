@@ -359,7 +359,7 @@ export function _suggestApplyPure(beats, proposals, throughI) {
     const out = beats.map(b => ({ ...b }));
     for (const [i, t] of newTime) out[i].time = t;
     // Re-space interiors between consecutive downbeats where an edge moved.
-    let a = -1;
+    let a = -1; let previousDownbeat = -1;
     for (let i = 0; i < beats.length; i++) {
         if (!(beats[i].measure > 0)) continue;
         if (a >= 0) {
@@ -372,7 +372,24 @@ export function _suggestApplyPure(beats, proposals, throughI) {
                 }
             }
         }
+        previousDownbeat = a;
         a = i;
+    }
+    // The canonical grid has an open final measure: there is usually no
+    // closing downbeat to act as the far edge. When Whole Fit reaches the
+    // final authored downbeat, carry its most recent fitted beat interval
+    // through the remaining interior beats instead of leaving the last bar on
+    // the old tempo. This preserves topology and TempoMapCmd's equal-length
+    // invariant while making the accepted fit actually reach chart end.
+    if (a >= 0 && previousDownbeat >= 0 && newTime.has(a) && a < beats.length - 1) {
+        const oldSpan = beats[a].time - beats[previousDownbeat].time;
+        const newSpan = out[a].time - out[previousDownbeat].time;
+        if (oldSpan > 0 && newSpan > 0) {
+            const scale = newSpan / oldSpan;
+            for (let j = a + 1; j < beats.length; j++) {
+                out[j].time = out[a].time + (beats[j].time - beats[a].time) * scale;
+            }
+        }
     }
     return out;
 }
