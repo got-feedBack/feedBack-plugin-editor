@@ -112,5 +112,88 @@ t('capo and title reach the header; too few downbeats refuses', () => {
     assert.strictEqual(gen([], [{ time: 0, measure: 1 }]), null);
 });
 
+// ---- non-quarter denominators (6/8, 7/8) ------------------------------
+// A ruler beat in x/8 is an EIGHTH note, so bar capacity must scale with
+// the denominator: a 6/8 bar totals six :8 equivalents (12 sixteenth
+// ticks), not six quarters. These pin the denominator-aware allocation.
+
+// An x/8 grid at 0.25s per eighth-note beat, linear converter to match.
+function grid8(bars, num) {
+    const beats = [];
+    for (let m = 0; m < bars; m++) for (let b = 0; b < num; b++) {
+        beats.push({ time: (m * num + b) * 0.25, measure: b === 0 ? m + 1 : 0, den: 8 });
+    }
+    return beats;
+}
+const beatOf8 = (t2) => t2 / 0.25;
+const gen8 = (notes, beats) => _alphaTexFromNotesPure({
+    notes, beats, beatOfFn: beatOf8, ...STD,
+});
+
+// Sums a bar's emitted durations as a fraction of a whole note (chords,
+// rests and notes alike), so every fixture can assert exact bar totals.
+function barWhole(bar) {
+    const s = bar.replace(/\\ts \d+ \d+ ?/, '');
+    let sum = 0, m;
+    const re = /(?:r|\([^)]*\)|\d+\.\d+)\.(\d+)/g;
+    while ((m = re.exec(s))) sum += 1 / Number(m[1]);
+    return sum;
+}
+
+t('6/8: notes on every eighth-note beat engrave as eighths, and the bar sums to 6/8', () => {
+    const notes = [0, 1, 2, 3, 4, 5].map(b => N(b * 0.25, 0, 3));
+    const r = gen8(notes, grid8(2, 6));
+    const bar1 = r.tex.split(' | ')[0].split('\n').pop();
+    assert.strictEqual(bar1, '\\ts 6 8 3.6.8 3.6.8 3.6.8 3.6.8 3.6.8 3.6.8');
+    assert.strictEqual(barWhole(bar1), 6 / 8, 'bar sums to exactly six eighths');
+});
+
+t('6/8: rest fill and gap durations stay in eighth-beat capacity; beatMap aligns', () => {
+    // One note on beat 4 (tick 6 of 12): leading rests 6 ticks, note takes
+    // the largest fit (quarter = 4), trailing eighth rest completes 12.
+    const r = gen8([N(0.75, 0, 3)], grid8(2, 6));
+    const bar1 = r.tex.split(' | ')[0].split('\n').pop();
+    assert.strictEqual(bar1, '\\ts 6 8 r.4 r.8 3.6.4 r.8');
+    assert.strictEqual(barWhole(bar1), 6 / 8);
+    assert.deepStrictEqual(r.beatMap[0].map(x => x && x.length), [null, null, 1, null].map(x => x),
+        'rests null, the note beat carries its ref');
+});
+
+t('6/8: sixteenth subdivisions inside an eighth-note beat still quantize to the 16th grid', () => {
+    // Beat 0 plus a note half a beat later (a 16th offset): .16 then the
+    // greedy remainder (half + eighth rest + sixteenth rest = 11 ticks).
+    const r = gen8([N(0, 0, 3), N(0.125, 0, 5)], grid8(2, 6));
+    const bar1 = r.tex.split(' | ')[0].split('\n').pop();
+    assert.strictEqual(bar1, '\\ts 6 8 3.6.16 5.6.2 r.8 r.16');
+    assert.strictEqual(barWhole(bar1), 6 / 8);
+});
+
+t('7/8: bar capacity is seven eighths; an empty 7/8 bar rest-fills to exactly 7/8', () => {
+    const r = gen8([N(0, 0, 3), N(1.0, 1, 5)], grid8(3, 7));
+    const barsOut = r.tex.split('\n').pop().split(' | ');
+    assert.strictEqual(barsOut[0], '\\ts 7 8 3.6.2 5.5.4 r.8');
+    assert.strictEqual(barsOut[1], 'r.2 r.4 r.8', 'empty bar: half + quarter + eighth rests');
+    assert.strictEqual(barWhole(barsOut[0]), 7 / 8);
+    assert.strictEqual(barWhole(barsOut[1]), 7 / 8);
+});
+
+t('meter change 4/4 → 6/8 switches per-bar tick capacity with the denominator', () => {
+    const beats = [];
+    for (let b = 0; b < 4; b++) beats.push({ time: b * 0.5, measure: b === 0 ? 1 : 0, den: 4 });
+    for (let b = 0; b < 6; b++) beats.push({ time: 2 + b * 0.25, measure: b === 0 ? 2 : 0, den: 8 });
+    beats.push({ time: 3.5, measure: 3, den: 8 });
+    const bo = (t2) => t2 < 2 ? t2 / 0.5 : 4 + (t2 - 2) / 0.25;
+    const r = _alphaTexFromNotesPure({ notes: [], beats, beatOfFn: bo, ...STD });
+    const barsOut = r.tex.split('\n').pop().split(' | ');
+    assert.strictEqual(barsOut[0], '\\ts 4 4 r.1');
+    assert.strictEqual(barsOut[1], '\\ts 6 8 r.2 r.4', 'six eighths = half + quarter rest');
+});
+
+t('4/4 output is bit-identical to the pre-denominator-aware markup (no regression)', () => {
+    const r = gen([N(0, 0, 3), N(0.5, 1, 5), N(1.0, 2, 7), N(1.5, 0, 3)], grid(2));
+    assert.strictEqual(r.tex,
+        '\\tuning e5 b4 g4 d4 a3 e3\n.\n\\ts 4 4 3.6.4 5.5.4 7.4.4 3.6.4');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
