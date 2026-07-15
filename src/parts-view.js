@@ -4,16 +4,17 @@
 // (drawNow, the canvas hooks); everything they refresh routes through host.
 
 import { startPlayback, stopPlayback } from './audio.js';
-import { DPR, canvas, ctx } from './canvas.js';
+import { ctx } from './canvas.js';
 import { hideContextMenu } from './context-menu.js';
 import { DRUM_PIECE_META, _refreshDrumEditButton } from './drum.js';
-import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
+import { LABEL_W, TIMELINE_TOP, timeToX, xToTime } from './geometry.js';
 import { KEYS_PATTERN } from './keys.js';
 import { _stringCountFor } from './lanes.js';
 import { _downbeatTimes } from './loop.js';
 import { _recState } from './midi-record.js';
 import { getMousePos } from './mouse.js';
 import { S } from './state.js';
+import { _trackSessionLaneLayoutPure, _trackSessionRowsPure } from './track-session.js';
 import { _refreshTempoMapButton } from './tempo.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
@@ -64,7 +65,13 @@ function _partsArrKindPure(name) {
     if (/bass/i.test(s)) return 'Bass';
     return 'Guitar';
 }
+function _partsTrackRowAtYPure(layout, y) {
+    const lane = (layout || []).find(item => y >= item.y && y < item.y + item.h);
+    return lane ? lane.row : null;
+}
 /* @pure:parts-view:end */
+
+export { _partsArrKindPure, _partsDrumBandPure, _partsLaneAtYPure, _partsLaneLayoutPure, _partsListPure, _partsTrackRowAtYPure };
 
 // Track names and instrument identity live in the persistent header at left.
 // Parts view keeps only the normal timeline gutter; duplicating a 140px label
@@ -131,18 +138,50 @@ function _partsDrawSilhouette(part, y0, laneH, w) {
     }
 }
 
+function _arrIndexForTarget(targetId) {
+    return (S.arrangements || []).findIndex((arr, i) => arr
+        && ((arr.id && String(arr.id) === targetId) || (!arr.id && 'arr:' + i === targetId)));
+}
+
+function _drawTrackAudioWaveform(row, y0, laneH, w) {
+    const data = host.trackWaveform(row.sourceId);
+    if (!data || !data.peaks || !data.peaks.bins || !(data.duration > 0)) return;
+    const pk = data.peaks;
+    const source = (S.audioSources || []).find(item => item.id === row.sourceId) || {};
+    const shift = (Number(S.audioShift) || 0) + (Number(source.offset) || 0);
+    const xLo = Math.max(PARTS_GUTTER, Math.floor(timeToX(shift)));
+    const xHi = Math.min(w, Math.ceil(timeToX(data.duration + shift)));
+    const mid = y0 + laneH / 2;
+    const amp = Math.max(2, laneH / 2 - 5);
+    ctx.strokeStyle = 'rgba(120,150,210,.18)';
+    ctx.beginPath(); ctx.moveTo(xLo, mid + .5); ctx.lineTo(xHi, mid + .5); ctx.stroke();
+    ctx.fillStyle = row.sourceKind === 'master' ? 'rgba(95,165,245,.72)' : 'rgba(74,205,220,.72)';
+    for (let px = xLo; px < xHi; px++) {
+        let i0 = Math.floor((xToTime(px) - shift) / data.duration * pk.bins);
+        let i1 = Math.floor((xToTime(px + 1) - shift) / data.duration * pk.bins);
+        i0 = Math.max(0, Math.min(pk.bins - 1, i0));
+        i1 = Math.max(i0, Math.min(pk.bins - 1, i1));
+        let lo = pk.min[i0]; let hi = pk.max[i0];
+        for (let i = i0 + 1; i <= i1; i++) { if (pk.min[i] < lo) lo = pk.min[i]; if (pk.max[i] > hi) hi = pk.max[i]; }
+        ctx.fillRect(px, mid - hi * amp, 1, Math.max(1, (hi - lo) * amp));
+    }
+}
+
+function _unifiedRows() {
+    return _trackSessionRowsPure(S.trackSession, S.audioSources, S.arrangements, S.drumTab).rows;
+}
+
 export function _partsViewDraw(w, h) {
     host.drawTimelineHeader(w);
-    host.drawWaveform(w);
-    const parts = _partsListPure(S.arrangements, S.drumTab);
-    const { laneH } = _partsLaneLayoutPure(h - (TIMELINE_TOP + WAVEFORM_H), parts.length);
-    if (!laneH) return;
+    const rows = _unifiedRows();
+    const { lanes } = _trackSessionLaneLayoutPure(rows, S.trackHeights, S.trackScrollY, TIMELINE_TOP);
     const downbeats = _downbeatTimes();
-    for (let p = 0; p < parts.length; p++) {
-        const part = parts[p];
-        const y0 = (TIMELINE_TOP + WAVEFORM_H) + p * laneH;
-        const armed = part.kind === 'arr' && part.idx === S.currentArr;
-        ctx.fillStyle = armed ? '#141432' : (p % 2 === 0 ? '#0c0c1c' : '#0f0f24');
+    for (let p = 0; p < lanes.length; p++) {
+        const { row, y: y0, h: laneH } = lanes[p];
+        if (y0 + laneH <= TIMELINE_TOP || y0 >= h) continue;
+        const arrIdx = row.type === 'transcription' ? _arrIndexForTarget(row.targetId) : -1;
+        const armed = arrIdx >= 0 && arrIdx === S.currentArr;
+        ctx.fillStyle = row.type === 'folder' ? '#172033' : armed ? '#141432' : (p % 2 === 0 ? '#0c0c1c' : '#0f0f24');
         ctx.fillRect(0, y0, w, laneH);
         ctx.strokeStyle = '#1a1a35';
         ctx.lineWidth = 1;
@@ -159,82 +198,59 @@ export function _partsViewDraw(w, h) {
             ctx.lineTo(x, y0 + laneH);
             ctx.stroke();
         }
-        _partsDrawSilhouette(part, y0, laneH, w);
+        if (row.type === 'audio') _drawTrackAudioWaveform(row, y0, laneH, w);
+        else if (row.type === 'transcription' && row.targetId === 'drums') {
+            _partsDrawSilhouette({ kind: 'drums', idx: -1 }, y0, laneH, w);
+        } else if (row.type === 'transcription' && arrIdx >= 0) {
+            _partsDrawSilhouette({ kind: 'arr', idx: arrIdx }, y0, laneH, w);
+        } else if (row.type === 'folder') {
+            ctx.fillStyle = 'rgba(251,191,36,.16)';
+            ctx.fillRect(PARTS_GUTTER, y0 + laneH - 2, w - PARTS_GUTTER, 2);
+        }
     }
-    // Playhead across every lane (the waveform band draws its own).
+    // One playhead spans the same unified track rows as the header list.
     const cx = timeToX(S.cursorTime || 0);
     if (cx >= PARTS_GUTTER && cx <= w) {
         ctx.strokeStyle = '#f43f5e';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.moveTo(cx, 0);
-        ctx.lineTo(cx, (TIMELINE_TOP + WAVEFORM_H) + parts.length * laneH);
+        ctx.lineTo(cx, h);
         ctx.stroke();
     }
 }
 
 export function _partsViewOnMouseDown(e, x, y) {
-    if (y < (TIMELINE_TOP + WAVEFORM_H)) {
-        // Waveform-area click seeks, mirroring the other modes (and the
-        // same mid-recording guard).
+    if (y < TIMELINE_TOP) {
         if (_recState === 'recording') return;
         S.cursorTime = Math.max(0, xToTime(x));
         if (S.playing) { stopPlayback(); startPlayback(); }
         host.draw();
         return;
     }
-    const parts = _partsListPure(S.arrangements, S.drumTab);
-    const { laneH } = _partsLaneLayoutPure((canvas.height / DPR) - (TIMELINE_TOP + WAVEFORM_H), parts.length);
-    const i = _partsLaneAtYPure(y, (TIMELINE_TOP + WAVEFORM_H), laneH, parts.length);
-    if (i < 0) return;
-    const part = parts[i];
-    if (part.kind === 'arr' && part.idx !== S.currentArr) {
-        window.editorSelectArrangement(part.idx);
+    const rows = _unifiedRows();
+    const layout = _trackSessionLaneLayoutPure(rows, S.trackHeights, S.trackScrollY, TIMELINE_TOP).lanes;
+    const row = _partsTrackRowAtYPure(layout, y);
+    if (!row || row.type === 'folder') return;
+    if (row.type === 'audio') {
+        S.focusedSourceId = row.sourceId;
+        host.selectTrackSessionSource(row.sourceId);
+        setStatus(`Audio track: ${row.name}`);
+    } else if (row.targetId === 'drums') {
+        setStatus('Drum transcription selected');
+    } else {
+        const idx = _arrIndexForTarget(row.targetId);
+        if (idx >= 0 && idx !== S.currentArr) window.editorSelectArrangement(idx);
         const sel = document.getElementById('editor-arrangement');
-        if (sel) sel.value = String(part.idx);
-        setStatus(`Armed "${part.name}" — double-click to open it`);
-    } else if (part.kind === 'drums') {
-        setStatus('Drums — double-click to open the drum editor');
+        if (sel && idx >= 0) sel.value = String(idx);
+        setStatus(`Transcription track: ${row.name}`);
     }
     host.draw();
 }
 
 export function _partsViewOnDblClick(e) {
     const { y } = getMousePos(e);
-    const parts = _partsListPure(S.arrangements, S.drumTab);
-    const { laneH } = _partsLaneLayoutPure((canvas.height / DPR) - (TIMELINE_TOP + WAVEFORM_H), parts.length);
-    const i = _partsLaneAtYPure(y, (TIMELINE_TOP + WAVEFORM_H), laneH, parts.length);
-    if (i < 0) return;
-    const part = parts[i];
-    S.partsViewMode = false;
-    if (part.kind === 'arr') {
-        if (part.idx !== S.currentArr) {
-            window.editorSelectArrangement(part.idx);
-            const sel = document.getElementById('editor-arrangement');
-            if (sel) sel.value = String(part.idx);
-        }
-        setStatus(`Editing "${part.name}"`);
-    } else if (S.format === 'sloppak') {
-        // Open the drum grid — the same entry steps AND format gate as the
-        // Edit Drums button (_refreshDrumEditButton hides itself when
-        // format !== 'sloppak'). Without this gate a non-sloppak session
-        // carrying a drum_tab could enter drum mode with no visible exit.
-        S.drumEditMode = true;
-        S.drumSel = new Set();
-        hideContextMenu();
-        host.hideAddNote();
-        S.sel.clear();
-        S.tempoMapMode = false;
-        S.tempoSel = -1;
-        setStatus('Editing drums');
-    } else {
-        setStatus('Drum editing needs a sloppak session');
-    }
-    _refreshPartsViewButton();
-    _refreshDrumEditButton();
-    _refreshTempoMapButton();
-    host.draw();
-    host.updateStatus();
+    _partsViewOnMouseDown(e, getMousePos(e).x, y);
 }
 
 export function _editorTogglePartsView() {
@@ -244,43 +260,23 @@ export function _editorTogglePartsView() {
     // Commit any in-flight drag before the mode switch (mirrors the drum
     // and tempo toggles).
     host.finalizeActiveDrag();
-    S.partsViewMode = !S.partsViewMode;
-    if (S.partsViewMode) {
-        S.tempoMapMode = false;
-        S.tempoSel = -1;
-        S.drumEditMode = false;
-        S.drumSel = new Set();
-        hideContextMenu();
-        host.hideAddNote();
-        S.sel.clear();
-    }
+    S.partsViewMode = true;
+    S.tempoMapMode = false; S.tempoSel = -1; S.drumEditMode = false; S.drumSel = new Set();
+    hideContextMenu(); host.hideAddNote(); S.sel.clear();
     _refreshPartsViewButton();
     _refreshDrumEditButton();
     _refreshTempoMapButton();
     host.draw();
     host.updateStatus();
-    setStatus(S.partsViewMode
-        ? `Parts view — ${partCount} part${partCount === 1 ? '' : 's'}. Click a lane to arm it, double-click to open.`
-        : 'Note edit mode');
+    setStatus(`Unified Tracks area — ${partCount} transcription track${partCount === 1 ? '' : 's'} plus audio sources.`);
     return true;
 }
 
 let _partsViewBtnState = '';
 function _ensurePartsViewButton() {
-    let btn = document.getElementById('editor-parts-view-btn');
-    if (!btn) {
-        const anchor = document.getElementById('editor-save-btn');
-        if (!anchor || !anchor.parentNode) return null;
-        btn = document.createElement('button');
-        btn.id = 'editor-parts-view-btn';
-        btn.type = 'button';
-        btn.textContent = '☰ Parts';
-        btn.className = 'px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden';
-        btn.title = 'Stacked overview of every part (Shift+A). Click a lane to arm it, double-click to open it.';
-        btn.onclick = () => _editorTogglePartsView();
-        anchor.parentNode.insertBefore(btn, anchor.nextSibling);
-    }
-    return btn;
+    const old = document.getElementById('editor-parts-view-btn');
+    if (old) old.remove();
+    return null;
 }
 export function _refreshPartsViewButton() {
     const btn = _ensurePartsViewButton();

@@ -7,6 +7,9 @@ import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart 
 const MASTER_ID = 'master';
 const DRUM_TARGET_ID = 'drums';
 const VERSION = 1;
+const TRACK_LANE_DEFAULT = 56;
+const TRACK_LANE_MIN = 28;
+const TRACK_LANE_MAX = 160;
 const idOf = (value) => typeof value === 'string' && value.length > 0 && value.length <= 160 ? value : '';
 const audioTrackId = (sourceId) => 'audio:' + sourceId;
 const transcriptionTrackId = (targetId) => 'transcription:' + targetId;
@@ -181,6 +184,23 @@ function _trackSessionRenamePure(session, trackId, name, rawSources, arrangement
     if (track && clean) track.name = clean;
     return model;
 }
+function _trackSessionLaneHeightPure(heights, trackId) {
+    const value = Number(heights && heights[trackId]);
+    return Number.isFinite(value)
+        ? Math.max(TRACK_LANE_MIN, Math.min(TRACK_LANE_MAX, Math.round(value)))
+        : TRACK_LANE_DEFAULT;
+}
+function _trackSessionLaneLayoutPure(rows, heights, scrollY = 0, top = 40) {
+    const out = [];
+    let y = Number(top) || 0;
+    const scroll = Math.max(0, Number(scrollY) || 0);
+    for (const row of (rows || [])) {
+        const h = _trackSessionLaneHeightPure(heights, row.id);
+        out.push({ row, y: y - scroll, h });
+        y += h;
+    }
+    return { lanes: out, contentHeight: Math.max(0, y - (Number(top) || 0)) };
+}
 function _trackRenameEditorMarkupPure(trackId, currentName) {
     const id = _editorEscHtml(trackId);
     const name = _editorEscHtml(currentName);
@@ -190,7 +210,7 @@ function _trackRenameEditorMarkupPure(trackId, currentName) {
 }
 /* @pure:track-session:end */
 
-export { _trackRenameEditorMarkupPure, _trackSessionCreateFolderPure, _trackSessionMoveBeforePure, _trackSessionNormalizePure, _trackSessionPairPure, _trackSessionRenamePure, _trackSessionRowsPure, _trackSessionSourcesPure, _trackSessionTargetsPure };
+export { _trackRenameEditorMarkupPure, _trackSessionCreateFolderPure, _trackSessionLaneHeightPure, _trackSessionLaneLayoutPure, _trackSessionMoveBeforePure, _trackSessionNormalizePure, _trackSessionPairPure, _trackSessionRenamePure, _trackSessionRowsPure, _trackSessionSourcesPure, _trackSessionTargetsPure };
 
 let lastRender = '';
 let draggedId = '';
@@ -200,6 +220,8 @@ export function installTrackSession(raw, sources) {
     S.audioSources = _trackSessionSourcesPure(sources);
     S.trackSession = _trackSessionNormalizePure(raw, S.audioSources, S.arrangements, S.drumTab);
     S.focusedSourceId = S.trackSession.tempoGuideSourceId;
+    S.trackScrollY = 0;
+    S.partsViewMode = S.trackSession.tracks.length > 0;
     lastRender = '';
     refreshTrackSession();
     host.syncAudioTrackSources(S.audioSources);
@@ -246,16 +268,22 @@ function render() {
             + `<button class="editor-track-ms" data-track-action="mix-solo" data-mix-key="${key}" aria-pressed="${st.solo}" title="Solo track">S</button>`
             + `<input class="editor-track-fader" type="range" min="0" max="106" step="0.1" value="${st.vol}" data-track-action="mix-vol" data-mix-key="${key}" aria-label="${_editorEscHtml(row.name)} fader level">`;
     };
-    el.innerHTML = `<div class="editor-track-session-head"><span>Tracks</span><button data-track-action="folder" title="Create optional folder">+ Folder</button></div><div class="editor-track-session-guide"><span>Tempo</span><button data-track-action="guide-cycle" title="Cycle tempo guide">${_editorEscHtml(guide.name)}</button><button data-track-action="guide-lock" aria-pressed="${model.tempoGuideLocked}" title="Lock tempo guide">${model.tempoGuideLocked ? '🔒' : '🔓'}</button></div><div class="editor-track-session-list">${rows.map(row => {
+    const resizeGrip = row => `<span class="editor-track-resize" data-track-action="resize" data-track-id="${_editorEscHtml(row.id)}" title="Drag to resize track"></span>`;
+    el.innerHTML = `<div class="editor-track-session-head"><strong>Tracks</strong><button data-track-action="folder" title="Create optional folder">+ Folder</button><span class="editor-track-guide-label">Guide</span><button class="editor-track-guide-source" data-track-action="guide-cycle" title="Cycle tempo guide">${_editorEscHtml(guide.name)}</button><button data-track-action="guide-lock" aria-pressed="${model.tempoGuideLocked}" title="Lock tempo guide">${model.tempoGuideLocked ? '🔒' : '🔓'}</button><button data-track-action="zoom-out" title="Reduce all track heights">−</button><button data-track-action="zoom-in" title="Increase all track heights">+</button></div><div class="editor-track-session-list">${rows.map(row => {
         const trackId = _editorEscHtml(row.id); const name = _editorEscHtml(row.name); const indent = Math.min(5, row.depth) * 14;
-        if (row.type === 'folder') return `<div class="editor-track-row editor-track-folder" draggable="true" data-track-id="${trackId}" style="--track-indent:${indent}px"><button data-track-action="collapse" data-track-id="${trackId}">${row.collapsed ? '›' : '⌄'}</button><span>${name}</span></div>`;
-        if (row.type === 'audio') return `<div class="editor-track-row${row.sourceId === model.tempoGuideSourceId ? ' editor-track-guide' : ''}" draggable="true" data-track-id="${trackId}" style="--track-indent:${indent}px"><span class="editor-track-kind">${row.sourceKind === 'master' ? 'MIX' : 'AUD'}</span><button class="editor-track-name" data-track-action="source-select" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use as the audible reference">${name}</button>${mixControls(row)}<button data-track-action="guide-set" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use for tempo">${row.sourceId === model.tempoGuideSourceId ? '★' : '☆'}</button></div>`;
-        return `<div class="editor-track-row editor-track-transcription" draggable="true" data-track-id="${trackId}" style="--track-indent:${indent}px"><span class="editor-track-kind">${row.targetId === DRUM_TARGET_ID ? 'DRM' : 'MIDI'}</span><button class="editor-track-name" data-track-action="select" data-target-id="${_editorEscHtml(row.targetId)}">${name}</button>${mixControls(row)}<select data-track-action="pair" data-track-id="${trackId}" aria-label="Audio reference for ${name}">${sourceOptions(row.pairedSourceId)}</select></div>`;
+        const height = _trackSessionLaneHeightPure(S.trackHeights, row.id);
+        const style = `--track-indent:${indent}px;--track-row-height:${height}px`;
+        if (row.type === 'folder') return `<div class="editor-track-row editor-track-folder" draggable="true" data-track-id="${trackId}" style="${style}"><button data-track-action="collapse" data-track-id="${trackId}">${row.collapsed ? '›' : '⌄'}</button><span>${name}</span>${resizeGrip(row)}</div>`;
+        if (row.type === 'audio') return `<div class="editor-track-row${row.sourceId === model.tempoGuideSourceId ? ' editor-track-guide' : ''}" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.sourceKind === 'master' ? 'MIX' : 'AUD'}</span><button class="editor-track-name" data-track-action="source-select" data-source-id="${_editorEscHtml(row.sourceId)}" title="Select audio track">${name}</button>${mixControls(row)}<button data-track-action="guide-set" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use for tempo">${row.sourceId === model.tempoGuideSourceId ? '★' : '☆'}</button>${resizeGrip(row)}</div>`;
+        return `<div class="editor-track-row editor-track-transcription" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.targetId === DRUM_TARGET_ID ? 'DRM' : 'MIDI'}</span><button class="editor-track-name" data-track-action="select" data-target-id="${_editorEscHtml(row.targetId)}">${name}</button>${mixControls(row)}<select data-track-action="pair" data-track-id="${trackId}" aria-label="Audio reference for ${name}">${sourceOptions(row.pairedSourceId)}</select>${resizeGrip(row)}</div>`;
     }).join('')}</div>`;
+    const list = el.querySelector('.editor-track-session-list');
+    if (list) list.scrollTop = Math.max(0, Number(S.trackScrollY) || 0);
 }
 
 export function refreshTrackSession() {
-    const key = JSON.stringify([S.trackSession, S.audioSources, S.partMix, (S.arrangements || []).map(a => a && [a.id, a.name]), S.drumTab && S.drumTab.name]);
+    const key = JSON.stringify([S.trackSession, S.audioSources, S.partMix, S.trackHeights,
+        (S.arrangements || []).map(a => a && [a.id, a.name]), S.drumTab && S.drumTab.name]);
     if (key === lastRender) return;
     lastRender = key; render();
 }
@@ -268,6 +296,7 @@ export function initTrackSession() {
         const control = event.target && event.target.closest ? event.target.closest('[data-track-action]') : null;
         if (!control) return;
         const action = control.getAttribute('data-track-action');
+        if (action === 'resize') return;
         if (action === 'mix-mute' || action === 'mix-solo') {
             mixerTogglePart(control.getAttribute('data-mix-key') || '', action === 'mix-mute' ? 'mute' : 'solo');
             lastRender = '';
@@ -296,6 +325,13 @@ export function initTrackSession() {
             return;
         }
         if (action === 'folder') commit(_trackSessionCreateFolderPure(S.trackSession, S.audioSources, S.arrangements, S.drumTab, 'Folder'), 'Folder added — drag tracks to arrange the session.');
+        else if (action === 'zoom-in' || action === 'zoom-out') {
+            const delta = action === 'zoom-in' ? 8 : -8;
+            const rows = _trackSessionRowsPure(S.trackSession, S.audioSources, S.arrangements, S.drumTab).rows;
+            const next = { ...(S.trackHeights || {}) };
+            for (const row of rows) next[row.id] = _trackSessionLaneHeightPure(next, row.id) + delta;
+            S.trackHeights = next; lastRender = ''; refreshTrackSession(); host.draw();
+        }
         else if (action === 'collapse') {
             const next = _trackSessionNormalizePure(S.trackSession, S.audioSources, S.arrangements, S.drumTab);
             const folder = next.tracks.find(t => t.id === control.getAttribute('data-track-id') && t.type === 'folder');
@@ -344,6 +380,30 @@ export function initTrackSession() {
         if (!range) return;
         mixerSetPart(range.getAttribute('data-mix-key') || '', { vol: Number(range.value) });
     });
+    el.addEventListener('scroll', event => {
+        const list = event.target && event.target.matches && event.target.matches('.editor-track-session-list') ? event.target : null;
+        if (!list) return;
+        S.trackScrollY = list.scrollTop;
+        host.draw();
+    }, true);
+    el.addEventListener('pointerdown', event => {
+        const grip = event.target && event.target.closest ? event.target.closest('[data-track-action="resize"]') : null;
+        if (!grip) return;
+        event.preventDefault();
+        const trackId = grip.getAttribute('data-track-id') || '';
+        const startY = event.clientY;
+        const startH = _trackSessionLaneHeightPure(S.trackHeights, trackId);
+        const move = moveEvent => {
+            S.trackHeights = { ...(S.trackHeights || {}), [trackId]: startH + moveEvent.clientY - startY };
+            lastRender = ''; refreshTrackSession(); host.draw();
+        };
+        const up = () => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up, { once: true });
+    });
     el.addEventListener('keydown', event => {
         const input = event.target && event.target.matches && event.target.matches('[data-track-rename-input]') ? event.target : null;
         if (!input || (event.key !== 'Enter' && event.key !== 'Escape')) return;
@@ -361,4 +421,13 @@ export function initTrackSession() {
     el.addEventListener('dragstart', event => { const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null; draggedId = row ? row.getAttribute('data-track-id') || '' : ''; });
     el.addEventListener('dragover', event => { if (draggedId) event.preventDefault(); });
     el.addEventListener('drop', event => { event.preventDefault(); const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null; const before = row ? row.getAttribute('data-track-id') || '' : ''; if (draggedId && before && draggedId !== before) commit(_trackSessionMoveBeforePure(S.trackSession, draggedId, before, S.audioSources, S.arrangements, S.drumTab), 'Track order saved with the song.'); draggedId = ''; });
+}
+
+export function scrollTrackSessionBy(deltaY) {
+    const list = panel()?.querySelector('.editor-track-session-list');
+    if (!list) return false;
+    list.scrollTop += Number(deltaY) || 0;
+    S.trackScrollY = list.scrollTop;
+    host.draw();
+    return true;
 }

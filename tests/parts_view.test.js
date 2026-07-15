@@ -21,9 +21,9 @@ if (!m) {
 }
 const api = new Function(
     '"use strict";' + m[0]
-    + '\nreturn { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure, _partsArrKindPure };'
+    + '\nreturn { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure, _partsArrKindPure, _partsTrackRowAtYPure };'
 )();
-const { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure, _partsArrKindPure } = api;
+const { _partsListPure, _partsLaneLayoutPure, _partsDrumBandPure, _partsLaneAtYPure, _partsArrKindPure, _partsTrackRowAtYPure } = api;
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -78,6 +78,16 @@ t('lane hit-test respects the waveform band and lane bounds', () => {
     assert.strictEqual(_partsLaneAtYPure(WF + 149, WF, LANE, N), 2, 'last lane');
     assert.strictEqual(_partsLaneAtYPure(WF + 150, WF, LANE, N), -1, 'past the stack');
     assert.strictEqual(_partsLaneAtYPure(100, WF, 0, N), -1, 'no layout → no hit');
+});
+
+t('unified row hit-test follows the exact shared header layout', () => {
+    const rows = [
+        { row: { id: 'audio:master' }, y: 40, h: 56 },
+        { row: { id: 'transcription:guitar' }, y: 96, h: 72 },
+    ];
+    assert.strictEqual(_partsTrackRowAtYPure(rows, 40).id, 'audio:master');
+    assert.strictEqual(_partsTrackRowAtYPure(rows, 120).id, 'transcription:guitar');
+    assert.strictEqual(_partsTrackRowAtYPure(rows, 168), null);
 });
 
 // ── per-lane instrument tag ────────────────────────────────────────────────────

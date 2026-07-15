@@ -72,6 +72,10 @@ export const S = {
     trackSession: { version: 1, tracks: [], tempoGuideSourceId: 'master', tempoGuideLocked: false },
     focusedSourceId: 'master',
     activeAudioSourceId: 'master',
+    // One Logic-style vertical geometry model for both header cells and
+    // workspace lanes. Heights are view state (not authored song data).
+    trackHeights: {},
+    trackScrollY: 0,
 
     // Tempo Map mode — EOF-style: drag the song-wide beat grid's measure
     // downbeats ("sync points") to fit it to the audio; BPM is derived

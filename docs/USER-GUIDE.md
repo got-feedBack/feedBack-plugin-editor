@@ -145,6 +145,13 @@ before another track to reorder the session. Right-click any track and choose
 command renames folders. Folders are organization only; they never alter the
 song, tempo map, or export.
 
+The header list and timeline are one Tracks area. Every header row has exactly
+one matching horizontal lane: audio rows draw waveforms, transcription rows
+draw their condensed string, piano-roll, or drum events, and folder rows span
+both sides. Drag the thin lower boundary of any header to resize that track;
+the **− / +** controls resize all tracks. Vertical scrolling moves headers and
+lanes together. There is no separate Parts window or second track-name gutter.
+
 Each transcription can choose an audio reference from its row. Select that
 transcription and the editor switches its audible waveform/onset reference to
 the paired stem; choose **Master mix (inherit)** to fall back to the current

@@ -1,6 +1,8 @@
 import assert from 'node:assert';
 import {
     _trackRenameEditorMarkupPure,
+    _trackSessionLaneHeightPure,
+    _trackSessionLaneLayoutPure,
     _trackSessionMoveBeforePure,
     _trackSessionNormalizePure,
     _trackSessionPairPure,
@@ -80,6 +82,18 @@ test('right-click rename supports tracks and folders through an inline editor', 
         assert.match(markup, /data-track-action="rename-cancel"/);
     }
     assert.match(trackMarkup, /Drums &amp; Percussion/);
+});
+
+test('one lane layout drives matching header and canvas row geometry', () => {
+    const rows = [{ id: 'audio:master' }, { id: 'folder:1' }, { id: 'transcription:guitar' }];
+    const layout = _trackSessionLaneLayoutPure(rows, { 'folder:1': 32, 'transcription:guitar': 90 }, 20, 40);
+    assert.deepStrictEqual(layout.lanes.map(item => [item.row.id, item.y, item.h]), [
+        ['audio:master', 20, 56], ['folder:1', 76, 32], ['transcription:guitar', 108, 90],
+    ]);
+    assert.strictEqual(layout.contentHeight, 178);
+    assert.strictEqual(_trackSessionLaneHeightPure({}, 'missing'), 56);
+    assert.strictEqual(_trackSessionLaneHeightPure({ x: 999 }, 'x'), 160);
+    assert.strictEqual(_trackSessionLaneHeightPure({ x: 2 }, 'x'), 28);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

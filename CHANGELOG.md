@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their saved pre-unity response and add +6 dB of headroom above 0 dB. Track
   and folder rename uses an in-app editor (Save/Cancel or Enter/Escape), so it
   works in the desktop shell without relying on a browser prompt.
+  The former separate Parts overview is now the primary unified Tracks area:
+  audio, transcription, and folder headers use the same ordered row geometry
+  as their timeline lanes, share one vertical scroll position, and resize
+  together from the row boundary. Each decoded audio source draws in its own
+  waveform lane; MIDI/string/drum transcriptions remain visible alongside it.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns

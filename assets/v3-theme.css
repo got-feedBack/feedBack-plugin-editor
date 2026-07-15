@@ -509,24 +509,24 @@ html.fb-immersive #plugin-editor .editor-root {
 }
 
 /* ── Source-aware DAW track session ───────────────────────────────── */
-#plugin-editor #editor-track-session { min-width: 20rem; }
-#plugin-editor .editor-track-session-head,
-#plugin-editor .editor-track-session-guide {
-    display: flex; align-items: center; gap: .35rem; padding: .55rem .6rem;
-    border-bottom: 1px solid #374151; color: #9ca3af; font-size: 10px;
+#plugin-editor #editor-track-session { min-width: 20rem; position: relative; }
+#plugin-editor .editor-track-session-head {
+    height: 40px; display: flex; align-items: center; gap: .28rem; padding: 0 .4rem;
+    border-bottom: 1px solid #374151; color: #9ca3af; font-size: 9px;
     text-transform: uppercase; letter-spacing: .06em;
 }
-#plugin-editor .editor-track-session-head span { flex: 1; font-weight: 700; color: #d1d5db; }
-#plugin-editor .editor-track-session-head button,
-#plugin-editor .editor-track-session-guide button {
+#plugin-editor .editor-track-session-head strong { color: #d1d5db; margin-right: auto; }
+#plugin-editor .editor-track-session-head button {
     border: 1px solid #374151; border-radius: 4px; background: #1f2937; color: #d1d5db;
-    padding: .17rem .35rem; font-size: 10px; text-transform: none; letter-spacing: 0;
+    padding: .12rem .28rem; font-size: 9px; text-transform: none; letter-spacing: 0; white-space: nowrap;
 }
-#plugin-editor .editor-track-session-guide > button:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: left; }
+#plugin-editor .editor-track-guide-label { color: #fbbf24; }
+#plugin-editor .editor-track-guide-source { width: 4.5rem; overflow: hidden; text-overflow: ellipsis; }
+#plugin-editor .editor-track-session-list { position: absolute; left: 0; right: 0; top: 40px; bottom: 0; overflow-y: auto; overflow-x: hidden; }
 #plugin-editor .editor-track-row {
-    min-height: 29px; display: flex; align-items: center; gap: .35rem;
+    height: var(--track-row-height); min-height: var(--track-row-height); display: flex; align-items: center; gap: .35rem;
     padding: .22rem .35rem .22rem calc(.45rem + var(--track-indent));
-    border-bottom: 1px solid rgba(55,65,81,.48); color: #d1d5db;
+    border-bottom: 1px solid rgba(55,65,81,.7); color: #d1d5db; position: relative;
 }
 #plugin-editor .editor-track-row:hover { background: rgba(55,65,81,.55); }
 #plugin-editor .editor-track-folder { color: #f3f4f6; font-weight: 600; background: rgba(17,24,39,.58); }
@@ -535,6 +535,8 @@ html.fb-immersive #plugin-editor .editor-root {
 #plugin-editor .editor-track-name { min-width: 4rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 #plugin-editor .editor-track-guide { box-shadow: inset 3px 0 #fbbf24; }
 #plugin-editor .editor-track-row select { width: 5.2rem; background: #111827; border: 1px solid #374151; border-radius: 3px; color: #cbd5e1; font-size: 10px; padding: .12rem; }
+#plugin-editor .editor-track-resize { position: absolute; left: 0; right: 0; bottom: -2px; height: 5px; z-index: 2; cursor: ns-resize; }
+#plugin-editor .editor-track-resize:hover { background: rgba(34,211,238,.65); }
 #plugin-editor .editor-mixer-drawer {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 45; height: 20rem;
     display: flex; flex-direction: column; overflow: hidden; background: rgba(11,15,23,.985);

@@ -203,6 +203,10 @@ export const host = {
     mixerMeterLevels: () => ({ ref: 0, guide: 0, click: 0, master: 0 }),
     /** Preload synchronized audio channels into the transport. */
     syncAudioTrackSources: () => {},
+    /** Cached waveform envelope for one source in the unified Tracks area. */
+    trackWaveform: () => null,
+    /** Vertically scroll the shared track-header/workspace lane stack. */
+    scrollTrackArea: () => false,
 };
 
 export function setHostHooks(hooks) { Object.assign(host, hooks); }

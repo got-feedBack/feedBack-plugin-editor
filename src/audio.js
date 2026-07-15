@@ -53,6 +53,24 @@ const playingTrackSources = new Map();
 const trackGainNodes = new Map();
 let trackPreloadGeneration = 0;
 
+function _trackAudioCacheEntry(url, decoded) {
+    if (!decoded) return { url, buffer: decoded, peaks: null };
+    const data = decoded.getChannelData(0);
+    const binSamples = Math.max(64, Math.round(decoded.sampleRate * 0.003));
+    return { url, buffer: decoded, peaks: _buildWaveformPeaks(data, binSamples) };
+}
+
+export function audioTrackWaveform(sourceId) {
+    const cached = trackAudioCache.get(sourceId);
+    if (!cached || !cached.buffer) return null;
+    if (!cached.peaks) {
+        const enriched = _trackAudioCacheEntry(cached.url, cached.buffer);
+        trackAudioCache.set(sourceId, enriched);
+        return { peaks: enriched.peaks, duration: cached.buffer.duration };
+    }
+    return { peaks: cached.peaks, duration: cached.buffer.duration };
+}
+
 function _installDecodedAudio(decoded, url, sourceId, preserveTimeline) {
     S.audioBuffer = decoded;
     if (!preserveTimeline) S.duration = decoded.duration;
@@ -86,7 +104,7 @@ export async function syncAudioTrackSources(sources) {
             if (!response.ok) return;
             const decoded = await ctx.decodeAudioData(await response.arrayBuffer());
             if (generation === trackPreloadGeneration) {
-                trackAudioCache.set(source.id, { url: source.url, buffer: decoded });
+                trackAudioCache.set(source.id, _trackAudioCacheEntry(source.url, decoded));
             }
         } catch (_) { /* one unavailable stem must not block the session */ }
     }));
@@ -141,7 +159,7 @@ export async function loadAudio(url, options = {}) {
         const buf = await resp.arrayBuffer();
         const decoded = await S.audioCtx.decodeAudioData(buf);
         if (generation !== audioLoadGeneration) return false;
-        trackAudioCache.set(sourceId, { url, buffer: decoded });
+        trackAudioCache.set(sourceId, _trackAudioCacheEntry(url, decoded));
         _installDecodedAudio(decoded, url, sourceId, !!options.preserveTimeline);
         if (options.resetAudition !== false) _resetAuditionForNewSong();
         // A new recording is loaded — re-arm the hearing-safety fade so it

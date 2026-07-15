@@ -44,12 +44,12 @@ import {
     _abApplyRefGain, _editBlipAt, _editorToggleGuideClap,
     _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip,
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
-    editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio, activateTrackAudioSource, audioMixerMeterLevels, syncAudioTrackSources, applyAudioTrackMix,
+    editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio, activateTrackAudioSource, audioMixerMeterLevels, syncAudioTrackSources, audioTrackWaveform, applyAudioTrackMix,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
     editorToggleAuditionTrainer,
 } from './audio.js';
 import { _mixerClapState, _mixerPanelRefresh, _mixerPartStripState, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
-import { initTrackSession, refreshTrackSession } from './track-session.js';
+import { initTrackSession, refreshTrackSession, scrollTrackSessionBy } from './track-session.js';
 import {
     _barSpanForTimes, _editorApplyScrollBounds,
     _editorClampScrollX, _loopReliftBeats,
@@ -511,7 +511,7 @@ setHostHooks({
     partMixChanged: () => { refreshTrackSession(); applyAudioTrackMix(); _abApplyRefGain(); },
     selectTrackSessionTarget: (targetId) => {
         if (targetId === 'drums' && S.drumTab) {
-            S.drumEditMode = true; S.partsViewMode = false; host.draw(); return;
+            S.drumEditMode = false; S.partsViewMode = true; host.draw(); return;
         }
         const index = S.arrangements.findIndex((arr, i) => arr && ((arr.id && String(arr.id) === targetId) || (!arr.id && ('arr:' + i) === targetId)));
         if (index >= 0) window.editorSelectArrangement(String(index));
@@ -520,6 +520,8 @@ setHostHooks({
     mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
     mixerMeterLevels: audioMixerMeterLevels,
     syncAudioTrackSources,
+    trackWaveform: audioTrackWaveform,
+    scrollTrackArea: scrollTrackSessionBy,
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML

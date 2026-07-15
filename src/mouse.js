@@ -648,6 +648,10 @@ export function onDblClick(e) {
 
 export function onWheel(e) {
     e.preventDefault();
+    if (S.partsViewMode && !e.ctrlKey && Math.abs(e.deltaY) >= Math.abs(e.deltaX || 0)) {
+        host.scrollTrackArea(e.deltaY);
+        return;
+    }
     if (e.ctrlKey) {
         // Ctrl+scroll = zoom
         const { x } = getMousePos(e);
@@ -664,4 +668,3 @@ export function onWheel(e) {
     host.updateZoomDisplay();
     host.draw();
 }
-
