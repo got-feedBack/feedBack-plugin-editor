@@ -159,6 +159,27 @@ await t('band mode voices a DRUM-ONLY chart, and its first hit honors mute', () 
         'and stays 0 through the tick that created it');
 });
 
+await t('live transcription tracks do not depend on the legacy guide toggle', () => {
+    stored.editorGuideClap = '0';
+    try {
+        Object.assign(S, BASE, {
+            audioCtx: ctx,
+            audioBuffer: {},
+            audioUrl: 'stem.ogg',
+            arrangements: [],
+            drumTab: { hits: [{ t: 0.04 }] },
+            partMix: {},
+        });
+        setBand(true);
+        const before = ctx.oscs.length;
+        tickOnce();
+        assert.strictEqual(ctx.oscs.length, before + 1,
+            'an unmuted chart track stays live beside its stem');
+    } finally {
+        stored.editorGuideClap = '1';
+    }
+});
+
 // ── item 10 — a solo elsewhere gates a new part gain's FIRST note ────────
 await t("a new part gain is born solo'd-away, its very first note silent", () => {
     Object.assign(S, {

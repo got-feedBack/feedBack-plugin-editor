@@ -81,16 +81,22 @@ t('per-key strip state applies the DAW rule ACROSS parts', () => {
     assert.deepStrictEqual(_mixerPartStripState('drums'), { audible: true, vol: 1 }, 'untouched = unity');
 });
 
-t('the pref round-trips and the toggle notifies the panel', () => {
+t('the pref round-trips; every transcription track defaults live beside recordings', () => {
     let pinged = 0;
     setHostHooks({ stripUiChanged: () => { pinged++; } });
-    assert.strictEqual(editorPlayAllTracksEnabled(), false, 'default off');
-    editorTogglePlayAllTracks();
-    assert.strictEqual(editorPlayAllTracksEnabled(), true);
-    assert.strictEqual(stored.editorPlayAllTracks, '1', 'persisted');
-    assert.strictEqual(pinged, 1, 'panel repaints its header toggle');
+    // No stored choice + no recording (a GP/MIDI import) = the band plays.
+    Object.assign(S, { createMode: false, audioBuffer: null, audioUrl: null });
+    assert.strictEqual(editorPlayAllTracksEnabled(), true, 'chartware default ON');
+    // A recording-backed session still plays its transcription tracks.
+    S.audioBuffer = {};
+    assert.strictEqual(editorPlayAllTracksEnabled(), true, 'stems and transcription play together');
+    // A stored choice beats the session default in BOTH directions.
     editorTogglePlayAllTracks();
     assert.strictEqual(editorPlayAllTracksEnabled(), false);
+    assert.strictEqual(stored.editorPlayAllTracks, '0', 'persisted');
+    assert.strictEqual(pinged, 1, 'panel repaints its header toggle');
+    S.audioBuffer = null;                       // chartware again; user said OFF
+    assert.strictEqual(editorPlayAllTracksEnabled(), false, 'stored OFF beats chartware default');
     assert.strictEqual(stored.editorPlayAllTracks, '0');
     assert.ok(host, 'host imports clean');
 });

@@ -1049,8 +1049,14 @@ let _guideLastFiredKey = null; // last-fired 1 ms bucket key, PERSISTED across
                                // double-fire — per-window dedupe alone resets.
 
 export function editorGuideClapEnabled() {
-    try { return localStorage.getItem('editorGuideClap') === '1'; }
-    catch (_) { return false; }
+    try {
+        const raw = localStorage.getItem('editorGuideClap');
+        if (raw === '1') return true;
+        if (raw === '0') return false;
+    } catch (_) { /* fall through to the session default */ }
+    // DAW default: transcription tracks are live beside recordings and stems
+    // until the user explicitly turns them off or mutes their track strips.
+    return true;
 }
 // Guide voice mode (DAW 1.2): 'clap' (default) or 'gm' — pitched GM
 // instrument voices at the same charted times. The guide toggle (C) stays
@@ -1069,7 +1075,7 @@ export function _editorSetGuideVoiceMode(mode) {
         const gm = _guideGmProgram();
         if (gm !== null && _ensureAudioCtx()) ensureGmPreset(gm, S.audioCtx);
         setStatus('Guide voice: instrument — charted notes play as a GM voice'
-            + (editorGuideClapEnabled() ? '' : ' (turn guide claps on to hear it — C)'));
+            + (editorGuideClapEnabled() ? '' : ' (turn the guide on to hear it — C)'));
     } else {
         setStatus('Guide voice: clap');
     }
@@ -1388,17 +1394,22 @@ function _bandFiredKeyPure(partKey, t) {
 /* @pure:midi-playback:end */
 
 // The persisted mode pref ('1' = the band plays; default off).
-let _playAllPref = null;
+let _playAllPref;   // '1' | '0' | null (no stored choice)
 export function editorPlayAllTracksEnabled() {
-    if (_playAllPref === null) {
-        try { _playAllPref = localStorage.getItem('editorPlayAllTracks') === '1'; }
-        catch (_) { _playAllPref = false; }
+    if (_playAllPref === undefined) {
+        try { _playAllPref = localStorage.getItem('editorPlayAllTracks'); }
+        catch (_) { _playAllPref = null; }
     }
-    return _playAllPref;
+    if (_playAllPref === '1') return true;
+    if (_playAllPref === '0') return false;
+    // DAW default: every transcription track is live, including beside stems.
+    // Per-track M/S/faders are the normal way to control what is heard.
+    return true;
 }
 export function editorTogglePlayAllTracks() {
-    _playAllPref = !editorPlayAllTracksEnabled();
-    try { localStorage.setItem('editorPlayAllTracks', _playAllPref ? '1' : '0'); } catch (_) { /* pref just won't persist */ }
+    const next = !editorPlayAllTracksEnabled();
+    _playAllPref = next ? '1' : '0';
+    try { localStorage.setItem('editorPlayAllTracks', _playAllPref); } catch (_) { /* pref just won't persist */ }
     // A live toggle mid-play: everything queued in the lookahead window
     // belongs to the OLD mode (single guide voice ↔ the whole band), so
     // cancel it and restart the schedule window at the current transport
@@ -1411,7 +1422,7 @@ export function editorTogglePlayAllTracks() {
         _guideScheduledUntil = _transportChartTimePure(
             S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _auditionRate());
     }
-    setStatus(_playAllPref
+    setStatus(next
         ? 'All tracks play their instruments — mix them with the Tracks strips (Shift+C). The recording is unaffected.'
         : 'Back to the single guide voice — only the current track sounds.');
     host.stripUiChanged();
@@ -1570,7 +1581,13 @@ function _guideTick() {
     // with the pref off; recording passes stay clean even with it on.
     const claps = _abClapsEnabledPure(_abActive(), _abPhase, editorGuideClapEnabled());
     const metro = editorMetronomeEnabled();
-    if (!S.playing || !S.audioCtx || (!claps && !metro)) return;
+    // Band tracks are real DAW channels, not a flavor of the old guide-clap
+    // toggle. They stay live beside stems until their own strip is muted.
+    // A/B's recording-only pass remains an intentional global audition mute.
+    const bandParts = (editorPlayAllTracksEnabled() && !S.drumEditMode
+        && (!_abActive() || claps)) ? _bandPartsPure(S.arrangements, S.drumTab) : null;
+    const bandLive = !!(bandParts && bandParts.length);
+    if (!S.playing || !S.audioCtx || (!claps && !metro && !bandLive)) return;
     const nowChart = _transportChartTimePure(S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _auditionRate());
     // Clamp the lookahead end to the loop-region end while looping, so no clap
     // is scheduled past the boundary before the rAF wrap cancels the window.
@@ -1591,8 +1608,6 @@ function _guideTick() {
     // Band mode gates on the REAL roster, not S.arrangements.length — a
     // drum-only chart has no arrangements but is still a band of one
     // (review #280, item 8).
-    const bandParts = (claps && editorPlayAllTracksEnabled() && !S.drumEditMode)
-        ? _bandPartsPure(S.arrangements, S.drumTab) : null;
     if (bandParts && bandParts.length) {
         // ── Band mode (multi-track MIDI playback) ────────────────────
         // EVERY part voices its own GM instrument through its own gain node
@@ -1905,8 +1920,10 @@ export function _editorToggleLoopAB() {
 // Start/stop the scheduler to match "playing AND enabled". Called from
 // startPlayback/stopPlayback and from the toggle (mid-play enable works).
 export function _guideTimerSync() {
+    const bandLive = editorPlayAllTracksEnabled() && !S.drumEditMode
+        && _bandPartsPure(S.arrangements, S.drumTab).length > 0;
     const want = S.playing
-        && (editorGuideClapEnabled() || editorMetronomeEnabled() || _abActive());
+        && (editorGuideClapEnabled() || editorMetronomeEnabled() || _abActive() || bandLive);
     if (want && !_guideTimer) {
         _guideScheduledUntil = _transportChartTimePure(
             S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _auditionRate());
@@ -1935,8 +1952,8 @@ export function _editorToggleGuideClap() {
     _refreshGuideBtn();
     _guideTimerSync();
     setStatus(next
-        ? 'Guide claps on — charted notes tick during playback (C toggles)'
-        : 'Guide claps off');
+        ? 'Guide voices on — charted notes play their instruments during playback (C toggles)'
+        : 'Guide voices off');
     return true;
 }
 // window.editorToggleGuideClap re-attached in main.js

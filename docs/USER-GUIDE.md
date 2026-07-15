@@ -57,7 +57,8 @@ notes) — useful for lining a grid up fast.
 - **Companion strips** — a **fretboard strip** for fretted tracks (shows
   candidate positions from the position resolver — click one to assign) and a
   **drum pad strip** for drum tracks.
-- **Mixer** (`Shift+C`) — per-track volume / mute / solo for the guide voice.
+- **Mixer** (`Shift+C`) — per-track volume / mute / solo. Audio and transcription
+  tracks are live together by default; mute or solo the channels you want to hear.
 
 Press **`?`** at any time for the searchable shortcut panel, or **`Ctrl+K`** for
 the command palette.

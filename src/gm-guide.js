@@ -138,7 +138,12 @@ export function _gmVoiceForKindPure(rawPref, kind) {
 
 // Guide-voice mode pref: 'clap' (default) or 'gm'; garbage reads as clap.
 export function _gmGuideModePure(raw) {
-    return raw === 'gm' ? 'gm' : 'clap';
+    // Instruments ARE the guide (Christian's call: claps were a placement
+    // tick, not music). The clap survives ONLY as the loading fallback and
+    // the drum-grid tick — never as a selectable mode; a legacy stored
+    // 'clap' pref reads as 'gm' too.
+    void raw;
+    return 'gm';
 }
 
 // Sanitize raw pitched events before the window query: finite times, MIDI

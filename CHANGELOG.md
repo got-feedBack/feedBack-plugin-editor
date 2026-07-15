@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the editor never draws a connection the music doesn't have.
 ### Added
 
+- **Import a Guitar Pro or MIDI file, press play, hear music.** Transcription
+  tracks now sound out of the box, including alongside recordings and stems:
+  **every track plays its instrument** (band mode defaults on), and the guide
+  voice is always a real instrument — the old "clap"
+  tick is gone as a choice and survives only as a split-second stand-in
+  while a sound loads. The default instrument sounds (grand piano, clean
+  electric guitar, fingered bass — FluidR3, MIT) now **ship inside the
+  plugin** (~2 MB), so the first play needs no internet. Like a DAW, tracks
+  stay live until muted/soloed or disabled explicitly, and those choices are
+  remembered.
+
 - **Play all tracks — the chart plays as a band, mixed by the Mixer.** The
   new **All tracks** toggle in the Mixer header (also in the Transport menu
   and the command palette) makes EVERY track voice its instrument at once —
@@ -112,6 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   note shared the bend-curve data between the original and every paste —
   editing any one of them silently edited them all. Copies are fully
   independent now.
+  choice persists as an editor preference. Band channels no longer depend on
+  the legacy guide toggle; their own M/S/faders control their audible state.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns

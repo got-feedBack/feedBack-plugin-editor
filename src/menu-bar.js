@@ -219,8 +219,6 @@ export const EDITOR_MENUS = Object.freeze([
         // the clap, or the charted pitches on a GM instrument. The
         // instrument radio rows follow the current part's kind (ctx.gmGuide).
         { hdr: 'Guide voice' },
-        { guideVoice: 'clap', label: 'Clap' },
-        { guideVoice: 'gm', label: 'Instrument (GM)' },
         { gmVoiceRows: true },
     ] },
     { title: 'Tempo/Grid', items: [
