@@ -208,13 +208,54 @@ function _groupingLabelPure(num, den, grouping) {
     const base = `${num}/${den}`;
     return (Array.isArray(grouping) && grouping.length) ? `${base} (${grouping.join('+')})` : base;
 }
+
+// P2-6 — the grouping's ACCENT MAP: [2,2,3] in 7 → [1,0,1,0,1,0,0] (1 marks
+// each grouping-cell start). No/invalid grouping → downbeat-only accent,
+// which is exactly the pre-grouping behavior everywhere this map is consumed
+// (metronome, ruler ticks, comb) — so ungrouped bars are bit-identical.
+function _groupingAccentMapPure(grouping, num) {
+    const n = Math.max(1, Number(num) || 1);
+    const map = new Array(n).fill(0);
+    map[0] = 1;
+    if (Array.isArray(grouping) && grouping.length
+        && grouping.every(v => Number.isInteger(v) && v >= 1)
+        && grouping.reduce((a, b) => a + b, 0) === n) {
+        let at = 0;
+        for (const g of grouping) { map[at] = 1; at += g; }
+    }
+    return map;
+}
+
+// measure → accent map, for every meter mark that carries a grouping. The
+// lookup the three consumers share; bars absent from the map are ungrouped.
+function _groupingAccentsByMeasurePure(marks) {
+    const out = new Map();
+    for (const m of (marks || [])) {
+        if (m.kind === 'meter' && Array.isArray(m.grouping) && m.grouping.length) {
+            out.set(m.measure, _groupingAccentMapPure(m.grouping, m.num));
+        }
+    }
+    return out;
+}
 /* @pure:tempo-marks:end */
 
 export {
-    TEMPO_MARK_PROVENANCE, _groupingLabelPure, _groupingParsePure, _holdMeasuresPure,
+    TEMPO_MARK_PROVENANCE, _groupingAccentMapPure, _groupingAccentsByMeasurePure,
+    _groupingLabelPure, _groupingParsePure, _holdMeasuresPure,
     _markNormPure, _marksAtPure, _marksMeterReconcilePure, _marksRemapByTimePure,
     _marksRemapPure, _marksRemovePure, _marksSanitizePure, _marksUpsertPure,
 };
+
+// The memoized LIVE accent lookup every per-frame consumer shares (the
+// ruler paint and the click scheduler both read it on their hot paths) —
+// keyed on the marks array identity, which swaps immutably on every edit.
+let _accCache = { marksRef: null, value: new Map() };
+export function _groupingAccentsLive() {
+    if (_accCache.marksRef !== S.tempoMarks) {
+        _accCache = { marksRef: S.tempoMarks, value: _groupingAccentsByMeasurePure(S.tempoMarks) };
+    }
+    return _accCache.value;
+}
 
 // One undoable command per marker edit. Marks don't move beats in this
 // slice, so this is the TempoGridCmd DIRECTION (topology metadata): song-
