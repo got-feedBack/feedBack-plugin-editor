@@ -1578,9 +1578,19 @@ function _guideTick() {
         for (const part of bandParts) {
             const target = _ensurePartGain(part.key);
             if (!target) continue;
-            if (part.key === 'drums') {
-                const hits = _guideSanitizeTimesPure((S.drumTab.hits || []).map(h => h.t));
-                for (const t of _guideClapTimesInWindowPure(hits, from, to)) {
+            const arr = part.idx >= 0 ? S.arrangements[part.idx] : null;
+            // Percussion claps its rhythm: the drum-grid sidecar OR a
+            // drum-encoded arrangement (a created/imported/legacy "Drums"
+            // part — no pitch, so _bandPartPitchedEvents returns []). Both
+            // route through this part's gain, so without this a drum
+            // ARRANGEMENT would voice neither GM nor clap and go silent
+            // (review #280 follow-up).
+            const clapTimes = part.key === 'drums'
+                ? (S.drumTab.hits || []).map(h => h.t)
+                : (arr && /^drums/i.test(arr.name || '') ? (arr.notes || []).map(n => n.time) : null);
+            if (clapTimes) {
+                const times = _guideSanitizeTimesPure(clapTimes);
+                for (const t of _guideClapTimesInWindowPure(times, from, to)) {
                     const k = _bandFiredKeyPure(part.key, t);
                     if (_bandFiredKeys.has(k)) continue;
                     _bandFiredKeys.add(k);
@@ -1588,7 +1598,6 @@ function _guideTick() {
                 }
                 continue;
             }
-            const arr = S.arrangements[part.idx];
             const gm = editorGmVoiceFor(_gmKindPure(arr && arr.name));
             const ready = gm !== null && gmPresetReady(gm);
             if (gm !== null && !ready) ensureGmPreset(gm, S.audioCtx);   // clap while it loads

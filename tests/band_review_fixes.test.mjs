@@ -281,5 +281,48 @@ await t('toggling the band OFF mid-play stops queued band voices, single voice r
     }
 });
 
+// ── a drum-ENCODED arrangement claps in band mode (not just the sidecar) ─
+// A created/imported/legacy "Drums" part lives in S.arrangements (key
+// 'arr:i'), has no pitch, so its pitched set is empty by design. Pre-fix the
+// band loop clapped only the 'drums' SIDECAR key, so a drum arrangement voiced
+// neither GM nor clap and went silent. It must clap its rhythm, gated by its
+// own strip.
+await t('a drum-encoded arrangement claps in band mode; mute silences it', () => {
+    Object.assign(S, BASE, {
+        audioCtx: ctx,
+        arrangements: [
+            { name: 'Lead', notes: [{ time: 0.06, string: 2, fret: 12, sustain: 0.1 }] },
+            { name: 'Drums', notes: [{ time: 0.01, string: 0, fret: 0 }, { time: 0.05, string: 1, fret: 0 }] },
+        ],
+        drumTab: null,
+        partMix: {},
+    });
+    setBand(true);
+    const before = ctx.oscs.length;
+    tickOnce();
+    const news = ctx.oscs.slice(before);
+    // The two drum-arrangement hits clap at their charted times.
+    assert.ok(news.some((o) => o.startAt === 0.01) && news.some((o) => o.startAt === 0.05),
+        'the drum arrangement claps its rhythm (would be silent pre-fix)');
+
+    // And its strip mutes it: mute the drum arrangement, replay, no drum claps.
+    Object.assign(S, BASE, {
+        audioCtx: ctx,
+        arrangements: [
+            { name: 'Lead', notes: [{ time: 0.16, string: 2, fret: 12, sustain: 0.1 }] },
+            { name: 'Drums', notes: [{ time: 0.11, string: 0, fret: 0 }, { time: 0.15, string: 1, fret: 0 }] },
+        ],
+        drumTab: null,
+        partMix: { 'arr:1': { vol: 100, mute: true, solo: false } },
+    });
+    const mark = ctx.oscs.length;
+    tickOnce();
+    const muted = ctx.oscs.slice(mark);
+    const drumClap = muted.find((o) => o.startAt === 0.11);
+    assert.ok(drumClap, 'the muted drum arrangement still SCHEDULES its clap');
+    assert.strictEqual(partGainConn(drumClap).toGainAtConnect, 0,
+        'but through a gain seated at 0 — the mute silences it');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
