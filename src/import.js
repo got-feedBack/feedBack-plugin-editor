@@ -274,34 +274,37 @@ export async function editorDoAddKeys() {
         let xmlPaths = [];
         if (_addKeysSourceFormat === 'midi') {
             // MIDI unpack: EVERY selected track imports, one arrangement each
-            // (was: silently only the first). Names carry the MIDI track name
-            // under a keys-safe prefix — kind inference is name-driven and the
-            // notes use keys packing.
-            arrangements = [];
-            for (const picked of pickedList) {
-                const resp = await fetch('/api/plugins/editor/import-keys-midi', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        midi_path: _addKeysSourcePath,
-                        track_index: Number(picked.index) || 0,
-                        audio_offset: audioOffset,
-                        channel_filter: (picked.channel_filter == null) ? null : Number(picked.channel_filter),
-                    }),
+            // (was: silently only the first). ONE batch request — the endpoint
+            // rmtree's its temp dir after responding, so a per-track request
+            // loop would find no file on the second track. Names carry the
+            // MIDI track name under a keys-safe prefix — kind inference is
+            // name-driven and the notes use keys packing.
+            const resp = await fetch('/api/plugins/editor/import-keys-midi', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    midi_path: _addKeysSourcePath,
+                    audio_offset: audioOffset,
+                    tracks: pickedList.map(p => ({
+                        index: Number(p.index) || 0,
+                        channel_filter: (p.channel_filter == null) ? null : Number(p.channel_filter),
+                    })),
+                }),
+            });
+            data = await resp.json();
+            if (data.error) {
+                statusEl.textContent = 'Error: ' + data.error;
+                goBtn.disabled = false;
+                return;
+            }
+            arrangements = Array.isArray(data.arrangements)
+                ? data.arrangements
+                : (data.arrangement ? [data.arrangement] : []);
+            if (pickedList.length > 1) {
+                arrangements.forEach((arr, i) => {
+                    const picked = pickedList[i];
+                    if (arr && picked) arr.name = _midiKeysArrNamePure(picked.name, picked.index);
                 });
-                const one = await resp.json();
-                if (one.error) {
-                    statusEl.textContent = 'Error: ' + one.error;
-                    goBtn.disabled = false;
-                    return;
-                }
-                if (one.arrangement) {
-                    if (pickedList.length > 1) {
-                        one.arrangement.name = _midiKeysArrNamePure(picked.name, picked.index);
-                    }
-                    arrangements.push(one.arrangement);
-                }
-                data = one;   // the tempo-map offer reads the last (same file, same map)
             }
         } else {
             const resp = await fetch('/api/plugins/editor/import-keys', {
