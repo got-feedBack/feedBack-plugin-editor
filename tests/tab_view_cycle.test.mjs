@@ -19,6 +19,7 @@ globalThis.requestAnimationFrame = globalThis.requestAnimationFrame || ((fn) => 
 
 const { S } = await import('../src/state.js');
 const { _editorCycleViewMode } = await import('../src/key-view.js');
+const { _tabViewPing } = await import('../src/tab-view-live.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -74,6 +75,39 @@ t('leaving the Tab lens restores String view', () => {
     S.tabViewMode = true;
     _editorCycleViewMode();
     assert.deepStrictEqual(calls, [['tab', false], ['setView', 'string']]);
+});
+
+// Track-switch leak: the entry toggle refuses keys/drums, but switching TO
+// such a track while the lens is already on bypasses it and the cycle's keys
+// short-circuit can't clear it — so the draw-pass ping must drop the lens
+// itself rather than engrave `undefined.NaN.*`. Fails pre-fix (the ping just
+// unhid the mount and left tabViewMode on).
+const fakeMount = {
+    classList: { _h: true, contains() { return this._h; }, add() { this._h = true; }, remove() { this._h = false; } },
+    innerHTML: '',
+};
+document.getElementById = (id) => (id === 'editor-tabview-mount' ? fakeMount : null);
+
+t('a draw-pass ping on a keys track drops the lens and hides the mount', () => {
+    Object.assign(S, { arrangements: [{ name: 'Keys' }], currentArr: 0, tabViewMode: true });
+    fakeMount.classList._h = false;
+    _tabViewPing();
+    assert.strictEqual(S.tabViewMode, false, 'lens dropped for a track with no tab');
+    assert.strictEqual(fakeMount.classList._h, true, 'mount hidden so the roll shows through');
+});
+
+t('a draw-pass ping on a drums track also drops the lens', () => {
+    Object.assign(S, { arrangements: [{ name: 'Drums' }], currentArr: 0, tabViewMode: true });
+    _tabViewPing();
+    assert.strictEqual(S.tabViewMode, false);
+});
+
+t('a draw-pass ping on a fretted track keeps the lens on and shows the mount', () => {
+    Object.assign(S, { arrangements: [{ name: 'Lead' }], currentArr: 0, tabViewMode: true, beats: [] });
+    fakeMount.classList._h = true;
+    _tabViewPing();
+    assert.strictEqual(S.tabViewMode, true, 'fretted track keeps the lens');
+    assert.strictEqual(fakeMount.classList._h, false, 'mount shown');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
