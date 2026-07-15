@@ -210,6 +210,35 @@ await ta('every selected track imports, each under its keys-safe source name', a
         ['Keys — Melody', 'Keys — Bass, Baby.']);
 });
 
+// ── Seed flag is session-scoped: a cancelled picker must not delete another
+//    song's arrangement 0. The MIDI-only create sets S._midiSeedArrIdx=0 for
+//    its own session; if the user cancels the auto-opened picker and opens a
+//    DIFFERENT song (loadCDLC carries the flag over unchanged), a later import
+//    there must NOT remove that song's empty 'Lead' arrangement. ──────────────
+await ta('a stale seed flag from a cancelled create never deletes another song\'s arrangement 0', async () => {
+    // Song B, opened after a MIDI create whose picker was cancelled: it happens
+    // to have an empty 'Lead' at index 0 (a fresh blank-Lead project). The flag
+    // still points at index 0 but was tagged to song A's session.
+    Object.assign(S, {
+        sessionId: 'sess-B', format: 'sloppak', currentArr: 0,
+        arrangements: [{ name: 'Lead', notes: [], chords: [], chord_templates: [] }],
+        _midiSeedArrIdx: 0, _midiSeedSession: 'sess-A',
+    });
+    installFetch([
+        ['import-midi', { midi_path: '/tmp/b.mid', tracks: [{ index: 0, name: 'Melody', notes: 5, is_piano: true }] }],
+        ['import-keys-midi', { arrangements: [{ name: 'Keys', notes: [], chords: [], chord_templates: [] }] }],
+        ['add-arrangement', { ok: true }],
+        ['remove-arrangement', { ok: true }],
+    ]);
+    await imp._editorKeysHandleFile({ name: 'b.mid' });
+    _checkedTracks.length = 0;
+    _checkedTracks.push({ value: '0' });
+    await imp.editorDoAddKeys();
+    assert.ok(S.arrangements.some((a) => a.name === 'Lead'),
+        'song B\'s own empty Lead survives — the stale flag belonged to session A');
+    assert.deepStrictEqual(S.arrangements.map((a) => a.name), ['Lead', 'Keys — Melody']);
+});
+
 // ── Item 21: seed cleanup is provenance-driven, not value-driven ────────────
 
 t('_midiSeedRosterPure: provenance decides, the roster VALUE does not', () => {

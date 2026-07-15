@@ -366,7 +366,13 @@ export { _midiSeedRemovablePure };
 async function _maybeRemoveMidiSeed() {
     const flagIdx = S._midiSeedArrIdx;
     if (flagIdx === undefined) return;
-    delete S._midiSeedArrIdx;   // one shot, success or refusal
+    const flagSession = S._midiSeedSession;
+    delete S._midiSeedArrIdx;       // one shot, success or refusal
+    delete S._midiSeedSession;
+    // The seed belongs to the session that created it. A flag left behind by a
+    // cancelled picker must not delete arrangement 0 of a DIFFERENT song the
+    // user opened afterwards (loadCDLC carries the flag over unchanged).
+    if (flagSession !== S.sessionId) return;
     const arr = S.arrangements[flagIdx];
     if (!_midiSeedRemovablePure(arr, flagIdx, flagIdx, S.arrangements.length)) return;
     if (S.sessionId) {

@@ -1919,7 +1919,11 @@ async function _editorDoMidiCreate() {
     const file = createState.midiFiles[0];
     await _editorDoBlankCreate();
     if (!S.sessionId || !S.arrangements.length) return;   // create failed — its status stands
-    if (seeded) S._midiSeedArrIdx = 0;
+    // Bind the seed flag to THIS session. If the user cancels the picker
+    // below (no import), _maybeRemoveMidiSeed never runs and the flag survives
+    // on shared S — loadCDLC doesn't clear it — so without the session tag a
+    // later import on a DIFFERENT song would delete that song's arrangement 0.
+    if (seeded) { S._midiSeedArrIdx = 0; S._midiSeedSession = S.sessionId; }
     // Feed the staged file straight into the existing track picker (the one
     // surface that already knows channels/pairs/drums) — no re-pick.
     if (typeof window.editorShowAddKeysModal === 'function'
