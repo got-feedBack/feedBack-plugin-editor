@@ -796,10 +796,30 @@ export function _tempoSuggestScopePure(beats, tempoSel, tempoSelMulti, metronome
     return { anchor, opts };
 }
 
-function _editorTempoSuggestFit() {
+export function _tempoGuideActivationPure(trackSession, activeAudioSourceId) {
+    if (!trackSession || trackSession.tempoGuideMode !== 'metronome') return null;
+    const guide = typeof trackSession.tempoGuideSourceId === 'string'
+        ? trackSession.tempoGuideSourceId : '';
+    return guide && guide !== activeAudioSourceId ? guide : null;
+}
+
+export async function _editorTempoSuggestFit() {
     if (!S.tempoMapMode) {
         setStatus('Enter Tempo Map (T) first — Suggest fits the barlines to the recording.');
         return true;
+    }
+    const metronome = !!(S.trackSession && S.trackSession.tempoGuideMode === 'metronome');
+    const activateGuide = _tempoGuideActivationPure(S.trackSession, S.activeAudioSourceId);
+    if (activateGuide) {
+        const guide = (S.audioSources || []).find(source => source && source.id === activateGuide);
+        setStatus(`Loading ${guide && guide.name ? `“${guide.name}”` : 'the locked metronome guide'} for tempo analysis…`);
+        const activated = await host.selectTrackSessionSource(activateGuide);
+        if (activated === false) {
+            setStatus('The locked metronome guide could not be loaded for tempo analysis.');
+            return true;
+        }
+        if (!S.tempoMapMode || !S.trackSession
+                || S.trackSession.tempoGuideSourceId !== activateGuide) return true;
     }
     const onsets = _ensureOnsetsShifted();
     if (!onsets || !onsets.length) {
@@ -808,7 +828,6 @@ function _editorTempoSuggestFit() {
     }
     // With a multi-selection, fit only the selected RANGE: anchor at its first
     // downbeat and bound the march at its last.
-    const metronome = !!(S.trackSession && S.trackSession.tempoGuideMode === 'metronome');
     let { anchor, opts } = _tempoSuggestScopePure(
         S.beats, S.tempoSel, S.tempoSelMulti, metronome);
     if (anchor < 0 || !(S.beats[anchor] && S.beats[anchor].measure > 0)) {

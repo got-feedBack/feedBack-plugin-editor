@@ -225,6 +225,8 @@ Three ways to set the tempo, from coarse to fine:
      anchor but never cap `G`; it continues through the final authored barline
      and final measure. Click an individual ghost when you only
      want to accept through that bar.
+     `G` always reloads the locked metronome guide before analysis, even when a
+     transcription selection has temporarily switched audition to its paired stem.
    - **`Shift+B` — Tap tempo**: tap along and the selected barline takes your
      tempo.
    - **`B` — Set BPM** for the selected barline; **`M` — metric modulation**

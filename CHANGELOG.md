@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   When onset confidence fails, the detected prefix is preserved and the tail
   continues as explicitly low-confidence estimates; selections choose the
   starting anchor but can no longer silently truncate the proposal.
+  Metronome **G** now explicitly activates and awaits the locked guide source
+  before detecting pulses. Selecting a transcription or paired audio stem can
+  no longer leave the UI showing the metronome guide while analysis silently
+  runs against a different active buffer.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns

@@ -31,7 +31,7 @@ const { S, bumpEditGen } = await import('../src/state.js');
 const { timeToX } = await import('../src/geometry.js');
 const { EditHistory } = await import('../src/history.js');
 const { editorAcceptWholeTempoFit } = await import('../src/tempo.js');
-const { _tempoSuggestScopePure } = await import('../src/input.js');
+const { _tempoGuideActivationPure, _tempoSuggestScopePure } = await import('../src/input.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -152,6 +152,35 @@ t('metronome fitting consolidates one click transient and re-anchors at locked b
     assert.ok(locked && locked.locked);
     assert.strictEqual(locked.time, 6.1);
     assert.strictEqual(proposals.at(-1).i, 20, 'duplicate detector hits do not consume extra beats');
+});
+
+t('a drifting smart-metronome pulse train maps exactly in half-time bar feel', () => {
+    const bars = 80;
+    const pulses = [];
+    let time = 0.5;
+    for (let i = 0; i < bars * 4; i++) {
+        pulses.push({ t: time, s: i % 4 === 0 ? 1 : 0.8 });
+        time += 0.405 + 0.012 * Math.sin(i / 19);
+    }
+    const g = grid(bars, 147, 0.5);
+    let measure = 1;
+    for (let i = 0; i < g.length; i += 4) {
+        g[i].measure = i % 8 === 0 ? measure++ : -1;
+    }
+    const { proposals } = _suggestMetronomeFitPure(g, pulses, 0);
+    assert.strictEqual(proposals.length, bars / 2 - 1);
+    proposals.forEach((proposal, k) => {
+        assert.ok(Math.abs(proposal.time - pulses[(k + 1) * 8].t) < 1e-9,
+            `half-time bar ${k + 2} stays on its exact smart-click pulse`);
+    });
+});
+
+t('metronome G explicitly activates the locked guide when another track is focused', () => {
+    const session = { tempoGuideMode: 'metronome', tempoGuideSourceId: 'click-stem' };
+    assert.strictEqual(_tempoGuideActivationPure(session, 'master'), 'click-stem');
+    assert.strictEqual(_tempoGuideActivationPure(session, 'drum-stem'), 'click-stem');
+    assert.strictEqual(_tempoGuideActivationPure(session, 'click-stem'), null);
+    assert.strictEqual(_tempoGuideActivationPure({ ...session, tempoGuideMode: 'audio' }, 'master'), null);
 });
 
 t('Accept Whole Fit commits every metronome proposal as one undoable command', () => {
