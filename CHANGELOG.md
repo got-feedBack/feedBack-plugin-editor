@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and nest-inside-folder zones, carries folder children, and rejects cycles.
   Transcription headers and mixer strips share a subtle green tint so MIDI,
   string, and drum data remain distinct from blue/cyan audio tracks.
+  The drawer's explicit hidden selector now outranks its flex layout rule, so
+  startup, Mix-toggle close, and X-close actually remove the mixer and bus
+  strips instead of only changing button state.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns

@@ -105,5 +105,9 @@ t('guide prose colors are theme tokens, not dark-only hardcoded inks', () => {
     assert.match(code, /color:\s*var\(--ed-text,/);
 });
 
+t('the mixer drawer hidden state overrides its flex display rule', () => {
+    assert.match(block('#plugin-editor .editor-mixer-drawer.hidden'), /display:\s*none/);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

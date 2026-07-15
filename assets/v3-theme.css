@@ -548,6 +548,7 @@ html.fb-immersive #plugin-editor .editor-root {
     border-top: 1px solid #4b5563; box-shadow: 0 -12px 30px rgba(0,0,0,.42);
     animation: editor-mixer-rise .18s ease-out both;
 }
+#plugin-editor .editor-mixer-drawer.hidden { display: none; }
 @keyframes editor-mixer-rise { from { transform: translateY(100%); } to { transform: translateY(0); } }
 #plugin-editor .editor-mixer-titlebar {
     height: 2rem; flex: none; display: flex; align-items: center; justify-content: space-between;
