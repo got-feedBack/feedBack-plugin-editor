@@ -165,8 +165,6 @@ t('upsert is immutable and replaces per (measure, kind)', () => {
     assert.strictEqual(b[0].factor, 4);
 });
 
-// The undoable TempoMarkCmd is what the verbs go through — one more direct
-// pin that a raw command carries the exact arrays it was built with.
 t('the suggest march CARRIES a held bar - grid position kept, no onset snap', () => {
     const beats = gridWithHold();
     const onsets = [];
@@ -238,6 +236,8 @@ t('an insert that leaves a grouping still honest keeps it (no spurious drop)', (
     assert.deepStrictEqual(mk.grouping, [2, 2]);
 });
 
+// The undoable TempoMarkCmd is what the verbs go through — one more direct
+// pin that a raw command carries the exact arrays it was built with.
 t('TempoMarkCmd swaps the exact before/after arrays', () => {
     Object.assign(S, { tempoMarks: [], history: new EditHistory() });
     const before = S.tempoMarks;
