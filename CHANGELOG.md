@@ -76,6 +76,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Select All stays inside the editor.** `Ctrl+A` / `Cmd+A` now selects the
+  active chart objects without letting Chromium highlight the entire editor UI.
+  Read-only Parts view and active MIDI recording also suppress page selection,
+  while text inputs and inline rename fields keep their native Select All.
 - **"Shift Audio…" now survives saving and reopening.** The recording-vs-chart
   shift was sent with every save but the backend silently dropped it, so a
   carefully aligned song came back misaligned on the next open — reading as

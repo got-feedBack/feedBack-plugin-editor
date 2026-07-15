@@ -1339,6 +1339,20 @@ function showSectionMenu(cx, cy, time) {
     menu.classList.remove('hidden');
 }
 
+export function _editorSelectAllPolicyPure(e) {
+    // Select All is the unshifted Ctrl/Cmd+A only. Shift+Ctrl+A is a distinct
+    // chord (e.g. the EOF profile's Toggle Accent) and must fall through to the
+    // shortcut dispatch, not be swallowed here. CapsLock still reports the base
+    // key as 'A' without setting shiftKey, so it keeps working.
+    if (!e || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey
+            || String(e.key || '').toLowerCase() !== 'a') return null;
+
+    const target = e.target;
+    const isTextEditor = !!(target && typeof target.matches === 'function'
+        && target.matches('input, select, textarea, [contenteditable]:not([contenteditable="false"])'));
+    return isTextEditor ? 'text' : 'editor';
+}
+
 export function onKeyDown(e) {
     // Only handle when editor screen is visible
     const screen = document.getElementById('plugin-editor');
@@ -1380,6 +1394,42 @@ export function onKeyDown(e) {
         e.preventDefault();
         return;
     }
+
+    // Select All belongs to the active DAW surface, not Chromium's page-text
+    // selection. Claim it before the recording and Parts-view guards below;
+    // those read-only states must suppress the browser default without
+    // selecting editor objects hidden behind the current surface. Actual text
+    // editors retain their native Select All behavior, including inline rename.
+    const selectAllPolicy = _editorSelectAllPolicyPure(e);
+    if (selectAllPolicy === 'editor') {
+        e.preventDefault();
+        if (_recState === 'recording' || S.partsViewMode) return;
+        if (S.drumEditMode && S.drumTab) {
+            // Select every drum hit. No filter — the user wants every
+            // hit even off-screen, mirroring the guitar Ctrl+A path.
+            S.drumSel = new Set();
+            const hits = S.drumTab.hits || [];
+            for (let i = 0; i < hits.length; i++) S.drumSel.add(i);
+            host.draw();
+            return;
+        }
+        // Tempo-map mode: Ctrl+A selects every downbeat (PR 5a).
+        if (S.tempoMapMode) {
+            if (!S.tempoSelMulti) S.tempoSelMulti = new Set();
+            S.tempoSelMulti.clear();
+            const beats = S.beats || [];
+            for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) S.tempoSelMulti.add(i);
+            host.draw();
+            setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
+            return;
+        }
+        const nn = notes();
+        S.sel.clear();
+        for (let i = 0; i < nn.length; i++) S.sel.add(i);
+        host.draw();
+        return;
+    }
+    if (selectAllPolicy === 'text') return;
 
     if (e.key === ' ' && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
@@ -1600,34 +1650,6 @@ export function onKeyDown(e) {
         e.preventDefault();
         window.editorRedo();
         return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-        if (!e.target.matches('input, select, textarea')) {
-            e.preventDefault();
-            if (S.drumEditMode && S.drumTab) {
-                // Select every drum hit. No filter — the user wants every
-                // hit even off-screen, mirroring the guitar Ctrl+A path.
-                S.drumSel = new Set();
-                const hits = S.drumTab.hits || [];
-                for (let i = 0; i < hits.length; i++) S.drumSel.add(i);
-                host.draw();
-                return;
-            }
-            // Tempo-map mode: Ctrl+A selects every downbeat (PR 5a).
-            if (S.tempoMapMode) {
-                if (!S.tempoSelMulti) S.tempoSelMulti = new Set();
-                S.tempoSelMulti.clear();
-                const beats = S.beats || [];
-                for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) S.tempoSelMulti.add(i);
-                host.draw();
-                setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
-                return;
-            }
-            const nn = notes();
-            for (let i = 0; i < nn.length; i++) S.sel.add(i);
-            host.draw();
-            return;
-        }
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
         // Duplicate the selection to the next position. preventDefault so
