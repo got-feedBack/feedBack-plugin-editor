@@ -45,6 +45,43 @@ let rafId = null;
 let audioLoadController = null;
 let audioLoadGeneration = 0;
 
+// Decoded reference sources are cached by the opaque source id supplied by the
+// track session. Only one buffer is active in the transport at a time: this is
+// intentional reference switching, not a second stem-mixing graph.
+const trackAudioCache = new Map();
+
+function _installDecodedAudio(decoded, url, sourceId, preserveTimeline) {
+    S.audioBuffer = decoded;
+    if (!preserveTimeline) S.duration = decoded.duration;
+    S.audioUrl = url;
+    S.activeAudioSourceId = sourceId;
+    host.editorApplyScrollBounds();
+    computeWaveform();
+}
+
+export function resetTrackAudioCache() {
+    trackAudioCache.clear();
+    S.activeAudioSourceId = 'master';
+}
+
+export async function activateTrackAudioSource(sourceId) {
+    const source = (S.audioSources || []).find(item => item && item.id === sourceId);
+    if (!source || !source.url) {
+        setStatus('That audio reference is unavailable in this song.');
+        return false;
+    }
+    const cached = trackAudioCache.get(sourceId);
+    if (cached && cached.url === source.url) {
+        _installDecodedAudio(cached.buffer, source.url, sourceId, sourceId !== 'master');
+        host.draw();
+        setStatus('Reference source: ' + source.name);
+        return true;
+    }
+    const ok = await loadAudio(source.url, { sourceId, preserveTimeline: sourceId !== 'master', resetAudition: false });
+    if (ok) setStatus('Reference source: ' + source.name);
+    return ok;
+}
+
 // Lazily create the shared AudioContext. Compose mode never decodes a
 // recording (loadAudio is the only other creation site), yet the transport
 // clock + metronome/guide voices still need a context to schedule on — make
@@ -59,8 +96,14 @@ function _ensureAudioCtx() {
     return S.audioCtx;
 }
 
-export async function loadAudio(url) {
+export async function loadAudio(url, options = {}) {
     if (!url) return false;
+    const sourceId = options.sourceId || 'master';
+    const cached = trackAudioCache.get(sourceId);
+    if (cached && cached.url === url) {
+        _installDecodedAudio(cached.buffer, url, sourceId, !!options.preserveTimeline);
+        return true;
+    }
     cancelAudioLoad();
     const generation = audioLoadGeneration;
     audioLoadController = typeof AbortController === 'function' ? new AbortController() : null;
@@ -70,17 +113,12 @@ export async function loadAudio(url) {
         const buf = await resp.arrayBuffer();
         const decoded = await S.audioCtx.decodeAudioData(buf);
         if (generation !== audioLoadGeneration) return false;
-        S.audioBuffer = decoded;
-        S.duration = S.audioBuffer.duration;
-        // Keep the playable URL for the pitch-preserving audition path (the
-        // MediaElement needs a src; the decoded buffer feeds waveform + onsets).
-        S.audioUrl = url;
-        _resetAuditionForNewSong();   // a per-song pref never carries across loads
+        trackAudioCache.set(sourceId, { url, buffer: decoded });
+        _installDecodedAudio(decoded, url, sourceId, !!options.preserveTimeline);
+        if (options.resetAudition !== false) _resetAuditionForNewSong();
         // A new recording is loaded — re-arm the hearing-safety fade so it
         // applies to this recording too, not just the session's first one.
         _mixResetFirstPlay();
-        host.editorApplyScrollBounds();
-        computeWaveform();
         return true;
     } catch (e) {
         if (e && e.name !== 'AbortError') console.error('Audio load error:', e);

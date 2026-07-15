@@ -4,7 +4,7 @@
 // triggers stay in main.js and are reached through host.
 
 import { _anchorsAreDirty, _stripToneInternals, _tonesAreDirty, _updateTonesButtonVisibility } from './annotation-lanes.js';
-import { _abDisarm, _resetAuditionForNewSong, loadAudio } from './audio.js';
+import { _abDisarm, _resetAuditionForNewSong, loadAudio, resetTrackAudioCache } from './audio.js';
 import { _handshapesAreDirty, _normalizeHandshape, flattenChords, reconstructChords } from './chords.js';
 import { _normalizeTuningToLanes } from './commands.js';
 import { EditHistory } from './history.js';
@@ -23,6 +23,7 @@ import { _resetSignpostCounters } from './signposts.js';
 import { surfaceMigrateFilename, surfaceOnSongLoaded } from './toolbars.js';
 import { _editorEscHtml, setStatus } from './ui.js';
 import { host } from './host.js';
+import { installTrackSession, trackSessionSavePayload } from './track-session.js';
 
 // How many loads are in flight. The entry landing is armed by a timer on screen
 // entry and asks "is anything loaded?" only when it fires, so a load that is
@@ -173,6 +174,10 @@ export async function loadCDLC(filename, options = {}) {
         }
         // Freshly loaded from disk — not dirty until the user edits it.
         S.drumTabDirty = false;
+        resetTrackAudioCache();
+        // One ordered DAW session tree blends audio and transcription tracks.
+        // Older servers omit these fields; the normalizer supplies Master Mix.
+        installTrackSession(data.track_session, data.audio_sources);
         // Exit drum-edit mode on song change so we don't carry a stale
         // selection into a sloppak whose hits[] is different.
         S.drumEditMode = false;
@@ -252,7 +257,7 @@ export async function loadCDLC(filename, options = {}) {
 
         // Load audio
         if (data.audio_url) {
-            await loadAudio(data.audio_url);
+            await loadAudio(data.audio_url, { sourceId: 'master', resetAudition: true });
         }
 
         host.draw();
@@ -539,6 +544,9 @@ function _buildSaveBody(forceFullSnapshot) {
         // backend can persist it into the pack manifest as `audio_shift` (read
         // back on load via data.audio_shift). Harmless if the backend ignores it.
         audio_shift: Number(S.audioShift) || 0,
+        // Optional folders, audio/transcription pairings, and the locked tempo
+        // reference are pack authoring state — IDs, never display names/indexes.
+        track_session: trackSessionSavePayload(),
         // Always ship title/artist so archive saves persist in-session
         // metadata edits too. Backend merges with session metadata
         // (album/year captured at load time) so all four fields

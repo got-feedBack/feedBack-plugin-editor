@@ -507,3 +507,39 @@ html.fb-immersive #plugin-editor .editor-root {
     #plugin-editor #editor-cue.editor-cue-show { animation-name: editor-cue-fade-plain; }
     @keyframes editor-cue-fade-plain { 0%,100% { opacity: 0; } 12%,80% { opacity: 1; } }
 }
+
+/* ── Source-aware DAW track session ───────────────────────────────── */
+#plugin-editor #editor-track-session { min-width: 12rem; }
+#plugin-editor .editor-track-session-head,
+#plugin-editor .editor-track-session-guide {
+    display: flex; align-items: center; gap: .35rem; padding: .55rem .6rem;
+    border-bottom: 1px solid #374151; color: #9ca3af; font-size: 10px;
+    text-transform: uppercase; letter-spacing: .06em;
+}
+#plugin-editor .editor-track-session-head span { flex: 1; font-weight: 700; color: #d1d5db; }
+#plugin-editor .editor-track-session-head button,
+#plugin-editor .editor-track-session-guide button {
+    border: 1px solid #374151; border-radius: 4px; background: #1f2937; color: #d1d5db;
+    padding: .17rem .35rem; font-size: 10px; text-transform: none; letter-spacing: 0;
+}
+#plugin-editor .editor-track-session-guide > button:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: left; }
+#plugin-editor .editor-track-row {
+    min-height: 29px; display: flex; align-items: center; gap: .35rem;
+    padding: .22rem .35rem .22rem calc(.45rem + var(--track-indent));
+    border-bottom: 1px solid rgba(55,65,81,.48); color: #d1d5db;
+}
+#plugin-editor .editor-track-row:hover { background: rgba(55,65,81,.55); }
+#plugin-editor .editor-track-folder { color: #f3f4f6; font-weight: 600; background: rgba(17,24,39,.58); }
+#plugin-editor .editor-track-folder button { color: #9ca3af; width: 1rem; }
+#plugin-editor .editor-track-kind { width: 1.75rem; color: #67e8f9; font: 9px/1 monospace; }
+#plugin-editor .editor-track-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+#plugin-editor .editor-track-guide { box-shadow: inset 3px 0 #fbbf24; }
+#plugin-editor .editor-track-row select { width: 5.6rem; background: #111827; border: 1px solid #374151; border-radius: 3px; color: #cbd5e1; font-size: 10px; padding: .12rem; }
+#plugin-editor .editor-mixer-drawer {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 45; height: 13.5rem;
+    overflow-y: auto; background: rgba(17,24,39,.98); border-top: 1px solid #374151;
+    box-shadow: 0 -12px 30px rgba(0,0,0,.32); animation: editor-mixer-rise .18s ease-out both;
+}
+@keyframes editor-mixer-rise { from { transform: translateY(100%); } to { transform: translateY(0); } }
+#plugin-editor .editor-mixer-drawer #editor-mixer-parts { display: flex; gap: .75rem; overflow-x: auto; align-items: stretch; }
+#plugin-editor .editor-mixer-drawer #editor-mixer-parts > div { min-width: 9rem; border: 1px solid rgba(75,85,99,.7); border-radius: 5px; padding: .45rem; background: rgba(31,41,55,.72); }

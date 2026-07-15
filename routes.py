@@ -136,6 +136,75 @@ def _apply_audio_shift(manifest: dict, shift) -> None:
     else:
         manifest.pop("audio_shift", None)
 
+_TRACK_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9:._-]{1,160}$")
+
+
+def _track_session_id(value):
+    """Return an opaque, bounded track-session identifier or an empty string."""
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    return value if _TRACK_SESSION_ID_RE.fullmatch(value) else ""
+
+
+def _coerce_track_session(value, invalid=_FIELD_ABSENT):
+    """Sanitize the editor-only DAW tree stored in a sloppak manifest.
+
+    This extension intentionally contains only presentation/order relationships:
+    no filesystem paths, display HTML, or tempo data. Sources and
+    transcriptions are resolved against the freshly-loaded song on the client.
+    """
+    if not isinstance(value, dict) or not isinstance(value.get("tracks"), list):
+        return invalid
+    out, seen = [], set()
+    for raw in value["tracks"][:300]:
+        if not isinstance(raw, dict):
+            continue
+        tid = _track_session_id(raw.get("id"))
+        kind = raw.get("type")
+        if not tid or tid in seen or kind not in ("folder", "audio", "transcription"):
+            continue
+        parent_id = _track_session_id(raw.get("parentId"))
+        if kind == "folder":
+            name = raw.get("name")
+            out.append({"id": tid, "type": kind,
+                        "name": str(name or "Folder")[:120],
+                        "parentId": parent_id, "collapsed": bool(raw.get("collapsed"))})
+        elif kind == "audio":
+            source_id = _track_session_id(raw.get("sourceId"))
+            if not source_id:
+                continue
+            out.append({"id": tid, "type": kind, "sourceId": source_id,
+                        "parentId": parent_id})
+        else:
+            target_id = _track_session_id(raw.get("targetId"))
+            if not target_id:
+                continue
+            paired = _track_session_id(raw.get("pairedSourceId"))
+            out.append({"id": tid, "type": kind, "targetId": target_id,
+                        "parentId": parent_id, "pairedSourceId": paired})
+        seen.add(tid)
+    guide = _track_session_id(value.get("tempoGuideSourceId")) or "master"
+    return {"version": 1, "tracks": out, "tempoGuideSourceId": guide,
+            "tempoGuideLocked": bool(value.get("tempoGuideLocked"))}
+
+
+def _parse_track_session(data: dict):
+    """Absent/malformed session trees have no authority to erase persisted UI."""
+    if "track_session" not in data:
+        return _FIELD_ABSENT
+    if data.get("track_session") is None:
+        return None
+    return _coerce_track_session(data.get("track_session"), invalid=_FIELD_ABSENT)
+
+
+def _apply_track_session(manifest: dict, session) -> None:
+    if session is _FIELD_ABSENT:
+        return
+    if session is None:
+        manifest.pop("editor_track_session", None)
+    else:
+        manifest["editor_track_session"] = session
 
 _sessions = None
 
@@ -3702,7 +3771,36 @@ def setup(app, context):
                     result["beats"] = timeline["beats"]
                 if "sections" in timeline:
                     result["sections"] = timeline["sections"]
+            # A stable editor source list is deliberately separate from the
+            # legacy `stems` response: source ids are opaque session ids, while
+            # stem labels remain display-only. This prevents filename/id changes
+            # from breaking a persisted transcription pairing.
+            result["audio_sources"] = [{
+                "id": "master", "name": "Master Mix", "kind": "master",
+                "url": audio_url or "",
+            }]
+            _source_ids = {"master"}
+            for _source_index, _stem in enumerate(_stem_urls):
+                _source_base = "stem:" + re.sub(
+                    r"[^A-Za-z0-9._-]", "_", str(_stem.get("id") or "stem"))
+                _source_id = _source_base
+                _collision = 2
+                while _source_id in _source_ids:
+                    _source_id = f"{_source_base}:{_collision}"
+                    _collision += 1
+                _source_ids.add(_source_id)
+                result["audio_sources"].append({
+                    "id": _source_id,
+                    "name": str(_stem.get("id") or f"Stem {_source_index + 1}"),
+                    "kind": "stem", "url": _stem.get("url") or "",
+                })
+            _track_session = _coerce_track_session(
+                loaded.manifest.get("editor_track_session"), invalid=None)
+            if _track_session is not None:
+                result["track_session"] = _track_session
             if len(_stem_urls) >= 2:
+                # Legacy compatibility only; the new editor consumes
+                # `audio_sources` above rather than exposing a second mixer.
                 result["stems"] = _stem_urls
             # `lib/sloppak.load_song()` doesn't restore song.offset (the
             # sloppak format doesn't carry an explicit offset field today),
@@ -3883,6 +3981,7 @@ def setup(app, context):
         # and REMOVES the manifest key (a shift slid back to 0 must not leave
         # residue in the pack).
         audio_shift = _parse_audio_shift(data)
+        track_session = _parse_track_session(data)
         # Merge session metadata (album/year captured at archive load
         # time) with anything the frontend sent. `_buildSaveBody` ships
         # `{title, artist}` on every save path; this merge keeps the
@@ -4300,6 +4399,7 @@ def setup(app, context):
             # alignment the charter set; the frontend restores it from
             # `data.audio_shift` on load.
             _apply_audio_shift(manifest, audio_shift)
+            _apply_track_session(manifest, track_session)
 
             _write_song_timeline_sidecar(source_dir, manifest, beats, sections)
 

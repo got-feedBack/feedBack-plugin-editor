@@ -134,6 +134,26 @@ Switch tracks from the track selector. **Tracks overview** (`Shift+A`) stacks ev
 track for a bird's-eye look. Rename / reorder tracks from the **Track** menu.
 Add a track by importing into it (e.g. Import MIDI as a keys track).
 
+### Source-aware track session
+
+The left **Tracks** pane is a DAW-style session list: it places the **Master
+Mix**, available audio stems, and each transcription together. Use **+ Folder**
+only when you need it, then drag a track onto the folder to nest it or drag it
+before another track to reorder the session. Folders are organization only;
+they never alter the song, tempo map, or export.
+
+Each transcription can choose an audio reference from its row. Select that
+transcription and the editor switches its audible waveform/onset reference to
+the paired stem; choose **Master mix (inherit)** to fall back to the current
+Tempo guide. Click an audio track itself to audition it directly.
+
+The **Tempo** control above the list is separate from those pairings. It is the
+reference used for tempo mapping, and its lock prevents accidental changes
+while you move between guitar, piano-roll, and drum tracks. Changing a tempo
+source never time-stretches or moves the samples: the musical ruler is still
+fitted to the selected fixed recording. Open **Mixer** (`Shift+C`) for the
+bottom drawer of familiar mute, solo, and fader channel strips.
+
 ---
 
 ## 6. Tempo mapping — line the grid up to the music

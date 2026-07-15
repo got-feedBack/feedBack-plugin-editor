@@ -44,11 +44,12 @@ import {
     _editBlipAt, _editorToggleGuideClap,
     _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip,
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
-    editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio,
+    editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio, activateTrackAudioSource,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
     editorToggleAuditionTrainer,
 } from './audio.js';
 import { _mixerClapState, _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
+import { initTrackSession, refreshTrackSession } from './track-session.js';
 import {
     _barSpanForTimes, _editorApplyScrollBounds,
     _editorClampScrollX, _loopReliftBeats,
@@ -113,7 +114,7 @@ import {
     _refreshViewSwitch, editorDetectKey, editorSetKeyScale, editorSetKeyTonic,
     editorSetViewMode
 } from './key-view.js';
-import { setHostHooks } from './host.js';
+import { host, setHostHooks } from './host.js';
 import { dismissSessionPrompt, guardSessionTransition } from './session-lifecycle.js';
 import { initAnchorResolve } from './anchor-resolve.js';
 import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from './playability-lint.js';
@@ -506,6 +507,14 @@ setHostHooks({
     editorTogglePartsView: (...a) => _editorTogglePartsView(...a),
     tempoResolvedMeasureIdx: (...a) => _tempoResolvedMeasureIdx(...a),
     partClapState: _mixerClapState,
+    selectTrackSessionTarget: (targetId) => {
+        if (targetId === 'drums' && S.drumTab) {
+            S.drumEditMode = true; S.partsViewMode = false; host.draw(); return;
+        }
+        const index = S.arrangements.findIndex((arr, i) => arr && ((arr.id && String(arr.id) === targetId) || (!arr.id && ('arr:' + i) === targetId)));
+        if (index >= 0) window.editorSelectArrangement(String(index));
+    },
+    selectTrackSessionSource: (sourceId) => activateTrackAudioSource(sourceId),
     mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
 });
 
@@ -888,6 +897,8 @@ function updateArrangementSelector() {
         S.currentArr = idx;
         sel.value = String(idx);
     }
+
+    refreshTrackSession();
 
     // "+ Drums" button: shown on any active session — the modal lets the
     // user add OR replace a drum tab. The old gate ("hide when a drums
@@ -2005,6 +2016,7 @@ function init() {
     initTransportBar();
     initToolbars();
     initMixerPanel();
+    initTrackSession();
 
     // Observe screen visibility for resize + the entry landing. Held in
     // _editorScreenObs so the teardown can disconnect it on re-injection.

@@ -43,6 +43,10 @@ export const host = {
     updateStatus: () => {},
     /** Rebuild the arrangement <select> after a structural edit. */
     updateArrangementSelector: () => {},
+    /** Select a source-aware transcription target (arrangement id or drums). */
+    selectTrackSessionTarget: () => {},
+    /** Activate an audio source used as the current reference. */
+    selectTrackSessionSource: () => {},
     /** Dismiss the canvas context menu. */
     hideContextMenu: () => {},
     /** Snap a time to the active grid (or the nearest onset). Identity default. */

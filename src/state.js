@@ -66,6 +66,13 @@ export const S = {
     // Parts-gutter M/S/A all read. Reset when a song is installed.
     partMix: {},
 
+    // Source-aware DAW track tree. Audio and transcription leaves share one
+    // optional-folder order; durable pairings use stable ids, never indices.
+    audioSources: [],
+    trackSession: { version: 1, tracks: [], tempoGuideSourceId: 'master', tempoGuideLocked: false },
+    focusedSourceId: 'master',
+    activeAudioSourceId: 'master',
+
     // Tempo Map mode — EOF-style: drag the song-wide beat grid's measure
     // downbeats ("sync points") to fit it to the audio; BPM is derived
     // from sync-point spacing. tempoSel/tempoHover index into S.beats. Under

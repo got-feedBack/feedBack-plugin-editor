@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Source-aware DAW track session.** The new left-hand Tracks list combines
+  the master mix, available audio stems, and every transcription in one
+  reorderable session. Create optional folders and drop tracks onto them;
+  pair any transcription with a stem for focused editing; click an audio row
+  to make it the audible reference. The explicit **Tempo** guide remains
+  separate, can be switched deliberately, and can be locked before tempo-map
+  work so selecting a drum or MIDI track never silently changes tempo truth.
+  The Mixer is now a bottom drawer with familiar channel strips instead of a
+  side inspector.
+
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
   its note shape: it's sized to the current note value (the snap step, so the box
