@@ -949,6 +949,7 @@ export function _editorToggleTempoMapMode() {
         S.drumEditMode = false;
         S.drumSel = new Set();
         S.partsViewMode = false;
+        S.tabViewMode = false;
         host.hideContextMenu();
         host.hideAddNote();
         S.sel.clear();

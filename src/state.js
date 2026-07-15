@@ -109,6 +109,11 @@ export const S = {
     // snapped to downbeat boundaries. `null` = no bar range selected.
     barSel: null,
     loopEnabled: false,
+    // Live Tab view (view-modality): an orthogonal lens flag like
+    // partsViewMode — mode toggles clear it, the draw pass enforces it.
+    tabViewMode: false,
+    // Which staves the score view engraves: 'tab' | 'notation' | 'both'.
+    tabViewStaff: 'tab',
     // True when this editor session was opened from the 3D highway's
     // "Edit region" action. Used to make the preview button read as a
     // return trip instead of a fresh action.
@@ -146,9 +151,6 @@ export const S = {
 
     // Songs list cache
     songsList: null,
-
-    // Clipboard
-    clipboard: null, // { notes: [...], baseTime }
 };
 
 // ── Shared edit generation ──────────────────────────────────────────

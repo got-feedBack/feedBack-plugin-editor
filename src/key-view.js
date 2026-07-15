@@ -142,7 +142,25 @@ export function _editorCycleViewMode() {
         setStatus('Keys tracks always use the piano roll');
         return true;
     }
-    window.editorSetViewMode(viewFor(arr) === 'piano' ? 'string' : 'piano');
+    // String → Piano roll → Tab → String. The Tab lens sits ON TOP of the
+    // per-part view pref, so leaving it restores whichever view the pref says.
+    if (S.tabViewMode) {
+        if (typeof window.editorToggleTabView === 'function') window.editorToggleTabView(false);
+        window.editorSetViewMode('string');
+        return true;
+    }
+    if (viewFor(arr) === 'piano') {
+        // Drums have no tab (same refusal as the lens's own guard) — the
+        // toggle would refuse WITHOUT changing mode and the cycle would
+        // stick on the roll. Skip the Tab stop and wrap to String view.
+        if (/^drums/i.test(arr.name || '')) {
+            window.editorSetViewMode('string');
+            return true;
+        }
+        if (typeof window.editorToggleTabView === 'function') window.editorToggleTabView(true);
+        return true;
+    }
+    window.editorSetViewMode('piano');
     return true;
 }
 

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Assisted tempo mapping trusts a bridged gap once the far side confirms.**
+  When Suggest marches across a sustained or held bar (no attack to snap to),
+  it keeps going on prediction but marks those bars very low confidence — and
+  used to leave them there even after the next bar snapped cleanly, proving
+  the marched path was right. Bars bridged BETWEEN two confirmed hits now get
+  their confidence raised retroactively (still discounted, never outranking a
+  real hit), so the ghost markers over a held chord read as "probably right"
+  instead of "guessing". A trailing march that never re-confirms keeps the
+  floor and is still dropped, exactly as before; a barline you locked confirms
+  at full trust.
+- **Slides and ties now reach the note they belong to.** A pitched slide's
+  diagonal used to stop at the edge of its own note; when the next note on
+  that string is where the slide actually lands, the line now runs all the
+  way to it — you can see the gesture arrive. Likewise a tie (link-next) now
+  draws a legato arc from the note's tail to the linked note's head instead
+  of a small hook, so the two notes visibly belong to one gesture. When no
+  landing is charted (or notes overlap), the old compact glyphs remain —
+  the editor never draws a connection the music doesn't have.
 ### Added
 
 - **Hold / fermata bars and meter groupings — the chart can finally say what
@@ -23,6 +43,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or deleted, and carry **provenance** — hand-set marks are recorded as
   human-confirmed, the foundation for keeping your verified work through
   future automatic re-fits.
+- **Cut, and real Copy/Paste commands.** Copy and paste existed but were
+  hidden hardwired keys — invisible in the Edit menu, the shortcut panel, and
+  anywhere else you'd look, with no Cut at all. All three are first-class
+  commands now: **Edit ▸ Copy / Cut / Paste** (Ctrl+C / Ctrl+X / Ctrl+V; the
+  EOF profile keeps its Ctrl+X mute binding, so Cut is Shift+Del there).
+  Paste lands the phrase's first note at the playhead — snapped to your grid
+  like any other placement — keeps the internal timing intact, selects the
+  pasted notes, and is one undo. Pasting across tracks now behaves: notes on
+  strings the target track doesn't have are skipped and counted instead of
+  written invisibly, and keys ↔ fretted pasting is refused (the note shapes
+  don't translate). Undoing a cut restores the notes but keeps the clipboard,
+  like every text editor.
+
+### Fixed
+
+- **Pasted bend curves are no longer linked to the original.** Copying a bent
+  note shared the bend-curve data between the original and every paste —
+  editing any one of them silently edited them all. Copies are fully
+  independent now.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
@@ -48,9 +87,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   click to accept as far as it looks right. Nothing commits until you accept,
   Esc dismisses, and as always the audio never moves: barlines re-fit to the
   recording and your notes ride along.
+- **Tab view — live engraved tablature of the track you're editing.** The
+  view cycle gains a third stop (String view → Piano roll → **Tab**, also in
+  the View menu): the timeline becomes real engraved tab of the CURRENT
+  chart, re-drawn as you edit — no saving first, no other plugin installed,
+  unlike the read-only preview window (which stays, for proofreading what's
+  actually on disk). **Click any beat in the tab to select those notes** and
+  move the playhead there, then edit in String view or the roll as usual —
+  the score keeps up. Quantization is honest about its v1 limits: positions
+  engrave on a 16th grid against your tempo map (variable tempo included),
+  durations read from the spacing between notes, and anything outside the
+  barline span is counted in the status rather than silently dropped.
+  Fretted tracks only for now; standard notation is the follow-up.
+- **Standard notation in the score view — View ▸ Score staff.** Pick what
+  the live score engraves: **tablature only** (the default), **standard
+  notation only**, or **both staves together**. Clicking a beat selects its
+  notes on every staff choice, the pick is remembered per browser, and
+  choosing a staff while the score view is off switches you into it.
 
 ### Fixed
 
+- **Select All stays inside the editor.** `Ctrl+A` / `Cmd+A` now selects the
+  active chart objects without letting Chromium highlight the entire editor UI.
+  Read-only Parts view and active MIDI recording also suppress page selection,
+  while text inputs and inline rename fields keep their native Select All.
 - **"Shift Audio…" now survives saving and reopening.** The recording-vs-chart
   shift was sent with every save but the backend silently dropped it, so a
   carefully aligned song came back misaligned on the next open — reading as

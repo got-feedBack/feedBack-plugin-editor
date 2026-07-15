@@ -233,6 +233,10 @@
                     <ul id="editor-palette-list" class="max-h-80 overflow-y-auto p-1.5 text-xs"></ul>
                 </div>
             </div>
+            <!-- Live Tab view mount (view-modality): the engraved score that
+                 OWNS the timeline area while S.tabViewMode is on. alphaTab
+                 renders into it; the draw pass shows/hides it. -->
+            <div id="editor-tabview-mount" class="hidden absolute inset-0 z-20 overflow-auto bg-white"></div>
             <!-- Playability-lint popover (P9) — anchored bottom-right of the timeline. -->
             <div id="editor-lint-pop" role="dialog" aria-label="Playability notes" class="hidden absolute right-3 bottom-2 z-30 editor-lint-pop"></div>
             <!-- Entry tour card (workspace-shell C3) — a non-modal, task-based

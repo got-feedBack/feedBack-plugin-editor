@@ -120,6 +120,7 @@ import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from '
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
 import { EDITOR_MENUS, initMenuBar } from './menu-bar.js';
+import { _tabViewHideIfShown, _tabViewPing, editorToggleTabView, teardownTabView } from './tab-view-live.js';
 import { initToolbars } from './toolbars.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
 import { editorDismissSignpost } from './signposts.js';
@@ -227,8 +228,17 @@ function _cancelPendingDraw() {
 
 function drawNow() {
     if (!canvas) return;
+    // The toolbar LCDs refresh on EVERY draw, before any mode fork — undo/
+    // redo can change BPM / time signature while a lens (Tab view included)
+    // owns the timeline, and the readouts must not go stale behind it.
     updateBPMDisplay();
     updateTempoSigDisplay();
+    // Live Tab view: the engraved score OWNS the timeline area — ping the
+    // module (it shows the mount + re-renders on real changes) and skip the
+    // canvas chain. The else-branch hides the mount the moment any mode
+    // toggle clears the flag, so no toggle needs teardown knowledge.
+    if (S.tabViewMode) { _tabViewPing(); return; }
+    _tabViewHideIfShown();
     const w = canvas.width / DPR;
     const h = canvas.height / DPR;
     ctx.save();
@@ -562,6 +572,7 @@ window.editorApplyReplaceAudio = editorApplyReplaceAudio;
 
 // Sync-tempo dialog (sync-tempo.js owns the logic; HTML calls these by name).
 window.editorSyncTempo = editorSyncTempo;
+window.editorToggleTabView = (force) => editorToggleTabView(force);
 window.editorScanTempoZones = () => editorScanTempoZones();
 window.editorApplyTempoZones = () => editorApplyTempoZones();
 window.editorHealGrid = () => editorHealGrid();
@@ -727,6 +738,9 @@ window.__editorScreenTeardown = () => {
     // Stop any playback this injection owns — the audio graph outlives the
     // DOM, so a replaced screen would otherwise keep sounding.
     teardownAudio();  // stops playback + cancels the rAF loop (src/audio.js owns both)
+    // typeof-guarded for the sliced boot_teardown suite (its extracted env
+    // stubs only what it names — the same convention as the #98 hook below).
+    if (typeof teardownTabView === 'function') teardownTabView();   // engraving api dies with the mount DOM
     try { if (_editorScreenObs) { _editorScreenObs.disconnect(); _editorScreenObs = null; } } catch (_) {}
     try { if (_v3TopbarWatch) { _v3TopbarWatch.disconnect(); _v3TopbarWatch = null; } } catch (_) {}
     // The v3 layout ResizeObserver watches #v3-topbar, a shell-persistent node
