@@ -566,6 +566,18 @@ export function _tempoSyncInspectorStatePure(measures, selectedIndex) {
             : `${numerator}/${denominator} - final measure BPM needs a closing downbeat.`,
     };
 }
+
+export function _tempoLockControlStatePure(beats, focus, selected) {
+    const plan = _tempoLockPlanPure(beats, focus, selected);
+    if (!plan) return { disabled: true, count: 0, locked: false, label: 'Lock barline' };
+    const verb = plan.locked ? 'Lock' : 'Unlock';
+    return {
+        disabled: false,
+        count: plan.indices.length,
+        locked: plan.locked,
+        label: plan.indices.length > 1 ? `${verb} ${plan.indices.length} barlines` : `${verb} barline`,
+    };
+}
 /* @pure:tempo-sync-inspector:end */
 
 function _ensureTempoSyncInspector() {
@@ -583,18 +595,21 @@ function _ensureTempoSyncInspector() {
         + '<button type="button" id="editor-tempo-sync-songfit" class="px-2 py-0.5 rounded bg-dark-600 text-gray-200 hover:bg-dark-500" title="Song Fit — one place to line the chart up with the recording (shift, fit tempo, or set a constant tempo). The audio never moves.">Song Fit…</button>'
         + '<button type="button" id="editor-tempo-sync-insert" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Mark a barline at the playhead">Mark</button>'
         + '<button type="button" id="editor-tempo-sync-bar1" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Shift the grid, notes and sections so bar 1 lands at the playhead (the audio does not move)">Bar 1 here</button>'
+        + '<button type="button" id="editor-tempo-sync-lock" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Lock selected barlines through automatic tempo re-fits (S)">Lock barline</button>'
         + '<button type="button" id="editor-tempo-sync-delete" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete selected barline">Delete</button>'
         + '<button type="button" id="editor-tempo-sync-modulate" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Metric modulation: new tempo = current × ratio, from this measure to the next tempo change (M)">Modulate…</button>';
     const songFitBtn = el.querySelector('#editor-tempo-sync-songfit');
     const acceptAllBtn = el.querySelector('#editor-tempo-sync-accept-all');
     const insertBtn = el.querySelector('#editor-tempo-sync-insert');
     const bar1Btn = el.querySelector('#editor-tempo-sync-bar1');
+    const lockBtn = el.querySelector('#editor-tempo-sync-lock');
     const deleteBtn = el.querySelector('#editor-tempo-sync-delete');
     const modulateBtn = el.querySelector('#editor-tempo-sync-modulate');
     if (songFitBtn) songFitBtn.onclick = () => { if (typeof window !== 'undefined' && window.editorSongFit) window.editorSongFit(); };
     if (acceptAllBtn) acceptAllBtn.onclick = () => editorAcceptWholeTempoFit();
     if (insertBtn) insertBtn.onclick = () => _tempoInsertSyncPoint(S.cursorTime);
     if (bar1Btn) bar1Btn.onclick = () => _tempoSetBar1Here();
+    if (lockBtn) lockBtn.onclick = () => _editorToggleSyncLock();
     if (deleteBtn) deleteBtn.onclick = () => { if (S.tempoSel >= 0) _tempoDeleteSyncPoint(S.tempoSel); };
     if (modulateBtn) modulateBtn.onclick = () => _editorModulateTempoAtSelection();
     bpm.parentNode.insertBefore(el, bpm.previousElementSibling || bpm);
@@ -614,6 +629,7 @@ export function _refreshTempoSyncInspector() {
     const denEl = document.getElementById('editor-tempo-sig-den');
     const insertBtn = document.getElementById('editor-tempo-sync-insert');
     const deleteBtn = document.getElementById('editor-tempo-sync-delete');
+    const lockBtn = document.getElementById('editor-tempo-sync-lock');
     const acceptAllBtn = document.getElementById('editor-tempo-sync-accept-all');
     if (!el) return;
     const hasGrid = !!(S.beats && S.beats.length >= 2);
@@ -625,10 +641,25 @@ export function _refreshTempoSyncInspector() {
     const hint = document.getElementById('editor-tempo-sync-hint');
     if (label) label.textContent = state.label;
     if (hint) hint.textContent = state.hint;
+    const lockState = _tempoLockControlStatePure(S.beats, visible ? S.tempoSel : -1,
+        visible ? S.tempoSelMulti : null);
+    if (lockBtn) {
+        lockBtn.disabled = !visible || lockState.disabled;
+        lockBtn.textContent = lockState.label;
+        lockBtn.title = lockState.count > 1
+            ? `${lockState.label} through automatic tempo re-fits (S)` : LOCK_TOOLTIP;
+    }
+    if (visible && lockState.count > 1) {
+        if (label) label.textContent = `${lockState.count} barlines selected`;
+        if (hint) hint.textContent = 'Shift-click extends · Ctrl/Cmd-click toggles';
+    }
     if (acceptAllBtn) {
         const active = visible && _suggestActive();
         acceptAllBtn.classList.toggle('hidden', !active);
-        const whole = S.trackSession && S.trackSession.tempoGuideMode === 'metronome';
+        const proposals = _suggestProposals();
+        const finalDownbeat = (S.beats || []).reduce((last, beat, index) =>
+            beat && beat.measure > 0 ? index : last, -1);
+        const whole = proposals.length > 0 && proposals[proposals.length - 1].i === finalDownbeat;
         acceptAllBtn.textContent = whole ? 'Accept Whole Fit' : 'Accept All Suggestions';
     }
     // The BPM / signature inputs are SHARED with normal (non-tempo-map) editing.
@@ -1071,8 +1102,9 @@ export function _tempoDirectEditBandPure(y, gridTop) {
     return Number(y) >= Number(gridTop) && Number(y) <= Number(gridTop) + TEMPO_HANDLE_H;
 }
 
-export function _tempoPoleGrabTolerancePure(y, gridTop) {
-    return _tempoDirectEditBandPure(y, gridTop) ? TEMPO_POLE_HALF + 2 : TEMPO_LINE_GRAB_HALF;
+export function _tempoPoleGrabTolerancePure(y, gridTop, selecting = false) {
+    return selecting || _tempoDirectEditBandPure(y, gridTop)
+        ? TEMPO_POLE_HALF + 2 : TEMPO_LINE_GRAB_HALF;
 }
 
 // Sub-beat hit-test — the per-beat rubato drag's target. Same vertical
@@ -1288,7 +1320,8 @@ export function _tempoMapOnMouseDown(e, x, y) {
     // draggable through the lane at a tight tolerance. That restores the
     // familiar grab-anywhere-on-the-line gesture while leaving almost all of
     // the lane body free to begin a marquee.
-    const hit = _tempoSyncAtX(x, y, _tempoPoleGrabTolerancePure(y, gridTop));
+    const selecting = e.ctrlKey || e.metaKey || e.shiftKey;
+    const hit = _tempoSyncAtX(x, y, _tempoPoleGrabTolerancePure(y, gridTop, selecting));
     if (hit >= 0) {
         // Ctrl/Cmd-click toggles one pole without beginning a drag — the DAW
         // complement to Shift-click range selection and body-lane marquee.

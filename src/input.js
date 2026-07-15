@@ -7,7 +7,7 @@
 import { AddAnchorCmd, AddHandshapeCmd, AddToneChangeCmd, RemoveAnchorCmd, RemoveHandshapeCmd, RemoveToneChangeCmd, _anchorLaneTopY, _currentAnchorArr, _currentToneArr, _ensureTones, _handshapeLaneTopY, _readAnchorSnapshot, onAnchorLaneContextMenu, onHandshapeLaneContextMenu, onToneLaneContextMenu } from './annotation-lanes.js';
 import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsetsShifted, startPlayback, stopPlayback } from './audio.js';
 import { editorSuggestFingers } from './anchor-resolve.js';
-import { _suggestActive, _suggestCompute, _suggestDismiss } from './tempo-suggest.js';
+import { _suggestActive, _suggestCompute, _suggestDismiss, _suggestProposals } from './tempo-suggest.js';
 import { _zonesDismiss } from './tempo-zones.js';
 import { editorToggleMixerPanel } from './mixer-panel.js';
 import { canvas } from './canvas.js';
@@ -786,13 +786,12 @@ function _editorPromptTempoBpmAtSelection() {
 export function _tempoSuggestScopePure(beats, tempoSel, tempoSelMulti, metronome) {
     let anchor = tempoSel;
     const range = _tempoSelRangePure(beats, tempoSelMulti);
-    const opts = metronome ? { metronome: true } : undefined;
+    const opts = metronome ? { metronome: true } : { complete: true };
     if (range) {
         anchor = range.lo;
-        // A selected range is useful for ordinary phrase re-fit, but an
-        // explicitly-declared click guide means "from here through the song".
-        // Stale marker selections must never silently cap Whole Fit.
-        if (!metronome) return { anchor, opts: { toIdx: range.hi } };
+        // Selection chooses the authoritative starting anchor only. It never
+        // silently caps G: the user asked for a whole-song proposal and may
+        // have selected these bars merely to lock or move them.
     }
     return { anchor, opts };
 }
@@ -822,13 +821,14 @@ function _editorTempoSuggestFit() {
     S.tempoSel = anchor;
     _zonesDismiss();   // one proposal surface at a time — G replaces the zone bands
     const n = _suggestCompute(anchor, onsets, opts);
+    const inferred = _suggestProposals().filter(proposal => proposal.inferred).length;
     host.draw();
     setStatus(n
         ? (metronome
             ? `Metronome guide mapped all ${n} remaining barline${n === 1 ? '' : 's'} and the final measure — review, then Accept Whole Fit or click a ghost to accept through it`
-            : opts
-            ? `Suggested a fit for the selected range (${n} barline${n === 1 ? '' : 's'}) — click a ghost handle to accept through it; Esc dismisses`
-            : `Suggested ${n} barline${n === 1 ? '' : 's'} ahead of the anchor — click a ghost handle to accept through it; Esc dismisses`)
+            : `Suggested the whole song (${n} barline${n === 1 ? '' : 's'}`
+              + `${inferred ? `; ${inferred} low-confidence continuation${inferred === 1 ? '' : 's'}` : ''}) — `
+              + 'review, then Accept Whole Fit or click a ghost to accept through it')
         : 'No confident suggestions from here — verify this anchor (drag it onto the downbeat) and press G again.');
     return true;
 }

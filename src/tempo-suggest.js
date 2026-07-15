@@ -127,6 +127,61 @@ export function _suggestMedianPure(vals) {
     return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+// Extend a conservative onset fit through every remaining authored downbeat.
+// Detected proposals stay untouched; only the tail after the confidence stop
+// is inferred, clearly flagged, and low-confidence. This is deliberately an
+// editable proposal—not a silent commit—because a complete rough answer is
+// more useful than an unexplained one-minute cutoff.
+export function _suggestCompleteTailPure(beats, fromIdx, result, opts) {
+    const base = result || { proposals: [], stopReason: 'end', stopDetail: 'end' };
+    const proposals = Array.isArray(base.proposals) ? base.proposals.map(p => ({ ...p })) : [];
+    const downs = _suggestDownbeatsFromPure(beats, fromIdx);
+    if (downs.length < 2) return { ...base, proposals };
+    const toIdx = opts && Number.isInteger(opts.toIdx) ? opts.toIdx : Infinity;
+    let lastIdx = proposals.length ? proposals[proposals.length - 1].i : downs[0];
+    let lastTime = proposals.length ? proposals[proposals.length - 1].time : beats[lastIdx].time;
+    const previous = proposals.length > 1
+        ? proposals[proposals.length - 2]
+        : { i: downs[0], time: beats[downs[0]].time };
+    const oldSpan = beats[lastIdx].time - beats[previous.i].time;
+    const newSpan = lastTime - previous.time;
+    let scale = oldSpan > 0 && newSpan > 0 ? newSpan / oldSpan : 1;
+    scale = Math.max(0.25, Math.min(4, scale));
+    let pos = downs.findIndex(i => i === lastIdx) + 1;
+    while (pos > 0 && pos < downs.length && downs[pos] <= toIdx) {
+        let lockPos = -1;
+        for (let k = pos; k < downs.length && downs[k] <= toIdx; k++) {
+            if (beats[downs[k]].locked) { lockPos = k; break; }
+        }
+        if (lockPos >= 0 && beats[downs[lockPos]].time > lastTime) {
+            const lockIdx = downs[lockPos];
+            const gridSpan = beats[lockIdx].time - beats[lastIdx].time;
+            for (; pos <= lockPos; pos++) {
+                const i = downs[pos];
+                const frac = gridSpan > 0 ? (beats[i].time - beats[lastIdx].time) / gridSpan : 1;
+                const time = lastTime + frac * (beats[lockIdx].time - lastTime);
+                proposals.push({ i, time, conf: i === lockIdx ? 1 : 0.08,
+                    locked: i === lockIdx, ...(i === lockIdx ? {} : { inferred: true }) });
+            }
+            lastIdx = lockIdx;
+            lastTime = beats[lockIdx].time;
+            scale = 1;
+            continue;
+        }
+        const i = downs[pos++];
+        const time = Math.max(lastTime + 0.01,
+            lastTime + (beats[i].time - beats[lastIdx].time) * scale);
+        proposals.push({ i, time, conf: 0.08, locked: false, inferred: true });
+        lastIdx = i;
+        lastTime = time;
+    }
+    return {
+        proposals,
+        stopReason: 'end',
+        stopDetail: base.stopReason === 'lost' ? `inferred-${base.stopDetail || 'lost'}` : base.stopDetail,
+    };
+}
+
 // An explicitly-declared click track is a stronger contract than ordinary
 // musical audio: each consolidated transient is one beat pulse. Walk that
 // sequence by the chart's authored beats-per-measure so tempo changes in the
@@ -337,7 +392,8 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
         if (stopDetail === 'end') stopDetail = 'silence';
     }
     for (const p of proposals) delete p.miss;   // internal flag; keep the public shape
-    return { proposals, stopReason, stopDetail };
+    const result = { proposals, stopReason, stopDetail };
+    return o.complete ? _suggestCompleteTailPure(beats, fromIdx, result, o) : result;
 }
 
 // Apply proposals up to and including the one for downbeat `throughI`:

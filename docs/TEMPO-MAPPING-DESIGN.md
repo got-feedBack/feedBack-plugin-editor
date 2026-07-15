@@ -66,12 +66,15 @@ and tempo drift does not imply a new meter.
 The normal workflow is seed, suggest, correct:
 
 1. Mark two or more reliable downbeats.
-2. Suggest the next short range, a selection, or the song tail.
+2. Suggest from the chosen anchor through the whole authored song. Keep the
+   onset-supported prefix at its measured confidence; after a confidence break,
+   continue as visibly low-confidence editable estimates instead of stopping.
 3. Show proposed barlines with confidence; do not commit them silently.
 4. Accept a range or correct the first wrong proposal.
 5. Recalculate only the unconfirmed future from that correction.
-6. Stop at low confidence, silence, phase breaks, or likely tempo/meter changes
-   and request another anchor.
+6. At low confidence, silence, phase breaks, or likely tempo/meter changes,
+   stop trusting onset snaps but continue the proposal from the most recent
+   fitted interval. Never commit that inferred tail without explicit acceptance.
 
 Manual anchors are authoritative. Onset detection may offer a visible soft
 snap but must never silently move a mark. Long gaps must not silently infer a

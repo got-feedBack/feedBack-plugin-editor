@@ -67,7 +67,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   individual marker handles. Lock/unlock applies atomically to every selected
   barline, is undoable, and does not mark the feedpak dirty. The thin visible
   barline remains draggable through its full height, with the larger top handle
-  available as a forgiving target.
+  available as a forgiving target. Ctrl/Cmd-click and Shift-click use that
+  forgiving target through the full marker height, and the Tempo Map inspector
+  shows the selection count plus an explicit **Lock N barlines** bulk action.
+  **G — Suggest fit** now always proposes through the final authored barline.
+  When onset confidence fails, the detected prefix is preserved and the tail
+  continues as explicitly low-confidence estimates; selections choose the
+  starting anchor but can no longer silently truncate the proposal.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns

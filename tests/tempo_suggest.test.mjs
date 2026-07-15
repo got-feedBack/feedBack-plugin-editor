@@ -25,7 +25,7 @@ const {
     _suggestHudTextPure, _suggestCompute, _suggestActive, _suggestProposals,
     _suggestDismiss, _suggestRegenerateFrom, _suggestHitAt,
     _suggestBeatWinPure, _suggestCombPure, _suggestMedianPure, _suggestAnyOnsetInPure,
-    _suggestMetronomeFitPure,
+    _suggestCompleteTailPure, _suggestMetronomeFitPure,
 } = await import('../src/tempo-suggest.js');
 const { S, bumpEditGen } = await import('../src/state.js');
 const { timeToX } = await import('../src/geometry.js');
@@ -110,6 +110,20 @@ t('silence stops the march and drops the trailing guesses', () => {
     assert.ok(proposals.every(p => p.conf > 0.12), 'no bare guesses survive');
 });
 
+t('complete mode keeps detected bars and infers a low-confidence tail through song end', () => {
+    const g = grid(12, 120);
+    const detected = _suggestFitPure(g, onsetsAt(126, 6), 0);
+    const result = _suggestCompleteTailPure(g, 0, detected, {});
+    assert.strictEqual(result.stopReason, 'end');
+    assert.strictEqual(result.proposals.length, 11, 'every remaining downbeat is proposed');
+    assert.strictEqual(result.proposals.at(-1).i, 44, 'proposal reaches the final authored barline');
+    assert.strictEqual(result.proposals.filter(p => p.inferred).length, 6);
+    assert.ok(result.proposals.slice(0, 5).every(p => !p.inferred), 'detected prefix is unchanged');
+    for (let i = 1; i < result.proposals.length; i++) {
+        assert.ok(result.proposals[i].time > result.proposals[i - 1].time, 'tail stays monotonic');
+    }
+});
+
 t('an explicit metronome guide maps the whole pulse train across tempo changes', () => {
     const g = grid(10, 120);
     const pulseTimes = [];
@@ -161,14 +175,13 @@ t('Accept Whole Fit commits every metronome proposal as one undoable command', (
     assert.deepStrictEqual(S.beats.map(beat => beat.time), before, 'one undo restores the entire prior map');
 });
 
-t('metronome Whole Fit ignores a stale marker-range endpoint', () => {
+t('Whole Fit uses a marker range only to choose its start, never to truncate the song', () => {
     const beats = grid(8, 120);
     const selected = new Set([4, 8, 12]);
     const whole = _tempoSuggestScopePure(beats, 8, selected, true);
     assert.deepStrictEqual(whole, { anchor: 4, opts: { metronome: true } });
     const phrase = _tempoSuggestScopePure(beats, 8, selected, false);
-    assert.deepStrictEqual(phrase, { anchor: 4, opts: { toIdx: 12 } },
-        'ordinary phrase fitting remains selection-bounded');
+    assert.deepStrictEqual(phrase, { anchor: 4, opts: { complete: true } });
 });
 
 t('a locked downbeat is pinned at its own time with full confidence', () => {

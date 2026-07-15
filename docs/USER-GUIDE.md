@@ -210,16 +210,20 @@ Three ways to set the tempo, from coarse to fine:
    **barline**; drag one onto its downbeat in the waveform and the surrounding
    bars re-space to fit. In this mode:
    - **`G` — Suggest fit**: from the selected barline, the editor proposes the
-     next downbeats from the audio's onsets. Click a ghost handle to accept
-     through it.
+     entire remaining song. Onset-supported bars retain their measured
+     confidence; if detection loses the pulse, the remaining barlines continue
+     as visibly low-confidence estimates so you can still accept, correct, or
+     reject a complete map rather than getting an unexplained early cutoff.
+     Click a ghost handle to accept through it, or **Accept Whole Fit** to take
+     the complete proposal as one undoable edit.
    - For a clean click track, right-click its audio row and choose **Use as
      Metronome Guide**. `G` then counts that guide's beat pulses through the
      entire chart, follows click-track tempo changes, and extrapolates missing
      detections at visibly lower confidence instead of stopping. Choose
      **Accept Whole Fit** to apply every proposal as one edit; `Ctrl+Z` restores
      the previous map. Any existing multi-selected barlines choose the starting
-     anchor but do not cap Metronome Guide mode; it continues through the final
-     authored barline and final measure. Click an individual ghost when you only
+     anchor but never cap `G`; it continues through the final authored barline
+     and final measure. Click an individual ghost when you only
      want to accept through that bar.
    - **`Shift+B` — Tap tempo**: tap along and the selected barline takes your
      tempo.
@@ -234,9 +238,11 @@ Three ways to set the tempo, from coarse to fine:
      Drag across the body of the Tempo Map lane to marquee-select barlines;
      hold **Shift** while dragging to add another range, or **Ctrl/Cmd-click**
      marker handles to toggle individual barlines. Press **S** or right-click
-     any selected marker to lock/unlock the whole selection. Drag the small
+     any selected marker—or use the inspector's explicit **Lock N barlines**
+     button—to lock/unlock the whole selection. Drag the small
      handles along the top edge—or the thin barline itself—when you want to
-     move a marker instead.
+     move a marker instead. **Ctrl/Cmd+A** selects every barline; there is no
+     limit on the number or disjoint groups that can be locked together.
 
 ### Offset (audio alignment)
 

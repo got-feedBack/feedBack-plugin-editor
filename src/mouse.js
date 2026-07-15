@@ -289,7 +289,8 @@ function _onMouseMoveBody(e, x, y, L) {
         // Tempo-map mode: highlight the sync-point pole under the cursor.
         if (S.tempoMapMode) {
             const gridTop = TIMELINE_TOP + WAVEFORM_H;
-            const hit = _tempoSyncAtX(x, y, _tempoPoleGrabTolerancePure(y, gridTop));
+            const selecting = e.ctrlKey || e.metaKey || e.shiftKey;
+            const hit = _tempoSyncAtX(x, y, _tempoPoleGrabTolerancePure(y, gridTop, selecting));
             if (hit !== S.tempoHover) { S.tempoHover = hit; host.draw(); }
             if (canvas) canvas.style.cursor = hit >= 0 ? 'ew-resize' : '';
             return;

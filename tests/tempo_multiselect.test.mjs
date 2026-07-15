@@ -13,7 +13,7 @@ import { EditHistory } from '../src/history.js';
 import {
     TempoGridCmd, _editorToggleSyncLock, _tempoDeletableBarlineIndicesPure,
     _tempoDeleteBarlinesPure, _tempoDeleteSelection, _tempoDirectEditBandPure,
-    _tempoLockPlanPure, _tempoMarqueeDownbeatsPure, _tempoMarqueeSelectionPure,
+    _tempoLockControlStatePure, _tempoLockPlanPure, _tempoMarqueeDownbeatsPure, _tempoMarqueeSelectionPure,
     _tempoPoleGrabTolerancePure, _tempoSelectedDownbeatRunsPure, _tempoSelectDownbeatRange,
     _tempoToggleDownbeatSelectionPure,
 } from '../src/tempo.js';
@@ -62,6 +62,8 @@ t('the lane body stays available for marquee selection below the marker handles'
 t('the full-height marker line keeps a precise drag target without consuming the marquee lane', () => {
     assert.strictEqual(_tempoPoleGrabTolerancePure(110, 100), 8, 'top handle is forgiving');
     assert.strictEqual(_tempoPoleGrabTolerancePure(150, 100), 2.5, 'body line is narrow but draggable');
+    assert.strictEqual(_tempoPoleGrabTolerancePure(150, 100, true), 8,
+        'Ctrl/Shift selection is forgiving through the full marker height');
 });
 
 t('_tempoMarqueeSelectionPure replaces or extends selection and focuses the drag end', () => {
@@ -95,6 +97,28 @@ t('_tempoLockPlanPure applies one state to the whole selected group', () => {
     assert.deepStrictEqual(_tempoLockPlanPure(b, 12, new Set()), {
         indices: [12], locked: true,
     }, 'single focus remains supported');
+});
+
+t('_tempoLockPlanPure has no bulk-selection cap', () => {
+    const beats = Array.from({ length: 512 }, (_, i) => ({ time: i, measure: i + 1 }));
+    const selected = new Set(beats.map((_, i) => i));
+    const plan = _tempoLockPlanPure(beats, -1, selected);
+    assert.strictEqual(plan.indices.length, 512);
+    assert.strictEqual(plan.locked, true);
+});
+
+t('_tempoLockControlStatePure exposes an explicit plural bulk action', () => {
+    const b = grid();
+    assert.deepStrictEqual(_tempoLockControlStatePure(b, -1, new Set()), {
+        disabled: true, count: 0, locked: false, label: 'Lock barline',
+    });
+    assert.deepStrictEqual(_tempoLockControlStatePure(b, 4, new Set([4, 8, 12])), {
+        disabled: false, count: 3, locked: true, label: 'Lock 3 barlines',
+    });
+    b[4].locked = true; b[8].locked = true; b[12].locked = true;
+    assert.deepStrictEqual(_tempoLockControlStatePure(b, 4, new Set([4, 8, 12])), {
+        disabled: false, count: 3, locked: false, label: 'Unlock 3 barlines',
+    });
 });
 
 t('_editorToggleSyncLock toggles a marquee selection as one undoable, session-neutral edit', () => {
