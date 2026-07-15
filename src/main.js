@@ -41,14 +41,14 @@ import {
 import {
     hideContextMenu, promptBend } from './context-menu.js';
 import {
-    _editBlipAt, _editorToggleGuideClap,
+    _abApplyRefGain, _editBlipAt, _editorToggleGuideClap,
     _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip,
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
     editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio, activateTrackAudioSource,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
     editorToggleAuditionTrainer,
 } from './audio.js';
-import { _mixerClapState, _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
+import { _mixerClapState, _mixerPanelRefresh, _mixerPartStripState, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import { initTrackSession, refreshTrackSession } from './track-session.js';
 import {
     _barSpanForTimes, _editorApplyScrollBounds,
@@ -507,6 +507,8 @@ setHostHooks({
     editorTogglePartsView: (...a) => _editorTogglePartsView(...a),
     tempoResolvedMeasureIdx: (...a) => _tempoResolvedMeasureIdx(...a),
     partClapState: _mixerClapState,
+    partStripState: key => _mixerPartStripState(key),
+    partMixChanged: () => { refreshTrackSession(); _abApplyRefGain(); },
     selectTrackSessionTarget: (targetId) => {
         if (targetId === 'drums' && S.drumTab) {
             S.drumEditMode = true; S.partsViewMode = false; host.draw(); return;

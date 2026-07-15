@@ -45,7 +45,7 @@ function makeEl(id) {
 const els = {};
 for (const id of ['editor-mixer-panel', 'editor-mixer-parts', 'editor-mixer-btn', 'editor-tp-mixer',
     'editor-mix-ref', 'editor-mix-ref-val', 'editor-mix-guide', 'editor-mix-guide-val',
-    'editor-mix-click', 'editor-mix-click-val', 'editor-mix-blip', 'editor-status']) {
+    'editor-mix-click', 'editor-mix-click-val', 'editor-mix-master', 'editor-mix-master-val', 'editor-status']) {
     els[id] = makeEl(id);
 }
 globalThis.document = globalThis.document || {
@@ -62,7 +62,7 @@ globalThis.window = globalThis.window || globalThis;
 
 const {
     _mixerPartsPure, _mixerPartStatePure, _mixerAnySoloPure, _mixerPartAudiblePure,
-    _mixerClapStatePure, _mixerOpenFromStoredPure, _mixerClapState,
+    _mixerClapStatePure, _mixerOpenFromStoredPure, _mixerClapState, _mixerPartStripState,
     _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel,
 } = await import('../src/mixer-panel.js');
 const { S } = await import('../src/state.js');
@@ -79,14 +79,18 @@ function t(name, fn) {
 t('one strip per arrangement, keyed by index, drums appended only with hits', () => {
     const arrs = [{ name: 'Lead' }, { name: '' }, null];
     assert.deepStrictEqual(_mixerPartsPure(arrs, null), [
-        { key: 'arr:0', name: 'Lead' },
-        { key: 'arr:1', name: 'Track 2' },
-        { key: 'arr:2', name: 'Track 3' },
+        { key: 'arr:0', name: 'Lead', kind: 'transcription' },
+        { key: 'arr:1', name: 'Track 2', kind: 'transcription' },
+        { key: 'arr:2', name: 'Track 3', kind: 'transcription' },
     ]);
     assert.deepStrictEqual(_mixerPartsPure([], { hits: [] }), []);
     assert.deepStrictEqual(_mixerPartsPure([], { hits: [{ t: 1 }] }),
-        [{ key: 'drums', name: 'Drums' }]);
+        [{ key: 'drums', name: 'Drums', kind: 'transcription' }]);
     assert.deepStrictEqual(_mixerPartsPure(null, null), []);
+    assert.deepStrictEqual(_mixerPartsPure([], null, [{ id: 'master', name: 'Master Mix' }, { id: 'stem:0', name: 'Drums Stem' }]), [
+        { key: 'audio:master', name: 'Master Mix', kind: 'audio' },
+        { key: 'audio:stem:0', name: 'Drums Stem', kind: 'audio' },
+    ]);
 });
 
 t('strip state defaults to audible unity; volume clamps into [0, 100]', () => {
@@ -120,6 +124,13 @@ t('clap state follows the active surface: drums in drum mode, else the current a
     assert.deepStrictEqual(_mixerClapStatePure(mix, false, 1), { audible: false, vol: 100 / 100 });
     assert.deepStrictEqual(_mixerClapStatePure(mix, true, 1), { audible: true, vol: 0.5 });
     assert.deepStrictEqual(_mixerClapStatePure(mix, false, 0), { audible: true, vol: 1 });
+});
+
+t('arbitrary strip state exposes the same canonical mute/solo/fader model', () => {
+    S.partMix = { 'audio:stem:0': { vol: 42, solo: true }, 'audio:master': {} };
+    assert.deepStrictEqual(_mixerPartStripState('audio:stem:0'), { audible: true, vol: 0.42 });
+    assert.deepStrictEqual(_mixerPartStripState('audio:master'), { audible: false, vol: 1 });
+    S.partMix = {};
 });
 
 t('solo keeps the reference audible (D5): the gate is per-PART, and the host default leaves audio untouched', () => {
@@ -170,14 +181,14 @@ t('init restores the persisted open state', () => {
     editorToggleMixerPanel(false);
 });
 
-t('bus faders + blip seed from host.mixUiState on open', () => {
+t('bus and master faders seed from host.mixUiState on open', () => {
     const prev = host.mixUiState;
-    host.mixUiState = () => ({ pcts: { ref: 80, guide: 15, click: 5 }, blip: false });
+    host.mixUiState = () => ({ pcts: { ref: 80, guide: 15, click: 5, master: 70 }, blip: false });
     editorToggleMixerPanel(true);
     assert.strictEqual(els['editor-mix-ref'].value, '80');
     assert.strictEqual(els['editor-mix-guide-val'].textContent, '15%');
     assert.strictEqual(els['editor-mix-click'].value, '5');
-    assert.strictEqual(els['editor-mix-blip'].checked, false);
+    assert.strictEqual(els['editor-mix-master'].value, '70');
     host.mixUiState = prev;
     editorToggleMixerPanel(false);
 });

@@ -14,6 +14,25 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 from xml.dom import minidom
 
+
+def _normalize_generated_xml_encoding(paths):
+    """Rewrite converter XML as UTF-8 when legacy metadata bytes leak through.
+
+    Guitar Pro 3/4/5 metadata is commonly Windows-1252. Older core
+    converters can copy those bytes into an XML document whose declaration
+    still says UTF-8, making otherwise-valid conversions fail in
+    ``ElementTree``. Only converter-owned temporary files pass here.
+    """
+    for raw_path in paths or []:
+        path = Path(raw_path)
+        payload = path.read_bytes()
+        try:
+            payload.decode("utf-8")
+        except UnicodeDecodeError:
+            path.write_text(payload.decode("cp1252"), encoding="utf-8")
+    return paths
+
+
 import base64
 
 from fastapi import UploadFile, File, Form
@@ -175,6 +194,7 @@ def _coerce_track_session(value, invalid=_FIELD_ABSENT):
             if not source_id:
                 continue
             out.append({"id": tid, "type": kind, "sourceId": source_id,
+                        "name": str(raw.get("name") or "")[:120],
                         "parentId": parent_id})
         else:
             target_id = _track_session_id(raw.get("targetId"))
@@ -182,6 +202,7 @@ def _coerce_track_session(value, invalid=_FIELD_ABSENT):
                 continue
             paired = _track_session_id(raw.get("pairedSourceId"))
             out.append({"id": tid, "type": kind, "targetId": target_id,
+                        "name": str(raw.get("name") or "")[:120],
                         "parentId": parent_id, "pairedSourceId": paired})
         seen.add(tid)
     guide = _track_session_id(value.get("tempoGuideSourceId")) or "master"
@@ -6136,6 +6157,7 @@ def setup(app, context):
                 audio_offset=0.0 if _warp_anchors else _provided_offset,
                 arrangement_names=names_map,
             )
+            _normalize_generated_xml_encoding(xml_paths)
 
             # Parse the generated XMLs into a Song object
             song = Song()
@@ -6516,6 +6538,7 @@ def setup(app, context):
                     audio_offset=audio_offset,
                     arrangement_names={i: "Keys" for i in track_indices},
                 )
+                _normalize_generated_xml_encoding(xml_paths)
             else:
                 song = guitarpro.parse(gp_path)
                 xml_paths = []
@@ -6634,6 +6657,7 @@ def setup(app, context):
                 audio_offset=audio_offset,
                 arrangement_names={track_index: name},
             )
+            _normalize_generated_xml_encoding(xml_paths)
             if not xml_paths:
                 raise RuntimeError("Guitar/bass track produced no arrangement")
             arr_data = _arr_to_data(parse_arrangement(xml_paths[0]), name)
@@ -6696,6 +6720,7 @@ def setup(app, context):
                     audio_offset=audio_offset,
                     arrangement_names={track_index: "Drums"},
                 )
+                _normalize_generated_xml_encoding(xml_paths)
                 if not xml_paths:
                     raise RuntimeError("Drum track produced no arrangement")
                 xml_path = xml_paths[0]
@@ -6850,6 +6875,7 @@ def setup(app, context):
                 audio_offset=audio_offset,
                 arrangement_names={track_index: arr_name},
             )
+            _normalize_generated_xml_encoding(xml_paths)
             if not xml_paths:
                 raise RuntimeError("Drum track produced no arrangement")
             arr = parse_arrangement(xml_paths[0])

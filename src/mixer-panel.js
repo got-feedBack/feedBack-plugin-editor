@@ -2,9 +2,9 @@
 // Mixer panel (workspace-shell B6) — the one first-class mixer surface.
 //
 // Consolidates the old floating audio-mixer popover (and the never-implemented
-// stem-mixer stub) into a DOCKED panel beside the canvas (inspector idiom):
-// one channel strip per part (volume · mute · solo) over the three bus faders
-// (recording / guide / click) and the edit blip.
+// stem-mixer stub) into a bottom drawer with vertical channel strips:
+// one strip per audio or transcription track (volume · mute · solo), utility
+// buses for source / guide / click, and a dedicated final master bus.
 //
 // This module owns the CANONICAL per-part mix state, `S.partMix` — a map from
 // part key ('arr:<idx>' for arrangements, 'drums' for the drum tab) to
@@ -33,16 +33,25 @@ import { _editorEscHtml, setStatus } from './ui.js';
 // One strip per part: every arrangement, plus the drum tab as its own strip
 // (drums are a song-level sidecar, not an arrangement) — the same list shape
 // as the Parts view, keyed the way S.currentArr addresses parts (by index).
-export function _mixerPartsPure(arrangements, drumTab) {
+export function _mixerPartsPure(arrangements, drumTab, audioSources = []) {
     const parts = [];
+    (audioSources || []).forEach(source => {
+        if (!source || !source.id) return;
+        parts.push({
+            key: 'audio:' + source.id,
+            name: source.name || (source.kind === 'master' ? 'Master Mix' : source.id),
+            kind: 'audio',
+        });
+    });
     (arrangements || []).forEach((arr, i) => {
         parts.push({
             key: 'arr:' + i,
             name: (arr && arr.name) || 'Track ' + (i + 1),
+            kind: 'transcription',
         });
     });
     if (drumTab && Array.isArray(drumTab.hits) && drumTab.hits.length) {
-        parts.push({ key: 'drums', name: 'Drums' });
+        parts.push({ key: 'drums', name: 'Drums', kind: 'transcription' });
     }
     return parts;
 }
@@ -90,6 +99,15 @@ export function _mixerClapState() {
     return _mixerClapStatePure(S.partMix, S.drumEditMode, S.currentArr);
 }
 
+// Shared track-header/mixer state for an arbitrary strip. Audio uses this for
+// the currently selected source, so its M/S/fader controls are not cosmetic.
+export function _mixerPartStripState(key) {
+    return {
+        audible: _mixerPartAudiblePure(S.partMix, key),
+        vol: _mixerPartStatePure(S.partMix, key).vol / 100,
+    };
+}
+
 function _panel() { return document.getElementById('editor-mixer-panel'); }
 
 // ── Strip rendering (memoized — never rides the draw loop) ───────────
@@ -101,7 +119,7 @@ function _msBtn(key, act, pressed, label, title) {
 }
 
 function _renderParts(container) {
-    const parts = _mixerPartsPure(S.arrangements, S.drumTab);
+    const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.audioSources);
     if (!parts.length) {
         container.innerHTML = '<p class="text-[10px] text-gray-500">No tracks yet — strips appear as tracks are added.</p>';
         return;
@@ -109,32 +127,31 @@ function _renderParts(container) {
     container.innerHTML = parts.map(p => {
         const st = _mixerPartStatePure(S.partMix, p.key);
         const name = _editorEscHtml(p.name);
-        return `<div class="space-y-1" data-mix-row="${p.key}">`
-            + `<div class="flex items-center gap-1.5">`
-            + `<span class="flex-1 truncate text-gray-300" title="${name}">${name}</span>`
-            + _msBtn(p.key, 'mute', st.mute, 'M', 'Mute this part’s guide voice')
-            + _msBtn(p.key, 'solo', st.solo, 'S', 'Solo this part’s guide voice — the recording stays audible')
+        return `<div class="editor-mixer-strip" data-mix-row="${p.key}">`
+            + `<span class="editor-mixer-strip-type">${p.kind === 'audio' ? 'AUDIO' : 'MIDI'}</span>`
+            + `<div class="editor-mixer-ms-row">`
+            + _msBtn(p.key, 'mute', st.mute, 'M', 'Mute track')
+            + _msBtn(p.key, 'solo', st.solo, 'S', 'Solo track')
             + `</div>`
-            + `<div class="flex items-center gap-2">`
+            + `<div class="editor-mixer-meter" aria-hidden="true"><span></span></div>`
             + `<input type="range" min="0" max="100" value="${st.vol}" data-mix-part="${p.key}" data-mix-act="vol"`
-            + ` aria-label="${name} guide volume percent" class="flex-1 accent-accent">`
-            + `<span data-mix-val="${p.key}" class="w-9 text-right font-mono text-gray-400">${st.vol}%</span>`
-            + `</div></div>`;
+            + ` aria-label="${name} volume percent" class="editor-mixer-fader">`
+            + `<span data-mix-val="${p.key}" class="editor-mixer-value">${st.vol}%</span>`
+            + `<span class="editor-mixer-strip-name" title="${name}">${name}</span>`
+            + `</div>`;
     }).join('');
 }
-
 // Seed the bus faders + blip checkbox from their prefs (owned by audio.js,
 // read through the host hook so this module stays audio-import-free).
 function _renderBuses() {
     const ui = host.mixUiState();
-    for (const [bus, id] of [['ref', 'editor-mix-ref'], ['guide', 'editor-mix-guide'], ['click', 'editor-mix-click']]) {
+    for (const [bus, id] of [['ref', 'editor-mix-ref'], ['guide', 'editor-mix-guide'], ['click', 'editor-mix-click'], ['master', 'editor-mix-master']]) {
         const slider = document.getElementById(id);
         const label = document.getElementById(id + '-val');
         if (slider) slider.value = String(ui.pcts[bus]);
         if (label) label.textContent = ui.pcts[bus] + '%';
     }
-    const blip = document.getElementById('editor-mix-blip');
-    if (blip) blip.checked = !!ui.blip;
+
 }
 
 // Toolbar "Mix" button + transport "Mix" button track the panel like every
@@ -152,9 +169,18 @@ function _refreshMixerButtons(open) {
     if (tp) tp.setAttribute('aria-pressed', open ? 'true' : 'false');
 }
 
-function _setPart(key, patch) {
+export function mixerSetPart(key, patch) {
     if (!S.partMix || typeof S.partMix !== 'object') S.partMix = {};
     S.partMix[key] = { ..._mixerPartStatePure(S.partMix, key), ...patch };
+    _lastKey = '';
+    _mixerPanelRefresh();
+    host.partMixChanged?.(key);
+    return S.partMix[key];
+}
+
+export function mixerTogglePart(key, act) {
+    const st = _mixerPartStatePure(S.partMix, key);
+    return mixerSetPart(key, act === 'mute' ? { mute: !st.mute } : { solo: !st.solo });
 }
 
 // One delegated listener pair on the (static) panel element — guarded so a
@@ -169,10 +195,7 @@ function _wire(panel) {
         if (!btn) return;
         const key = btn.getAttribute('data-mix-part');
         const act = btn.getAttribute('data-mix-act');
-        const st = _mixerPartStatePure(S.partMix, key);
-        _setPart(key, act === 'mute' ? { mute: !st.mute } : { solo: !st.solo });
-        _lastKey = '';
-        _mixerPanelRefresh();
+        mixerTogglePart(key, act);
         const now = _mixerPartStatePure(S.partMix, key);
         setStatus(act === 'mute'
             ? (now.mute ? 'Track muted — its guide voice is silent' : 'Track unmuted')
@@ -182,7 +205,7 @@ function _wire(panel) {
         const el = e.target;
         if (!el || el.getAttribute('data-mix-act') !== 'vol') return;
         const key = el.getAttribute('data-mix-part');
-        _setPart(key, { vol: Number(el.value) });
+        mixerSetPart(key, { vol: Number(el.value) });
         const val = panel.querySelector(`[data-mix-val="${key}"]`);
         if (val) val.textContent = _mixerPartStatePure(S.partMix, key).vol + '%';
     });
@@ -196,7 +219,7 @@ export function _mixerPanelRefresh() {
     if (!panel || panel.classList.contains('hidden')) { _lastKey = ''; return; }
     const container = document.getElementById('editor-mixer-parts');
     if (!container) return;
-    const parts = _mixerPartsPure(S.arrangements, S.drumTab);
+    const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.audioSources);
     const key = editGen + '|' + JSON.stringify(S.partMix) + '|' + parts.map(p => p.key + ':' + p.name).join(',');
     if (key === _lastKey) return;
     _lastKey = key;

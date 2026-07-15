@@ -56,7 +56,7 @@ export const host = {
      * executed against, or refuse when it is gone. `true` means "proceed".
      */
     ensureArr: () => true,
-    /** Flash the edit-confirmation blip at a canvas point. Purely cosmetic. */
+    /** Legacy compatibility hook; edit confirmation is intentionally silent. */
     editBlipAt: () => {},
     /** Indices (into notes()) of the current selection, in stable order. */
     editorCurrentNoteIndices: () => [],
@@ -189,6 +189,10 @@ export const host = {
      * (D5), which rides its own transparent gain path.
      */
     partClapState: () => ({ audible: true, vol: 1 }),
+    /** Mute/solo/fader state for any audio or transcription strip. */
+    partStripState: () => ({ audible: true, vol: 1 }),
+    /** Refresh other track-control surfaces after canonical mix state changes. */
+    partMixChanged: () => {},
     /**
      * Bus-fader percents + edit-blip flag for seeding the panel's controls.
      * Owned by src/audio.js (the `editorMix*` prefs); the panel reads them

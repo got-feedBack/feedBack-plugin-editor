@@ -536,10 +536,44 @@ html.fb-immersive #plugin-editor .editor-root {
 #plugin-editor .editor-track-guide { box-shadow: inset 3px 0 #fbbf24; }
 #plugin-editor .editor-track-row select { width: 5.6rem; background: #111827; border: 1px solid #374151; border-radius: 3px; color: #cbd5e1; font-size: 10px; padding: .12rem; }
 #plugin-editor .editor-mixer-drawer {
-    position: absolute; left: 0; right: 0; bottom: 0; z-index: 45; height: 13.5rem;
-    overflow-y: auto; background: rgba(17,24,39,.98); border-top: 1px solid #374151;
-    box-shadow: 0 -12px 30px rgba(0,0,0,.32); animation: editor-mixer-rise .18s ease-out both;
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 45; height: 20rem;
+    display: flex; flex-direction: column; overflow: hidden; background: rgba(11,15,23,.985);
+    border-top: 1px solid #4b5563; box-shadow: 0 -12px 30px rgba(0,0,0,.42);
+    animation: editor-mixer-rise .18s ease-out both;
 }
 @keyframes editor-mixer-rise { from { transform: translateY(100%); } to { transform: translateY(0); } }
-#plugin-editor .editor-mixer-drawer #editor-mixer-parts { display: flex; gap: .75rem; overflow-x: auto; align-items: stretch; }
-#plugin-editor .editor-mixer-drawer #editor-mixer-parts > div { min-width: 9rem; border: 1px solid rgba(75,85,99,.7); border-radius: 5px; padding: .45rem; background: rgba(31,41,55,.72); }
+#plugin-editor .editor-mixer-titlebar {
+    height: 2rem; flex: none; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 .75rem; border-bottom: 1px solid #374151; color: #d1d5db; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .08em;
+}
+#plugin-editor .editor-mixer-titlebar button { color: #9ca3af; font-size: 18px; }
+#plugin-editor .editor-mixer-console { min-height: 0; flex: 1; display: flex; overflow-x: auto; align-items: stretch; padding: .55rem; gap: .5rem; }
+#plugin-editor .editor-mixer-strips { display: flex; align-items: stretch; gap: .45rem; }
+#plugin-editor .editor-mixer-utility-strips { display: flex; gap: .35rem; padding-left: .55rem; border-left: 1px solid #374151; }
+#plugin-editor .editor-mixer-strip {
+    width: 5.4rem; min-width: 5.4rem; display: flex; flex-direction: column; align-items: center; gap: .3rem;
+    padding: .4rem .35rem; border: 1px solid #374151; border-radius: 4px;
+    background: linear-gradient(#202938, #111827); color: #d1d5db;
+}
+#plugin-editor .editor-mixer-strip-type { font: 8px/1 monospace; color: #67e8f9; letter-spacing: .08em; }
+#plugin-editor .editor-mixer-ms-row { display: flex; gap: .25rem; }
+#plugin-editor .editor-mix-ms, #plugin-editor .editor-track-ms {
+    width: 1.45rem; height: 1.25rem; border: 1px solid #4b5563; border-radius: 3px;
+    background: #1f2937; color: #9ca3af; font: 700 9px/1 monospace;
+}
+#plugin-editor [data-mix-act="mute"][aria-pressed="true"], #plugin-editor [data-track-action="mix-mute"][aria-pressed="true"] { background: #b45309; color: #fff; border-color: #f59e0b; }
+#plugin-editor [data-mix-act="solo"][aria-pressed="true"], #plugin-editor [data-track-action="mix-solo"][aria-pressed="true"] { background: #ca8a04; color: #111827; border-color: #fde047; }
+#plugin-editor .editor-mixer-meter { width: .55rem; flex: 1; min-height: 3rem; border-radius: 2px; background: #030712; position: relative; overflow: hidden; }
+#plugin-editor .editor-mixer-meter span { position: absolute; left: 1px; right: 1px; bottom: 1px; height: 38%; background: linear-gradient(to top,#22c55e 70%,#eab308 86%,#ef4444); }
+#plugin-editor .editor-mixer-fader { width: 5.8rem; height: 1rem; transform: rotate(-90deg); margin: 2.35rem 0; accent-color: #22d3ee; }
+#plugin-editor .editor-mixer-value { font: 9px/1 monospace; color: #9ca3af; }
+#plugin-editor .editor-mixer-strip-name, #plugin-editor .editor-mixer-bus-name { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 10px; color: #e5e7eb; }
+#plugin-editor .editor-mixer-bus-strip { background: linear-gradient(#283142,#151b27); }
+#plugin-editor .editor-mixer-master-strip { margin-left: .2rem; border-color: #0891b2; background: linear-gradient(#164e63,#111827); }
+#plugin-editor .editor-mixer-master-meter { width: .72rem; }
+#plugin-editor .editor-track-fader { width: 3.2rem; accent-color: #22d3ee; }
+
+#plugin-editor .editor-track-context-menu { position: fixed; z-index: 90; min-width: 8rem; padding: .25rem; border: 1px solid #4b5563; border-radius: 4px; background: #111827; box-shadow: 0 10px 25px rgba(0,0,0,.45); }
+#plugin-editor .editor-track-context-menu button { width: 100%; padding: .35rem .55rem; text-align: left; color: #e5e7eb; border-radius: 3px; }
+#plugin-editor .editor-track-context-menu button:hover { background: #374151; }

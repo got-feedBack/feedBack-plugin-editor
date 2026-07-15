@@ -3,6 +3,7 @@ import {
     _trackSessionMoveBeforePure,
     _trackSessionNormalizePure,
     _trackSessionPairPure,
+    _trackSessionRenamePure,
     _trackSessionRowsPure,
 } from '../src/track-session.js';
 
@@ -57,6 +58,16 @@ test('cyclic folder parents are repaired instead of hiding the tree', () => {
     };
     const rows = _trackSessionRowsPure(corrupt, sources, arrangements, null).rows;
     assert.ok(rows.length >= 2);
+});
+
+test('track display names rename independently of stable identities', () => {
+    const renamed = _trackSessionRenamePure(base, 'transcription:guitar', 'Lead DI', sources, arrangements, null);
+    const track = renamed.tracks.find(item => item.id === 'transcription:guitar');
+    assert.strictEqual(track.name, 'Lead DI');
+    assert.strictEqual(track.targetId, 'guitar');
+    const rows = _trackSessionRowsPure(renamed, sources, arrangements, null).rows;
+    assert.strictEqual(rows.find(row => row.id === 'transcription:guitar').name, 'Lead DI');
+    assert.strictEqual(rows.find(row => row.id === 'transcription:guitar').mixKey, 'arr:0');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

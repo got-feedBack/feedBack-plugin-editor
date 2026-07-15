@@ -2,6 +2,7 @@
 import { host } from './host.js';
 import { S, markSessionDirty } from './state.js';
 import { _editorEscHtml, setStatus } from './ui.js';
+import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart } from './mixer-panel.js';
 
 const MASTER_ID = 'master';
 const DRUM_TARGET_ID = 'drums';
@@ -35,10 +36,14 @@ function _trackSessionTargetsPure(arrangements, drumTab) {
     (Array.isArray(arrangements) ? arrangements : []).forEach((arr, index) => {
         if (!arr) return;
         const stable = idOf(arr.id);
-        out.push({ id: stable || 'arr:' + index, name: String(arr.name || ('Track ' + (index + 1))).slice(0, 120) });
+        out.push({
+            id: stable || 'arr:' + index,
+            name: String(arr.name || ('Track ' + (index + 1))).slice(0, 120),
+            mixKey: 'arr:' + index,
+        });
     });
     if (drumTab && Array.isArray(drumTab.hits)) {
-        out.push({ id: DRUM_TARGET_ID, name: String(drumTab.name || 'Drums').slice(0, 120) });
+        out.push({ id: DRUM_TARGET_ID, name: String(drumTab.name || 'Drums').slice(0, 120), mixKey: 'drums' });
     }
     return out;
 }
@@ -63,13 +68,13 @@ function _trackSessionNormalizePure(raw, rawSources, arrangements, drumTab) {
             const sourceId = idOf(item.sourceId);
             if (!knownSources.has(sourceId) || sourceLeaves.has(sourceId)) continue;
             sourceLeaves.add(sourceId);
-            tracks.push({ id, type: 'audio', sourceId, parentId: idOf(item.parentId) });
+            tracks.push({ id, type: 'audio', sourceId, name: String(item.name || '').slice(0, 120), parentId: idOf(item.parentId) });
         } else {
             const targetId = idOf(item.targetId);
             const pairedSourceId = idOf(item.pairedSourceId);
             if (!knownTargets.has(targetId) || targetLeaves.has(targetId)) continue;
             targetLeaves.add(targetId);
-            tracks.push({ id, type: 'transcription', targetId, parentId: idOf(item.parentId), pairedSourceId: knownSources.has(pairedSourceId) ? pairedSourceId : '' });
+            tracks.push({ id, type: 'transcription', targetId, name: String(item.name || '').slice(0, 120), parentId: idOf(item.parentId), pairedSourceId: knownSources.has(pairedSourceId) ? pairedSourceId : '' });
         }
         seen.add(id);
     }
@@ -110,7 +115,13 @@ function _trackSessionRowsPure(session, rawSources, arrangements, drumTab) {
         for (const track of (children.get(parentId) || [])) {
             const source = track.type === 'audio' ? sources.get(track.sourceId) : null;
             const target = track.type === 'transcription' ? targets.get(track.targetId) : null;
-            rows.push({ ...track, depth, name: track.type === 'folder' ? track.name : (source || target || {}).name || 'Track', sourceKind: source ? source.kind : '' });
+            rows.push({
+                ...track,
+                depth,
+                name: track.name || (source || target || {}).name || 'Track',
+                sourceKind: source ? source.kind : '',
+                mixKey: source ? audioTrackId(source.id) : (target && target.mixKey) || '',
+            });
             if (track.type !== 'folder' || !track.collapsed) visit(track.id, depth + 1);
         }
     };
@@ -162,9 +173,17 @@ function _trackSessionCreateFolderPure(session, rawSources, arrangements, drumTa
     model.tracks.push({ id: 'folder:' + n, type: 'folder', name: String(name || 'Folder').slice(0, 120), parentId: '', collapsed: false });
     return model;
 }
+
+function _trackSessionRenamePure(session, trackId, name, rawSources, arrangements, drumTab) {
+    const model = _trackSessionNormalizePure(session, rawSources, arrangements, drumTab);
+    const track = model.tracks.find(item => item.id === trackId);
+    const clean = String(name || '').trim().slice(0, 120);
+    if (track && clean) track.name = clean;
+    return model;
+}
 /* @pure:track-session:end */
 
-export { _trackSessionCreateFolderPure, _trackSessionMoveBeforePure, _trackSessionNormalizePure, _trackSessionPairPure, _trackSessionRowsPure, _trackSessionSourcesPure, _trackSessionTargetsPure };
+export { _trackSessionCreateFolderPure, _trackSessionMoveBeforePure, _trackSessionNormalizePure, _trackSessionPairPure, _trackSessionRenamePure, _trackSessionRowsPure, _trackSessionSourcesPure, _trackSessionTargetsPure };
 
 let lastRender = '';
 let draggedId = '';
@@ -191,16 +210,23 @@ function render() {
     const { model, rows, sources } = _trackSessionRowsPure(S.trackSession, S.audioSources, S.arrangements, S.drumTab);
     const sourceOptions = selected => ['<option value="">Master mix (inherit)</option>'].concat(sources.map(source => `<option value="${_editorEscHtml(source.id)}"${source.id === selected ? ' selected' : ''}>${_editorEscHtml(source.name)}</option>`)).join('');
     const guide = sources.find(source => source.id === model.tempoGuideSourceId) || sources[0];
+    const mixControls = row => {
+        const key = _editorEscHtml(row.mixKey);
+        const st = _mixerPartStatePure(S.partMix, row.mixKey);
+        return `<button class="editor-track-ms" data-track-action="mix-mute" data-mix-key="${key}" aria-pressed="${st.mute}" title="Mute track">M</button>`
+            + `<button class="editor-track-ms" data-track-action="mix-solo" data-mix-key="${key}" aria-pressed="${st.solo}" title="Solo track">S</button>`
+            + `<input class="editor-track-fader" type="range" min="0" max="100" value="${st.vol}" data-track-action="mix-vol" data-mix-key="${key}" aria-label="${_editorEscHtml(row.name)} volume">`;
+    };
     el.innerHTML = `<div class="editor-track-session-head"><span>Tracks</span><button data-track-action="folder" title="Create optional folder">+ Folder</button></div><div class="editor-track-session-guide"><span>Tempo</span><button data-track-action="guide-cycle" title="Cycle tempo guide">${_editorEscHtml(guide.name)}</button><button data-track-action="guide-lock" aria-pressed="${model.tempoGuideLocked}" title="Lock tempo guide">${model.tempoGuideLocked ? '🔒' : '🔓'}</button></div><div class="editor-track-session-list">${rows.map(row => {
         const trackId = _editorEscHtml(row.id); const name = _editorEscHtml(row.name); const indent = Math.min(5, row.depth) * 14;
         if (row.type === 'folder') return `<div class="editor-track-row editor-track-folder" draggable="true" data-track-id="${trackId}" style="--track-indent:${indent}px"><button data-track-action="collapse" data-track-id="${trackId}">${row.collapsed ? '›' : '⌄'}</button><span>${name}</span></div>`;
-        if (row.type === 'audio') return `<div class="editor-track-row${row.sourceId === model.tempoGuideSourceId ? ' editor-track-guide' : ''}" draggable="true" data-track-id="${trackId}" style="--track-indent:${indent}px"><span class="editor-track-kind">${row.sourceKind === 'master' ? 'MIX' : 'AUD'}</span><button class="editor-track-name" data-track-action="source-select" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use as the audible reference">${name}</button><button data-track-action="guide-set" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use for tempo">${row.sourceId === model.tempoGuideSourceId ? '★' : '☆'}</button></div>`;
-        return `<div class="editor-track-row editor-track-transcription" draggable="true" data-track-id="${trackId}" style="--track-indent:${indent}px"><span class="editor-track-kind">${row.targetId === DRUM_TARGET_ID ? 'DRM' : 'MIDI'}</span><button class="editor-track-name" data-track-action="select" data-target-id="${_editorEscHtml(row.targetId)}">${name}</button><select data-track-action="pair" data-track-id="${trackId}" aria-label="Audio reference for ${name}">${sourceOptions(row.pairedSourceId)}</select></div>`;
+        if (row.type === 'audio') return `<div class="editor-track-row${row.sourceId === model.tempoGuideSourceId ? ' editor-track-guide' : ''}" draggable="true" data-track-id="${trackId}" style="--track-indent:${indent}px"><span class="editor-track-kind">${row.sourceKind === 'master' ? 'MIX' : 'AUD'}</span><button class="editor-track-name" data-track-action="source-select" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use as the audible reference">${name}</button>${mixControls(row)}<button data-track-action="guide-set" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use for tempo">${row.sourceId === model.tempoGuideSourceId ? '★' : '☆'}</button></div>`;
+        return `<div class="editor-track-row editor-track-transcription" draggable="true" data-track-id="${trackId}" style="--track-indent:${indent}px"><span class="editor-track-kind">${row.targetId === DRUM_TARGET_ID ? 'DRM' : 'MIDI'}</span><button class="editor-track-name" data-track-action="select" data-target-id="${_editorEscHtml(row.targetId)}">${name}</button>${mixControls(row)}<select data-track-action="pair" data-track-id="${trackId}" aria-label="Audio reference for ${name}">${sourceOptions(row.pairedSourceId)}</select></div>`;
     }).join('')}</div>`;
 }
 
 export function refreshTrackSession() {
-    const key = JSON.stringify([S.trackSession, S.audioSources, (S.arrangements || []).map(a => a && [a.id, a.name]), S.drumTab && S.drumTab.name]);
+    const key = JSON.stringify([S.trackSession, S.audioSources, S.partMix, (S.arrangements || []).map(a => a && [a.id, a.name]), S.drumTab && S.drumTab.name]);
     if (key === lastRender) return;
     lastRender = key; render();
 }
@@ -213,6 +239,33 @@ export function initTrackSession() {
         const control = event.target && event.target.closest ? event.target.closest('[data-track-action]') : null;
         if (!control) return;
         const action = control.getAttribute('data-track-action');
+        if (action === 'mix-mute' || action === 'mix-solo') {
+            mixerTogglePart(control.getAttribute('data-mix-key') || '', action === 'mix-mute' ? 'mute' : 'solo');
+            lastRender = '';
+            refreshTrackSession();
+            return;
+        }
+        if (action === 'rename') {
+            const trackId = control.getAttribute('data-track-id') || '';
+            const current = (S.trackSession.tracks || []).find(track => track.id === trackId);
+            const requested = window.prompt('Rename track', (current && current.name) || '');
+            if (requested && requested.trim()) {
+                const clean = requested.trim().slice(0, 120);
+                const next = _trackSessionRenamePure(S.trackSession, trackId, clean, S.audioSources, S.arrangements, S.drumTab);
+                const renamed = next.tracks.find(track => track.id === trackId);
+                if (renamed && renamed.type === 'audio') {
+                    const source = (S.audioSources || []).find(item => item.id === renamed.sourceId);
+                    if (source) source.name = clean;
+                } else if (renamed && renamed.type === 'transcription') {
+                    if (renamed.targetId === DRUM_TARGET_ID && S.drumTab) S.drumTab.name = clean;
+                    const index = (S.arrangements || []).findIndex((arr, i) => (idOf(arr && arr.id) || 'arr:' + i) === renamed.targetId);
+                    if (index >= 0) S.arrangements[index].name = clean;
+                }
+                commit(next, `Track renamed to ${clean}.`);
+                _mixerPanelRefresh();
+            }
+            return;
+        }
         if (action === 'folder') commit(_trackSessionCreateFolderPure(S.trackSession, S.audioSources, S.arrangements, S.drumTab, 'Folder'), 'Folder added — drag tracks to arrange the session.');
         else if (action === 'collapse') {
             const next = _trackSessionNormalizePure(S.trackSession, S.audioSources, S.arrangements, S.drumTab);
@@ -239,6 +292,28 @@ export function initTrackSession() {
             host.selectTrackSessionSource(S.focusedSourceId);
             host.selectTrackSessionTarget(targetId);
         }
+    });
+    el.addEventListener('contextmenu', event => {
+        const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null;
+        if (!row) return;
+        event.preventDefault();
+        let menu = document.getElementById('editor-track-context-menu');
+        if (!menu) {
+            menu = document.createElement('div');
+            menu.id = 'editor-track-context-menu';
+            menu.className = 'editor-track-context-menu';
+            el.appendChild(menu);
+        }
+        const trackId = row.getAttribute('data-track-id') || '';
+        menu.innerHTML = `<button data-track-action="rename" data-track-id="${_editorEscHtml(trackId)}">Rename</button>`;
+        menu.style.left = `${event.clientX}px`;
+        menu.style.top = `${event.clientY}px`;
+        menu.classList.remove('hidden');
+    });
+    el.addEventListener('input', event => {
+        const range = event.target && event.target.matches && event.target.matches('[data-track-action="mix-vol"]') ? event.target : null;
+        if (!range) return;
+        mixerSetPart(range.getAttribute('data-mix-key') || '', { vol: Number(range.value) });
     });
     el.addEventListener('change', event => {
         const select = event.target && event.target.matches && event.target.matches('[data-track-action="pair"]') ? event.target : null;

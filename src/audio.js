@@ -4,7 +4,7 @@
 // The playback engine (startPlayback / stopPlayback / playbackTick), the
 // waveform, the onset strip, follow-scroll, and the WebAudio graph — plus the
 // guide claps (a tick per charted event), the metronome, the A/B reference
-// loop, the per-bus mixer, and the edit blip.
+// loop and the per-bus mixer.
 //
 // It owns the rAF loop: `rafId` is module-scope, set by playbackTick and
 // cancelled by teardownAudio(), which main.js's screen teardown calls.
@@ -1095,7 +1095,7 @@ export function editorMetronomeEnabled() {
 // edit-preview blip gating. Fader percents live in editor prefs (never the
 // pack) and map linearly onto bus gain, so 100% = the bus's design ceiling
 // (unity) — nothing here can boost a bus past the shipped headroom.
-const MIX_DEFAULT_PCT = Object.freeze({ ref: 100, guide: 35, click: 25 });
+const MIX_DEFAULT_PCT = Object.freeze({ ref: 100, guide: 35, click: 25, master: 100 });
 // Parse a stored fader percent: corrupted values clamp into [0, 100] and
 // non-numeric ones fall back, so a bad pref can never blast a bus.
 function _mixPctFromStoredPure(raw, fallbackPct) {
@@ -1116,12 +1116,7 @@ function _mixFirstPlayStartGainPure(target) {
     if (!(target > 0)) return 0;
     return Math.min(target, Math.max(0.05, target * 0.3));
 }
-// Rate-limit for the edit-preview blip: a group edit (set fret on N notes)
-// must read as ONE cue, not a machine-gun transient.
-function _mixBlipAllowedPure(nowMs, lastMs, gapMs) {
-    if (!Number.isFinite(lastMs)) return true;
-    return (nowMs - lastMs) >= gapMs;
-}
+
 // A committed drag only previews when it changed PITCH — any string delta
 // (a note moved to another string sounds a different pitch) or any fret
 // delta (a moved keys/piano-roll pitch, or a fret-changing drag). Time-only
@@ -1157,10 +1152,13 @@ function _ensureMasterBus() {
     limiter.ratio.value = 20;
     limiter.attack.value = 0.003;
     limiter.release.value = 0.25;
+    const masterGain = ctx.createGain();
+    masterGain.gain.value = _mixGainForPctPure(_mixLoadPct().master);
     guideGain.connect(limiter);
     clickGain.connect(limiter);
-    limiter.connect(ctx.destination);
-    _masterBus = { guideGain, clickGain, limiter };
+    limiter.connect(masterGain);
+    masterGain.connect(ctx.destination);
+    _masterBus = { guideGain, clickGain, limiter, masterGain };
     return _masterBus;
 }
 
@@ -1169,16 +1167,18 @@ function _ensureMasterBus() {
 let _mixPctCache = null;
 export function _mixLoadPct() {
     if (_mixPctCache) return _mixPctCache;
-    let ref = null, guide = null, click = null;
+    let ref = null, guide = null, click = null, master = null;
     try {
         ref = localStorage.getItem('editorMixRef');
         guide = localStorage.getItem('editorMixGuide');
         click = localStorage.getItem('editorMixClick');
+        master = localStorage.getItem('editorMixMaster');
     } catch (_) {}
     _mixPctCache = {
         ref: _mixPctFromStoredPure(ref, MIX_DEFAULT_PCT.ref),
         guide: _mixPctFromStoredPure(guide, MIX_DEFAULT_PCT.guide),
         click: _mixPctFromStoredPure(click, MIX_DEFAULT_PCT.click),
+        master: _mixPctFromStoredPure(master, MIX_DEFAULT_PCT.master),
     };
     return _mixPctCache;
 }
@@ -1187,11 +1187,17 @@ export function _mixLoadPct() {
 // reference still never sums through the guide limiter (see the bus comment
 // above). This only adds user volume control; unity by default.
 let _refGain = null;
+function _activeAudioStripGain() {
+    const strip = host.partStripState('audio:' + (S.activeAudioSourceId || 'master'));
+    if (!strip || strip.audible === false) return 0;
+    return Math.max(0, Math.min(1, Number(strip.vol) || 0));
+}
 function _ensureRefGain() {
     if (_refGain || !S.audioCtx) return _refGain;
     _refGain = S.audioCtx.createGain();
-    _refGain.gain.value = _mixGainForPctPure(_mixLoadPct().ref);
-    _refGain.connect(S.audioCtx.destination);
+    _refGain.gain.value = _mixGainForPctPure(_mixLoadPct().ref) * _activeAudioStripGain();
+    const bus = _ensureMasterBus();
+    _refGain.connect(bus ? bus.masterGain : S.audioCtx.destination);
     return _refGain;
 }
 
@@ -1204,7 +1210,7 @@ let _mixFirstPlayDone = false;
 function _mixApplyFirstPlayFade() {
     if (_mixFirstPlayDone || !_refGain || !S.audioCtx) return;
     _mixFirstPlayDone = true;
-    const target = _mixGainForPctPure(_mixLoadPct().ref);
+    const target = _mixGainForPctPure(_mixLoadPct().ref) * _activeAudioStripGain();
     const now = S.audioCtx.currentTime;
     _refGain.gain.setValueAtTime(_mixFirstPlayStartGainPure(target), now);
     _refGain.gain.linearRampToValueAtTime(target, now + 0.35);
@@ -1222,13 +1228,15 @@ function _mixResetFirstPlay() {
 // smoothing) — a gain change is never a stepped jump mid-audio.
 function _mixSetBusGain(bus, pct) {
     const key = bus === 'ref' ? 'editorMixRef'
-        : bus === 'guide' ? 'editorMixGuide' : 'editorMixClick';
+        : bus === 'guide' ? 'editorMixGuide'
+        : bus === 'click' ? 'editorMixClick' : 'editorMixMaster';
     const p = _mixPctFromStoredPure(String(pct), MIX_DEFAULT_PCT[bus]);
     _mixLoadPct()[bus] = p;
     try { localStorage.setItem(key, String(p)); } catch (_) {}
     const node = bus === 'ref' ? _refGain
         : bus === 'guide' ? (_masterBus && _masterBus.guideGain)
-        : (_masterBus && _masterBus.clickGain);
+        : bus === 'click' ? (_masterBus && _masterBus.clickGain)
+        : (_masterBus && _masterBus.masterGain);
     if (node && S.audioCtx) {
         // The recording fader must never un-mute an active A/B guide pass:
         // route ref moves through the A/B-aware target so a nudge ramps to
@@ -1244,47 +1252,11 @@ function _mixSetBusGain(bus, pct) {
     return p;
 }
 
-export function editorEditBlipEnabled() {
-    try { return localStorage.getItem('editorEditBlip') !== '0'; }
-    catch (_) { return true; }
-}
+export function editorEditBlipEnabled() { return false; }
 
-// Edit-preview blip: a soft confirmation tick on note ADD and PITCH change
-// only (never marquee/time-only moves). It sums straight into the shared
-// limiter — NOT through the guide fader — so muting guide claps never also
-// silences the edit cue, while the limiter still tames it. It skips when the
-// context isn't running — an edit must never resume audio — and is pitched
-// apart from the 1750 Hz guide clap so the two read as different cues.
-let _mixLastBlipMs = null;
-export function _editBlipAt() {
-    if (!editorEditBlipEnabled()) return;
-    if (!S.audioCtx || S.audioCtx.state !== 'running') return;
-    const bus = _ensureMasterBus();
-    if (!bus) return;
-    const nowMs = Date.now();
-    if (!_mixBlipAllowedPure(nowMs, _mixLastBlipMs, 60)) return;
-    _mixLastBlipMs = nowMs;
-    const ctx = S.audioCtx;
-    const when = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    osc.type = 'triangle';
-    osc.frequency.value = 1320;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, when);
-    g.gain.exponentialRampToValueAtTime(0.5, when + 0.002);
-    g.gain.exponentialRampToValueAtTime(0.0001, when + 0.04);
-    osc.connect(g);
-    g.connect(bus.limiter);
-    osc.start(when);
-    osc.stop(when + 0.05);
-    _guideVoices.push({ osc, gain: g, until: when + 0.05 });
-    // Same bounded-bookkeeping rule as the scheduler tick.
-    if (_guideVoices.length > 64) {
-        const nowCtx = ctx.currentTime;
-        _guideVoices = _guideVoices.filter(v => v.until > nowCtx);
-    }
-}
-
+// Compatibility hook retained for older command modules. Edits are silent;
+// pitch is heard only through explicit audition controls.
+export function _editBlipAt() { return false; }
 // Audition one pitch for the keyboard gutter (click a piano key → hear it).
 // A gentle, hearing-safe voice through the master limiter (soft attack, ~0.28
 // peak, ~320 ms decay) — the same envelope shape as the edit blip but pitched
@@ -1666,9 +1638,10 @@ export function _abDisarm() {
 export function _abApplyRefGain() {
     const rg = _ensureRefGain();
     if (!rg || !S.audioCtx) return;
+    const stripGain = _activeAudioStripGain();
     const target = _abRefTargetPure(
         _abActive(), !!S.playing, _abPhase,
-        _mixGainForPctPure(_mixLoadPct().ref));
+        _mixGainForPctPure(_mixLoadPct().ref) * stripGain);
     // Same ~20 ms ramp as every mixer move — a phase flip is never a pop.
     rg.gain.setTargetAtTime(target, S.audioCtx.currentTime, 0.02);
 }
@@ -1789,18 +1762,16 @@ export function _editorToggleMetronome() {
 // host.mixUiState (wired in main.js to _mixLoadPct + editorEditBlipEnabled).
 
 export function editorSetMixLevel(bus, val) {
-    if (bus !== 'ref' && bus !== 'guide' && bus !== 'click') return;
+    if (!['ref', 'guide', 'click', 'master'].includes(bus)) return;
     const p = _mixSetBusGain(bus, val);
     const label = document.getElementById(
-        (bus === 'ref' ? 'editor-mix-ref' : bus === 'guide' ? 'editor-mix-guide' : 'editor-mix-click') + '-val');
+        (bus === 'ref' ? 'editor-mix-ref' : bus === 'guide' ? 'editor-mix-guide'
+            : bus === 'click' ? 'editor-mix-click' : 'editor-mix-master') + '-val');
     if (label) label.textContent = p + '%';
 }
 
-export function editorSetEditBlip(on) {
-    try { localStorage.setItem('editorEditBlip', on ? '1' : '0'); } catch (_) {}
-    setStatus(on
-        ? 'Edit blip on — a soft tick confirms note adds and pitch changes'
-        : 'Edit blip off');
+export function editorSetEditBlip() {
+    setStatus('Edit previews are silent; use explicit audition controls to hear pitch.');
 }
 
 // Wired by main.js's init(), not at import — a module must have no side

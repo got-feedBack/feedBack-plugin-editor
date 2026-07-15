@@ -162,6 +162,7 @@ function buildAB(opts) {
     // the same spies the injected params used to be.
     const host = {
         selectedLoopRegion: () => region,
+        partStripState: () => ({ audible: true, vol: 1 }),
         setLoopRegionEnabled: (enabled) => {
             spies.setLoopRegionEnabled.push(enabled); S.loopEnabled = !!enabled;
         },

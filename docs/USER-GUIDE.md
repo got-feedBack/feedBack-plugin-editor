@@ -57,7 +57,8 @@ notes) — useful for lining a grid up fast.
 - **Companion strips** — a **fretboard strip** for fretted tracks (shows
   candidate positions from the position resolver — click one to assign) and a
   **drum pad strip** for drum tracks.
-- **Mixer** (`Shift+C`) — per-track volume / mute / solo for the guide voice.
+- **Mixer** (`Shift+C`) — vertical per-track channel strips plus source, guide,
+  click, and final Master buses.
 
 Press **`?`** at any time for the searchable shortcut panel, or **`Ctrl+K`** for
 the command palette.
@@ -139,8 +140,9 @@ Add a track by importing into it (e.g. Import MIDI as a keys track).
 The left **Tracks** pane is a DAW-style session list: it places the **Master
 Mix**, available audio stems, and each transcription together. Use **+ Folder**
 only when you need it, then drag a track onto the folder to nest it or drag it
-before another track to reorder the session. Folders are organization only;
-they never alter the song, tempo map, or export.
+before another track to reorder the session. Right-click any track and choose
+**Rename**. Folders are organization only; they never alter the song, tempo
+map, or export.
 
 Each transcription can choose an audio reference from its row. Select that
 transcription and the editor switches its audible waveform/onset reference to
@@ -151,8 +153,11 @@ The **Tempo** control above the list is separate from those pairings. It is the
 reference used for tempo mapping, and its lock prevents accidental changes
 while you move between guitar, piano-roll, and drum tracks. Changing a tempo
 source never time-stretches or moves the samples: the musical ruler is still
-fitted to the selected fixed recording. Open **Mixer** (`Shift+C`) for the
-bottom drawer of familiar mute, solo, and fader channel strips.
+fitted to the selected fixed recording. Every non-folder row has **M**, **S**,
+and a fader; those controls share state with the matching vertical channel
+strip in **Mixer** (`Shift+C`). The drawer ends with a dedicated **Master**
+output strip. Note adds and pitch edits are silent; use explicit pitch audition
+when you want to hear a note.
 
 ---
 

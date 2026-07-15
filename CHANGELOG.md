@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to make it the audible reference. The explicit **Tempo** guide remains
   separate, can be switched deliberately, and can be locked before tempo-map
   work so selecting a drum or MIDI track never silently changes tempo truth.
-  The Mixer is now a bottom drawer with familiar channel strips instead of a
-  side inspector.
+  Track headers and the Mixer share mute, solo, and fader state; right-click a
+  header to rename it. The Mixer rises from the bottom with vertical console
+  strips, source/guide/click buses, and a dedicated final Master bus.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
@@ -46,6 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Legacy Guitar Pro metadata no longer breaks import.** GP3/4/5 files can
+  contain Windows-1252 text even when the converter declares UTF-8 XML (for
+  example a raw copyright symbol in an album name). Generated XML is now
+  normalized to UTF-8 before parsing, while already-valid UTF-8 stays
+  byte-identical.
+- **Note creation and pitch edits are silent.** The automatic edit blip and its
+  mixer toggle were removed; pitch only sounds through explicit audition
+  controls.
 - **"Shift Audio…" now survives saving and reopening.** The recording-vs-chart
   shift was sent with every save but the backend silently dropped it, so a
   carefully aligned song came back misaligned on the next open — reading as
@@ -391,6 +400,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`parts`) are unchanged, so shortcuts, saves, and pack data are unaffected.
 
 ### Fixed
+
 
 - **Whole-song tempo edits silently corrupted multi-part songs.** Sync tempo,
   the BPM box's constant-tempo rescale, and the audio Offset nudge each mutated
@@ -918,6 +928,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+
 - Loading a new feedpak while the old recording was playing no longer
   leaves the old AudioBufferSource sounding under the new song. Audio-less
   packs also clear the previous decoded buffer, and overlapping load/audio
@@ -998,6 +1009,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ### Fixed
+
 
 - **From-scratch song creation now behaves the way the button, the markup and the
   server all say it should.** Typing a title enabled Create; clicking it answered
@@ -1117,6 +1129,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+
 - **Hook callbacks captured the pre-wrapper `draw`.** `draw` is reassigned near
   the bottom of `main.js` to a wrapper that refreshes seven toolbar buttons
   before repainting. The per-module hook setters (since consolidated into
@@ -1185,6 +1198,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is never read-only. Six of them were CJS and are now `.mjs`.
 
 ### Fixed
+
 
 - **Opening a song from the library card or the 3D highway left an invisible
   wall over the canvas.** `window.editSong` calls `showScreen('plugin-editor')`
@@ -1363,6 +1377,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+
 - **Chord-template save path (#152).** Three pre-existing data-integrity bugs,
   surfaced by CodeRabbit while extracting `src/chords.js` and each verified by
   running the real module.
@@ -1521,6 +1536,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   restored on load — **never written to the pack**. Tests:
   `tests/beat_lock.test.js`.
 ### Fixed
+
 - **Vertically re-pitching a chord in the roll can't double-book a string.**
   `_rollDragPitchMove` resolved each dragged member independently against the
   strings *not* in the drag set, so two members could land on the **same**
@@ -1554,6 +1570,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unlock: **hold Alt while dragging to move free of the grid** (vertical
   stays semitone/string-quantized). Tests: `tests/group_move_snap.test.js`.
 ### Fixed
+
 - **Compose transport: final guide clap plays, and A/B never mutes claps
   without a recording.** The content-bound compose length now pads a small
   tail past the last authored onset so its guide clap rings out instead of
@@ -1888,6 +1905,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tests: `tests/reorder_part.test.js`.
 
 ### Fixed
+
 - **Saving no longer strips `type` / `centOffset` / unknown keys from manifest
   arrangement entries.** The full-snapshot save path rebuilt every manifest
   arrangement entry from scratch (`{id, name, file, tuning, capo}`), silently
@@ -1951,6 +1969,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of cursor lag. Groundwork for the multi-part arrange view, which
   multiplies per-repaint cost. Tests: `tests/draw_coalesce.test.js`.
 ### Fixed
+
 - **Screen re-injection no longer stacks global listeners or leaks
   playback.** The editor registered document/window-level listeners (two
   keydown handlers, input, mousemove/mouseup, resize) with no teardown — if
@@ -2193,6 +2212,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dragging. Applies to every selected note as one undoable command.
 
 ### Fixed
+
 - **Inspector sustain edits are undoable.** Setting Sustain from the inspector
   mutated the notes in place with no undo entry — a mistyped value couldn't be
   taken back with Ctrl+Z. Both inspector numeric edits (Sustain and the new
@@ -2219,6 +2239,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tests: `tests/snap_options.test.mjs`.
 
 ### Fixed
+
 - **Editing a computed anchor no longer wipes the rest of the anchors.** The
   anchor lane shows the backend's computed/source anchors until you author your
   own, and the backend treats a non-empty `anchors_user` as the *complete*
@@ -2345,6 +2366,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `nav.label`, so the dedicated sidebar item reads "Song Editor".
 
 ### Fixed
+
 - **GP8 piano/keys imports keep their accurate GP notation across edits and
   reopens — and can no longer bloat or mis-fill the shipped feedpak.** Importing
   a GP8 grand-staff keys track carries the GP-sourced per-stave/voice notation
@@ -2390,6 +2412,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still adds a hit; shift-drag unions onto the current selection.
 
 ### Fixed
+
 - **archive save** now writes edits to the arrangement you actually
   selected. `_load_archive` built its `xml_files` list (indexed on save by
   the dropdown's `arrangement_index`) from a raw `rglob` walk in
@@ -2430,6 +2453,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.4.2] - 2026-05-26
 
 ### Fixed
+
 - **Build Song** no longer drops chords from arrangements that weren't
   the last one viewed. `editorBuild` ran `reconstructChords()` on every
   arrangement without flattening first; `reconstructChords()` rebuilds
@@ -2484,6 +2508,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.1] - 2026-05-22
 
 ### Fixed
+
 - The sync **offset** now also shifts `drum_tab` hits. Previously an
   offset nudge moved the guitar notes, beat grid and sections but left
   the drum chart behind, so drums ended up out of sync. Shifted hits

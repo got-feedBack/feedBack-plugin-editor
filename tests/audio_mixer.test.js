@@ -35,7 +35,7 @@ const busBlock = extract('audio-bus');
 const P = new Function(
     '"use strict";' + mixBlock
     + '\nreturn { MIX_DEFAULT_PCT, _mixPctFromStoredPure, _mixGainForPctPure,'
-    + ' _mixFirstPlayStartGainPure, _mixBlipAllowedPure, _mixDragChangedPitchPure };'
+    + ' _mixFirstPlayStartGainPure, _mixDragChangedPitchPure };'
 )();
 
 // ── Stateful env: real bus + blip code over stub ctx/localStorage ────
@@ -85,15 +85,16 @@ function stubStorage(seed = {}) {
 }
 function makeEnv({ ctxState = 'running', storage = {} } = {}) {
     const ls = stubStorage(storage);
-    const S = { audioCtx: stubCtx(ctxState) };
+    const S = { audioCtx: stubCtx(ctxState), activeAudioSourceId: 'master' };
     const voices = [];
+    const host = { partStripState: () => ({ audible: true, vol: 1 }) };
     const env = new Function(
-        'S', 'localStorage', '_guideVoices',
+        'S', 'localStorage', '_guideVoices', 'host',
         '"use strict";' + mixBlock + '\n' + busBlock
         + '\nreturn { _ensureMasterBus, _ensureRefGain, _mixLoadPct, _mixSetBusGain,'
         + ' _mixApplyFirstPlayFade, _mixResetFirstPlay, _editBlipAt, editorEditBlipEnabled,'
         + ' voices: () => _guideVoices };'
-    )(S, ls, voices);
+    )(S, ls, voices, host);
     return { ...env, S, ls, initialVoices: voices };
 }
 
@@ -128,12 +129,6 @@ t('first-play start gain: reduced but never inaudible, never above target', () =
     assert.strictEqual(P._mixFirstPlayStartGainPure(0), 0);
 });
 
-t('blip rate limit: first always fires, gap enforced', () => {
-    assert.strictEqual(P._mixBlipAllowedPure(1000, null, 60), true);
-    assert.strictEqual(P._mixBlipAllowedPure(1030, 1000, 60), false);
-    assert.strictEqual(P._mixBlipAllowedPure(1060, 1000, 60), true);
-});
-
 t('drag pitch detection: string/keys-fret deltas count, time-only does not', () => {
     assert.strictEqual(P._mixDragChangedPitchPure([0, 0], null), false);
     assert.strictEqual(P._mixDragChangedPitchPure([0, 1], null), true);
@@ -161,7 +156,9 @@ t('reference gain node: unity by default, straight to destination, not the limit
     const env = makeEnv();
     const rg = env._ensureRefGain();
     assert.strictEqual(rg.gain.value, 1);
-    assert.strictEqual(rg.to, env.S.audioCtx.destination, 'connects to destination, not through the limiter');
+    const bus = env._ensureMasterBus();
+    assert.strictEqual(rg.to, bus.masterGain, 'reference joins the final master gain without passing through the limiter');
+    assert.strictEqual(bus.masterGain.to, env.S.audioCtx.destination);
 });
 
 t('fader move persists the pref and ramps the live node (never a step)', () => {
@@ -177,6 +174,14 @@ t('fader move persists the pref and ramps the live node (never a step)', () => {
     assert.ok(last[3] > 0, 'nonzero smoothing time constant');
 });
 
+t('master fader persists and ramps the final output gain', () => {
+    const env = makeEnv({ storage: { editorMixMaster: '90' } });
+    const bus = env._ensureMasterBus();
+    assert.strictEqual(bus.masterGain.gain.value, 0.9);
+    assert.strictEqual(env._mixSetBusGain('master', '55'), 55);
+    assert.strictEqual(env.ls.map.get('editorMixMaster'), '55');
+    assert.strictEqual(bus.masterGain.gain.calls.at(-1)[0], 'target');
+});
 t('fader input clamps out-of-range values before persisting', () => {
     const env = makeEnv();
     env._ensureRefGain();
@@ -209,39 +214,12 @@ t('first-play fade re-arms after a new recording loads (_mixResetFirstPlay)', ()
     assert.deepStrictEqual(kinds, ['set', 'lin'], 'fades again for the new recording');
 });
 
-// ── Stateful: edit blip ──────────────────────────────────────────────
-
-t('blip sums into the limiter, independent of the guide fader', () => {
+// ── Stateful: silent edits ──────────────────────────────────────────
+t('edit compatibility hook is inert and never creates audio nodes', () => {
     const env = makeEnv();
-    env._editBlipAt();
-    const osc = env.S.audioCtx.made.find(n => n.kind === 'osc');
-    assert.ok(osc && osc.started, 'oscillator created and started');
-    assert.strictEqual(osc.frequency.value, 1320, 'pitched apart from the 1750 Hz clap');
-    const bus = env._ensureMasterBus();
-    assert.strictEqual(osc.to.to, bus.limiter, 'osc → gain → limiter (limited, not scaled by the guide fader)');
-    assert.strictEqual(env.voices().length, 1, 'voice tracked for cancel-on-stop');
-});
-
-t('blip respects the pref: editorEditBlip=0 silences it', () => {
-    const env = makeEnv({ storage: { editorEditBlip: '0' } });
     assert.strictEqual(env.editorEditBlipEnabled(), false);
-    env._editBlipAt();
-    assert.strictEqual(env.S.audioCtx.made.length, 0, 'no nodes created');
-});
-
-t('blip never resumes a suspended context', () => {
-    const env = makeEnv({ ctxState: 'suspended' });
-    env._editBlipAt();
+    assert.strictEqual(env._editBlipAt(), false);
     assert.strictEqual(env.S.audioCtx.made.length, 0);
 });
-
-t('rapid group edits rate-limit to one blip', () => {
-    const env = makeEnv();
-    env._editBlipAt();
-    env._editBlipAt();
-    const oscs = env.S.audioCtx.made.filter(n => n.kind === 'osc');
-    assert.strictEqual(oscs.length, 1, 'second call inside the gap is dropped');
-});
-
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
