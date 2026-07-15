@@ -34,6 +34,7 @@ import { TAB_RENDERER_FONT_DIR, _tabPreviewLoadScript } from './tab-preview.js';
 let _api = null;
 let _apiMount = null;           // the DOM node the api was built on (re-injection guard)
 let _apiStaff = '';             // the staff profile the api was built with
+let _domHandler = null;         // the capture-phase mousedown fallback (removed on destroy)
 let _beatMap = null;
 let _renderedKey = '';          // editGen|arr|session — regen only on real change
 let _debounce = 0;
@@ -62,6 +63,13 @@ function _keyNow() {
 
 function _destroyApi() {
     if (_api) { try { _api.destroy(); } catch (_) { /* best-effort */ } }
+    // Our capture-phase DOM listener is our own closure — alphaTab.destroy()
+    // never touches it, so remove it here or a same-node rebuild (e.g. a
+    // staff switch) accumulates a live listener on the surviving mount.
+    if (_apiMount && _domHandler) {
+        try { _apiMount.removeEventListener('mousedown', _domHandler, true); } catch (_) { /* best-effort */ }
+    }
+    _domHandler = null;
     _api = null;
     _apiMount = null;
     _apiStaff = '';
@@ -72,7 +80,7 @@ function _destroyApi() {
 // Build (or rebuild after a screen re-injection replaced the mount) and wire
 // the click-to-select: alphaTab reports the clicked beat's bar + in-bar index,
 // which is exactly how the generator's beatMap is keyed.
-function _ensureApi(mount) {
+export function _ensureApi(mount) {
     if (_api && _apiMount === mount && _apiStaff === S.tabViewStaff) return _api;
     _destroyApi();
     /* global alphaTab */
@@ -115,7 +123,7 @@ function _ensureApi(mount) {
     // the events it consumes — so this fallback listens in CAPTURE phase (it
     // runs before alphaTab's own handlers, whatever they swallow) and pairs
     // the plain DOM click with the bounds lookup.
-    mount.addEventListener('mousedown', (e) => {
+    _domHandler = (e) => {
         try {
             const lookup = _api && _api.renderer && _api.renderer.boundsLookup;
             if (!lookup || !lookup.getBeatAtPos) return;
@@ -125,7 +133,8 @@ function _ensureApi(mount) {
                 e.clientY - r.top + mount.scrollTop);
             if (beat) select(beat);
         } catch (_) { /* no lookup yet — ignore */ }
-    }, true);
+    };
+    mount.addEventListener('mousedown', _domHandler, true);
     return _api;
 }
 

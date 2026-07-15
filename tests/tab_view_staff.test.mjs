@@ -25,9 +25,32 @@ globalThis.document = globalThis.document || {
 };
 globalThis.window = globalThis.window || globalThis;
 
+// Minimal alphaTab stub so _ensureApi can build without the CDN bundle. Only
+// the surface _ensureApi touches at construction time is stubbed.
+globalThis.alphaTab = {
+    LayoutMode: { Page: 'Page' },
+    StaveProfile: { Tab: 'Tab', Score: 'Score', ScoreTab: 'ScoreTab' },
+    AlphaTabApi: class { constructor(mount, opts) { this.mount = mount; this.opts = opts; this.renderer = {}; } destroy() {} },
+};
+
 const { S } = await import('../src/state.js');
-const { _scoreStaffProfilePure, editorSetTabViewStaff, editorTabViewStaff } =
+const { _scoreStaffProfilePure, editorSetTabViewStaff, editorTabViewStaff, _ensureApi } =
     await import('../src/tab-view-live.js');
+
+// A mount that records add/removeEventListener so we can count live listeners.
+function fakeMount() {
+    const listeners = [];
+    return {
+        listeners,
+        addEventListener(type, fn, capture) { listeners.push({ type, fn, capture }); },
+        removeEventListener(type, fn, capture) {
+            const i = listeners.findIndex((l) => l.type === type && l.fn === fn && l.capture === capture);
+            if (i >= 0) listeners.splice(i, 1);
+        },
+        getBoundingClientRect: () => ({ left: 0, top: 0 }),
+        scrollLeft: 0, scrollTop: 0,
+    };
+}
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -76,6 +99,22 @@ t('picking a staff while the score view is off enters it (guard: needs a song)',
     editorSetTabViewStaff('both');
     assert.strictEqual(S.tabViewStaff, 'both');
     assert.strictEqual(S.tabViewMode, true, 'choosing what to read implies wanting to read');
+});
+
+t('a staff-change rebuild on the same mount does not leak DOM mousedown listeners', () => {
+    const mount = fakeMount();
+    const count = () => mount.listeners.filter((l) => l.type === 'mousedown').length;
+    S.tabViewStaff = 'tab';
+    _ensureApi(mount);
+    assert.strictEqual(count(), 1, 'first build wires exactly one capture listener');
+    // Same node, different staff -> _ensureApi rebuilds (staveProfile is a
+    // construction-time setting). Pre-fix the old listener stayed bound.
+    S.tabViewStaff = 'notation';
+    _ensureApi(mount);
+    assert.strictEqual(count(), 1, 'rebuild removes the stale listener instead of stacking a second');
+    S.tabViewStaff = 'both';
+    _ensureApi(mount);
+    assert.strictEqual(count(), 1, 'still one after a third staff switch');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
