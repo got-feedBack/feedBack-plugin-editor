@@ -90,15 +90,26 @@ export function _mapHealthPure(beats, onsets, opts) {
         return 0;
     };
 
+    // P2-8: the feel timeline (sorted [{fromMeasure, ratio}]). Under a
+    // half-time feel only the FELT beats (every other grid beat) are
+    // EXPECTED onsets — a genuinely sparser section reads as green coverage
+    // of its felt pulse, not "missing onsets" grey. Ratio 2 needs no help
+    // (extra onsets never hurt coverage).
+    const feelRanges = Array.isArray(o.feelRanges) ? o.feelRanges : null;
     const measures = [];
     let cursor = 0;
     for (let d = 0; d < downs.length; d++) {
         const start = downs[d];
         const end = d + 1 < downs.length ? downs[d + 1] : beats.length;   // exclusive
+        let feel = 1;
+        if (feelRanges) {
+            for (const f of feelRanges) { if (f.fromMeasure <= beats[start].measure) feel = f.ratio; else break; }
+        }
         const drifts = [];
         let total = 0;
         for (let j = start; j < end; j++) {
             if (!beats[j] || !Number.isFinite(beats[j].time)) continue;
+            if (feel === 0.5 && (j - start) % 2 === 1) continue;   // not a felt beat
             total++;
             const interval = intervalAt(j);
             if (!(interval > 0)) continue;

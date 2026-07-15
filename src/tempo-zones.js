@@ -229,15 +229,28 @@ export function _zonesRenderBar() {
         const b = document.getElementById(id);
         if (b) b.disabled = _zones.sel < 0;
     }
-    // The octave rescue only shows when Scan actually detected the mismatch.
+    // The 2:1 offer only shows when Scan actually detected the mismatch.
+    // P2-8 (every instrument seat): the DEFAULT resolution is a FEEL change
+    // — a half-/double-time section is a pulse-tier change over a constant
+    // tempo. "Actually a tempo change" (the grid rescue) is the override.
+    const feelBtn = document.getElementById('editor-segment-feel');
+    if (feelBtn) {
+        feelBtn.classList.toggle('hidden', !_zones.octave);
+        if (_zones.octave) {
+            feelBtn.textContent = _zones.octave === 'double' ? 'Double-time feel' : 'Half-time feel';
+            feelBtn.title = _zones.octave === 'double'
+                ? 'Looks like a double-time section: the pulse doubles but the tempo does not. Marks the feel (undoable) — the grid stays put.'
+                : 'Looks like a half-time section: the pulse halves but the tempo does not. Marks the feel (undoable) — the grid stays put.';
+        }
+    }
     const oct = document.getElementById('editor-segment-octave');
     if (oct) {
         oct.classList.toggle('hidden', !_zones.octave);
         if (_zones.octave) {
-            oct.textContent = _zones.octave === 'double' ? 'Double grid tempo' : 'Halve grid tempo';
+            oct.textContent = _zones.octave === 'double' ? 'Actually 2× tempo' : 'Actually ½ tempo';
             oct.title = _zones.octave === 'double'
-                ? 'The recording pulses at about TWICE your grid — each grid bar spans two real bars. One click doubles the grid tempo (undoable; audio and notes stay put).'
-                : 'The recording pulses at about HALF your grid — your grid runs double-time. One click halves the grid tempo (undoable; audio and notes stay put).';
+                ? 'The grid itself is octave-trapped: each grid bar spans two real bars. One click doubles the grid tempo (undoable; audio and notes stay put).'
+                : 'The grid itself is octave-trapped: it runs double-time. One click halves the grid tempo (undoable; audio and notes stay put).';
         }
     }
 }
@@ -252,6 +265,7 @@ export function initTempoZones(hooks) {
             if (t.id === 'editor-segment-apply' && _hooks.confirm) _hooks.confirm();
             else if (t.id === 'editor-segment-single' && _hooks.single) _hooks.single();
             else if (t.id === 'editor-segment-octave' && _hooks.octave && _zones.octave) _hooks.octave(_zones.octave);
+            else if (t.id === 'editor-segment-feel' && _hooks.feel && _zones.octave) _hooks.feel(_zones.octave);
             else if (t.id === 'editor-segment-split') _zonesSplitSelectedAt(S.cursorTime || 0);
             else if (t.id === 'editor-segment-merge') _zonesMergeSelected();
             else if (t.id === 'editor-segment-kind') _zonesCycleSelected();

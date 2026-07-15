@@ -218,7 +218,8 @@
                 <button id="editor-segment-merge" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600 disabled:opacity-40" title="Merge the selected zone with the one after it">Merge &#8594;</button>
                 <button id="editor-segment-kind" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600 disabled:opacity-40" title="Cycle the selected zone: steady &#8594; ramp &#8594; unmapped">Kind</button>
                 <button id="editor-segment-bpm" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600 disabled:opacity-40" title="Type the selected zone's tempo">BPM&#8230;</button>
-                <button id="editor-segment-octave" class="hidden px-2 py-0.5 rounded bg-amber-700 text-white hover:bg-amber-600"></button>
+                <button id="editor-segment-feel" class="hidden px-2 py-0.5 rounded bg-teal-700 text-white hover:bg-teal-600"></button>
+                <button id="editor-segment-octave" class="hidden px-2 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600"></button>
                 <button id="editor-segment-single" class="px-2 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Replace every zone with one steady tempo (escape hatch for an over-segmented steady song)">Single tempo</button>
                 <button id="editor-segment-apply" class="px-2 py-0.5 rounded bg-teal-700 text-white hover:bg-teal-600" title="Build the grid: seed each zone, then snap its barlines to the recording inside it">Confirm &amp; refine</button>
                 <button id="editor-segment-dismiss" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Dismiss (Esc)">&#10005;</button>
@@ -226,6 +227,21 @@
             <!-- Command palette (Ctrl+K) — a searchable front door over every
                  registry command (with its live keybinding) and menu action.
                  Type-to-filter; ↑/↓ select, Enter runs, Esc / backdrop closes. -->
+            <!-- Numeric Tempo List (P2-7, UX G3): one row per AUTHORED mark;
+                 toggled from Tempo/Grid menu; click a row jumps to its bar. -->
+            <div id="editor-tempo-list" class="hidden absolute right-2 top-12 z-30 w-80 max-h-80 overflow-y-auto rounded-md border border-gray-600 bg-dark-800/95 backdrop-blur-sm text-xs">
+                <div class="flex items-center justify-between px-2 py-1 border-b border-gray-700">
+                    <span class="text-teal-300 font-medium">Tempo List</span>
+                    <button id="editor-tempo-list-close" class="px-1.5 rounded text-gray-400 hover:text-white hover:bg-dark-600" title="Close">&#10005;</button>
+                </div>
+                <table class="w-full text-left">
+                    <thead><tr class="text-gray-500">
+                        <th class="px-2 py-0.5 text-right">Bar</th><th class="px-2 py-0.5">Type</th>
+                        <th class="px-2 py-0.5">Value</th><th class="px-2 py-0.5">Source</th>
+                    </tr></thead>
+                    <tbody id="editor-tempo-list-body"></tbody>
+                </table>
+            </div>
             <div id="editor-command-palette" class="hidden absolute inset-0 z-40 bg-black/40 backdrop-blur-[2px]">
                 <div class="mx-auto mt-16 w-[36rem] max-w-[calc(100%-2rem)] rounded-lg border border-gray-600 bg-dark-800/95 shadow-2xl text-sm" role="dialog" aria-label="Command palette">
                     <input id="editor-palette-input" type="text" placeholder="Type a command… (Esc to close)" autocomplete="off" spellcheck="false"
@@ -233,6 +249,10 @@
                     <ul id="editor-palette-list" class="max-h-80 overflow-y-auto p-1.5 text-xs"></ul>
                 </div>
             </div>
+            <!-- Live Tab view mount (view-modality): the engraved score that
+                 OWNS the timeline area while S.tabViewMode is on. alphaTab
+                 renders into it; the draw pass shows/hides it. -->
+            <div id="editor-tabview-mount" class="hidden absolute inset-0 z-20 overflow-auto bg-white"></div>
             <!-- Playability-lint popover (P9) — anchored bottom-right of the timeline. -->
             <div id="editor-lint-pop" role="dialog" aria-label="Playability notes" class="hidden absolute right-3 bottom-2 z-30 editor-lint-pop"></div>
             <!-- Entry tour card (workspace-shell C3) — a non-modal, task-based

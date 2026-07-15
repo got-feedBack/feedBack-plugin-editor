@@ -80,6 +80,11 @@ export const S = {
     // on empty grid, or Ctrl+A add here. Index-based, so it is CLEARED (never
     // remapped) on any topology change (TempoGridCmd) and on mode exit.
     tempoSelMulti: new Set(),
+    // Authored tempo/meter marks (P2-5): sparse intent the grid can't express
+    // (hold/fermata, meter grouping), MEASURE-keyed, swapped immutably by
+    // TempoMarkCmd / TempoGridCmd — see src/tempo-marks.js. Never fields on
+    // S.beats entries; persisted via the editor_tempo_marks manifest key.
+    tempoMarks: [],
 
     // View
     scrollX: 0,   // seconds
@@ -104,6 +109,11 @@ export const S = {
     // snapped to downbeat boundaries. `null` = no bar range selected.
     barSel: null,
     loopEnabled: false,
+    // Live Tab view (view-modality): an orthogonal lens flag like
+    // partsViewMode — mode toggles clear it, the draw pass enforces it.
+    tabViewMode: false,
+    // Which staves the score view engraves: 'tab' | 'notation' | 'both'.
+    tabViewStaff: 'tab',
     // True when this editor session was opened from the 3D highway's
     // "Edit region" action. Used to make the preview button read as a
     // return trip instead of a fresh action.
@@ -141,9 +151,6 @@ export const S = {
 
     // Songs list cache
     songsList: null,
-
-    // Clipboard
-    clipboard: null, // { notes: [...], baseTime }
 };
 
 // ── Shared edit generation ──────────────────────────────────────────

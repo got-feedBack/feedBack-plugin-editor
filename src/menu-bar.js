@@ -43,6 +43,7 @@ import {
     applyToolbarPreset, getToolbarCtx, resetToolbarLayout, toggleToolbar,
 } from './toolbars.js';
 import { _clearBarSelection, editorLoopSnapMode, editorSetLoopSnapMode } from './loop.js';
+import { editorSetTabViewStaff, editorTabViewStaff } from './tab-view-live.js';
 
 /* @pure:menu-model:start */
 // The nine menus (charrette §2.2). Item kinds:
@@ -76,6 +77,9 @@ export const EDITOR_MENUS = Object.freeze([
         { label: 'Redo', fn: 'editorRedo', key: 'Ctrl+Y' },
         { label: 'Undo to last checkpoint', fn: 'editorUndoToCheckpoint', key: 'Ctrl+Alt+Z' },
         { sep: true },
+        { cmd: 'copySelection' },
+        { cmd: 'cutSelection' },
+        { cmd: 'pasteAtPlayhead' },
         { cmd: 'duplicateSelection' },
         { cmd: 'selectLike' },
         { cmd: 'resnapSelection' },
@@ -147,7 +151,16 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'togglePartsView' },
         { cmd: 'toggleKeyHighlight' },
         { cmd: 'toggleFollow' },
+        { cmd: 'toggleTabView' },
         { cmd: 'showTabPreview' },
+        { sep: true },
+        // Score-staff radio (rides the live Tab/Score view): which staves
+        // the engraving shows. Checkmarks resolve from ctx.scoreStaff at
+        // open time, same as the loop-snap trio.
+        { hdr: 'Score staff' },
+        { scoreStaff: 'tab', label: 'Tablature only' },
+        { scoreStaff: 'notation', label: 'Standard notation only' },
+        { scoreStaff: 'both', label: 'Notation + tablature' },
         { sep: true },
         { label: 'Theme: Dark → Medium → Light', fn: 'editorCycleTheme', v3Only: true },
         { sep: true },
@@ -213,6 +226,7 @@ export const EDITOR_MENUS = Object.freeze([
     { title: 'Tempo/Grid', items: [
         { cmd: 'toggleTempoMap' },
         { cmd: 'setTimeSignature' },
+        { label: 'Tempo List (authored marks)', fn: 'editorToggleTempoList' },
         { sep: true },
         { hdr: 'Barlines (Tempo Map)' },
         { cmd: 'tempoSuggestFit', needs: 'tempoMap' },
@@ -282,6 +296,19 @@ export function _menuModelPure(menus, rows, ctx) {
                     key: '',
                     dispatch: it.tb ? { tb: it.tb }
                         : it.tbPreset ? { tbPreset: it.tbPreset } : { tbReset: true },
+                    disabled: false,
+                    planned: false,
+                });
+                continue;
+            }
+            if (it.scoreStaff) {
+                // Score-staff radio: ctx.scoreStaff is absent in older
+                // callers -> unchecked (same degradation as the loop trio).
+                const on = ctx.scoreStaff === it.scoreStaff;
+                items.push({
+                    label: (on ? '✓ ' : '  ') + it.label,
+                    key: '',
+                    dispatch: { scoreStaff: it.scoreStaff },
                     disabled: false,
                     planned: false,
                 });
@@ -402,6 +429,7 @@ function currentModel() {
             v3: !!(window.slopsmith && window.slopsmith.uiVersion === 'v3'),
             toolbars: getToolbarCtx(),
             loopSnapMode: editorLoopSnapMode(),
+            scoreStaff: editorTabViewStaff(),
             gmGuide: _gmGuideMenuCtx(),
         });
 }
@@ -413,6 +441,7 @@ function dispatch(d) {
     if (d.tbPreset) { applyToolbarPreset(d.tbPreset); return; }
     if (d.tbReset) { resetToolbarLayout(); return; }
     if (d.loopSnap) { editorSetLoopSnapMode(d.loopSnap); return; }
+    if (d.scoreStaff) { editorSetTabViewStaff(d.scoreStaff); return; }
     if (d.loopClear) { _clearBarSelection(); return; }
     if (d.guideVoice) { _editorSetGuideVoiceMode(d.guideVoice); return; }
     if (d.gmVoice != null) { editorSetGmVoice(d.gmKind, d.gmVoice); return; }

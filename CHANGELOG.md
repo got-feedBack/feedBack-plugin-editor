@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Assisted tempo mapping trusts a bridged gap once the far side confirms.**
+  When Suggest marches across a sustained or held bar (no attack to snap to),
+  it keeps going on prediction but marks those bars very low confidence — and
+  used to leave them there even after the next bar snapped cleanly, proving
+  the marched path was right. Bars bridged BETWEEN two confirmed hits now get
+  their confidence raised retroactively (still discounted, never outranking a
+  real hit), so the ghost markers over a held chord read as "probably right"
+  instead of "guessing". A trailing march that never re-confirms keeps the
+  floor and is still dropped, exactly as before; a barline you locked confirms
+  at full trust.
+- **Slides and ties now reach the note they belong to.** A pitched slide's
+  diagonal used to stop at the edge of its own note; when the next note on
+  that string is where the slide actually lands, the line now runs all the
+  way to it — you can see the gesture arrive. Likewise a tie (link-next) now
+  draws a legato arc from the note's tail to the linked note's head instead
+  of a small hook, so the two notes visibly belong to one gesture. When no
+  landing is charted (or notes overlap), the old compact glyphs remain —
+  the editor never draws a connection the music doesn't have.
 ### Added
 
 - **Play all tracks — the chart plays as a band, mixed by the Mixer.** The
@@ -21,6 +41,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while their sound loads, and the transport now reaches every track's last
   note — a bass outro past the lead's final chord no longer cuts off. The
   choice persists as an editor preference.
+- **Tempo ramps — a ritardando is ONE thing now.** Select a run of barlines
+  in the Tempo Map, right-click ▸ **Ramp the range (accel/rit)…**, give it
+  "start → end" BPM, and the whole gesture becomes one authored object: the
+  bars re-space smoothly along a curve (a rit eases out, the natural
+  release), notes ride, locked barlines hold their exact times, and one
+  undo restores everything. The marker lane shows a single `rit. 140→120`
+  chip instead of a spray of per-bar tempo chips. **Fit ramp to the
+  recording** goes one better: it reads the onset drift across your
+  selection and proposes the ramp that flattens it — the drifting-red bar
+  in Map Health resolves to authored-green instead of nagging forever.
+- **Tempo List (Tempo/Grid menu)** — every authored mark as text: one row
+  per ramp / meter grouping / hold / feel with its bar, value, and source
+  (human-confirmed vs detected vs imported). Click a row to jump to its
+  bar. The chips are paint; this is the ledger.
+
+- **Half-time / double-time is a FEEL now, not a fake tempo change.** A
+  half-time chorus or double-time bridge never meant the band changed tempo
+  — the *pulse tier* changed. Right-click a barline: **Half-time feel /
+  Double-time feel from here** (and **Straight time from here** to end it).
+  The tempo and every barline stay exactly put; instead, the metronome
+  accents the *felt* pulse, Map Health expects onsets on felt beats only (a
+  genuinely sparser half-time section reads green, not "missing onsets"
+  grey), and the marker lane shows a green feel chip. When **Scan** detects
+  the recording pulsing at twice/half your grid, the confirm bar now offers
+  **the feel marker as the default** ("Half-time feel") with "Actually ½/2×
+  tempo" as the explicit grid-rescue override — reading a density change as
+  an octave tempo jump was a top mapping failure mode.
+
+- **Meter groupings now teach the feel.** An authored grouping (`7/8` as
+  `2+2+3`) reaches its three consumers: the **metronome accents** each
+  grouping-cell start (strong-weak-strong-weak-strong-weak-weak — you hear
+  where the riff resets), the **ruler** keeps the felt pulse visible (bright
+  ticks on the accents at every zoom, and at far zoom the few sub-bar ticks
+  are spent on the accents instead of vanishing), and **tempo suggestions
+  corroborate on the felt pulse** — a candidate barline whose onsets land on
+  the `2+2+3` accents now out-scores one that merely matches an even seven.
+  Ungrouped bars behave exactly as before.
+
+- **Hold / fermata bars and meter groupings — the chart can finally say what
+  the band meant.** Right-click a barline in the Tempo Map: **"Hold /
+  fermata this bar"** marks a bar the band holds out (a big rock ending, a
+  pause before the last chorus). A held bar stops reading as a bogus tempo
+  collapse: it's excluded from tempo statistics, the marker lane shows one
+  amber **hold** chip instead of two spurious BPM chips, and tempo
+  suggestions carry straight across it instead of chasing onsets inside the
+  pause. **"Meter grouping…"** records how a compound bar is *felt* — `7/8`
+  as `2+2+3` vs `3+2+2` — and the marker lane says so. Both are real edits
+  (one undo step each), survive save → reopen (stored in the pack, invisible
+  to apps that don't know them), follow their bar when barlines are inserted
+  or deleted, and carry **provenance** — hand-set marks are recorded as
+  human-confirmed, the foundation for keeping your verified work through
+  future automatic re-fits.
+- **Cut, and real Copy/Paste commands.** Copy and paste existed but were
+  hidden hardwired keys — invisible in the Edit menu, the shortcut panel, and
+  anywhere else you'd look, with no Cut at all. All three are first-class
+  commands now: **Edit ▸ Copy / Cut / Paste** (Ctrl+C / Ctrl+X / Ctrl+V; the
+  EOF profile keeps its Ctrl+X mute binding, so Cut is Shift+Del there).
+  Paste lands the phrase's first note at the playhead — snapped to your grid
+  like any other placement — keeps the internal timing intact, selects the
+  pasted notes, and is one undo. Pasting across tracks now behaves: notes on
+  strings the target track doesn't have are skipped and counted instead of
+  written invisibly, and keys ↔ fretted pasting is refused (the note shapes
+  don't translate). Undoing a cut restores the notes but keeps the clipboard,
+  like every text editor.
+
+### Fixed
+
+- **Pasted bend curves are no longer linked to the original.** Copying a bent
+  note shared the bend-curve data between the original and every paste —
+  editing any one of them silently edited them all. Copies are fully
+  independent now.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
@@ -46,9 +137,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   click to accept as far as it looks right. Nothing commits until you accept,
   Esc dismisses, and as always the audio never moves: barlines re-fit to the
   recording and your notes ride along.
+- **Tab view — live engraved tablature of the track you're editing.** The
+  view cycle gains a third stop (String view → Piano roll → **Tab**, also in
+  the View menu): the timeline becomes real engraved tab of the CURRENT
+  chart, re-drawn as you edit — no saving first, no other plugin installed,
+  unlike the read-only preview window (which stays, for proofreading what's
+  actually on disk). **Click any beat in the tab to select those notes** and
+  move the playhead there, then edit in String view or the roll as usual —
+  the score keeps up. Quantization is honest about its v1 limits: positions
+  engrave on a 16th grid against your tempo map (variable tempo included),
+  durations read from the spacing between notes, and anything outside the
+  barline span is counted in the status rather than silently dropped.
+  Fretted tracks only for now; standard notation is the follow-up.
+- **Standard notation in the score view — View ▸ Score staff.** Pick what
+  the live score engraves: **tablature only** (the default), **standard
+  notation only**, or **both staves together**. Clicking a beat selects its
+  notes on every staff choice, the pick is remembered per browser, and
+  choosing a staff while the score view is off switches you into it.
 
 ### Fixed
 
+- **Select All stays inside the editor.** `Ctrl+A` / `Cmd+A` now selects the
+  active chart objects without letting Chromium highlight the entire editor UI.
+  Read-only Parts view and active MIDI recording also suppress page selection,
+  while text inputs and inline rename fields keep their native Select All.
 - **"Shift Audio…" now survives saving and reopening.** The recording-vs-chart
   shift was sent with every save but the backend silently dropped it, so a
   carefully aligned song came back misaligned on the next open — reading as

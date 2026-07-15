@@ -463,6 +463,10 @@ export function drawNotes(w) {
     // Playability lint (P9): a memoized Set keyed on the edit generation —
     // hoisted so the per-note check is a Set.has, never a lint pass.
     const lintFlags = _lintFlaggedSet();
+    // Slide/tie target lookup: resolved ONCE per frame here (keys mode never
+    // draws these overlays), then threaded to each _drawNote so the per-note
+    // draw stays an O(1) map read.
+    const nextMap = keysMode ? null : _nextSameString(nn);
     for (let i = 0; i < nn.length; i++) {
         const n = nn[i];
         if (n.time + (n.sustain || 0) < st || n.time > et) continue;
@@ -470,7 +474,7 @@ export function drawNotes(w) {
             const midi = _rollMidiForNote(n, rctx);
             if (midi !== null) _drawPianoNote(n, S.sel.has(i), hl, midi, !!rctx, lintFlags.has(i));
         } else {
-            _drawNote(n, S.sel.has(i), ghl, lintFlags.has(i));
+            _drawNote(n, S.sel.has(i), ghl, lintFlags.has(i), nextMap);
         }
     }
 
@@ -593,7 +597,61 @@ export function _rollTechBadgesPure(techs) {
 }
 /* @pure:tech-badges:end */
 
-function _drawNote(n, selected, ghl, linted) {
+/* @pure:technique-connect:start */
+// Next note on the SAME STRING, per note — the target a pitched slide lands
+// on and the note a tie (link_next) legatos into. One reverse pass; returned
+// as a Map keyed by note OBJECT so the draw loop (which has the note, not its
+// index) reads it in O(1).
+export function _nextSameStringMapPure(nn) {
+    const map = new Map();
+    const lastByString = new Map();
+    // Order by CURRENT time, not array order: drag moves mutate n.time in
+    // place without re-sorting the array (that identity-stability is the
+    // draw-memo contract), so after a drag the array can be out of time
+    // order and "next in the array" would link the wrong note.
+    const byTime = (nn || []).filter(Boolean)
+        .slice().sort((a, b) => (a.time - b.time) || (a.string - b.string));
+    for (let i = byTime.length - 1; i >= 0; i--) {
+        const n = byTime[i];
+        const prev = lastByString.get(n.string);
+        if (prev) map.set(n, prev);
+        lastByString.set(n.string, n);
+    }
+    return map;
+}
+
+// A slide CONNECTS to the next same-string note only when that note is the
+// slide's actual landing (its fret equals slide_to) — otherwise the target
+// isn't charted and the within-note glyph stays (never draw a line to a note
+// the gesture doesn't reach).
+export function _slideConnectsPure(techs, next) {
+    return !!(next && techs && Number.isFinite(techs.slide_to)
+        && next.fret === techs.slide_to);
+}
+/* @pure:technique-connect:end */
+
+// The per-frame lookup: memoized on editGen + the notes array identity (the
+// standard draw-memo contract — in-place time moves keep identity, and every
+// committed edit bumps the gen). Cost per frame after an edit: one O(n) pass.
+// Called ONCE per frame by drawNotes and threaded to every _drawNote, so the
+// move-drag bypass below stays O(n)/frame (not O(n²) via a per-note recompute).
+let _nextStrMemo = { gen: -1, ref: null, map: null };
+export function _nextSameString(nn) {
+    // A live note-move drag mutates note time/string/fret in place every
+    // mousemove and only commits (bumping editGen) on mouseUp — so the
+    // editGen-keyed memo would serve the PRE-drag map for the whole drag,
+    // defeating _nextSameStringMapPure's own time-order handling and linking
+    // slides/ties to the wrong target until release. Bypass for the drag's
+    // duration, exactly as _sectionCoverage does for the coverage strip.
+    if (S.drag && S.drag.type === 'move') return _nextSameStringMapPure(nn);
+    if (_nextStrMemo.gen === editGen && _nextStrMemo.ref === nn && _nextStrMemo.map) {
+        return _nextStrMemo.map;
+    }
+    _nextStrMemo = { gen: editGen, ref: nn, map: _nextSameStringMapPure(nn) };
+    return _nextStrMemo.map;
+}
+
+function _drawNote(n, selected, ghl, linted, nextMap) {
     const x = timeToX(n.time);
     const y = strToY(n.string) + NOTE_PAD;
     const sw = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
@@ -695,14 +753,21 @@ function _drawNote(n, selected, ghl, linted) {
             ctx.closePath(); ctx.fill();
         }
     }
-    // Slide: a diagonal line across the note, sloping up or down toward the target.
+    // Slide: a diagonal sloping up or down toward the target. When the NEXT
+    // note on this string IS the slide's landing (fret === slide_to), the
+    // diagonal reaches all the way to that note's head — the gesture visibly
+    // connects to where it lands. No charted landing → the within-note glyph.
     const _sdir = _slideDirPure(n.fret, techs.slide_to);
     if (_sdir !== 0) {
+        const _next = nextMap.get(n);
+        const _endX = _slideConnectsPure(techs, _next)
+            ? Math.max(x + _ovW - 1, timeToX(_next.time) - 1)
+            : x + _ovW - 1;
         ctx.strokeStyle = '#93c5fd';
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.moveTo(x + 1, _sdir > 0 ? y + h - 1 : y + 1);
-        ctx.lineTo(x + _ovW - 1, _sdir > 0 ? y + 1 : y + h - 1);
+        ctx.lineTo(_endX, _sdir > 0 ? y + 1 : y + h - 1);
         ctx.stroke();
     }
     // Vibrato: a small squiggle just above the note.
@@ -717,12 +782,22 @@ function _drawNote(n, selected, ghl, linted) {
             ctx.stroke();
         }
     }
-    // Tie (link_next): a small legato hook off the trailing edge.
+    // Tie (link_next): a legato arc from this note's tail to the LINKED
+    // note's head — the two notes visibly belong to one gesture. With no
+    // next note on the string (or an overlap), the old trailing hook stays.
     if (techs.link_next) {
         ctx.strokeStyle = '#a7f3d0';
         ctx.lineWidth = 1.5;
+        const _next = nextMap.get(n);
+        const _headX = _next ? timeToX(_next.time) : -1;
         ctx.beginPath();
-        ctx.arc(x + _ovW, y + h / 2, 4, -Math.PI / 2, Math.PI / 2);
+        if (_next && _headX > x + _ovW + 2) {
+            const midX = (x + _ovW + _headX) / 2;
+            ctx.moveTo(x + _ovW, y + h / 2);
+            ctx.quadraticCurveTo(midX, y - 3, _headX, y + h / 2);
+        } else {
+            ctx.arc(x + _ovW, y + h / 2, 4, -Math.PI / 2, Math.PI / 2);
+        }
         ctx.stroke();
     }
 

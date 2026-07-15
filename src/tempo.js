@@ -38,6 +38,12 @@ import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S, editGen } from './state.js';
 import {
+    _feelRangesLive, _groupingParsePure, _holdMeasuresPure, _markNormPure, _marksAtPure,
+    _marksMeterReconcilePure, _marksRemapByTimePure, _marksRemapPure, _marksRemovePure,
+    _marksUpsertPure,
+    editorSetFeelFromBar, editorSetMeterGrouping, editorToggleHoldBar,
+} from './tempo-marks.js';
+import {
     _suggestActive, _suggestApplyPure, _suggestAvgConf, _suggestDismiss,
     _suggestHitAt, _suggestHudTextPure, _suggestProposals, _suggestRegenerateFrom,
     _suggestStopReason, _suggestStopDetail,
@@ -803,13 +809,135 @@ export function editorZonesOctaveFix(dir) {
         return true;
     }
     _zonesDismiss();
-    S.history.exec(new TempoGridCmd(S.beats, rescued,
-        dir === 'double' ? 'double grid tempo' : 'halve grid tempo', S.tempoSel, -1));
+    const cmd = new TempoGridCmd(S.beats, rescued,
+        dir === 'double' ? 'double grid tempo' : 'halve grid tempo', S.tempoSel, -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats, rescued);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     setStatus(dir === 'double'
         ? 'Grid tempo doubled onto the real pulse — audio and notes stayed put. Run Scan again to confirm, then re-fit per zone. Undo restores.'
         : 'Grid tempo halved onto the real pulse — audio and notes stayed put. Run Scan again to confirm, then re-fit per zone. Undo restores.');
+    return true;
+}
+
+// P2-7: the authored ramp verb — a rit/accel over the multi-selected range
+// becomes ONE ramp object (never N shrinking bars painted as noisy chips).
+// Prompts start/end BPM (defaults = the derived BPMs at the ends), derives
+// the curve preset from direction (a rit releases: ease-out), compiles the
+// span along the curve, honors locks (_respaceWithLocksPure — a locked
+// anchor holds and the ramp compiles around it), and executes ONE
+// TempoMapCmd carrying mark + compiled grid (notes ride the reproject).
+export async function editorRampRange(prefill) {
+    const range = _tempoSelRangePure(S.beats, S.tempoSelMulti);
+    if (!range) { setStatus('Select a run of barlines first (Shift+click in Tempo Map), then ramp the range.'); return true; }
+    const mStart = S.beats[range.lo].measure;
+    const mEnd = S.beats[range.hi].measure;
+    const bpms = _tempoMeasureBpmsPure(S.beats, v => Math.round(v * 10) / 10, _tempoHoldMeasures());
+    const measures = _tempoMeasures();
+    const curAt = (idx) => {
+        const m = measures.find(mm => mm.i === idx);
+        return m && m.bpm > 0 ? Math.round(m.bpm * 10) / 10 : (bpms[0] || 120);
+    };
+    let bpmStart, bpmEnd, curve, provenance = 'confirmed';
+    if (prefill) {
+        ({ bpmStart, bpmEnd, curve } = prefill);
+        provenance = prefill.provenance || 'detected';
+    } else {
+        const raw = await _editorPromptText({
+            title: `Ramp bars ${mStart}–${mEnd}`,
+            label: 'Tempo across the span, as "start → end" BPM:',
+            value: `${curAt(range.lo)} → ${curAt(range.hi)}`,
+            placeholder: '120 → 140',
+        });
+        if (raw === null) return true;
+        const parsed = _rampPromptParsePure(raw);
+        if (!parsed) {
+            setStatus('Enter two tempos like "120 → 140" (or "120 -> 140"), each between 1 and 1000 BPM.');
+            return true;
+        }
+        ({ bpmStart, bpmEnd } = parsed);
+        curve = bpmEnd < bpmStart ? 'ease-out' : 'linear';
+    }
+    // Validate + normalize BEFORE any compile or history mutation (review
+    // #279 item 6): the normalized mark is what gets compiled AND stored, so
+    // the grid and the persisted ramp can never disagree — the old order
+    // compiled first and let _marksUpsertPure refuse the mark after, leaving
+    // warped beats with no ramp to document them. Invalid input (a bad
+    // prefill from fit-from-drift included) changes nothing.
+    const mark = _markNormPure({ measure: mStart, kind: 'ramp', measureEnd: mEnd, bpmStart, bpmEnd, curve, provenance });
+    if (!mark) {
+        setStatus('Ramp tempos must be between 1 and 1000 BPM — nothing was changed.');
+        return true;
+    }
+    // REPLACE-from-baseline (review #279 item 5). The rule: a new ramp first
+    // strips EVERY existing ramp mark whose span overlaps the new one — the
+    // old mark is removed and its whole span neutralized back to baseline
+    // (_rampNeutralizePure) — then the new mark compiles against that
+    // baseline. Consequences, all deliberate:
+    //   • reapplying the same ramp is IDEMPOTENT (bit-identical beats — a
+    //     compile never stacks on its own output);
+    //   • editing a ramp's BPMs/curve recompiles from the same baseline it
+    //     was first compiled against;
+    //   • a partial overlap replaces the old ramp's AUTHORITY entirely: its
+    //     non-overlapped remainder flattens to steady (leaving its warp in
+    //     the grid with no mark to document it would be exactly item 6's
+    //     unmarked-mutation bug). Ramps that merely touch at a shared
+    //     endpoint bar don't overlap — their compiled rows are disjoint.
+    // ONE TempoMapCmd still carries marks + grid, so a single undo restores
+    // any replaced ramp and its timing together.
+    let baseline = S.beats;
+    let marksAfter = S.tempoMarks || [];
+    for (const om of (S.tempoMarks || [])) {
+        if (om.kind !== 'ramp' || om.measureEnd <= mStart || om.measure >= mEnd) continue;
+        baseline = _rampNeutralizePure(baseline, om);
+        marksAfter = _marksRemovePure(marksAfter, om.measure, om.kind);
+    }
+    const compiled = _rampCompilePure(baseline, mark);
+    if (!compiled) { setStatus('Could not compile the ramp over this range.'); return true; }
+    const finalBeats = _respaceWithLocksPure(S.beats, compiled);
+    const cmd = new TempoMapCmd(S.beats, finalBeats, mark.bpmEnd < mark.bpmStart ? 'ritardando' : 'accelerando');
+    cmd.marks = { before: S.tempoMarks || [], after: _marksUpsertPure(marksAfter, mark) };
+    S.history.exec(cmd);
+    if (S.tempoSelMulti) S.tempoSelMulti.clear();
+    host.draw();
+    host.updateStatus();
+    setStatus(`${mark.bpmEnd < mark.bpmStart ? 'Ritardando' : 'Accelerando'} ${mark.bpmStart}→${mark.bpmEnd} BPM over bars ${mStart}–${mEnd} (${mark.curve}) — one undo restores.`);
+    return true;
+}
+
+// P2-7: fit-from-drift — the red rubato bar resolves to authored-green. The
+// proposed LINEAR ramp flattens the observed onset drift over the selection;
+// offered only when it genuinely beats a flat reading.
+export function editorRampFitFromDrift() {
+    const range = _tempoSelRangePure(S.beats, S.tempoSelMulti);
+    if (!range) { setStatus('Select the drifting run of barlines first, then fit a ramp to the recording.'); return true; }
+    const onsets = _ensureOnsetsShifted();
+    if (!onsets || !onsets.length) { setStatus('Fit-from-drift reads the recording’s onsets — open a song with audio first.'); return true; }
+    const fit = _rampFitFromDriftPure(S.beats, onsets.map(o => o.t), range.lo, range.hi);
+    if (!fit || !(fit.residual < fit.flatResidual)) {
+        setStatus('No clear ramp here — the span reads as steady (or too little onset evidence).');
+        return true;
+    }
+    return editorRampRange({ ...fit, provenance: 'detected' });
+}
+
+// P2-8: the FEEL resolution of Scan's 2:1 detection — the recording's pulse
+// reads double/half against the grid, and the DEFAULT reading is a feel
+// change over a constant tempo. Marks the feel from bar 1 (the detection is
+// whole-grid); the grid, audio, and notes all stay put. One undo restores.
+export function editorZonesFeelFix(dir) {
+    if (!S.sessionId || !S.history || !S.beats || S.beats.length < 2) return true;
+    let firstMeasure = -1;
+    for (const b of S.beats) if (b && b.measure > 0) { firstMeasure = b.measure; break; }
+    if (firstMeasure < 1) return true;
+    editorSetFeelFromBar(firstMeasure, dir === 'double' ? 2 : 0.5);
+    _zonesDismiss();
+    host.draw();
+    host.updateStatus();
+    setStatus(dir === 'double'
+        ? 'Marked as double-time FEEL from the top — tempo and grid unchanged. If the grid itself is octave-trapped, use "Actually 2× tempo" instead.'
+        : 'Marked as half-time FEEL from the top — tempo and grid unchanged. The click now accents the felt pulse and Map Health expects onsets on felt beats only.');
     return true;
 }
 
@@ -837,8 +965,10 @@ export function editorConfirmTempoZones() {
     const { beats: refined, refined: nRefined } = _segmentRefineGridPure(seeded, onsets, segments);
     const firstDown = refined.findIndex(b => b.measure > 0);
     _zonesDismiss();
-    S.history.exec(new TempoGridCmd(S.beats || [], refined, 'tempo zones (refined)',
-        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    const cmd = new TempoGridCmd(S.beats || [], refined, 'tempo zones (refined)',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats || [], refined);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     const n = segments.length;
@@ -872,8 +1002,10 @@ export function editorZonesSingleTempo() {
     }
     const firstDown = seeded.findIndex(b => b.measure > 0);
     _zonesDismiss();
-    S.history.exec(new TempoGridCmd(S.beats || [], seeded, 'tempo zones (single tempo)',
-        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    const cmd = new TempoGridCmd(S.beats || [], seeded, 'tempo zones (single tempo)',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats || [], seeded);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     setStatus(`Applied one steady tempo (${Math.round(single[0].bpmStart)} BPM) across the mapped span — Undo restores.`);
@@ -904,8 +1036,10 @@ export function editorApplyTempoZones() {
         return true;
     }
     const firstDown = rough.beats.findIndex(b => b.measure > 0);
-    S.history.exec(new TempoGridCmd(S.beats || [], rough.beats, 'segment-first rough map',
-        S.tempoSel, firstDown >= 0 ? firstDown : -1));
+    const cmd = new TempoGridCmd(S.beats || [], rough.beats, 'segment-first rough map',
+        S.tempoSel, firstDown >= 0 ? firstDown : -1);
+    cmd.marks = _tempoRemapMarksByTime(S.beats || [], rough.beats);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     const n = rough.segments.length;
@@ -937,6 +1071,7 @@ export function _editorToggleTempoMapMode() {
         S.drumEditMode = false;
         S.drumSel = new Set();
         S.partsViewMode = false;
+        S.tabViewMode = false;
         host.hideContextMenu();
         host.hideAddNote();
         S.sel.clear();
@@ -982,7 +1117,7 @@ export function _refreshTempoMapButton() {
     // The grid is song-wide and round-trips through archive + sloppak, so
     // the button is NOT format-gated — only a beat grid is required.
     const hasGrid = !!(S.beats && S.beats.length >= 2);
-    const hasMultipleBpms = hasGrid && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01);
+    const hasMultipleBpms = hasGrid && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01, _tempoHoldMeasures());
     const sig = `${!!S.sessionId}|${hasGrid}|${!!S.tempoMapMode}|${hasMultipleBpms}`;
     if (sig === _tempoMapBtnState) return;
     _tempoMapBtnState = sig;
@@ -1177,7 +1312,9 @@ export function editorHealGrid() {
         return true;
     }
     const healed = _gridHealPure(S.beats);
-    S.history.exec(new TempoGridCmd(S.beats, healed, 'heal uneven beats', S.tempoSel, S.tempoSel));
+    const cmd = new TempoGridCmd(S.beats, healed, 'heal uneven beats', S.tempoSel, S.tempoSel);
+    cmd.marks = _tempoRemapMarksByTime(S.beats, healed);
+    S.history.exec(cmd);
     host.draw();
     host.updateStatus();
     // NAME the measures, don't just count them. The scan cannot tell a corrupt
@@ -1387,12 +1524,38 @@ export function _tempoMapOnContextMenu(e) {
             if (cur > 1) html += mkBtn('pickup', 'Set pickup (partial first bar — for music that starts before beat 1)…');
         }
         html += '<div class="border-t border-gray-700 my-1"></div>';
+        // Authored marks (P2-5): fermata + meter grouping on this bar.
+        const _mMeasure = S.beats[onPole] ? S.beats[onPole].measure : -1;
+        const _mMarks = _marksAtPure(S.tempoMarks, _mMeasure);
+        html += mkBtn('holdbar',
+            _mMarks.some(mm => mm.kind === 'hold') ? 'Remove hold / fermata' : 'Hold / fermata this bar',
+            '', 'A held bar: excluded from tempo stats and suggestions instead of reading as a huge tempo drop');
+        html += mkBtn('grouping', 'Meter grouping…', '',
+            'How a compound bar is felt, e.g. 7/8 as 2+2+3 — drives the marker label, the click, and the detector');
+        // P2-8: the felt pulse tier — a marker over a CONSTANT tempo, never
+        // a 2x tempo change. Toggle semantics: re-picking the active one clears.
+        const _mFeel = _mMarks.find(mm => mm.kind === 'feel');
+        html += mkBtn('feelhalf',
+            (_mFeel && _mFeel.ratio === 0.5 ? '✓ ' : '') + 'Half-time feel from here', '',
+            'The felt pulse halves (tempo unchanged): click accents every other beat, Map Health expects onsets on the felt beats only');
+        html += mkBtn('feeldouble',
+            (_mFeel && _mFeel.ratio === 2 ? '✓ ' : '') + 'Double-time feel from here', '',
+            'The felt pulse doubles (tempo unchanged)');
+        if (_mFeel || _feelRangesLive().some(f => f.fromMeasure < _mMeasure)) {
+            html += mkBtn('feelstraight',
+                (_mFeel && _mFeel.ratio === 1 ? '✓ ' : '') + 'Straight time from here', '',
+                'Back to the written pulse');
+        }
         html += mkBtn('togglelock',
             (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
             '', LOCK_TOOLTIP);
         const nSelected = S.tempoSelMulti ? S.tempoSelMulti.size : 0;
         if (nSelected > 1) {
             html += '<div class="border-t border-gray-700 my-1"></div>';
+            html += mkBtn('ramp-range', 'Ramp the range (accel/rit)…', '',
+                'ONE authored tempo curve over the selected bars — start→end BPM, notes ride, one undo');
+            html += mkBtn('ramp-fit', 'Fit ramp to the recording', '',
+                'Reads the onset drift across the selection and proposes the ramp that flattens it');
             html += mkBtn('half-range', 'Half-time the range', '', 'Merge pairs of bars — audio positions hold; notes keep their times');
             html += mkBtn('double-range', 'Double-time the range', '', 'Split each bar at its midpoint — audio positions hold');
             html += mkBtn('flatten-range', 'Flatten range to a steady tempo', '', 'Even out the beats between the ends — notes follow');
@@ -1413,6 +1576,31 @@ export function _tempoMapOnContextMenu(e) {
             const a = btn.dataset.action;
             if (a === 'bar1here') { _tempoSetBar1Here(); return; }
             if (a === 'pickup') { _tempoPromptPickup(); return; }
+            if (a === 'holdbar') {
+                const mm = S.beats[onPole] ? S.beats[onPole].measure : -1;
+                if (editorToggleHoldBar(mm)) {
+                    setStatus(_tempoHoldMeasures().has(mm)
+                        ? `Bar ${mm} held (fermata) — excluded from tempo stats and suggestions.`
+                        : `Bar ${mm} hold removed.`);
+                }
+                return;
+            }
+            if (a === 'grouping') { _tempoPromptGrouping(onPole); return; }
+            if (a === 'feelhalf' || a === 'feeldouble' || a === 'feelstraight') {
+                const mm = S.beats[onPole] ? S.beats[onPole].measure : -1;
+                const ratio = a === 'feelhalf' ? 0.5 : a === 'feeldouble' ? 2 : 1;
+                if (editorSetFeelFromBar(mm, ratio)) {
+                    const nowFeel = (S.tempoMarks || []).some(k => k.kind === 'feel' && k.measure === mm);
+                    setStatus(!nowFeel ? `Bar ${mm}: feel mark cleared.`
+                        : ratio === 0.5 ? `Half-time feel from bar ${mm} — tempo unchanged, the felt pulse halves.`
+                        : ratio === 2 ? `Double-time feel from bar ${mm} — tempo unchanged, the felt pulse doubles.`
+                        : `Straight time from bar ${mm}.`);
+                    host.draw();
+                }
+                return;
+            }
+            if (a === 'ramp-range') { editorRampRange(); return; }
+            if (a === 'ramp-fit') { editorRampFitFromDrift(); return; }
             if (a === 'half-range') _tempoHalveRange();
             else if (a === 'double-range') _tempoDoubleRange();
             else if (a === 'flatten-range') _tempoFlattenRange();
@@ -1431,6 +1619,32 @@ export function _tempoMapOnContextMenu(e) {
     menu.classList.remove('hidden');
 }
 
+// Prompt for a meter grouping on the bar at downbeat index `d` (P2-5).
+async function _tempoPromptGrouping(d) {
+    const b = S.beats[d];
+    if (!b || b.measure <= 0) return;
+    const num = _tempoMeasureBeatCount(d);
+    const den = _tempoMeasureDenominator(d);
+    const cur = _marksAtPure(S.tempoMarks, b.measure).find(mm => mm.kind === 'meter');
+    const raw = await _editorPromptText({
+        title: `Meter grouping — bar ${b.measure} (${num}/${den})`,
+        label: `How the bar is felt, as parts summing to ${num} (empty clears):`,
+        value: cur && cur.grouping ? cur.grouping.join('+') : '',
+        placeholder: num === 7 ? '2+2+3' : '3+3+2',
+    });
+    if (raw === null) return;
+    const grouping = _groupingParsePure(raw, num);
+    if (grouping === null) {
+        setStatus(`That doesn't sum to ${num} — try something like ${num === 7 ? '2+2+3' : '3+3+2'}.`);
+        return;
+    }
+    editorSetMeterGrouping(b.measure, num, den, grouping);
+    setStatus(grouping.length
+        ? `Bar ${b.measure} felt as ${num}/${den} (${grouping.join('+')}).`
+        : `Bar ${b.measure} grouping cleared.`);
+    host.draw();
+}
+
 // ── Insert / delete sync points ─────────────────────────────────────
 //
 // Marking inside the mapped range promotes the nearest interior beat. Marking
@@ -1441,12 +1655,92 @@ export function _tempoMapOnContextMenu(e) {
 // Renumber every downbeat sequentially, preserving the first one's number.
 function _tempoRenumberMeasures(beats) {
     let m = null;
+    const oldToNew = new Map();
     for (const b of beats) {
         if (b.measure > 0) {
-            m = (m === null) ? b.measure : m + 1;
-            b.measure = m;
+            const next = (m === null) ? b.measure : m + 1;
+            if (!oldToNew.has(b.measure)) oldToNew.set(b.measure, next);
+            m = next;
+            b.measure = next;
         }
     }
+    return oldToNew;
+}
+
+// After a renumber, drop any authored meter GROUPING that no longer sums to
+// the bar numerator it now spans in the NEW grid. Inserting or deleting a
+// barline splits or merges a bar UNDER a grouping mark: a 2+2 mark stranded
+// on a bar the split cut to 2 beats would render as 2/4 (2+2) and feed a
+// four-slot accent map to every consumer — the exact stale-accent lie the
+// time-sig reconcile (review #276 item 3) prevents, reached by a different
+// edit path. Bare meter marks and holds are untouched; the open final bar
+// (no closing downbeat, so no exact numerator) is left alone. Returns the
+// input array BY IDENTITY when nothing drops, so the caller can tell whether
+// a snapshot is needed.
+function _marksReconcileGroupingsAgainst(marks, newBeats) {
+    if (!Array.isArray(marks) || !marks.length || !Array.isArray(newBeats)) return marks;
+    const db = [];
+    for (let i = 0; i < newBeats.length; i++) if (newBeats[i] && newBeats[i].measure > 0) db.push(i);
+    const numByMeasure = new Map();
+    for (let k = 0; k + 1 < db.length; k++) numByMeasure.set(newBeats[db[k]].measure, db[k + 1] - db[k]);
+    let changed = false;
+    const out = marks.filter(mk => {
+        if (mk.kind !== 'meter' || !Array.isArray(mk.grouping) || !mk.grouping.length) return true;
+        const num = numByMeasure.get(mk.measure);
+        if (num === undefined) return true;   // open last bar: no exact numerator to check
+        const ok = mk.grouping.reduce((a, b) => a + b, 0) === num;
+        if (!ok) changed = true;
+        return ok;
+    });
+    return changed ? out : marks;
+}
+
+// The measure-keyed marks follow a renumber via the SURVIVING downbeats'
+// old->new map (a deleted bar's marks drop — never a stale key), then any
+// grouping whose bar was split/merged out from under it is reconciled against
+// the new grid. Callers that renumber inside a TempoGridCmd pass the result
+// through the command's marks snapshot so undo restores both sides together.
+function _tempoRemapMarksForRenumber(oldToNew, newBeats) {
+    if (!S.tempoMarks || !S.tempoMarks.length) return null;
+    const before = S.tempoMarks;
+    const remapped = _marksRemapPure(before, oldToNew);
+    const after = _marksReconcileGroupingsAgainst(remapped, newBeats);
+    return { before, after };
+}
+
+// The remap for topology edits with NO surviving-downbeat old→new map —
+// pickup, halve/double-range, multi-delete, heal, and the wholesale rebuilds
+// (zones apply/refine, rough map, flatten, MIDI tempo map): the marks follow
+// the MUSIC. Each rides its old bar's downbeat TIME into whichever new bar
+// contains that moment (_marksRemapByTimePure), then any grouping stranded on
+// a merged/re-metered bar reconciles against the new grid. Returns the
+// TempoGridCmd marks snapshot, or null when nothing changes (no marks, or
+// every mark keeps its number) so callers can leave cmd.marks unset.
+export function _tempoRemapMarksByTime(oldBeats, newBeats) {
+    if (!S.tempoMarks || !S.tempoMarks.length) return null;
+    const before = S.tempoMarks;
+    const after = _marksReconcileGroupingsAgainst(
+        _marksRemapByTimePure(before, oldBeats, newBeats), newBeats);
+    return after === before ? null : { before, after };
+}
+
+// A time-signature edit and the bar's authored meter mark must move as ONE
+// undoable command (review #276 item 3) — changing 7/8 (2+2+3) to 4/4 while
+// the mark survived displayed "4/4 (2+2+3)" and fed a seven-slot accent map
+// to consumers. Reads the EFFECTIVE new signature straight off the new grid
+// (so the clamp in _tempoSetBeatsPerMeasurePure can never desynchronize it)
+// and returns the TempoGridCmd marks snapshot, or null when the bar carries
+// no mark that needs to change.
+function _tempoReconcileMeterMarkForTimesig(newBeats, d) {
+    const b = newBeats[d];
+    if (!b || b.measure < 1 || !S.tempoMarks || !S.tempoMarks.length) return null;
+    let ndb = newBeats.length;
+    for (let i = d + 1; i < newBeats.length; i++) {
+        if (newBeats[i].measure > 0) { ndb = i; break; }
+    }
+    const after = _marksMeterReconcilePure(
+        S.tempoMarks, b.measure, ndb - d, _tempoNormalizeDenominatorPure(b.den));
+    return after === S.tempoMarks ? null : { before: S.tempoMarks, after };
 }
 
 /* @pure:tempo-barline-append:start */
@@ -1536,8 +1830,10 @@ export function _tempoInsertSyncPoint(time) {
     const oldBeats = beats.map(b => ({ ...b }));
     const newBeats = beats.map(b => ({ ...b }));
     newBeats[bestS].measure = 1;  // placeholder; renumbered next
-    _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(oldBeats, newBeats, 'insert'));
+    const insRemap = _tempoRenumberMeasures(newBeats);
+    const insCmd = new TempoGridCmd(oldBeats, newBeats, 'insert');
+    insCmd.marks = _tempoRemapMarksForRenumber(insRemap, newBeats);
+    S.history.exec(insCmd);
     S.tempoSel = bestS;
     host.draw();
 }
@@ -1554,8 +1850,10 @@ export function _tempoDeleteSyncPoint(beatIdx) {
     const oldBeats = beats.map(b => ({ ...b }));
     const newBeats = beats.map(b => ({ ...b }));
     newBeats[beatIdx].measure = -1;  // demote to sub-beat
-    _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(oldBeats, newBeats, 'delete'));
+    const delRemap = _tempoRenumberMeasures(newBeats);
+    const delCmd = new TempoGridCmd(oldBeats, newBeats, 'delete');
+    delCmd.marks = _tempoRemapMarksForRenumber(delRemap, newBeats);
+    S.history.exec(delCmd);
     S.tempoSel = -1;
     host.draw();
 }
@@ -1661,8 +1959,10 @@ export function _tempoDeleteSelection() {
         : (S.tempoSel >= 0 ? [S.tempoSel] : []);
     const res = _tempoDeleteBarlinesPure(beats, sel);
     if (!res) { setStatus("Select interior barlines to delete — the first and last can't be removed."); return; }
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), res.beats,
-        res.count > 1 ? 'delete-barlines' : 'delete'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), res.beats,
+        res.count > 1 ? 'delete-barlines' : 'delete');
+    cmd.marks = _tempoRemapMarksByTime(beats, res.beats);
+    S.history.exec(cmd);
     S.tempoSel = -1;
     if (S.tempoSelMulti) S.tempoSelMulti.clear();
     host.draw();
@@ -1743,7 +2043,9 @@ export function _tempoHalveRange() {
     if (!range) { setStatus('Select a range of barlines (2+) to halve.'); return; }
     const res = _tempoHalveRangePure(S.beats, range.lo, range.hi);
     if (!res) { setStatus('Need at least two bars in the range to halve.'); return; }
-    S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'halve-range'));
+    const cmd = new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'halve-range');
+    cmd.marks = _tempoRemapMarksByTime(S.beats, res.beats);
+    S.history.exec(cmd);
     S.tempoSel = -1; if (S.tempoSelMulti) S.tempoSelMulti.clear();
     host.draw();
     setStatus(`Half-time: merged ${res.merged} barline${res.merged === 1 ? '' : 's'} — audio positions hold`
@@ -1755,7 +2057,9 @@ export function _tempoDoubleRange() {
     if (!range) { setStatus('Select a range of barlines (2+) to double.'); return; }
     const res = _tempoDoubleRangePure(S.beats, range.lo, range.hi);
     if (!res) { setStatus('Nothing to split — the range has no bars with an interior beat.'); return; }
-    S.history.exec(new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'double-range'));
+    const cmd = new TempoGridCmd(S.beats.map(b => ({ ...b })), res.beats, 'double-range');
+    cmd.marks = _tempoRemapMarksByTime(S.beats, res.beats);
+    S.history.exec(cmd);
     S.tempoSel = -1; if (S.tempoSelMulti) S.tempoSelMulti.clear();
     host.draw();
     setStatus(`Double-time: split ${res.split} bar${res.split === 1 ? '' : 's'} — audio positions hold`
@@ -1922,7 +2226,9 @@ export async function _tempoPromptPickup() {
     const newBeats = _tempoSetPickupPure(beats, count);
     if (!newBeats) { setStatus(`Pickup must be 1–${barLen - 1} beats.`); return true; }
     _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'pickup'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'pickup');
+    cmd.marks = _tempoRemapMarksByTime(beats, newBeats);
+    S.history.exec(cmd);
     host.updateTempoSigDisplay();
     host.draw();
     setStatus(`Pickup set: ${count} beat${count === 1 ? '' : 's'} — the partial bar displays as bar 0`);
@@ -1934,19 +2240,23 @@ export function _tempoSetBeatsPerMeasure(d, newCount) {
     const newBeats = _tempoSetBeatsPerMeasurePure(beats, d, newCount, S.duration, _r3);
     if (!newBeats) return;
     _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig');
+    cmd.marks = _tempoReconcileMeterMarkForTimesig(newBeats, d);
+    S.history.exec(cmd);
     host.updateTempoSigDisplay();
     host.draw();
 }
 
-function _tempoSetTimeSignature(d, numerator, denominator) {
+export function _tempoSetTimeSignature(d, numerator, denominator) {
     const beats = S.beats || [];
     let newBeats = _tempoSetBeatsPerMeasurePure(beats, d, numerator, S.duration, _r3);
     if (!newBeats) return false;
     newBeats = _tempoSetDenominatorOnBeatsPure(newBeats, d, denominator);
     if (!newBeats) return false;
     _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig');
+    cmd.marks = _tempoReconcileMeterMarkForTimesig(newBeats, d);
+    S.history.exec(cmd);
     host.updateTempoSigDisplay();
     host.draw();
     return true;
@@ -1999,9 +2309,14 @@ export class TempoGridCmd {
         // imported MIDI's tempo map right after a drums import (active part
         // still fretted-in-roll) would be silently blocked.
         this.songScope = true;
+        // Authored measure-keyed marks (P2-5): a topology edit that renumbers
+        // measures carries {before, after} snapshots so undo restores marks
+        // and beats TOGETHER. null = this command doesn't touch marks.
+        this.marks = null;
     }
     exec() {
         S.beats = this.newBeats.map(b => ({ ...b }));
+        if (this.marks) S.tempoMarks = this.marks.after;
         if (Number.isInteger(this.newSelection)) S.tempoSel = this.newSelection;
         // Topology changed: barline indices shifted, so the multi-selection (PR
         // 5a) can't be remapped safely — drop it rather than point at stale beats.
@@ -2020,6 +2335,7 @@ export class TempoGridCmd {
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
+        if (this.marks) S.tempoMarks = this.marks.before;
         if (Number.isInteger(this.oldSelection)) S.tempoSel = this.oldSelection;
         if (S.tempoSelMulti) S.tempoSelMulti.clear();   // topology reverted — drop the stale set
         // Seconds are unchanged; re-lift beats back onto the old indexing.
@@ -2035,13 +2351,17 @@ export class TempoGridCmd {
 export const MIN_MEASURE = 0.05;  // s — minimum gap a dragged downbeat keeps
 
 /* @pure:tempo-map-bpm:start */
-export function _tempoMeasureBpmsPure(beats, round) {
+export function _tempoMeasureBpmsPure(beats, round, skipMeasures) {
     if (!Array.isArray(beats) || beats.length < 2) return [];
     const r = typeof round === 'function' ? round : (v => v);
     const bpms = [];
     for (let d = 0; d < beats.length; d++) {
         const b = beats[d];
         if (!b || b.measure <= 0) continue;
+        // Held/fermata bars (P2-5): a hold's giant interval is not a tempo -
+        // it poisons every stat downstream (medians, flatten choices, Song
+        // Fit's readout). Callers pass the hold set to keep stats honest.
+        if (skipMeasures && skipMeasures.has(b.measure)) continue;
         let ndb = -1;
         for (let i = d + 1; i < beats.length; i++) {
             if (beats[i] && beats[i].measure > 0) { ndb = i; break; }
@@ -2055,9 +2375,9 @@ export function _tempoMeasureBpmsPure(beats, round) {
     return bpms;
 }
 
-export function _tempoHasMultipleMeasureBpmsPure(beats, tolerance) {
+export function _tempoHasMultipleMeasureBpmsPure(beats, tolerance, skipMeasures) {
     const tol = Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.01;
-    const bpms = _tempoMeasureBpmsPure(beats, v => Math.round(v * 1000) / 1000);
+    const bpms = _tempoMeasureBpmsPure(beats, v => Math.round(v * 1000) / 1000, skipMeasures);
     if (bpms.length < 2) return false;
     const first = bpms[0];
     return bpms.some(bpm => Math.abs(bpm - first) > tol);
@@ -2071,11 +2391,29 @@ export function _tempoHasMultipleMeasureBpmsPure(beats, tolerance) {
 // numerator (beats/bar) or `den` changes. Bar 1 gets a baseline of each. A
 // trailing partial final bar never emits a spurious meter change.
 // Returns [{ i, time, measure, kind: 'tempo'|'meter', label }], time-sorted.
-export function _tempoMarkersPure(beats, tolerance) {
+export function _tempoMarkersPure(beats, tolerance, marks) {
     const out = [];
     if (!Array.isArray(beats) || beats.length < 2) return out;
     const tol = Number.isFinite(tolerance) && tolerance >= 0 ? tolerance : 0.01;
     const r3 = v => Math.round(v * 1000) / 1000;
+    // Authored marks (P2-5) supersede the derived chips on their measure:
+    // a hold suppresses the spurious tempo-drop chip (and deliberately does
+    // NOT update the run tempo, so the re-entry bar matches the old run and
+    // emits nothing either); an authored grouping re-labels the meter chip.
+    const holdByMeasure = new Map();
+    const meterByMeasure = new Map();
+    const feelByMeasure = new Map();
+    const rampStarts = new Map();
+    const rampSpanned = new Set();   // measures INSIDE a ramp (chips suppressed)
+    for (const mk of (marks || [])) {
+        if (mk.kind === 'hold') holdByMeasure.set(mk.measure, mk);
+        if (mk.kind === 'meter') meterByMeasure.set(mk.measure, mk);
+        if (mk.kind === 'feel') feelByMeasure.set(mk.measure, mk);
+        if (mk.kind === 'ramp') {
+            rampStarts.set(mk.measure, mk);
+            for (let m = mk.measure; m < mk.measureEnd; m++) rampSpanned.add(m);
+        }
+    }
     const db = [];
     for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) db.push(i);
     if (!db.length) return out;
@@ -2091,12 +2429,46 @@ export function _tempoMarkersPure(beats, tolerance) {
             ? r3((num * 60) / (beats[nextI].time - beats[i].time))
             : runBpm;   // last (open) measure reuses the run's tempo
         const measure = beats[i].measure;
-        if (bpm !== null && (runBpm === null || Math.abs(bpm - runBpm) > tol)) {
+        const held = holdByMeasure.get(measure);
+        const ramp = rampStarts.get(measure);
+        if (ramp) {
+            // ONE authored chip for the whole gesture — never N shrinking-bar
+            // chips. The run tempo jumps to the ramp's END so the settled
+            // tempo after the span emits nothing.
+            out.push({ i, time: beats[i].time, measure, kind: 'ramp', authored: true,
+                provenance: ramp.provenance,
+                label: `${ramp.bpmEnd < ramp.bpmStart ? 'rit.' : 'accel.'} ${_tempoFmtBpm(ramp.bpmStart)}→${_tempoFmtBpm(ramp.bpmEnd)}` });
+            runBpm = ramp.bpmEnd;
+        } else if (held) {
+            out.push({ i, time: beats[i].time, measure, kind: 'hold', authored: true,
+                provenance: held.provenance, label: 'hold' });
+        } else if (rampSpanned.has(measure)) {
+            // Inside an authored ramp: the smooth per-bar drift is the POINT —
+            // suppress the derived chips it would otherwise spray.
+        } else if (bpm !== null && (runBpm === null || Math.abs(bpm - runBpm) > tol)) {
             out.push({ i, time: beats[i].time, measure, kind: 'tempo', label: `${_tempoFmtBpm(bpm)} BPM` });
             runBpm = bpm;
         }
+        const feelMk = feelByMeasure.get(measure);
+        if (feelMk) {
+            // P2-8: the feel chip — a declared pulse-tier change over a
+            // CONSTANT tempo (never a 2x tempo chip).
+            out.push({ i, time: beats[i].time, measure, kind: 'feel', authored: true,
+                provenance: feelMk.provenance,
+                label: feelMk.ratio === 0.5 ? 'half-time feel'
+                    : feelMk.ratio === 2 ? 'double-time feel' : 'straight time' });
+        }
+        const authoredMeter = meterByMeasure.get(measure);
         const meterChanged = runNum === null || num !== runNum || den !== runDen;
-        if (meterChanged) {
+        if (authoredMeter) {
+            // ONE authored chip (grouped label), even when nothing changed -
+            // the grouping IS the information.
+            const g = authoredMeter.grouping;
+            out.push({ i, time: beats[i].time, measure, kind: 'meter', authored: true,
+                provenance: authoredMeter.provenance,
+                label: (Array.isArray(g) && g.length) ? `${num}/${den} (${g.join('+')})` : `${num}/${den}` });
+            runNum = num; runDen = den;
+        } else if (meterChanged) {
             out.push({ i, time: beats[i].time, measure, kind: 'meter', label: `${num}/${den}` });
             runNum = num; runDen = den;
         }
@@ -2110,10 +2482,24 @@ function _tempoFmtBpm(bpm) {
 
 // editGen-memoized marker list for the ruler paint (recomputes only when an
 // edit bumps editGen or S.beats is reassigned by a grid command).
-let _markerCache = { gen: -1, beatsRef: null, value: [] };
+// The held-measure set every BPM consumer shares — memoized on the marks
+// array identity (S.tempoMarks is swapped immutably on every edit).
+let _holdSetCache = { marksRef: null, value: new Set() };
+export function _tempoHoldMeasures() {
+    if (_holdSetCache.marksRef !== S.tempoMarks) {
+        _holdSetCache = { marksRef: S.tempoMarks, value: _holdMeasuresPure(S.tempoMarks) };
+    }
+    return _holdSetCache.value;
+}
+
+let _markerCache = { gen: -1, beatsRef: null, marksRef: null, value: [] };
 export function _tempoMarkers() {
-    if (_markerCache.gen === editGen && _markerCache.beatsRef === S.beats) return _markerCache.value;
-    _markerCache = { gen: editGen, beatsRef: S.beats, value: _tempoMarkersPure(S.beats, 0.01) };
+    if (_markerCache.gen === editGen && _markerCache.beatsRef === S.beats
+        && _markerCache.marksRef === S.tempoMarks) return _markerCache.value;
+    _markerCache = {
+        gen: editGen, beatsRef: S.beats, marksRef: S.tempoMarks,
+        value: _tempoMarkersPure(S.beats, 0.01, S.tempoMarks),
+    };
     return _markerCache.value;
 }
 
@@ -2148,6 +2534,152 @@ export function _tempoSetMeasureBpmPure(beats, d, newBpm, minMeasure, round) {
         out[i].time = r(out[i].time + dt);
     }
     return out;
+}
+
+/* @pure:tempo-ramp:start */
+// P2-7 — the ramp curve family. u in [0,1] along the span's BEATS; presets,
+// never hand-tuned béziers. A rit releases (ease-out), an accel drives.
+function _rampCurveValPure(curve, u) {
+    if (curve === 'ease-in') return u * u;
+    if (curve === 'ease-out') return 1 - (1 - u) * (1 - u);
+    return u;   // linear
+}
+
+// Compile ONE authored ramp into beat times: the span [measureStart,
+// measureEnd] re-spaces its grid rows along the tempo curve (beat k lasts
+// 60/bpm(u_k) seconds, u across the span's beats), the span START stays
+// anchored, and everything AFTER the span shifts by the length delta — the
+// same trailing-shift rule as _tempoSetMeasureBpmPure. Equal-length output
+// (TempoMapCmd direction: beats move, notes reproject). Returns null when
+// the span isn't on this grid.
+function _rampCompilePure(beats, mark, round) {
+    if (!Array.isArray(beats) || beats.length < 2 || !mark) return null;
+    const r = typeof round === 'function' ? round : (v => Math.round(v * 1e6) / 1e6);
+    let sIdx = -1, eIdx = -1;
+    for (let i = 0; i < beats.length; i++) {
+        if (!beats[i] || beats[i].measure <= 0) continue;
+        if (beats[i].measure === mark.measure) sIdx = i;
+        if (beats[i].measure === mark.measureEnd) { eIdx = i; break; }
+    }
+    if (sIdx < 0 || eIdx <= sIdx) return null;
+    const nBeats = eIdx - sIdx;   // grid rows the ramp spans
+    if (nBeats < 2) return null;
+    const out = beats.map(b => ({ ...b }));
+    const startT = beats[sIdx].time;
+    const oldEnd = beats[eIdx].time;
+    let t = startT;
+    for (let k = 0; k < nBeats; k++) {
+        // The beat's tempo reads the curve at its MIDPOINT — a first-order
+        // integral good to well under a millisecond at beat granularity.
+        const u = (k + 0.5) / nBeats;
+        const bpm = mark.bpmStart + (mark.bpmEnd - mark.bpmStart) * _rampCurveValPure(mark.curve, u);
+        t += 60 / Math.max(1e-6, bpm);
+        if (sIdx + k + 1 <= eIdx) out[sIdx + k + 1].time = r(t);
+    }
+    const dt = out[eIdx].time - oldEnd;
+    for (let i = eIdx + 1; i < out.length; i++) out[i].time = r(out[i].time + dt);
+    return out;
+}
+
+// Review #279 item 6 — STRICT parse of the ramp prompt's '120 → 140'.
+// parseFloat accepted trailing garbage ('3000x' read as 3000) and the only
+// check was > 0, so a tempo past _markNormPure's 1000 BPM cap compiled the
+// grid and THEN had its mark refused. Each side must be one complete finite
+// number inside the same 0 < bpm <= 1000 bounds _markNormPure enforces;
+// anything else → null (and the caller changes nothing).
+function _rampPromptParsePure(raw) {
+    const parts = String(raw ?? '').split(/→|->/);
+    if (parts.length !== 2) return null;
+    const nums = parts.map(v => { const s = v.trim(); return s === '' ? NaN : Number(s); });
+    if (nums.some(n => !Number.isFinite(n) || n <= 0 || n > 1000)) return null;
+    return { bpmStart: nums[0], bpmEnd: nums[1] };
+}
+
+// Review #279 item 5 — the un-ramp: rebuild the BASELINE grid a previously
+// compiled ramp mark sits on, so a re-compile never stacks on already-ramped
+// beats. Exact inversion is impossible (the compile overwrote the pre-ramp
+// interior spacing), so the honest baseline HOLDS both span endpoints where
+// they are and re-spaces the interior uniformly. That choice is invisible to
+// a recompile over the same span — _rampCompilePure rebuilds the interior
+// purely from the start time + the mark, and measures its tail shift against
+// the HELD end time — which is exactly what makes a same-range reapply
+// bit-identical and a BPM edit equivalent to compiling the new mark against
+// the original grid. Only a PARTIAL overlap ever exposes the flattened
+// remainder (see editorRampRange's replace rule).
+function _rampNeutralizePure(beats, mark, round) {
+    if (!Array.isArray(beats) || beats.length < 2 || !mark) return beats;
+    const r = typeof round === 'function' ? round : (v => Math.round(v * 1e6) / 1e6);
+    let sIdx = -1, eIdx = -1;
+    for (let i = 0; i < beats.length; i++) {
+        if (!beats[i] || beats[i].measure <= 0) continue;
+        if (beats[i].measure === mark.measure) sIdx = i;
+        if (beats[i].measure === mark.measureEnd) { eIdx = i; break; }
+    }
+    if (sIdx < 0 || eIdx <= sIdx + 1) return beats;   // span off-grid, or no interior to flatten
+    const out = beats.map(b => ({ ...b }));
+    const t0 = beats[sIdx].time, span = beats[eIdx].time - t0, rows = eIdx - sIdx;
+    for (let k = 1; k < rows; k++) out[sIdx + k].time = r(t0 + span * k / rows);
+    return out;
+}
+/* @pure:tempo-ramp:end */
+export { _rampCompilePure, _rampCurveValPure, _rampNeutralizePure, _rampPromptParsePure };
+
+// P2-7 — fit-from-drift: given the observed onsets across a drifting span,
+// propose the LINEAR ramp that flattens the drift — the ghost that turns Map
+// Health's red rubato bar into authored-green instead of nagging forever.
+// Per-bar observed BPM comes from the nearest onset to each downbeat; the
+// least-squares line over (u_i, bpm_i) gives bpmStart/bpmEnd. Returns
+// { bpmStart, bpmEnd, curve: 'linear', residual, flatResidual } or null;
+// callers offer it only when residual beats flatResidual.
+export function _rampFitFromDriftPure(beats, onsetTimes, sIdx, eIdx, win) {
+    if (!Array.isArray(beats) || !Array.isArray(onsetTimes) || !onsetTimes.length) return null;
+    const downs = [];
+    for (let i = sIdx; i <= eIdx && i < beats.length; i++) {
+        if (beats[i] && beats[i].measure > 0) downs.push(i);
+    }
+    if (downs.length < 3) return null;
+    const w = win > 0 ? win : 0.35;
+    const nearest = (t) => {
+        let lo = 0, hi = onsetTimes.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (onsetTimes[mid] < t) lo = mid + 1; else hi = mid; }
+        let best = null;
+        for (const c of [lo - 1, lo]) {
+            if (c >= 0 && c < onsetTimes.length && Math.abs(onsetTimes[c] - t) <= w) {
+                if (best === null || Math.abs(onsetTimes[c] - t) < Math.abs(best - t)) best = onsetTimes[c];
+            }
+        }
+        return best;
+    };
+    const pts = [];   // [u, observed bpm] per bar with evidence at BOTH ends
+    for (let k = 0; k + 1 < downs.length; k++) {
+        const a = nearest(beats[downs[k]].time);
+        const b = nearest(beats[downs[k + 1]].time);
+        if (a === null || b === null || !(b > a)) continue;
+        const beatsInBar = downs[k + 1] - downs[k];
+        pts.push([(k + 0.5) / (downs.length - 1), (beatsInBar * 60) / (b - a)]);
+    }
+    if (pts.length < 3) return null;
+    let su = 0, sb = 0, suu = 0, sub = 0;
+    for (const [u, b] of pts) { su += u; sb += b; suu += u * u; sub += u * b; }
+    const n = pts.length;
+    const denom = n * suu - su * su;
+    if (!(Math.abs(denom) > 1e-12)) return null;
+    const slope = (n * sub - su * sb) / denom;
+    const icept = (sb - slope * su) / n;
+    const bpmStart = icept;
+    const bpmEnd = icept + slope;
+    if (!(bpmStart > 0 && bpmEnd > 0)) return null;
+    const flat = sb / n;
+    let residual = 0, flatResidual = 0;
+    for (const [u, b] of pts) {
+        residual += (b - (icept + slope * u)) ** 2;
+        flatResidual += (b - flat) ** 2;
+    }
+    return {
+        bpmStart: Math.round(bpmStart * 10) / 10,
+        bpmEnd: Math.round(bpmEnd * 10) / 10,
+        curve: 'linear', residual, flatResidual,
+    };
 }
 
 // Rebuild a beat grid as a UNIFORM constant-BPM grid: keep every beat's measure
@@ -3045,6 +3577,9 @@ export class TempoMapCmd {
         this.oldBeats = oldBeats.map(b => ({ ...b }));
         this.newBeats = newBeats.map(b => ({ ...b }));
         this.label = label || 'tempo';
+        // Authored marks (P2-7): a ramp edit carries {before, after} mark
+        // snapshots so ONE undo restores marks + compiled grid together.
+        this.marks = null;
         // The beat grid is SONG-level state (matching TempoGridCmd) — it opts out
         // of the read-only-roll lock so Sync / BPM-rescale / Offset (all fired
         // from the normal toolbar, potentially with a fretted part shown
@@ -3070,6 +3605,7 @@ export class TempoMapCmd {
                 endKind]);
         });
         S.beats = this.newBeats.map(b => ({ ...b }));
+        if (this.marks) S.tempoMarks = this.marks.after;
         _reprojectAll(S.beats);
         // A bar/grid loop keeps its beat coordinates and re-derives its seconds
         // on the new grid, so it stays on its bars; a free loop keeps its
@@ -3081,6 +3617,7 @@ export class TempoMapCmd {
     }
     rollback() {
         S.beats = this.oldBeats.map(b => ({ ...b }));
+        if (this.marks) S.tempoMarks = this.marks.before;
         // Restore the EXACT pre-edit seconds captured in exec rather than
         // reprojecting — reproject would _r3-round and quantize sub-ms placement.
         // Beat is left untouched: a flex preserves beat indexing, so beats are
