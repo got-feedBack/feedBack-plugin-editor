@@ -177,6 +177,21 @@ function _render() {
 export function _tabViewPing() {
     const mount = $mount();
     if (!mount) return;
+    // Track-switch guard: the entry toggle refuses keys/drums, but switching
+    // TO a non-fretted track while the lens is already on bypasses that guard
+    // (editorSelectArrangement doesn't clear the flag), and the view-cycle's
+    // own keys short-circuit returns before it can un-toggle either — leaving
+    // the user stuck engraving `undefined.NaN.*` for a track that has no tab.
+    // The draw pass is the single enforcement point: drop the lens here so the
+    // track's normal view (the roll) takes over on the redraw.
+    const arr = S.arrangements && S.arrangements[S.currentArr];
+    if (!arr || KEYS_PATTERN.test(arr.name || '') || /^drums/i.test(arr.name || '')) {
+        S.tabViewMode = false;
+        _tabViewHideIfShown();
+        setStatus('Tab view is for fretted tracks — switched back to this track’s normal view.');
+        host.draw();
+        return;
+    }
     if (mount.classList.contains('hidden')) mount.classList.remove('hidden');
     if (_renderedKey === _keyNow()) return;
     clearTimeout(_debounce);
