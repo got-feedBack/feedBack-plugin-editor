@@ -1,7 +1,6 @@
-'use strict';
 /*
- * Tests for the stem mixer math (@pure:stem-mixer in src/audio.js) — the
- * per-stem gain model behind the mixer panel's Stems section.
+ * Tests for the stem mixer math in src/audio.js — the per-stem gain model
+ * behind the mixer panel's Stems section.
  *
  * Pinned here: the strip-state defaults/clamps over S.stemMix, the DAW
  * audibility rule folded into per-stem GAINS (mute wins; any solo isolates;
@@ -10,30 +9,15 @@
  * source-path predicate (stems sound only when active AND decoded AND not
  * on the pitch-preserving slow path).
  *
- * Run: node tests/stem_mixer.test.js
+ * Run: node --test tests/stem_mixer.test.mjs
  */
-const fs = require('fs');
-const path = require('path');
-const assert = require('assert');
+import assert from 'node:assert';
 
-const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'audio.js'), 'utf8');
+globalThis.document = globalThis.document || { getElementById: () => null, addEventListener: () => {}, activeElement: null };
+globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setItem: () => {} };
+globalThis.window = globalThis.window || globalThis;
 
-function extract(name) {
-    const re = new RegExp(
-        '/\\* @pure:' + name + ':start \\*/[\\s\\S]*?/\\* @pure:' + name + ':end \\*/');
-    const m = src.match(re);
-    if (!m) {
-        console.error(`FAIL: @pure:${name} block not found in src/audio.js`);
-        process.exit(1);
-    }
-    return m[0].replace(/^export\s+/gm, '');
-}
-
-const P = new Function(
-    '"use strict";' + extract('stem-mixer')
-    + '\nreturn { _stemStripStatePure, _stemAnySoloPure, _stemGainsPure,'
-    + ' _stemMixActivePure, _stemPlaybackWantedPure };'
-)();
+const P = await import('../src/audio.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {

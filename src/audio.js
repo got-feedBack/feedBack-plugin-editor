@@ -1290,14 +1290,18 @@ export function _auditionPitch(midi) {
 }
 /* @pure:audio-bus:end */
 
-/* @pure:stem-mixer:start */
-// Per-stem mix math for the mixer panel's Stems section. Self-contained
-// (the test harness extracts this block verbatim): the DAW audibility rule
-// is deliberately the same one mixer-panel.js applies to parts — mute always
-// wins; any solo anywhere means only soloed stems sound — but stems are their
-// own map (S.stemMix, stem id → { vol, mute, solo }), so a stem solo never
-// gates the part strips, the buses, or the guide claps.
-function _stemStripStatePure(stemMix, id) {
+// Per-stem mix math for the mixer panel's Stems section (exported for
+// tests/stem_mixer.test.mjs): the DAW audibility rule is deliberately the
+// same one mixer-panel.js applies to parts — mute always wins; any solo
+// anywhere means only soloed stems sound — but stems are their own map
+// (S.stemMix, stem id → { vol, mute, solo }), so a stem solo never gates
+// the part strips, the buses, or the guide claps.
+
+/**
+ * A stem's strip state, defaulted and clamped: an absent entry is an audible
+ * stem at full volume, and a corrupted volume can never boost past 100.
+ */
+export function _stemStripStatePure(stemMix, id) {
     const m = (stemMix && typeof stemMix === 'object') ? stemMix[id] : null;
     const v = m ? Number(m.vol) : NaN;
     return {
@@ -1306,12 +1310,18 @@ function _stemStripStatePure(stemMix, id) {
         solo: !!(m && m.solo),
     };
 }
-function _stemAnySoloPure(stemMix, ids) {
+/**
+ * Whether any of THIS song's stems is soloed — walks the song's ids, not the
+ * map's keys, so a stale entry from another song's stem set is inert.
+ */
+export function _stemAnySoloPure(stemMix, ids) {
     return (ids || []).some(id => _stemStripStatePure(stemMix, id).solo);
 }
-// Gain per stem id (0..1) with the DAW rule applied — this is what the live
-// GainNodes are ramped to, so it IS the mixer.
-function _stemGainsPure(stemMix, ids) {
+/**
+ * Gain per stem id (0..1) with the DAW rule applied — this is what the live
+ * GainNodes are ramped to, so it IS the mixer.
+ */
+export function _stemGainsPure(stemMix, ids) {
     const anySolo = _stemAnySoloPure(stemMix, ids);
     const gains = {};
     for (const id of (ids || [])) {
@@ -1321,24 +1331,27 @@ function _stemGainsPure(stemMix, ids) {
     }
     return gains;
 }
-// "Has the user asked for anything but the artist's mixdown?" Unity (no
-// mute, no solo, every vol at 100) keeps the combined mix playing — a
-// sum-of-stems is never bit-identical to the shipped mixdown, so untouched
-// strips must not change what the user hears.
-function _stemMixActivePure(stemMix, ids) {
+/**
+ * "Has the user asked for anything but the artist's mixdown?" Unity (no
+ * mute, no solo, every vol at 100) keeps the combined mix playing — a
+ * sum-of-stems is never bit-identical to the shipped mixdown, so untouched
+ * strips must not change what the user hears.
+ */
+export function _stemMixActivePure(stemMix, ids) {
     return (ids || []).some(id => {
         const st = _stemStripStatePure(stemMix, id);
         return st.mute || st.solo || st.vol !== 100;
     });
 }
-// The source-path decision for _startAudioSourceAtCursor: stems sound only
-// when the mix is non-unity AND the buffers are decoded AND we're not on the
-// pitch-preserving slow path (N media elements can't be sample-synced, so
-// audition < 100% always rides the combined mix).
-function _stemPlaybackWantedPure(active, ready, slow) {
+/**
+ * The source-path decision for _startAudioSourceAtCursor: stems sound only
+ * when the mix is non-unity AND the buffers are decoded AND we're not on the
+ * pitch-preserving slow path (N media elements can't be sample-synced, so
+ * audition < 100% always rides the combined mix).
+ */
+export function _stemPlaybackWantedPure(active, ready, slow) {
     return !!active && !!ready && !slow;
 }
-/* @pure:stem-mixer:end */
 
 // ── Stem playback engine ─────────────────────────────────────────────
 // The per-instrument stems the /load payload advertises (S.stems, ≥2 or
@@ -1356,10 +1369,12 @@ let _stemLoadGeneration = 0;      // song-switch guard, the cancelAudioLoad idio
 let _stemLoadController = null;
 let _stemPathSounding = false;    // which source path the last (re)start took
 
+/** The current song's stem ids, straight off the /load payload's list. */
 function _stemIds() {
     return (Array.isArray(S.stems) ? S.stems : []).map(s => s && s.id).filter(Boolean);
 }
 
+/** _stemPlaybackWantedPure over the LIVE session state, given the slow flag. */
 function _stemPlaybackWanted(slow) {
     return _stemPlaybackWantedPure(
         _stemMixActivePure(S.stemMix, _stemIds()),
@@ -1367,6 +1382,11 @@ function _stemPlaybackWanted(slow) {
         slow);
 }
 
+/**
+ * Build (or extend) the stem graph lazily: one GainNode per decoded stem
+ * into one stem bus into _refGain, so the Recording fader and first-play
+ * fade govern the stem mix exactly as they govern the combined source.
+ */
 function _ensureStemGraph() {
     const refGain = _ensureRefGain();
     if (!refGain || !_stemBuffers) return null;
@@ -1385,9 +1405,11 @@ function _ensureStemGraph() {
     return _stemGraph;
 }
 
-// Ramp (or, before sources start, snap) every live stem gain to the current
-// mix — the ~20 ms smoothing is the same rule as every other fader move, so
-// a mute/solo/volume gesture is never a pop and never restarts playback.
+/**
+ * Ramp (or, before sources start, snap) every live stem gain to the current
+ * mix — the ~20 ms smoothing is the same rule as every other fader move, so
+ * a mute/solo/volume gesture is never a pop and never restarts playback.
+ */
 function _stemApplyGains(immediate) {
     if (!_stemGraph || !S.audioCtx) return;
     const gains = _stemGainsPure(S.stemMix, _stemIds());
@@ -1400,22 +1422,27 @@ function _stemApplyGains(immediate) {
     }
 }
 
+/** Stop and drop every live stem BufferSource (idempotent, swallows races). */
 function _stopStemSources() {
     for (const src of _stemSources) { try { src.stop(); } catch (_) { /* already stopped */ } }
     _stemSources = [];
 }
 
-// Every "kill the sounding source" site goes through here so the stem path
-// can never keep ringing under a seek / stop / teardown that only knew about
-// the single combined source.
+/**
+ * Every "kill the sounding source" site goes through here so the stem path
+ * can never keep ringing under a seek / stop / teardown that only knew about
+ * the single combined source.
+ */
 function _stopAllAudioSources() {
     if (S.audioSource) { try { S.audioSource.stop(); } catch (_) { /* already stopped */ } S.audioSource = null; }
     _stopStemSources();
 }
 
-// Start one sample-synced source per decoded stem: identical (when, offset)
-// args on the same context clock ⇒ the stems sum phase-aligned. Gains are
-// seeded immediately (not ramped) so a pre-set mute can't blip at start.
+/**
+ * Start one sample-synced source per decoded stem: identical (when, offset)
+ * args on the same context clock ⇒ the stems sum phase-aligned. Gains are
+ * seeded immediately (not ramped) so a pre-set mute can't blip at start.
+ */
 function _stemStartSourcesAt(when, offset) {
     const graph = _ensureStemGraph();
     if (!graph) return false;
@@ -1431,9 +1458,11 @@ function _stemStartSourcesAt(when, offset) {
     return _stemSources.length > 0;
 }
 
-// Fetch + decode every stem in parallel, guarded by the generation counter
-// so a song switch mid-decode can only ever be a no-op. Fewer than 2 decoded
-// stems isn't a mixer — mark the feature failed and stay on the combined mix.
+/**
+ * Fetch + decode every stem in parallel, guarded by the generation counter
+ * so a song switch mid-decode can only ever be a no-op. Fewer than 2 decoded
+ * stems isn't a mixer — mark the feature failed and stay on the combined mix.
+ */
 async function _stemLoadAll() {
     _ensureAudioCtx();
     if (!S.audioCtx) { _stemLoadState = 'failed'; host.stemUiChanged(); return; }
@@ -1474,9 +1503,11 @@ async function _stemLoadAll() {
     host.stemUiChanged();
 }
 
-// The mixer panel's one entry point (via host.stemMixChanged): kick the lazy
-// load on the first gesture, ramp live gains while the stem path sounds, and
-// restart onto/off the stem path when the unity boundary is crossed mid-play.
+/**
+ * The mixer panel's one entry point (via host.stemMixChanged): kick the lazy
+ * load on the first gesture, ramp live gains while the stem path sounds, and
+ * restart onto/off the stem path when the unity boundary is crossed mid-play.
+ */
 export function editorStemMixChanged() {
     const ids = _stemIds();
     if (ids.length < 2) return;
@@ -1492,8 +1523,10 @@ export function editorStemMixChanged() {
     else if (_stemPathSounding) _stemApplyGains(false);
 }
 
-// What the panel's strips reflect (via host.stemUiState): loading / failed
-// notes and the audition-slowdown bypass.
+/**
+ * What the panel's strips reflect (via host.stemUiState): loading / failed
+ * notes and the audition-slowdown bypass.
+ */
 export function _stemUiState() {
     return {
         loadState: _stemLoadState,
@@ -1502,9 +1535,11 @@ export function _stemUiState() {
     };
 }
 
-// Song switch / replace-audio / screen teardown: abort any in-flight decode,
-// silence the sources and drop the graph — its gain nodes are keyed by the
-// OLD song's stem ids. Cheap and idempotent, the _resetAuditionForNewSong twin.
+/**
+ * Song switch / replace-audio / screen teardown: abort any in-flight decode,
+ * silence the sources and drop the graph — its gain nodes are keyed by the
+ * OLD song's stem ids. Cheap and idempotent, the _resetAuditionForNewSong twin.
+ */
 export function _stemResetForNewSong() {
     _stemLoadGeneration++;
     if (_stemLoadController) {

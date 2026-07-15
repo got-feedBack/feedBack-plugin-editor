@@ -247,6 +247,9 @@ t('_mixerStemsPure: <2 stems is not a mixer; labels come from ids, capitalized',
     assert.deepStrictEqual(_mixerStemsPure(null), []);
     assert.deepStrictEqual(_mixerStemsPure([]), []);
     assert.deepStrictEqual(_mixerStemsPure([{ id: 'guitar', url: '/g.ogg' }]), []);
+    // The <2 gate counts VALID stems — two raw entries with one junk entry
+    // must not render a lone unusable strip.
+    assert.deepStrictEqual(_mixerStemsPure([{ id: 'guitar', url: '/g.ogg' }, null]), []);
     assert.deepStrictEqual(_mixerStemsPure([{ id: 'guitar', url: '/g' }, { id: 'bass', url: '/b' }]), [
         { key: 'guitar', name: 'Guitar' },
         { key: 'bass', name: 'Bass' },

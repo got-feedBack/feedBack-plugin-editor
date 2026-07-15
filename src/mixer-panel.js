@@ -91,23 +91,27 @@ export function _mixerClapStatePure(partMix, drumEditMode, currentArr) {
 export function _mixerOpenFromStoredPure(raw) {
     return raw === '1';
 }
-// One strip per audio stem, from the /load payload's [{id, url}] list. The
-// Stems strips mix the RECORDING itself (per-stem gain nodes in src/audio.js)
-// — a separate axis from the Tracks strips, which shape guide voices per
-// chart part. Fewer than 2 stems is not a mixer: the section hides entirely.
+/**
+ * One strip per audio stem, from the /load payload's [{id, url}] list. The
+ * Stems strips mix the RECORDING itself (per-stem gain nodes in src/audio.js)
+ * — a separate axis from the Tracks strips, which shape guide voices per
+ * chart part. Fewer than 2 VALID stems is not a mixer: the section hides.
+ */
 export function _mixerStemsPure(stems) {
     const list = Array.isArray(stems) ? stems : [];
-    if (list.length < 2) return [];
-    return list
-        .filter(s => s && typeof s.id === 'string' && s.id)
+    const valid = list.filter(s => s && typeof s.id === 'string' && s.id);
+    if (valid.length < 2) return [];
+    return valid
         .map(s => ({
             key: s.id,
             name: s.id.charAt(0).toUpperCase() + s.id.slice(1),
         }));
 }
-// The Stems section's status note, from the engine's UI state: empty at
-// unity-idle and during normal stem playback; otherwise the one line that
-// explains why the ear is hearing the combined mix instead.
+/**
+ * The Stems section's status note, from the engine's UI state: empty at
+ * unity-idle and during normal stem playback; otherwise the one line that
+ * explains why the ear is hearing the combined mix instead.
+ */
 export function _mixerStemNotePure(ui) {
     const u = ui || {};
     if (u.slow) return 'Audition below 100% — stems bypassed, the combined mix plays.';
@@ -135,11 +139,13 @@ function _msBtn(key, act, pressed, label, title) {
         + ` class="editor-mix-ms" title="${title}">${label}</button>`;
 }
 
-// Stem strips use their own data attributes (data-stem-part / data-stem-act):
-// a stem id like 'drums' is also a valid PART key, so sharing data-mix-* would
-// cross the two state maps in the delegated handlers.
+/**
+ * Stem strips use their own data attributes (data-stem-part / data-stem-act):
+ * a stem id like 'drums' is also a valid PART key, so sharing data-mix-* would
+ * cross the two state maps in the delegated handlers.
+ */
 function _stemMsBtn(key, act, pressed, label, title) {
-    return `<button data-stem-part="${key}" data-stem-act="${act}" aria-pressed="${pressed}"`
+    return `<button data-stem-part="${_editorEscHtml(key)}" data-stem-act="${act}" aria-pressed="${pressed}"`
         + ` class="editor-mix-ms" title="${title}">${label}</button>`;
 }
 
@@ -166,10 +172,12 @@ function _renderParts(container) {
     }).join('');
 }
 
-// The Stems section: strips over S.stemMix (the same DAW rule pures as the
-// part strips — they're generic over any {key → {vol,mute,solo}} map), plus
-// the engine's status note. Grayed while the audition slow path bypasses
-// stems so the controls read as "armed but not in the signal right now".
+/**
+ * The Stems section: strips over S.stemMix (the same DAW rule pures as the
+ * part strips — they're generic over any {key → {vol,mute,solo}} map), plus
+ * the engine's status note. Grayed while the audition slow path bypasses
+ * stems so the controls read as "armed but not in the signal right now".
+ */
 function _renderStems(head, container) {
     const stems = _mixerStemsPure(S.stems);
     const none = !stems.length;
@@ -182,17 +190,20 @@ function _renderStems(head, container) {
     container.innerHTML = stems.map(p => {
         const st = _mixerPartStatePure(S.stemMix, p.key);
         const name = _editorEscHtml(p.name);
+        // Stem ids come from the pack's /load payload — escape them wherever
+        // they land in markup (part keys are internal and never need this).
+        const attrKey = _editorEscHtml(p.key);
         const gone = ui.loadState === 'ready' && ui.failedIds.includes(p.key);
-        return `<div class="space-y-1${gone ? ' opacity-40' : ''}" data-stem-row="${p.key}">`
+        return `<div class="space-y-1${gone ? ' opacity-40' : ''}" data-stem-row="${attrKey}">`
             + `<div class="flex items-center gap-1.5">`
             + `<span class="flex-1 truncate text-gray-300" title="${name}">${name}</span>`
             + _stemMsBtn(p.key, 'mute', st.mute, 'M', 'Mute this stem')
             + _stemMsBtn(p.key, 'solo', st.solo, 'S', 'Solo this stem — the other stems go silent; guide voices are unaffected')
             + `</div>`
             + `<div class="flex items-center gap-2">`
-            + `<input type="range" min="0" max="100" value="${st.vol}" data-stem-part="${p.key}" data-stem-act="vol"`
+            + `<input type="range" min="0" max="100" value="${st.vol}" data-stem-part="${attrKey}" data-stem-act="vol"`
             + ` aria-label="${name} stem volume percent" class="flex-1 accent-accent">`
-            + `<span data-stem-val="${p.key}" class="w-9 text-right font-mono text-gray-400">${st.vol}%</span>`
+            + `<span data-stem-val class="w-9 text-right font-mono text-gray-400">${st.vol}%</span>`
             + `</div></div>`;
     }).join('')
         + (note ? `<p class="text-[10px] text-gray-500">${_editorEscHtml(note)}</p>` : '');
@@ -232,8 +243,10 @@ function _setPart(key, patch) {
     S.partMix[key] = { ..._mixerPartStatePure(S.partMix, key), ...patch };
 }
 
-// Twin of _setPart over the stem map — every write is followed by
-// host.stemMixChanged() so the engine can lazy-load / ramp / re-path.
+/**
+ * Twin of _setPart over the stem map — every write is followed by
+ * host.stemMixChanged() so the engine can lazy-load / ramp / re-path.
+ */
 function _setStem(key, patch) {
     if (!S.stemMix || typeof S.stemMix !== 'object') S.stemMix = {};
     S.stemMix[key] = { ..._mixerPartStatePure(S.stemMix, key), ...patch };
@@ -292,7 +305,9 @@ function _wire(panel) {
         if (el.getAttribute('data-stem-act') !== 'vol') return;
         const key = el.getAttribute('data-stem-part');
         _setStem(key, { vol: Number(el.value) });
-        const val = panel.querySelector(`[data-stem-val="${key}"]`);
+        // Row-scoped lookup — a stem id is untrusted /load data, so it never
+        // goes through a selector string (metacharacters would throw).
+        const val = el.closest?.('[data-stem-row]')?.querySelector('[data-stem-val]');
         if (val) val.textContent = _mixerPartStatePure(S.stemMix, key).vol + '%';
     });
 }
