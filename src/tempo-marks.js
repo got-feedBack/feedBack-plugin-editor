@@ -124,11 +124,24 @@ function _holdMeasuresPure(marks) {
 // SURVIVING downbeats; a mark whose bar was deleted is dropped (its bar no
 // longer exists — an honest drop, never a stale key pointing at the wrong
 // bar). Same policy as S.tempoSelMulti, but remapped instead of cleared.
+// A ramp is a RANGE — both endpoints follow the renumber ATOMICALLY
+// (review #279 item 4): remapping only `measure` left `measureEnd` on the
+// pre-edit numbering, silently stretching or shearing the span. A ramp
+// whose end bar was deleted, or whose remapped span collapses
+// (measureEnd <= measure), drops whole — a half-valid range is never
+// emitted.
 function _marksRemapPure(marks, oldToNew) {
     const out = [];
     for (const m of (marks || [])) {
         const nm = oldToNew instanceof Map ? oldToNew.get(m.measure) : undefined;
-        if (Number.isInteger(nm) && nm >= 1) out.push({ ...m, measure: nm });
+        if (!Number.isInteger(nm) || nm < 1) continue;
+        if (m.kind === 'ramp') {
+            const ne = oldToNew.get(m.measureEnd);
+            if (!Number.isInteger(ne) || ne <= nm) continue;
+            out.push({ ...m, measure: nm, measureEnd: ne });
+        } else {
+            out.push({ ...m, measure: nm });
+        }
     }
     return out.sort((a, b) => (a.measure - b.measure) || (a.kind < b.kind ? -1 : 1));
 }

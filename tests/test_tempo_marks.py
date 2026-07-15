@@ -202,6 +202,45 @@ def test_exact_int_unit():
         assert routes._exact_int(bad) is None, repr(bad)
 
 
+def test_coerce_ramp_measure_end_exact_int():
+    """Item 7 (review #279): measureEnd was parsed with a bare int() — 8.9
+    truncated to 8 (silently moving the ramp's end), "8" parsed (strings are
+    corruption on this wire), and inf crashed the load (OverflowError isn't
+    a ValueError). Same _exact_int rule as every other integer mark field."""
+    base = {"measure": 4, "kind": "ramp", "bpmStart": 120, "bpmEnd": 140}
+    assert routes._coerce_tempo_marks([{**base, "measureEnd": 8.9}]) == []
+    assert routes._coerce_tempo_marks([{**base, "measureEnd": True}]) == []
+    assert routes._coerce_tempo_marks([{**base, "measureEnd": "8"}]) == []
+    assert routes._coerce_tempo_marks([{**base, "measureEnd": None}]) == []
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert routes._coerce_tempo_marks([{**base, "measureEnd": bad}]) == []
+    # measureEnd <= measure is not a span — drops, never a backwards range.
+    assert routes._coerce_tempo_marks([{**base, "measureEnd": 4}]) == []
+    assert routes._coerce_tempo_marks([{**base, "measureEnd": 3}]) == []
+    # An INTEGRAL float still counts (JSON encoders float-ize whole numbers)
+    # and normalizes back to int.
+    (m,) = routes._coerce_tempo_marks([{**base, "measureEnd": 8.0}])
+    assert m["measureEnd"] == 8
+    assert isinstance(m["measureEnd"], int) and not isinstance(m["measureEnd"], bool)
+
+
+def test_save_boundary_rejects_malformed_ramps():
+    """Malformed ramps drop identically at the request (_parse) and manifest
+    load (_coerce) boundaries; valid neighbors survive."""
+    wire = [
+        {"measure": 2, "kind": "ramp", "measureEnd": 6.9, "bpmStart": 120, "bpmEnd": 140},
+        {"measure": 3, "kind": "ramp", "measureEnd": "7", "bpmStart": 120, "bpmEnd": 140},
+        {"measure": 4, "kind": "ramp", "measureEnd": float("inf"), "bpmStart": 120, "bpmEnd": 140},
+        {"measure": 5, "kind": "ramp", "measureEnd": True, "bpmStart": 120, "bpmEnd": 140},
+        {"measure": 6, "kind": "ramp", "measureEnd": 9, "bpmStart": 120, "bpmEnd": 140},  # survivor
+    ]
+    parsed = routes._parse_tempo_marks({"tempo_marks": wire})
+    assert [(m["measure"], m["measureEnd"]) for m in parsed] == [(6, 9)]
+    manifest = {}
+    routes._apply_tempo_marks(manifest, parsed)
+    assert routes._coerce_tempo_marks(manifest["editor_tempo_marks"]) == parsed
+
+
 def test_round_trip_save_shape_is_load_shape():
     """What _apply writes, _coerce reads back byte-identically (the manifest
     round-trip a save -> reopen performs), including stable ordering."""

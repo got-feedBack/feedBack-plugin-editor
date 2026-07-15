@@ -188,13 +188,17 @@ def _coerce_tempo_marks(value):
                 continue
             entry["ratio"] = ratio
         else:  # ramp (P2-7): one authored accel/rit over [measure, measureEnd]
+            # measureEnd rides the same exact-integer rule as `measure`
+            # (review #279 item 7): a bare int() truncated 8.9 to 8 (silently
+            # moving the ramp's end), accepted bool/strings, and crashed on
+            # ±inf (OverflowError is not a ValueError).
+            measure_end = _exact_int(m.get("measureEnd"))
             try:
-                measure_end = int(m.get("measureEnd"))
                 bpm_start = float(m.get("bpmStart"))
                 bpm_end = float(m.get("bpmEnd"))
             except (TypeError, ValueError):
                 continue
-            if measure_end <= measure:
+            if measure_end is None or measure_end <= measure:
                 continue
             if not (math.isfinite(bpm_start) and 0 < bpm_start <= 1000):
                 continue

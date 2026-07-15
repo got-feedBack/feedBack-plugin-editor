@@ -38,8 +38,9 @@ import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S, editGen } from './state.js';
 import {
-    _feelRangesLive, _groupingParsePure, _holdMeasuresPure, _marksAtPure,
-    _marksMeterReconcilePure, _marksRemapByTimePure, _marksRemapPure, _marksUpsertPure,
+    _feelRangesLive, _groupingParsePure, _holdMeasuresPure, _markNormPure, _marksAtPure,
+    _marksMeterReconcilePure, _marksRemapByTimePure, _marksRemapPure, _marksRemovePure,
+    _marksUpsertPure,
     editorSetFeelFromBar, editorSetMeterGrouping, editorToggleHoldBar,
 } from './tempo-marks.js';
 import {
@@ -850,25 +851,58 @@ export async function editorRampRange(prefill) {
             placeholder: '120 → 140',
         });
         if (raw === null) return true;
-        const m = String(raw).split(/→|->/).map(v => parseFloat(v));
-        if (m.length !== 2 || !(m[0] > 0) || !(m[1] > 0)) {
-            setStatus('Enter two tempos like "120 → 140" (or "120 -> 140").');
+        const parsed = _rampPromptParsePure(raw);
+        if (!parsed) {
+            setStatus('Enter two tempos like "120 → 140" (or "120 -> 140"), each between 1 and 1000 BPM.');
             return true;
         }
-        [bpmStart, bpmEnd] = m;
+        ({ bpmStart, bpmEnd } = parsed);
         curve = bpmEnd < bpmStart ? 'ease-out' : 'linear';
     }
-    const mark = { measure: mStart, kind: 'ramp', measureEnd: mEnd, bpmStart, bpmEnd, curve, provenance };
-    const compiled = _rampCompilePure(S.beats, mark);
+    // Validate + normalize BEFORE any compile or history mutation (review
+    // #279 item 6): the normalized mark is what gets compiled AND stored, so
+    // the grid and the persisted ramp can never disagree — the old order
+    // compiled first and let _marksUpsertPure refuse the mark after, leaving
+    // warped beats with no ramp to document them. Invalid input (a bad
+    // prefill from fit-from-drift included) changes nothing.
+    const mark = _markNormPure({ measure: mStart, kind: 'ramp', measureEnd: mEnd, bpmStart, bpmEnd, curve, provenance });
+    if (!mark) {
+        setStatus('Ramp tempos must be between 1 and 1000 BPM — nothing was changed.');
+        return true;
+    }
+    // REPLACE-from-baseline (review #279 item 5). The rule: a new ramp first
+    // strips EVERY existing ramp mark whose span overlaps the new one — the
+    // old mark is removed and its whole span neutralized back to baseline
+    // (_rampNeutralizePure) — then the new mark compiles against that
+    // baseline. Consequences, all deliberate:
+    //   • reapplying the same ramp is IDEMPOTENT (bit-identical beats — a
+    //     compile never stacks on its own output);
+    //   • editing a ramp's BPMs/curve recompiles from the same baseline it
+    //     was first compiled against;
+    //   • a partial overlap replaces the old ramp's AUTHORITY entirely: its
+    //     non-overlapped remainder flattens to steady (leaving its warp in
+    //     the grid with no mark to document it would be exactly item 6's
+    //     unmarked-mutation bug). Ramps that merely touch at a shared
+    //     endpoint bar don't overlap — their compiled rows are disjoint.
+    // ONE TempoMapCmd still carries marks + grid, so a single undo restores
+    // any replaced ramp and its timing together.
+    let baseline = S.beats;
+    let marksAfter = S.tempoMarks || [];
+    for (const om of (S.tempoMarks || [])) {
+        if (om.kind !== 'ramp' || om.measureEnd <= mStart || om.measure >= mEnd) continue;
+        baseline = _rampNeutralizePure(baseline, om);
+        marksAfter = _marksRemovePure(marksAfter, om.measure, om.kind);
+    }
+    const compiled = _rampCompilePure(baseline, mark);
     if (!compiled) { setStatus('Could not compile the ramp over this range.'); return true; }
     const finalBeats = _respaceWithLocksPure(S.beats, compiled);
-    const cmd = new TempoMapCmd(S.beats, finalBeats, bpmEnd < bpmStart ? 'ritardando' : 'accelerando');
-    cmd.marks = { before: S.tempoMarks || [], after: _marksUpsertPure(S.tempoMarks, mark) };
+    const cmd = new TempoMapCmd(S.beats, finalBeats, mark.bpmEnd < mark.bpmStart ? 'ritardando' : 'accelerando');
+    cmd.marks = { before: S.tempoMarks || [], after: _marksUpsertPure(marksAfter, mark) };
     S.history.exec(cmd);
     if (S.tempoSelMulti) S.tempoSelMulti.clear();
     host.draw();
     host.updateStatus();
-    setStatus(`${bpmEnd < bpmStart ? 'Ritardando' : 'Accelerando'} ${bpmStart}→${bpmEnd} BPM over bars ${mStart}–${mEnd} (${curve}) — one undo restores.`);
+    setStatus(`${mark.bpmEnd < mark.bpmStart ? 'Ritardando' : 'Accelerando'} ${mark.bpmStart}→${mark.bpmEnd} BPM over bars ${mStart}–${mEnd} (${mark.curve}) — one undo restores.`);
     return true;
 }
 
@@ -2546,8 +2580,49 @@ function _rampCompilePure(beats, mark, round) {
     for (let i = eIdx + 1; i < out.length; i++) out[i].time = r(out[i].time + dt);
     return out;
 }
+
+// Review #279 item 6 — STRICT parse of the ramp prompt's '120 → 140'.
+// parseFloat accepted trailing garbage ('3000x' read as 3000) and the only
+// check was > 0, so a tempo past _markNormPure's 1000 BPM cap compiled the
+// grid and THEN had its mark refused. Each side must be one complete finite
+// number inside the same 0 < bpm <= 1000 bounds _markNormPure enforces;
+// anything else → null (and the caller changes nothing).
+function _rampPromptParsePure(raw) {
+    const parts = String(raw ?? '').split(/→|->/);
+    if (parts.length !== 2) return null;
+    const nums = parts.map(v => { const s = v.trim(); return s === '' ? NaN : Number(s); });
+    if (nums.some(n => !Number.isFinite(n) || n <= 0 || n > 1000)) return null;
+    return { bpmStart: nums[0], bpmEnd: nums[1] };
+}
+
+// Review #279 item 5 — the un-ramp: rebuild the BASELINE grid a previously
+// compiled ramp mark sits on, so a re-compile never stacks on already-ramped
+// beats. Exact inversion is impossible (the compile overwrote the pre-ramp
+// interior spacing), so the honest baseline HOLDS both span endpoints where
+// they are and re-spaces the interior uniformly. That choice is invisible to
+// a recompile over the same span — _rampCompilePure rebuilds the interior
+// purely from the start time + the mark, and measures its tail shift against
+// the HELD end time — which is exactly what makes a same-range reapply
+// bit-identical and a BPM edit equivalent to compiling the new mark against
+// the original grid. Only a PARTIAL overlap ever exposes the flattened
+// remainder (see editorRampRange's replace rule).
+function _rampNeutralizePure(beats, mark, round) {
+    if (!Array.isArray(beats) || beats.length < 2 || !mark) return beats;
+    const r = typeof round === 'function' ? round : (v => Math.round(v * 1e6) / 1e6);
+    let sIdx = -1, eIdx = -1;
+    for (let i = 0; i < beats.length; i++) {
+        if (!beats[i] || beats[i].measure <= 0) continue;
+        if (beats[i].measure === mark.measure) sIdx = i;
+        if (beats[i].measure === mark.measureEnd) { eIdx = i; break; }
+    }
+    if (sIdx < 0 || eIdx <= sIdx + 1) return beats;   // span off-grid, or no interior to flatten
+    const out = beats.map(b => ({ ...b }));
+    const t0 = beats[sIdx].time, span = beats[eIdx].time - t0, rows = eIdx - sIdx;
+    for (let k = 1; k < rows; k++) out[sIdx + k].time = r(t0 + span * k / rows);
+    return out;
+}
 /* @pure:tempo-ramp:end */
-export { _rampCompilePure, _rampCurveValPure };
+export { _rampCompilePure, _rampCurveValPure, _rampNeutralizePure, _rampPromptParsePure };
 
 // P2-7 — fit-from-drift: given the observed onsets across a drifting span,
 // propose the LINEAR ramp that flattens the drift — the ghost that turns Map
