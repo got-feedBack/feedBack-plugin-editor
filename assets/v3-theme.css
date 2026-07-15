@@ -614,4 +614,4 @@ html.fb-immersive #plugin-editor .editor-root {
 #plugin-editor .editor-track-context-menu { position: fixed; z-index: 90; min-width: 8rem; padding: .25rem; border: 1px solid #4b5563; border-radius: 4px; background: #111827; box-shadow: 0 10px 25px rgba(0,0,0,.45); }
 #plugin-editor .editor-track-context-menu button { width: 100%; padding: .35rem .55rem; text-align: left; color: #e5e7eb; border-radius: 3px; }
 #plugin-editor .editor-track-context-menu button:hover { background: #374151; }
-#plugin-editor .editor-track-inline-rename { flex: 1; min-width: 3rem; padding: .25rem .35rem; border: 1px solid #22d3ee; border-radius: 3px; background: #030712; color: #f3f4f6; outline: none; box-shadow: 0 0 0 1px rgba(34,211,238,.2); }
+#plugin-editor .editor-track-inline-rename { flex: 1; min-width: 3rem; padding: .25rem .35rem; border: 1px solid #22d3ee; border-radius: 3px; background: #030712; color: #f3f4f6; outline: none; box-shadow: 0 0 0 1px rgba(34,211,238,.2); cursor: text; user-select: text; -webkit-user-select: text; -webkit-app-region: no-drag; }

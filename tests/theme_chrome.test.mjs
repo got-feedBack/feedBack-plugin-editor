@@ -116,5 +116,11 @@ t('responsive track headers preserve identity controls and progressively hide de
     assert.match(block('#plugin-editor #editor-track-session[data-track-density="wide"] .editor-track-name'), /min-width:\s*7rem/);
 });
 
+t('track rename text selection is excluded from desktop-window dragging', () => {
+    const rename = block('#plugin-editor .editor-track-inline-rename');
+    assert.match(rename, /user-select:\s*text/);
+    assert.match(rename, /-webkit-app-region:\s*no-drag/);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

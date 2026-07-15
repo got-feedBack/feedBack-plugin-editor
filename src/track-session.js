@@ -231,7 +231,7 @@ function _trackSessionLaneLayoutPure(rows, heights, scrollY = 0, top = 40) {
 function _trackRenameEditorMarkupPure(trackId, currentName) {
     const id = _editorEscHtml(trackId);
     const name = _editorEscHtml(currentName);
-    return `<input class="editor-track-inline-rename" data-track-rename-input data-track-id="${id}" value="${name}" aria-label="New track or folder name">`;
+    return `<input class="editor-track-inline-rename" data-track-rename-input data-track-id="${id}" value="${name}" draggable="false" aria-label="New track or folder name">`;
 }
 /* @pure:track-session:end */
 
@@ -447,6 +447,13 @@ export function initTrackSession() {
         host.draw();
     }, true);
     el.addEventListener('pointerdown', event => {
+        const renameInput = event.target && event.target.closest ? event.target.closest('[data-track-rename-input]') : null;
+        if (renameInput) {
+            // A track row is draggable. Keep text-selection gestures inside
+            // the editor instead of letting the row or desktop shell claim them.
+            event.stopPropagation();
+            return;
+        }
         const grip = event.target && event.target.closest ? event.target.closest('[data-track-action="resize"]') : null;
         if (!grip) return;
         event.preventDefault();
@@ -498,7 +505,15 @@ export function initTrackSession() {
         const track = (S.trackSession.tracks || []).find(item => item.id === row.getAttribute('data-track-id'));
         return { row, id: row.getAttribute('data-track-id') || '', placement: _trackSessionDropPlacementPure(event.clientY, rect.top, rect.height, track && track.type === 'folder') };
     };
-    el.addEventListener('dragstart', event => { const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null; draggedId = row ? row.getAttribute('data-track-id') || '' : ''; });
+    el.addEventListener('dragstart', event => {
+        const renameInput = event.target && event.target.closest ? event.target.closest('[data-track-rename-input]') : null;
+        if (renameInput) {
+            event.preventDefault(); event.stopPropagation(); draggedId = '';
+            return;
+        }
+        const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null;
+        draggedId = row ? row.getAttribute('data-track-id') || '' : '';
+    });
     el.addEventListener('dragover', event => {
         if (!draggedId) return;
         event.preventDefault(); clearDropTarget();

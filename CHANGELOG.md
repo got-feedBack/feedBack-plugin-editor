@@ -26,8 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   solo, and level affect those live sources and drive their own meter strips.
   Meters show held dBFS peaks beside a calibrated scale, while faders retain
   their saved pre-unity response and add +6 dB of headroom above 0 dB. Track
-  and folder rename uses an in-app editor (Save/Cancel or Enter/Escape), so it
-  works in the desktop shell without relying on a browser prompt.
+  and folder rename uses an in-row editor (Enter/Escape or focus-out), so it
+  works in the desktop shell without relying on a browser prompt. Text selection
+  inside that field is isolated from both row reordering and desktop-window drag.
   The former separate Parts overview is now the primary unified Tracks area:
   audio, transcription, and folder headers use the same ordered row geometry
   as their timeline lanes, share one vertical scroll position, and resize

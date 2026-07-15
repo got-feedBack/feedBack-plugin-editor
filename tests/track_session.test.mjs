@@ -83,6 +83,7 @@ test('right-click rename builds a prefilled editor for the track-list name cell'
     for (const markup of [trackMarkup, folderMarkup]) {
         assert.match(markup, /data-track-rename-input/);
         assert.match(markup, /editor-track-inline-rename/);
+        assert.match(markup, /draggable="false"/);
         assert.doesNotMatch(markup, /rename-save|rename-cancel/);
     }
     assert.match(trackMarkup, /Drums &amp; Percussion/);
