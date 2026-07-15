@@ -88,6 +88,11 @@ export function resetTrackAudioCache() {
         try { gain.disconnect(); } catch (_) {}
     }
     trackGainNodes.clear();
+    // The per-track meter taps are keyed to the gain nodes just torn down. Drop
+    // them so a fresh gain re-taps its analyser — otherwise _attachMeterTap's
+    // dedupe guard leaves every audio-track meter reading the dead old node
+    // after the first song switch.
+    _detachTrackMeters();
     S.activeAudioSourceId = 'master';
 }
 
@@ -1290,6 +1295,16 @@ function _attachMeterTap(node, key) {
     node.connect(analyser);
     if (_meterSilentSink) analyser.connect(_meterSilentSink);
     _meterAnalysers[key] = analyser;
+}
+
+// Forget the per-track meter taps (bus taps persist — their nodes outlive a
+// song switch). Called from resetTrackAudioCache once the track gains are gone.
+function _detachTrackMeters() {
+    for (const key of Object.keys(_meterAnalysers)) {
+        if (!key.startsWith('track:')) continue;
+        try { _meterAnalysers[key].disconnect(); } catch (_) { /* already gone */ }
+        delete _meterAnalysers[key];
+    }
 }
 
 export function audioMixerMeterLevels() {
