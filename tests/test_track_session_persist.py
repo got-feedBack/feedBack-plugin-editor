@@ -2,7 +2,13 @@
 
 import yaml
 
-from routes import _FIELD_ABSENT, _apply_track_session, _coerce_track_session, _parse_track_session
+from routes import (
+    _FIELD_ABSENT,
+    _apply_track_session,
+    _coerce_track_session,
+    _parse_track_session,
+    _stem_source_name,
+)
 
 
 def _sample():
@@ -51,3 +57,9 @@ def test_null_explicitly_removes_the_extension():
     manifest = {"editor_track_session": _sample()}
     _apply_track_session(manifest, _parse_track_session({"track_session": None}))
     assert "editor_track_session" not in manifest
+
+
+def test_stem_display_names_survive_reload_and_malformed_values_fall_back():
+    assert _stem_source_name({"name": "  Drum Room  "}, "drums") == "Drum Room"
+    assert _stem_source_name({"name": 42}, "drums") == "drums"
+    assert _stem_source_name({}, "Master Mix") == "Master Mix"

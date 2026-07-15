@@ -7,7 +7,7 @@ import { startPlayback, stopPlayback } from './audio.js';
 import { DPR, canvas, ctx } from './canvas.js';
 import { hideContextMenu } from './context-menu.js';
 import { DRUM_PIECE_META, _refreshDrumEditButton } from './drum.js';
-import { TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
+import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
 import { KEYS_PATTERN } from './keys.js';
 import { _stringCountFor } from './lanes.js';
 import { _downbeatTimes } from './loop.js';
@@ -66,25 +66,10 @@ function _partsArrKindPure(name) {
 }
 /* @pure:parts-view:end */
 
-const PARTS_GUTTER = 140;   // header column (name + tag) — wider than LABEL_W
-
-function _partsKindTag(part) {
-    if (part.kind === 'drums') return 'Drums';
-    const arr = S.arrangements[part.idx];
-    if (!arr) return '';
-    // Detect this lane's OWN arrangement — the param-less isBassArr() always
-    // tests the armed part, which would mistag every non-armed lane.
-    return _partsArrKindPure(arr.name);
-}
-
-function _partsFitText(s, maxPx) {
-    let out = String(s || '');
-    if (ctx.measureText(out).width <= maxPx) return out;
-    while (out.length > 1 && ctx.measureText(out + '…').width > maxPx) {
-        out = out.slice(0, -1);
-    }
-    return out + '…';
-}
+// Track names and instrument identity live in the persistent header at left.
+// Parts view keeps only the normal timeline gutter; duplicating a 140px label
+// panel inside the canvas hid time and made the two track lists disagree.
+const PARTS_GUTTER = LABEL_W;
 
 function _partsDrawSilhouette(part, y0, laneH, w) {
     const pad = 3;
@@ -175,22 +160,6 @@ export function _partsViewDraw(w, h) {
             ctx.stroke();
         }
         _partsDrawSilhouette(part, y0, laneH, w);
-        // Header column painted last so silhouettes never bleed into it.
-        ctx.fillStyle = armed ? '#191945' : '#101024';
-        ctx.fillRect(0, y0, PARTS_GUTTER, laneH);
-        ctx.strokeStyle = '#22224a';
-        ctx.beginPath();
-        ctx.moveTo(PARTS_GUTTER + 0.5, y0);
-        ctx.lineTo(PARTS_GUTTER + 0.5, y0 + laneH);
-        ctx.stroke();
-        ctx.fillStyle = armed ? '#ffffff' : '#c9c9e2';
-        ctx.font = '600 12px sans-serif';
-        ctx.fillText(_partsFitText(part.name, PARTS_GUTTER - 16), 8, y0 + 16);
-        if (laneH >= 34) {
-            ctx.fillStyle = '#8383a8';
-            ctx.font = '10px sans-serif';
-            ctx.fillText(`${_partsKindTag(part)} · ${part.count}`, 8, y0 + 30);
-        }
     }
     // Playhead across every lane (the waveform band draws its own).
     const cx = timeToX(S.cursorTime || 0);

@@ -15,6 +15,12 @@ from xml.etree import ElementTree as ET
 from xml.dom import minidom
 
 
+def _stem_source_name(stem, fallback):
+    """Prefer a persisted stem display name without trusting non-string data."""
+    name = stem.get("name") if isinstance(stem, dict) else None
+    return name.strip()[:160] if isinstance(name, str) and name.strip() else fallback
+
+
 def _normalize_generated_xml_encoding(paths):
     """Rewrite converter XML as UTF-8 when legacy metadata bytes leak through.
 
@@ -3781,6 +3787,7 @@ def setup(app, context):
                     continue
                 _stem_urls.append({
                     "id": _sid,
+                    "name": _stem_source_name(_s, _sid),
                     "url": f"{STORAGE_URL}/editor_stem_{audio_id}_{_safe_sid}{_sext}",
                 })
 
@@ -3796,8 +3803,11 @@ def setup(app, context):
             # legacy `stems` response: source ids are opaque session ids, while
             # stem labels remain display-only. This prevents filename/id changes
             # from breaking a persisted transcription pairing.
+            _master_manifest = next((stem for stem in loaded.stems
+                                     if str(stem.get("id") or "") == "full"), {})
             result["audio_sources"] = [{
-                "id": "master", "name": "Master Mix", "kind": "master",
+                "id": "master", "name": _stem_source_name(
+                    _master_manifest, "Master Mix"), "kind": "master",
                 "url": audio_url or "",
             }]
             _source_ids = {"master"}
@@ -3812,7 +3822,8 @@ def setup(app, context):
                 _source_ids.add(_source_id)
                 result["audio_sources"].append({
                     "id": _source_id,
-                    "name": str(_stem.get("id") or f"Stem {_source_index + 1}"),
+                    "name": str(_stem.get("name") or _stem.get("id")
+                                or f"Stem {_source_index + 1}"),
                     "kind": "stem", "url": _stem.get("url") or "",
                 })
             _track_session = _coerce_track_session(

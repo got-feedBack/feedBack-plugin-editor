@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   work so selecting a drum or MIDI track never silently changes tempo truth.
   Track headers and the Mixer share mute, solo, and fader state; right-click a
   header to rename it. The Mixer rises from the bottom with vertical console
-  strips, source/guide/click buses, and a dedicated final Master bus.
+  strips, source/guide/click buses, and a dedicated final Master bus. Track
+  names retain usable space beside their controls, and Parts view no longer
+  repeats a second name gutter inside the timeline.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
