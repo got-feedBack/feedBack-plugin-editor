@@ -324,6 +324,42 @@ def _apply_stem_links(manifest: dict, links) -> None:
         manifest.pop("editor_stem_links", None)
 
 
+def _stem_links_from_form(raw):
+    """Multipart twin of `_parse_stem_links`: import-stems is a Form POST, so
+    the frontend's stem_links snapshot arrives as a JSON-encoded string.
+    Absent or unusable → _FIELD_ABSENT (no authority to erase the session's
+    last-known links); a dict coerces through the same sanitizer."""
+    if raw is None:
+        return _FIELD_ABSENT
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return _FIELD_ABSENT
+    if not isinstance(value, dict):
+        return _FIELD_ABSENT
+    return _coerce_stem_links(value)
+
+
+def _stem_links_for_op(session_links, req_links):
+    """The links a stem op runs against: the request's atomic snapshot when
+    the frontend sent one (it ships its CURRENT pairings with every op, so an
+    unsaved pairing can't be overwritten by the op's authoritative response),
+    else the session's last-known links (older client)."""
+    if req_links is _FIELD_ABSENT:
+        return _coerce_stem_links(session_links)
+    return dict(req_links)
+
+
+def _stem_session_persisted(session) -> bool:
+    """True when stem edits are already durable: a dir-form sloppak session
+    writes straight into the library folder (the replace-audio rule).
+    Zip-form persists on Save, create-mode on Build — the frontend marks
+    those sessions dirty so the lifecycle guard can't silently discard."""
+    state = session.get("sloppak_state")
+    return bool(session.get("format") == "sloppak" and isinstance(state, dict)
+                and state.get("form") == "dir")
+
+
 def _parse_audio_shift(data: dict):
     """Validated `audio_shift` (seconds) from a request body.
 
@@ -4049,6 +4085,10 @@ def setup(app, context):
             "xml_files": xml_files,
             "format": "sloppak" if is_sloppak else "archive",
             "sloppak_state": sloppak_state,
+            # Seed the session's live pairing state from the persisted
+            # manifest links, so a stem op that arrives before any pairing
+            # edit answers from the pack's truth rather than from {}.
+            "stem_links": _coerce_stem_links(result.get("stem_links")),
             # Stash song-level metadata so save_as_sloppak can carry
             # album/year through to the generated manifest even though
             # the frontend's currentSong state only tracks title/artist.
@@ -4550,6 +4590,10 @@ def setup(app, context):
             # with disk makes every subsequent save start from current state.
             if isinstance(session.get("sloppak_state"), dict):
                 session["sloppak_state"]["manifest"] = manifest
+            # …and the live pairing state, so a stem op that follows this
+            # save answers from what was just persisted.
+            if stem_links is not _FIELD_ABSENT:
+                session["stem_links"] = dict(stem_links)
 
             # Directory-form sloppak: source_dir IS the sloppak — we've already
             # rewritten everything in place. Don't try to zip on top of it.
@@ -5576,16 +5620,24 @@ def setup(app, context):
                 sp = Path(e.get("path") or "")
                 if sp.exists():
                     out.append({"id": e["id"], "url": "%s/%s" % (STORAGE_URL, sp.name)})
-        return {"stems": out, "stem_links": _coerce_stem_links(session.get("stem_links"))}
+        return {"stems": out,
+                "stem_links": _coerce_stem_links(session.get("stem_links")),
+                # The frontend's dirty mark follows this verdict: dir-form
+                # writes are durable now; zip/create need a Save / Build.
+                "persisted": _stem_session_persisted(session)}
 
     @app.post("/api/plugins/editor/import-stems")
-    async def import_stems(session_id: str = Form(...), files: list[UploadFile] = File(...)):
+    async def import_stems(session_id: str = Form(...), files: list[UploadFile] = File(...),
+                           stem_links: str | None = Form(None)):
         """Ingest one or more audio files as named stems of this session.
 
         Ids come from the filenames (sanitized, deduped); the files land in
         the sloppak's stems/ dir + manifest (zip-form persists on Save, the
         replace-audio rule) or, for a fresh GP/MIDI import, in the session's
-        stem list which the Build packs into the new sloppak.
+        stem list which the Build packs into the new sloppak. The frontend
+        ships its current pairings as a JSON-encoded `stem_links` form field
+        (atomic link submission), so the authoritative links this endpoint
+        answers with can't be stale.
         """
         session = sessions.get(session_id)
         if not session:
@@ -5594,6 +5646,9 @@ def setup(app, context):
         if kind is None:
             return where
         session["last_touched"] = time.time()
+        req_links = _stem_links_from_form(stem_links)
+        if req_links is not _FIELD_ABSENT:
+            session["stem_links"] = req_links
         imported, skipped = [], []
         if kind == "sloppak":
             source_dir = where
@@ -5620,6 +5675,9 @@ def setup(app, context):
                               "codec": ext.lstrip("."), "default": "on"})
                 imported.append(sid)
             manifest["stems"] = stems
+            # Pairings ride the same manifest write (atomic with the import)
+            # so a dir-form session's persisted=True verdict is honest.
+            _apply_stem_links(manifest, _coerce_stem_links(session.get("stem_links")))
             (source_dir / "manifest.yaml").write_text(
                 yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
                 encoding="utf-8")
@@ -5649,8 +5707,11 @@ def setup(app, context):
 
     @app.post("/api/plugins/editor/stem-op")
     async def stem_op(data: dict):
-        """Rename / reorder / delete a stem, keeping chart links honest
-        (a rename follows the id; a delete drops its links)."""
+        """Rename / reorder / delete a stem — or sync the pairings alone
+        (op 'links') — keeping chart links honest (a rename follows the id;
+        a delete drops its links). Atomic link submission: the frontend
+        ships its CURRENT `stem_links` with every op, so the authoritative
+        response can't answer from a pre-pairing session."""
         session_id = data.get("session_id", "")
         session = sessions.get(session_id)
         if not session:
@@ -5660,7 +5721,8 @@ def setup(app, context):
             return where
         session["last_touched"] = time.time()
         op = data.get("op")
-        links = _coerce_stem_links(session.get("stem_links"))
+        links = _stem_links_for_op(session.get("stem_links"), _parse_stem_links(data))
+        session["stem_links"] = links
 
         def _sync_links(fn):
             session["stem_links"] = {k: fn(v) for k, v in links.items() if fn(v)}
@@ -5708,9 +5770,14 @@ def setup(app, context):
                     pass
                 stems = [e for e in stems if e["id"] != sid]
                 _sync_links(lambda v: None if v == sid else v)
+            elif op == "links":
+                pass  # pairing sync — the submitted snapshot IS the op
             else:
-                return JSONResponse({"error": "op must be rename|reorder|delete"}, 400)
+                return JSONResponse({"error": "op must be rename|reorder|delete|links"}, 400)
             manifest["stems"] = stems
+            # Pairings ride the same manifest write (atomic with the op) so
+            # a dir-form session's persisted=True verdict is honest.
+            _apply_stem_links(manifest, _coerce_stem_links(session.get("stem_links")))
             (source_dir / "manifest.yaml").write_text(
                 yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
                 encoding="utf-8")
@@ -5744,8 +5811,10 @@ def setup(app, context):
                     pass
                 stem_files = [e for e in stem_files if e["id"] != sid]
                 _sync_links(lambda v: None if v == sid else v)
+            elif op == "links":
+                pass  # pairing sync — the submitted snapshot IS the op
             else:
-                return JSONResponse({"error": "op must be rename|reorder|delete"}, 400)
+                return JSONResponse({"error": "op must be rename|reorder|delete|links"}, 400)
             session["stem_files"] = stem_files
         return _stem_state_payload(session, session_id)
 

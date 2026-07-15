@@ -44,6 +44,7 @@ import {
 } from './toolbars.js';
 import { _clearBarSelection, editorLoopSnapMode, editorSetLoopSnapMode } from './loop.js';
 import { editorSetTabViewStaff, editorTabViewStaff } from './tab-view-live.js';
+import { stemMixerAvailable } from './stem-tracks.js';
 
 /* @pure:menu-model:start */
 // The nine menus (charrette §2.2). Item kinds:
@@ -53,7 +54,9 @@ import { editorSetTabViewStaff, editorTabViewStaff } from './tab-view-live.js';
 //   { hdr }                — non-interactive section header.
 //   { sep: true }          — divider.
 // Gates: `audioOnly` hides without a recording; `needs:'tempoMap'` greys
-// outside Tempo Map mode; `fn` items grey when the entry point is absent.
+// outside Tempo Map mode; `needs:'stemMixer'` greys until a stem-mixer
+// implementation consumes S.stemMix (host.stemMixChanged wired — see
+// stemMixerAvailable); `fn` items grey when the entry point is absent.
 export const EDITOR_MENUS = Object.freeze([
     { title: 'File', items: [
         { label: 'New…', fn: 'editorShowCreateModal' },
@@ -215,7 +218,7 @@ export const EDITOR_MENUS = Object.freeze([
         { sep: true },
         { cmd: 'toggleMetronome' },
         { cmd: 'togglePlayAllTracks' },
-        { cmd: 'soloMyStem' },
+        { cmd: 'soloMyStem', needs: 'stemMixer' },
         { cmd: 'toggleGuideClap' },
         // Guide voice (DAW 1.2/1.5): what the guide toggle SOUNDS like —
         // the clap, or the charted pitches on a GM instrument. The
@@ -363,7 +366,8 @@ export function _menuModelPure(menus, rows, ctx) {
                 const row = byId.get(it.cmd);
                 if (!row) continue;   // registry moved on — never render a dangling id
                 const planned = row.status === 'planned';
-                const gated = it.needs === 'tempoMap' && !ctx.tempoMapMode;
+                const gated = (it.needs === 'tempoMap' && !ctx.tempoMapMode)
+                    || (it.needs === 'stemMixer' && !ctx.stemMixer);
                 items.push({
                     label: row.label,
                     key: row.key,
@@ -426,6 +430,7 @@ function currentModel() {
         _editorShortcutRowsPure(editorShortcutProfile),
         {
             tempoMapMode: !!S.tempoMapMode, hasAudio: !!S.audioBuffer, fns: windowFns(),
+            stemMixer: stemMixerAvailable(),
             v3: !!(window.slopsmith && window.slopsmith.uiVersion === 'v3'),
             toolbars: getToolbarCtx(),
             loopSnapMode: editorLoopSnapMode(),

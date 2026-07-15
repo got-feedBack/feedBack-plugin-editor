@@ -7,16 +7,22 @@
  * idea: "this arrangement transcribes THAT recording track". It persists as
  * the `editor_stem_links` manifest extension key (the audio_shift retention
  * contract) and powers the one-keystroke transcription move: SOLO MY SOURCE
- * TRACK (isolate the paired stem while you chart against it — the actual
- * audio isolation rides the stem mixer once its strips land; until then the
- * link is stored, shown, and shipped for gameplay/tools to consume).
+ * TRACK (isolate the paired stem while you chart against it — gated on a
+ * real stem-mixer consumer via `stemMixerAvailable()`; until one lands the
+ * verb reports itself unavailable and the link is stored, shown, and
+ * shipped for gameplay/tools to consume).
+ *
+ * Link-consistency rule: EVERY backend call here (pairing sync, rename,
+ * reorder, delete, import) ships the CURRENT S.stemLinks, so the
+ * authoritative {stems, stem_links} the backend answers with can never
+ * resurrect stale links over an unsaved pairing.
  *
  * Chart-track keys reuse the mixer/view-pref rule (_partViewKeyPure: the
  * arrangement's `id` if present, else its name) so links survive part
  * reordering — never a bare index.
  */
 
-import { S } from './state.js';
+import { S, markSessionDirty } from './state.js';
 import { host } from './host.js';
 import { setStatus, _editorPromptText } from './ui.js';
 import { _partViewKeyPure } from './keys.js';
@@ -76,6 +82,11 @@ async function _post(url, body) {
 function _adopt(data) {
     S.stems = Array.isArray(data.stems) ? data.stems : [];
     S.stemLinks = (data.stem_links && typeof data.stem_links === 'object') ? data.stem_links : {};
+    // Zip-form / create sessions persist stem changes only on the next
+    // Save / Build, so the lifecycle guard must know there is something to
+    // lose. A dir-form sloppak writes straight into the library
+    // (persisted=true, the replace-audio rule) — already durable, no mark.
+    if (!data.persisted) markSessionDirty();
     _render();
     if (host.stemUiChanged) host.stemUiChanged();
 }
@@ -104,12 +115,21 @@ function _render() {
         : '<p class="py-2 text-gray-500">No audio tracks yet — Import adds any number of them (wav / ogg / opus / mp3 / flac).</p>';
 }
 
-async function _refreshFromOps(promise, verb) {
+// Atomic link submission: every stem op POSTs the CURRENT pairings along
+// with the op, so the backend session is never behind the frontend and the
+// authoritative response it echoes can't resurrect stale links over an
+// unsaved pairing (pair → rename used to lose the pair). A failed POST
+// half-applies nothing: S keeps its state and the error surfaces.
+// Exported for the test suite; product code goes through the modal handlers.
+export async function _submitStemOp(body, verb, failLabel) {
     try {
-        _adopt(await promise);
-        setStatus(verb);
+        _adopt(await _post('/api/plugins/editor/stem-op',
+            { session_id: S.sessionId, stem_links: S.stemLinks || {}, ...body }));
+        if (verb) setStatus(verb);
+        return true;
     } catch (e) {
-        setStatus(`Stem ${verb ? verb.toLowerCase() : 'edit'} failed: ${e.message}`);
+        setStatus(`Stem ${failLabel || 'edit'} failed: ${e.message}`);
+        return false;
     }
 }
 
@@ -124,8 +144,7 @@ function _onListClick(e) {
         const j = dir === 'up' ? i - 1 : i + 1;
         if (i < 0 || j < 0 || j >= order.length) return;
         [order[i], order[j]] = [order[j], order[i]];
-        _refreshFromOps(_post('/api/plugins/editor/stem-op',
-            { session_id: S.sessionId, op: 'reorder', order }), 'Tracks reordered.');
+        _submitStemOp({ op: 'reorder', order }, 'Tracks reordered.', 'reorder');
     } else if (e.target.closest('[data-stem-rename]')) {
         (async () => {
             const raw = await _editorPromptText({
@@ -134,13 +153,10 @@ function _onListClick(e) {
                 value: sid, placeholder: 'Guitar_L',
             });
             if (raw === null || raw === sid) return;
-            _refreshFromOps(_post('/api/plugins/editor/stem-op',
-                { session_id: S.sessionId, op: 'rename', id: sid, new_id: raw }),
-            `Renamed to ${raw}.`);
+            _submitStemOp({ op: 'rename', id: sid, new_id: raw }, `Renamed to ${raw}.`, 'rename');
         })();
     } else if (e.target.closest('[data-stem-delete]')) {
-        _refreshFromOps(_post('/api/plugins/editor/stem-op',
-            { session_id: S.sessionId, op: 'delete', id: sid }), `Removed ${sid}.`);
+        _submitStemOp({ op: 'delete', id: sid }, `Removed ${sid}.`, 'delete');
     }
 }
 
@@ -150,14 +166,22 @@ function _onPairChange(e) {
     const row = sel.closest('[data-stem-id]');
     const sid = row && row.getAttribute('data-stem-id');
     const arrKey = sel.value;
-    if (!sid) return;
+    if (!sid || !S.sessionId) return;
     // Unlink every track currently pointing at this stem, then link the pick.
     let links = { ...(S.stemLinks || {}) };
     for (const [k, v] of Object.entries(links)) if (v === sid) delete links[k];
     if (arrKey) links = _stemLinkSetPure(links, arrKey, sid);
     S.stemLinks = links;
     _render();
-    setStatus(arrKey ? `${sid} paired — saved with the song.` : `${sid} unpaired.`);
+    // Sync the pairing to the backend session NOW (op 'links', atomic with
+    // the snapshot) so the next rename/reorder/delete can't answer from a
+    // pre-pairing world. If the sync fails the pairing still lives in S
+    // (Save/Build ship it) — keep it, surface the error, and mark the
+    // session dirty ourselves since no response did.
+    const verb = arrKey ? `${sid} paired — saved with the song.` : `${sid} unpaired.`;
+    (async () => {
+        if (!(await _submitStemOp({ op: 'links' }, verb, 'pairing'))) markSessionDirty();
+    })();
 }
 
 function _onImportPicked(e) {
@@ -165,6 +189,9 @@ function _onImportPicked(e) {
     if (!input || !input.files || !input.files.length || !S.sessionId) return;
     const fd = new FormData();
     fd.append('session_id', S.sessionId);
+    // The import's response also echoes authoritative stem_links — ship the
+    // current pairings (JSON-encoded: multipart) so they can't be echoed away.
+    fd.append('stem_links', JSON.stringify(S.stemLinks || {}));
     for (const f of input.files) fd.append('files', f);
     input.value = '';
     setStatus('Importing audio tracks…');
@@ -198,10 +225,25 @@ export function editorToggleStemTracks(force) {
     return true;
 }
 
-// The transcription move: solo the CURRENT track's paired source stem (the
-// stem mixer's S.stemMix rule — activates audibly once its strips land;
-// meanwhile the link itself is honest about what would happen).
+// Capability probe: the solo verb changes AUDIO, and audio only changes
+// when a stem-mixer implementation consumes S.stemMix through
+// host.stemMixChanged. The hook has NO inert default in host.js on
+// purpose — its very presence is the capability signal, so a host with no
+// mixer wired leaves the verb honestly unavailable (menu greys it via the
+// `needs: 'stemMixer'` gate; a direct invocation reports why).
+export function stemMixerAvailable() {
+    return typeof host.stemMixChanged === 'function';
+}
+
+// The transcription move: solo the CURRENT track's paired source stem via
+// the stem mixer's S.stemMix rule. EXCLUSIVE isolate: enabling clears every
+// other stem's solo (Guitar after Bass must not stack into Guitar+Bass);
+// toggling off restores the no-solo state — all solos cleared.
 export function editorSoloMyStem() {
+    if (!stemMixerAvailable()) {
+        setStatus('Solo my source track needs the stem mixer — not available in this build yet.');
+        return true;
+    }
     const arr = S.arrangements && S.arrangements[S.currentArr];
     if (!arr) { setStatus('Load a song first.'); return true; }
     const sid = (S.stemLinks || {})[_partViewKeyPure(arr)];
@@ -212,8 +254,11 @@ export function editorSoloMyStem() {
     if (!S.stemMix || typeof S.stemMix !== 'object') S.stemMix = {};
     const cur = S.stemMix[sid] || {};
     const on = !cur.solo;
+    for (const [k, v] of Object.entries(S.stemMix)) {
+        if (k !== sid && v && v.solo) S.stemMix[k] = { ...v, solo: false };
+    }
     S.stemMix[sid] = { vol: Number.isFinite(cur.vol) ? cur.vol : 100, mute: false, solo: on };
-    if (host.stemMixChanged) host.stemMixChanged();
+    host.stemMixChanged();
     setStatus(on
         ? `Soloing ${sid} — the source track "${arr.name}" transcribes against.`
         : `${sid} solo off.`);

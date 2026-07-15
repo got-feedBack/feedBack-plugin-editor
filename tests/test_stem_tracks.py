@@ -43,6 +43,45 @@ def test_stems_manifest_list_preserves_unknown_fields():
     assert out[0]["some_other_tools_field"] == 42, "another tool's metadata survives"
 
 
+def test_stem_links_for_op_prefers_the_request_snapshot():
+    # Absent from the request (older client) -> the session's last-known links.
+    assert routes._stem_links_for_op({"a1": "G"}, routes._FIELD_ABSENT) == {"a1": "G"}
+    assert routes._stem_links_for_op(None, routes._FIELD_ABSENT) == {}
+    # Present -> the atomic snapshot wins, even when empty (explicit unpair-all):
+    # this is what keeps an unsaved pairing from being overwritten by the op's
+    # response (review #283 item 15).
+    assert routes._stem_links_for_op({"a1": "old"}, {}) == {}
+    assert routes._stem_links_for_op({"a1": "old"}, {"a1": "G"}) == {"a1": "G"}
+    # Session garbage coerces away instead of crashing the op.
+    assert routes._stem_links_for_op("trash", routes._FIELD_ABSENT) == {}
+
+
+def test_stem_links_from_form_absent_garbage_and_value():
+    # The multipart twin of _parse_stem_links (import-stems is a Form POST, so
+    # the snapshot arrives JSON-encoded): absent/garbage gets no authority.
+    assert routes._stem_links_from_form(None) is routes._FIELD_ABSENT
+    assert routes._stem_links_from_form("not json") is routes._FIELD_ABSENT
+    assert routes._stem_links_from_form('["a", "list"]') is routes._FIELD_ABSENT
+    assert routes._stem_links_from_form("{}") == {}
+    parsed = routes._stem_links_from_form('{"a1": "Guitar_L", "b": 7}')
+    assert parsed == {"a1": "Guitar_L"}, "coerced through the same sanitizer"
+
+
+def test_stem_session_persisted_only_for_dir_form_sloppak():
+    # The item-16 boundary: dir-form writes land straight in the library
+    # (durable now); zip-form persists on Save, create-mode on Build.
+    assert routes._stem_session_persisted(
+        {"format": "sloppak", "sloppak_state": {"form": "dir"}}) is True
+    assert routes._stem_session_persisted(
+        {"format": "sloppak", "sloppak_state": {"form": "zip"}}) is False
+    assert routes._stem_session_persisted(
+        {"format": "sloppak", "sloppak_state": {}}) is False
+    assert routes._stem_session_persisted(
+        {"format": "sloppak", "sloppak_state": None}) is False
+    assert routes._stem_session_persisted({"create_mode": True}) is False
+    assert routes._stem_session_persisted({}) is False
+
+
 def test_stem_links_contract_absent_empty_garbage():
     assert routes._parse_stem_links({}) is routes._FIELD_ABSENT
     assert routes._parse_stem_links({"stem_links": "trash"}) is routes._FIELD_ABSENT
