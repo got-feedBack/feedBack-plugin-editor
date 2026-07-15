@@ -463,6 +463,10 @@ export function drawNotes(w) {
     // Playability lint (P9): a memoized Set keyed on the edit generation —
     // hoisted so the per-note check is a Set.has, never a lint pass.
     const lintFlags = _lintFlaggedSet();
+    // Slide/tie target lookup: resolved ONCE per frame here (keys mode never
+    // draws these overlays), then threaded to each _drawNote so the per-note
+    // draw stays an O(1) map read.
+    const nextMap = keysMode ? null : _nextSameString(nn);
     for (let i = 0; i < nn.length; i++) {
         const n = nn[i];
         if (n.time + (n.sustain || 0) < st || n.time > et) continue;
@@ -470,7 +474,7 @@ export function drawNotes(w) {
             const midi = _rollMidiForNote(n, rctx);
             if (midi !== null) _drawPianoNote(n, S.sel.has(i), hl, midi, !!rctx, lintFlags.has(i));
         } else {
-            _drawNote(n, S.sel.has(i), ghl, lintFlags.has(i));
+            _drawNote(n, S.sel.has(i), ghl, lintFlags.has(i), nextMap);
         }
     }
 
@@ -629,8 +633,17 @@ export function _slideConnectsPure(techs, next) {
 // The per-frame lookup: memoized on editGen + the notes array identity (the
 // standard draw-memo contract — in-place time moves keep identity, and every
 // committed edit bumps the gen). Cost per frame after an edit: one O(n) pass.
+// Called ONCE per frame by drawNotes and threaded to every _drawNote, so the
+// move-drag bypass below stays O(n)/frame (not O(n²) via a per-note recompute).
 let _nextStrMemo = { gen: -1, ref: null, map: null };
-function _nextSameString(nn) {
+export function _nextSameString(nn) {
+    // A live note-move drag mutates note time/string/fret in place every
+    // mousemove and only commits (bumping editGen) on mouseUp — so the
+    // editGen-keyed memo would serve the PRE-drag map for the whole drag,
+    // defeating _nextSameStringMapPure's own time-order handling and linking
+    // slides/ties to the wrong target until release. Bypass for the drag's
+    // duration, exactly as _sectionCoverage does for the coverage strip.
+    if (S.drag && S.drag.type === 'move') return _nextSameStringMapPure(nn);
     if (_nextStrMemo.gen === editGen && _nextStrMemo.ref === nn && _nextStrMemo.map) {
         return _nextStrMemo.map;
     }
@@ -638,7 +651,7 @@ function _nextSameString(nn) {
     return _nextStrMemo.map;
 }
 
-function _drawNote(n, selected, ghl, linted) {
+function _drawNote(n, selected, ghl, linted, nextMap) {
     const x = timeToX(n.time);
     const y = strToY(n.string) + NOTE_PAD;
     const sw = Math.max(MIN_NOTE_W, (n.sustain || 0) * S.zoom);
@@ -746,7 +759,7 @@ function _drawNote(n, selected, ghl, linted) {
     // connects to where it lands. No charted landing → the within-note glyph.
     const _sdir = _slideDirPure(n.fret, techs.slide_to);
     if (_sdir !== 0) {
-        const _next = _nextSameString(notes()).get(n);
+        const _next = nextMap.get(n);
         const _endX = _slideConnectsPure(techs, _next)
             ? Math.max(x + _ovW - 1, timeToX(_next.time) - 1)
             : x + _ovW - 1;
@@ -775,7 +788,7 @@ function _drawNote(n, selected, ghl, linted) {
     if (techs.link_next) {
         ctx.strokeStyle = '#a7f3d0';
         ctx.lineWidth = 1.5;
-        const _next = _nextSameString(notes()).get(n);
+        const _next = nextMap.get(n);
         const _headX = _next ? timeToX(_next.time) : -1;
         ctx.beginPath();
         if (_next && _headX > x + _ovW + 2) {

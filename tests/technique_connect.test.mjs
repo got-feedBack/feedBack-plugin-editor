@@ -20,7 +20,8 @@ globalThis.document = globalThis.document || {
 globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setItem: () => {} };
 globalThis.window = globalThis.window || globalThis;
 
-const { _nextSameStringMapPure, _slideConnectsPure } = await import('../src/draw.js');
+const { _nextSameStringMapPure, _slideConnectsPure, _nextSameString } = await import('../src/draw.js');
+const { S } = await import('../src/state.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -58,6 +59,28 @@ t('a slide connects only when the next note IS its landing fret', () => {
     assert.strictEqual(_slideConnectsPure({ slide_to: 7 }, undefined), false, 'no next note');
     assert.strictEqual(_slideConnectsPure({}, landing), false, 'no slide at all');
     assert.strictEqual(_slideConnectsPure(null, landing), false);
+});
+
+t('the memo is bypassed DURING a live move-drag so the target is never stale', () => {
+    // A move-drag mutates note time in place every mousemove WITHOUT bumping
+    // editGen (the commit is on mouseUp), so the editGen-keyed memo must not
+    // serve the pre-drag map. Regression: _nextSameString cached {a→b}, then a
+    // drag moved b before a; while S.drag.type==='move' the resolver must
+    // recompute and return {b→a}. Without the bypass it returns the stale map.
+    const a = N(0, 2, 5), b = N(2, 2, 9);
+    const nn = [a, b];
+    S.drag = null;
+    const before = _nextSameString(nn);        // populates the memo: a → b
+    assert.strictEqual(before.get(a), b);
+    b.time = -1;                               // drag moves b earlier, in place
+    S.drag = { type: 'move' };                 // …with no editGen bump
+    try {
+        const live = _nextSameString(nn);      // must reflect the new order
+        assert.strictEqual(live.get(b), a, 'during the drag b now leads into a');
+        assert.strictEqual(live.get(a), undefined, 'a is now the last note on the string');
+    } finally {
+        S.drag = null;
+    }
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
