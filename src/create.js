@@ -2440,6 +2440,11 @@ export async function editorBuild() {
                 // built pack's manifest (read back on load via data.audio_shift)
                 // so the alignment survives the first build, not just re-saves.
                 audio_shift: Number(S.audioShift) || 0,
+                // Chart-track <-> stem pairings — persisted as
+                // editor_stem_links in the built pack's manifest (the same
+                // wire the save body ships), so a pairing made while
+                // arranging survives the first Build, not just re-saves.
+                stem_links: S.stemLinks || {},
                 metadata: {
                     title: S.title,
                     artist: S.artist,

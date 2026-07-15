@@ -118,6 +118,13 @@ export const S = {
     // "Edit region" action. Used to make the preview button read as a
     // return trip instead of a fresh action.
     returnToHighway: false,
+    // Multitrack stems (studio-session ingest): the session's audio tracks
+    // [{id, url}] as /load or the import endpoints report them, the
+    // chart-track -> stem pairings (persisted as editor_stem_links), and
+    // the live mix map the stem-mixer strips/engine consume.
+    stems: [],
+    stemLinks: {},
+    stemMix: {},
     // Drag state
     drag: null, // { type, startX, startY, startTime, startString, noteIdx, origTimes, origStrings }
 

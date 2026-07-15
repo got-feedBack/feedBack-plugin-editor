@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tracks now sound out of the box, including alongside recordings and stems:
   **every track plays its instrument** (band mode defaults on), and the guide
   voice is always a real instrument — the old "clap"
+- **Bring in a whole studio session — File › Audio tracks…** Import any
+  number of audio tracks (wav / ogg / opus / mp3 / flac — a real session's
+  multitrack, not just separated stems), then rename them, reorder them,
+  delete them, and **pair each with the chart track that transcribes it**.
+  Pairings are saved with the song and survive track reordering. A new
+  **Solo my source track** command isolates the current track's paired
+  audio while you chart against it (audible once the stem-mixer strips
+  land; the pairing itself works today). Imported tracks are packed into
+  the feedpak on Save (or Build for a fresh Guitar Pro/MIDI import) and
+  show up as stems everywhere stems already work.
+
 - **Drums sound like a drum kit now.** Every drum piece in the chart plays
   its real sound — kick, snares (and cross-stick), open/closed/pedal hats,
   all four toms, crashes, splash, china, ride and bell, cowbell — instead of

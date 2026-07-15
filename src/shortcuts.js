@@ -50,6 +50,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'toggleMetronome', label: 'Toggle metronome click', group: 'Preview', status: 'ready', keys: { feedback: '', logical: 'K', cableton: 'O', eof: '' } },
     { id: 'toggleMixer', label: 'Toggle Mixer panel', group: 'Preview', status: 'ready', keys: { feedback: 'Shift+C', eof: 'Shift+C' } },
     { id: 'togglePlayAllTracks', label: 'Play all tracks (band mode)', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'manageStemTracks', label: 'Audio tracks (import / pair stems)', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'soloMyStem', label: 'Solo my source track (paired stem)', group: 'Preview', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleLoopAB', label: 'Toggle loop A/B compare (recording ↔ guide)', group: 'Preview', status: 'ready', keys: { feedback: 'Alt+B', eof: 'Alt+B' } },
     { id: 'toggleLoopRegion', label: 'Toggle loop playback for the selected region', group: 'Preview', status: 'ready', keys: { feedback: '', logical: 'C', cableton: 'Ctrl+L', eof: '' } },
     { id: 'songFit', label: 'Song Fit — line the chart up with the recording', group: 'Tempo map', status: 'ready', keys: { feedback: '', eof: '' } },
