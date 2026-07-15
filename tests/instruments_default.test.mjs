@@ -2,9 +2,8 @@
  * Instruments by default (Christian's call: "the guide claps are dumb —
  * built-in soundfonts, on by default for each Guitar Pro / MIDI track"):
  *
- *   - CHARTWARE (a GP/MIDI import — no recording) sounds OUT OF THE BOX:
- *     guide ON + band mode ON by default; recording-backed sessions keep
- *     the quiet defaults; a stored user choice beats both, both ways;
+ *   - every chart track sounds OUT OF THE BOX, including beside stems:
+ *     guide ON + band mode ON by default; a stored user choice beats both;
  *   - the guide voice is ALWAYS instruments (the clap mode is gone; a
  *     legacy stored 'clap' pref reads as instruments too);
  *   - the default per-kind presets are genuinely VENDORED (served from the
@@ -38,20 +37,22 @@ function t(name, fn) {
     catch (e) { fail++; console.error('  FAIL ' + name + ': ' + e.message); }
 }
 
-t('chartware guide default is ON; a recording keeps it OFF; stored choice wins both ways', () => {
+t('guide instruments default ON with or without audio; stored choice wins both ways', () => {
     Object.assign(S, { createMode: true, audioBuffer: null, audioUrl: null });
     assert.strictEqual(editorGuideClapEnabled(), true, 'a GP import sounds out of the box');
     Object.assign(S, { createMode: false, audioBuffer: {}, audioUrl: 'x' });
-    assert.strictEqual(editorGuideClapEnabled(), false, 'a recording session stays quiet');
-    // The user turns it ON in a recording session — stored '1' sticks…
+    assert.strictEqual(editorGuideClapEnabled(), true, 'stems and transcription play together');
+    // The user turns it OFF in a recording session — stored '0' sticks…
+    _editorToggleGuideClap();
+    assert.strictEqual(editorGuideClapEnabled(), false);
+    assert.strictEqual(stored.editorGuideClap, '0');
+    // …and turning it ON in chartware sticks too.
+    Object.assign(S, { createMode: true, audioBuffer: null, audioUrl: null });
     _editorToggleGuideClap();
     assert.strictEqual(editorGuideClapEnabled(), true);
     assert.strictEqual(stored.editorGuideClap, '1');
-    // …and turning it OFF in chartware sticks too (default never overrides).
-    Object.assign(S, { createMode: true, audioBuffer: null, audioUrl: null });
-    _editorToggleGuideClap();
-    assert.strictEqual(editorGuideClapEnabled(), false, 'an explicit OFF beats the chartware default');
-    assert.strictEqual(stored.editorGuideClap, '0');
+    stored.editorGuideClap = '0';
+    assert.strictEqual(editorGuideClapEnabled(), false, 'an explicit OFF beats the live default');
     delete stored.editorGuideClap;
 });
 
