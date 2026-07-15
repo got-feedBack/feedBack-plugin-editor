@@ -131,6 +131,8 @@ export const host = {
     loadCDLC: () => {},
     /** Decode an audio URL into the playback graph and the waveform peaks. */
     loadAudio: () => {},
+    /** Install create-time audio/transcription rows in a DAW track session. */
+    installCreatedTrackSession: () => {},
     /** Ask the host app to re-scan the song library after a build. */
     kickLibraryRescan: () => {},
     /** Clear the audio-offset input and its applied-delta dataset. */

@@ -1848,7 +1848,7 @@ window.editorShowStartLanding = () => {
         'Browse your song library and open a feedpak to edit.',
         () => window.editorShowLoadModal()));
     inner.appendChild(mk('✨  Create New',
-        'Pick what you’re arranging, import a chart or audio, add details.',
+        'Add session files, review the tracks, and choose a tempo guide.',
         () => window.editorShowCreateModal()));
     const cancel = document.createElement('div'); cancel.className = 'flex justify-end mt-2';
     const cb = document.createElement('button');

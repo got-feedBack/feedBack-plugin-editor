@@ -254,24 +254,13 @@ t('_midiSeedRosterPure: provenance decides, the roster VALUE does not', () => {
         'defensive: a pre-modal createState has neither field');
 });
 
-t('roster interaction marks provenance — an explicit re-build of the default is kept', () => {
+t('the unified create modal no longer populates the removed roster controls', () => {
     create.editorShowCreateModal();
-    assert.strictEqual(create.createState.rosterTouched, false, 'fresh modal = untouched');
-    let plan = _midiSeedRosterPure(create.createState.roster, create.createState.rosterTouched);
+    assert.strictEqual(create.createState.rosterTouched, undefined, 'removed roster UI has no intent state');
+    const plan = _midiSeedRosterPure(create.createState.roster, false);
     assert.strictEqual(plan.seeded, true, 'untouched default gets the removable seed');
-
-    // The user removes Lead then re-adds it via the palette — the VALUE ends
-    // equal to the default, but it is now their explicit choice.
     const palette = document.getElementById('editor-create-roster-palette');
-    const leadBtn = () => palette.children.find((b) => (b.textContent || '').includes('Lead Guitar'));
-    leadBtn().onclick();                                   // remove
-    assert.deepStrictEqual(create.createState.roster, []);
-    leadBtn().onclick();                                   // re-add
-    assert.deepStrictEqual(create.createState.roster, ['Lead']);
-    assert.strictEqual(create.createState.rosterTouched, true, 'interaction marks provenance');
-    plan = _midiSeedRosterPure(create.createState.roster, create.createState.rosterTouched);
-    assert.strictEqual(plan.seeded, false, 'explicit Lead is NOT auto-removed after import');
-    assert.deepStrictEqual(plan.roster, ['Lead']);
+    assert.strictEqual(palette.children.length, 0);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -18,13 +18,10 @@ function t(name, fn) {
 }
 const inp = (o = {}) => ({ hasTitle: false, hasArtist: false, hasAudio: false, ...o });
 
-t('from-scratch: needs a title AND at least one instrument in the roster', () => {
-    assert.strictEqual(_createGateOpen({ roster: ['Lead'] }, inp({ hasTitle: true })), true);
-    assert.strictEqual(_createGateOpen({ roster: ['Lead'] }, inp()), false);                        // no title
-    assert.strictEqual(_createGateOpen({ roster: [] }, inp({ hasTitle: true })), false);            // no instrument
-    assert.strictEqual(_createGateOpen({ roster: ['Vocals'] }, inp({ hasTitle: true })), false);    // Vocals alone
-    assert.strictEqual(_createGateOpen({ roster: ['Vocals', 'Keys'] }, inp({ hasTitle: true })), true);
-    assert.strictEqual(_createGateOpen({ roster: ['Drums'] }, inp({ hasTitle: true })), true);
+t('from-scratch: title is the only gate; the removed roster UI cannot block creation', () => {
+    assert.strictEqual(_createGateOpen({}, inp({ hasTitle: true })), true);
+    assert.strictEqual(_createGateOpen({}, inp()), false);
+    assert.strictEqual(_createGateOpen({ roster: [] }, inp({ hasTitle: true })), true);
 });
 
 t('a staged MIDI alone opens the gate (like a GP file — the fix for the dead-end import)', () => {
@@ -35,7 +32,8 @@ t('a staged MIDI alone opens the gate (like a GP file — the fix for the dead-e
 
 t('gp file wins regardless of roster/title', () => {
     assert.strictEqual(_createGateOpen({ gpPath: '/song.gp', roster: [] }, inp()), true);
-    assert.strictEqual(_createGateOpen({ gpPath: null, roster: [] }, inp({ hasTitle: true })), false);
+    assert.strictEqual(_createGateOpen({ gpPath: '/song.gp', tracks: [{ notes: 10, selected: false }] }, inp()), false);
+    assert.strictEqual(_createGateOpen({ gpPath: null, roster: [] }, inp({ hasTitle: true })), true);
 });
 
 t('eof file(s) win regardless of roster/title', () => {

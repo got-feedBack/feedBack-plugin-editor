@@ -507,3 +507,28 @@ html.fb-immersive #plugin-editor .editor-root {
     #plugin-editor #editor-cue.editor-cue-show { animation-name: editor-cue-fade-plain; }
     @keyframes editor-cue-fade-plain { 0%,100% { opacity: 0; } 12%,80% { opacity: 1; } }
 }
+
+/* ── Create: one DAW-style imported-track roster ─────────────────── */
+#plugin-editor .editor-create-track-head,
+#plugin-editor .editor-create-track-row {
+    display: grid;
+    grid-template-columns: 2.25rem minmax(8rem, 1fr) 5.5rem 5.5rem 6.5rem 1.5rem;
+    align-items: center;
+    column-gap: 0.5rem;
+}
+#plugin-editor .editor-create-track-head {
+    padding: 0 0.5rem; color: #6b7280; font-size: 0.625rem;
+    font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+#plugin-editor .editor-create-track-row {
+    min-height: 2rem; padding: 0.3rem 0.5rem; border-bottom: 1px solid #253044;
+    color: #cbd5e1; font-size: 0.75rem;
+}
+#plugin-editor .editor-create-track-row:last-child { border-bottom: 0; }
+#plugin-editor .editor-create-track-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#plugin-editor .editor-create-track-type { color: #67e8f9; font-size: 0.65rem; text-transform: uppercase; }
+#plugin-editor .editor-create-track-detail { color: #64748b; }
+#plugin-editor .editor-create-track-guide { text-align: center; }
+#plugin-editor .editor-create-track-row input { accent-color: #22d3ee; }
+#plugin-editor .editor-create-track-row button { color: #64748b; font-size: 1rem; }
+#plugin-editor .editor-create-track-row button:hover { color: #f8fafc; }
