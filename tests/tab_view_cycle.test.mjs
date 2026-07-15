@@ -19,7 +19,7 @@ globalThis.requestAnimationFrame = globalThis.requestAnimationFrame || ((fn) => 
 
 const { S } = await import('../src/state.js');
 const { _editorCycleViewMode } = await import('../src/key-view.js');
-const { _tabViewPing } = await import('../src/tab-view-live.js');
+const { _tabViewPing, _tabViewHideIfShown } = await import('../src/tab-view-live.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -108,6 +108,7 @@ t('a draw-pass ping on a fretted track keeps the lens on and shows the mount', (
     _tabViewPing();
     assert.strictEqual(S.tabViewMode, true, 'fretted track keeps the lens');
     assert.strictEqual(fakeMount.classList._h, false, 'mount shown');
+    _tabViewHideIfShown(); // cancel the 150 ms debounced render this ping scheduled
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
