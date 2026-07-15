@@ -57,7 +57,8 @@ notes) — useful for lining a grid up fast.
 - **Companion strips** — a **fretboard strip** for fretted tracks (shows
   candidate positions from the position resolver — click one to assign) and a
   **drum pad strip** for drum tracks.
-- **Mixer** (`Shift+C`) — per-track volume / mute / solo for the guide voice.
+- **Mixer** (`Shift+C`) — per-track volume / mute / solo. Audio and transcription
+  tracks are live together by default; mute or solo the channels you want to hear.
 
 Press **`?`** at any time for the searchable shortcut panel, or **`Ctrl+K`** for
 the command palette.
@@ -96,7 +97,9 @@ Select a note by clicking it; drag a box to select several. Then:
 - **Sustain** — drag a note's tail to shorten / lengthen (or **Note ▸**
   Shorten / Lengthen sustain; `[` / `]` in the EOF profile).
 - **Duplicate** the selection to the next position with `Ctrl+D`; **select all
-  matching** string/fret with `Ctrl+L`; **resnap** to the grid with `Shift+R`.
+  notes** with `Ctrl+A` (`Cmd+A` on macOS); **select all matching** string/fret
+  with `Ctrl+L`; **resnap** to the grid with `Shift+R`. Select All remains a
+  normal text command while editing a name or typing in a field.
 
 ### Techniques
 

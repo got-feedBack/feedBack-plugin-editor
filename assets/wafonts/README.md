@@ -34,5 +34,20 @@ Only these files, matching the route's whitelist (`_safe_wafont_name` in
 
 ## Currently vendored
 
-(none yet — the FTO/size call for committing preset renders is a follow-up;
-the guide uses the org/CDN sources until then)
+All from surikov/webaudiofont + webaudiofontdata (MIT), FluidR3_GM by Frank
+Wen (MIT) — fetched 2026-07-14 from `surikov.github.io`:
+
+- `WebAudioFontPlayer.js` (~122 KB) — the WebAudioFont player.
+- `0000_FluidR3_GM_sf2_file.js` (~1.2 MB) — Grand piano, the keys default.
+- `0270_FluidR3_GM_sf2_file.js` (~250 KB) — Clean electric, the guitar default.
+- `0330_FluidR3_GM_sf2_file.js` (~440 KB) — Fingered, the bass default.
+
+- `128{36,37,38,41,42,44,45,46,47,49,50,51,52,53,55,56,57}_0_FluidR3_GM_sf2_file.js`
+  (~900 KB together) — the FluidR3_GM percussion one-shots behind every
+  chartable drum piece (kick, snares, hats, toms, cymbals, cowbell — the
+  `DRUM_PIECE_GM_NOTE` table in `src/gm-guide.js`).
+
+These are the per-kind DEFAULT presets plus the drum kit (~2.9 MB total —
+the release-size call): a chart sounds out of the box with zero network.
+The non-default curated melodic choices still stream from the org/CDN rungs
+on first use.

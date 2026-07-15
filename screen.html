@@ -218,7 +218,8 @@
                 <button id="editor-segment-merge" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600 disabled:opacity-40" title="Merge the selected zone with the one after it">Merge &#8594;</button>
                 <button id="editor-segment-kind" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600 disabled:opacity-40" title="Cycle the selected zone: steady &#8594; ramp &#8594; unmapped">Kind</button>
                 <button id="editor-segment-bpm" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600 disabled:opacity-40" title="Type the selected zone's tempo">BPM&#8230;</button>
-                <button id="editor-segment-octave" class="hidden px-2 py-0.5 rounded bg-amber-700 text-white hover:bg-amber-600"></button>
+                <button id="editor-segment-feel" class="hidden px-2 py-0.5 rounded bg-teal-700 text-white hover:bg-teal-600"></button>
+                <button id="editor-segment-octave" class="hidden px-2 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600"></button>
                 <button id="editor-segment-single" class="px-2 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Replace every zone with one steady tempo (escape hatch for an over-segmented steady song)">Single tempo</button>
                 <button id="editor-segment-apply" class="px-2 py-0.5 rounded bg-teal-700 text-white hover:bg-teal-600" title="Build the grid: seed each zone, then snap its barlines to the recording inside it">Confirm &amp; refine</button>
                 <button id="editor-segment-dismiss" class="px-1.5 py-0.5 rounded bg-dark-700/90 text-gray-300 hover:text-white hover:bg-dark-600" title="Dismiss (Esc)">&#10005;</button>
@@ -226,6 +227,39 @@
             <!-- Command palette (Ctrl+K) — a searchable front door over every
                  registry command (with its live keybinding) and menu action.
                  Type-to-filter; ↑/↓ select, Enter runs, Esc / backdrop closes. -->
+            <!-- Numeric Tempo List (P2-7, UX G3): one row per AUTHORED mark;
+                 toggled from Tempo/Grid menu; click a row jumps to its bar. -->
+            <div id="editor-tempo-list" class="hidden absolute right-2 top-12 z-30 w-80 max-h-80 overflow-y-auto rounded-md border border-gray-600 bg-dark-800/95 backdrop-blur-sm text-xs">
+                <div class="flex items-center justify-between px-2 py-1 border-b border-gray-700">
+                    <span class="text-teal-300 font-medium">Tempo List</span>
+                    <button id="editor-tempo-list-close" class="px-1.5 rounded text-gray-400 hover:text-white hover:bg-dark-600" title="Close">&#10005;</button>
+                </div>
+                <table class="w-full text-left">
+                    <thead><tr class="text-gray-500">
+                        <th class="px-2 py-0.5 text-right">Bar</th><th class="px-2 py-0.5">Type</th>
+                        <th class="px-2 py-0.5">Value</th><th class="px-2 py-0.5">Source</th>
+                    </tr></thead>
+                    <tbody id="editor-tempo-list-body"></tbody>
+                </table>
+            </div>
+            <!-- Multitrack stem manager (studio-session ingest): import /
+                 rename / reorder / delete audio tracks and pair each with
+                 the chart track transcribing it. src/stem-tracks.js owns it. -->
+            <div id="editor-stem-tracks-modal" class="hidden absolute inset-0 z-40 bg-black/40 backdrop-blur-[2px]">
+                <div class="mx-auto mt-16 w-[30rem] max-w-[calc(100%-2rem)] rounded-lg border border-gray-600 bg-dark-800/95 shadow-2xl text-sm" role="dialog" aria-label="Audio tracks">
+                    <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+                        <span class="text-teal-300 font-medium">Audio tracks</span>
+                        <div class="flex items-center gap-2">
+                            <label class="px-2 py-0.5 rounded bg-teal-700 text-white hover:bg-teal-600 cursor-pointer">Import…
+                                <input id="editor-stem-tracks-file" type="file" multiple accept=".wav,.ogg,.opus,.mp3,.flac,.m4a,.aac,audio/*" class="hidden">
+                            </label>
+                            <button id="editor-stem-tracks-close" class="px-1.5 rounded text-gray-400 hover:text-white hover:bg-dark-600" title="Close">&#10005;</button>
+                        </div>
+                    </div>
+                    <div id="editor-stem-tracks-list" class="px-3 py-1.5 max-h-80 overflow-y-auto text-xs"></div>
+                    <p class="px-3 pb-2 text-[10px] text-gray-500">Each track can be paired with the chart track that transcribes it — pairing powers "Solo my source track" and is saved with the song.</p>
+                </div>
+            </div>
             <div id="editor-command-palette" class="hidden absolute inset-0 z-40 bg-black/40 backdrop-blur-[2px]">
                 <div class="mx-auto mt-16 w-[36rem] max-w-[calc(100%-2rem)] rounded-lg border border-gray-600 bg-dark-800/95 shadow-2xl text-sm" role="dialog" aria-label="Command palette">
                     <input id="editor-palette-input" type="text" placeholder="Type a command… (Esc to close)" autocomplete="off" spellcheck="false"
@@ -233,6 +267,10 @@
                     <ul id="editor-palette-list" class="max-h-80 overflow-y-auto p-1.5 text-xs"></ul>
                 </div>
             </div>
+            <!-- Live Tab view mount (view-modality): the engraved score that
+                 OWNS the timeline area while S.tabViewMode is on. alphaTab
+                 renders into it; the draw pass shows/hides it. -->
+            <div id="editor-tabview-mount" class="hidden absolute inset-0 z-20 overflow-auto bg-white"></div>
             <!-- Playability-lint popover (P9) — anchored bottom-right of the timeline. -->
             <div id="editor-lint-pop" role="dialog" aria-label="Playability notes" class="hidden absolute right-3 bottom-2 z-30 editor-lint-pop"></div>
             <!-- Entry tour card (workspace-shell C3) — a non-modal, task-based
@@ -334,6 +372,10 @@
         <div id="editor-mixer-panel" class="hidden w-64 shrink-0 bg-dark-800 border-l border-gray-800 overflow-y-auto text-xs text-gray-200">
             <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
                 <span class="text-xs font-semibold">Mixer</span>
+                <!-- Band mode (multi-track MIDI playback): every track voices
+                     its instrument, mixed by the Tracks strips below. -->
+                <button id="editor-mixer-play-all" onclick="editorTogglePlayAllTracks()" aria-pressed="false"
+                        class="editor-mix-ms" title="Play ALL tracks as their instruments (mix them with the strips below); off = only the current track's guide voice">All tracks</button>
                 <button onclick="editorToggleMixer(false)" class="text-gray-500 hover:text-white text-sm leading-none" title="Close the mixer panel">&times;</button>
             </div>
             <div class="px-3 pt-2 text-[10px] uppercase tracking-wide text-gray-500">Tracks</div>

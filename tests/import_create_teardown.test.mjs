@@ -91,5 +91,24 @@ await t('audio-less import stops processes, clears buffer, disposes old session'
     assert.ok(String(disposed.body).includes('old-session'), 'disposed the OUTGOING session id');
 });
 
+await t('an import RESETS authored tempo marks — the previous song must not bleed', async () => {
+    // Prior song left holds/groupings in S.tempoMarks; the import replaces the
+    // grid but (pre-fix) forgot the marks, so they leaked onto the new chart
+    // and would persist on its next save.
+    Object.assign(S, {
+        sessionId: 'old', tempoMarks: [
+            { measure: 2, kind: 'hold', factor: 2, provenance: 'confirmed' },
+            { measure: 5, kind: 'meter', num: 7, den: 8, grouping: [2, 2, 3] },
+        ],
+        arrangements: [], beats: [],
+    });
+    await editorApplyCreateResult({
+        session_id: 'fresh',
+        arrangements: [{ name: 'Lead', notes: [], chords: [], tuning: [0, 0, 0, 0, 0, 0] }],
+        beats: [], sections: [], duration: 0,   // an import carries no tempo_marks
+    });
+    assert.deepStrictEqual(S.tempoMarks, [], 'the new song starts with no authored marks');
+});
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);

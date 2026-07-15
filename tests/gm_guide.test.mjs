@@ -135,10 +135,9 @@ t('every curated choice is a valid program and every kind has a default in its l
     }
 });
 
-t('mode pure: gm only on the exact token, everything else is clap', () => {
-    assert.strictEqual(_gmGuideModePure('gm'), 'gm');
-    for (const junk of ['clap', null, undefined, '', 'GM', 'instrument', 1]) {
-        assert.strictEqual(_gmGuideModePure(junk), 'clap', String(junk));
+t('mode pure: instruments ARE the guide — every input reads gm (legacy clap prefs too)', () => {
+    for (const raw of ['gm', 'clap', null, undefined, '', 'GM', 'instrument', 1]) {
+        assert.strictEqual(_gmGuideModePure(raw), 'gm', String(raw));
     }
 });
 
@@ -221,14 +220,12 @@ function modelWith(gmGuide) {
 }
 const transportItems = (model) => model.find(m => m.title === 'Transport').items;
 
-t('menu: guide-voice radio reflects the mode; instrument rows follow the kind', () => {
+t('menu: the clap/instrument radio is GONE; instrument rows follow the kind', () => {
     const items = transportItems(modelWith({
         mode: 'gm', kind: 'bass', program: 34, choices: GM_VOICE_CHOICES.bass,
     }));
-    const clap = items.find(i => i.label && i.label.endsWith('Clap'));
-    const gm = items.find(i => i.label && i.label.includes('Instrument (GM)'));
-    assert.ok(clap && gm, 'both radio rows render');
-    assert.ok(clap.label.startsWith('  ') && gm.label.startsWith('✓ '), 'gm mode checked');
+    assert.ok(!items.some(i => i.label && i.label.endsWith('Clap')), 'no clap row anywhere');
+    assert.ok(!items.some(i => i.label && i.label.includes('Instrument (GM)')), 'no mode radio');
     assert.ok(items.some(i => i.hdr === 'Guide instrument (bass)'), 'kind header');
     const picked = items.find(i => i.label && i.label.includes('Picked'));
     assert.ok(picked.label.startsWith('✓ '), 'active program checked');
@@ -236,15 +233,15 @@ t('menu: guide-voice radio reflects the mode; instrument rows follow the kind', 
 });
 
 t('menu: no kind in scope (no song / drum grid) renders NO instrument rows', () => {
-    const items = transportItems(modelWith({ mode: 'clap', kind: null, program: null, choices: [] }));
+    const items = transportItems(modelWith({ mode: 'gm', kind: null, program: null, choices: [] }));
     assert.ok(!items.some(i => typeof i.hdr === 'string' && i.hdr.startsWith('Guide instrument')));
-    assert.ok(items.some(i => i.label && i.label.endsWith('Clap')), 'radio still present');
+    assert.ok(!items.some(i => i.label && i.label.endsWith('Clap')), 'and still no clap row');
 });
 
-t('menu: an older ctx without gmGuide renders the radio unchecked, never throws', () => {
+t('menu: an older ctx without gmGuide never throws (and still offers no radio)', () => {
     const items = transportItems(modelWith(undefined));
-    const clap = items.find(i => i.label && i.label.endsWith('Clap'));
-    assert.ok(clap && clap.label.startsWith('  '));
+    assert.ok(Array.isArray(items) && items.length, 'model renders');
+    assert.ok(!items.some(i => i.label && i.label.endsWith('Clap')));
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

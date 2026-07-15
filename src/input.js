@@ -5,7 +5,7 @@
 // the commands refresh in the composition root goes through host.
 
 import { AddAnchorCmd, AddHandshapeCmd, AddToneChangeCmd, RemoveAnchorCmd, RemoveHandshapeCmd, RemoveToneChangeCmd, _anchorLaneTopY, _currentAnchorArr, _currentToneArr, _ensureTones, _handshapeLaneTopY, _readAnchorSnapshot, onAnchorLaneContextMenu, onHandshapeLaneContextMenu, onToneLaneContextMenu } from './annotation-lanes.js';
-import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsetsShifted, startPlayback, stopPlayback } from './audio.js';
+import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsetsShifted, editorTogglePlayAllTracks, startPlayback, stopPlayback } from './audio.js';
 import { editorSuggestFingers } from './anchor-resolve.js';
 import { _suggestActive, _suggestCompute, _suggestDismiss } from './tempo-suggest.js';
 import { _zonesDismiss } from './tempo-zones.js';
@@ -24,6 +24,7 @@ import {
 } from './loop.js';
 import { _editorSongFit } from './song-fit.js';
 import { _recState } from './midi-record.js';
+import { editorSoloMyStem, editorToggleStemTracks } from './stem-tracks.js';
 import { getMousePos } from './mouse.js';
 import { _resizeSustainsForDeltaPure, notes } from './notes.js';
 import { EDITOR_PROFILE_OVERRIDES, _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure, _editorIsTypingTarget, _editorRenderShortcutPanel, _editorTableCommandForKeyPure, editorRightClickBehavior, editorShortcutProfile } from './shortcuts.js';
@@ -31,6 +32,7 @@ import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure
 import { S } from './state.js';
 import { _editorShowTabPreview, _tabPreviewKeyPolicyPure } from './tab-preview.js';
 import { editorOpenCommandPalette } from './command-palette.js';
+import { editorToggleTabView } from './tab-view-live.js';
 import { editorExportGp5 } from './gp5-export.js';
 import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSelection, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup, _tempoSelRangePure } from './tempo.js';
 import { _tourNoteAction } from './tour.js';
@@ -464,6 +466,130 @@ function _editorDuplicateSelection() {
     host.draw();
     host.updateStatus();
     setStatus(`Duplicated ${newNotes.length} note${newNotes.length === 1 ? '' : 's'}`);
+    return true;
+}
+
+/* @pure:clipboard:start */
+// The note clipboard (Ctrl+C/X/V). Session-scoped and internal — notes are
+// structured editor state, not text, and a stray Ctrl+C on the canvas must
+// never clobber whatever the user has on the OS clipboard (and vice versa) —
+// the same choice every DAW makes for its piano-roll clipboard.
+//
+// Pack: deep-copy the selection with times RELATIVE to its earliest note, so
+// a paste lands the phrase's first note exactly at the playhead and the
+// internal timing rides along. structuredClone, not spread: a bend curve
+// (`techniques.bend_values`) is an array — a shallow copy would leave every
+// paste sharing one curve, and editing any of them would edit all.
+export function _clipboardPackPure(selNotes, arrIndex, keys) {
+    const rows = (selNotes || []).filter(n => n && Number.isFinite(n.time))
+        .slice().sort((a, b) => a.time - b.time);
+    if (!rows.length) return null;
+    const anchor = rows[0].time;
+    return {
+        arrIndex,
+        keys: !!keys,
+        notes: rows.map(n => ({
+            dt: n.time - anchor,
+            string: n.string,
+            fret: n.fret,
+            sustain: Number(n.sustain) || 0,
+            techniques: structuredClone(n.techniques || {}),
+        })),
+    };
+}
+
+// Plan a paste at `atTime`: retime every clipboard note relative to the
+// anchor (clamped at t=0), deep-copying again so repeated pastes never share
+// state, and SKIP notes whose string doesn't exist on this track (pasting a
+// 6-string riff onto a 4-string bass keeps what fits and says what didn't).
+export function _clipboardPastePlanPure(clip, atTime, laneCount) {
+    if (!clip || !Array.isArray(clip.notes) || !clip.notes.length) return null;
+    const at = Number.isFinite(atTime) ? atTime : 0;
+    const out = [];
+    let laneSkipped = 0;
+    for (const c of clip.notes) {
+        if (Number.isFinite(laneCount) && laneCount > 0 && c.string >= laneCount) { laneSkipped++; continue; }
+        out.push({
+            time: Math.max(0, at + c.dt),
+            string: c.string,
+            fret: c.fret,
+            sustain: c.sustain,
+            techniques: structuredClone(c.techniques || {}),
+        });
+    }
+    return { notes: out, laneSkipped };
+}
+/* @pure:clipboard:end */
+
+let _noteClipboard = null;
+
+// The registry made Cut/Paste menu- and palette-invokable, which BYPASSES
+// onKeyDown's mode gates — so every clipboard WRITE re-checks them here:
+// no mutation while MIDI-recording, in the Tracks overview, or in the
+// read-only fretted roll (delete and add are pitch-writes there, same as
+// the right-click delete guard). Plain Copy is a read and stays free.
+function _clipboardWriteBlocked() {
+    if (_recState === 'recording') { setStatus('Stop recording first.'); return true; }
+    if (S.partsViewMode) { setStatus('Leave the Tracks overview to edit notes.'); return true; }
+    if (_rollReadOnly()) { _rollLockNotice(); return true; }
+    return false;
+}
+
+// Ctrl+C / Ctrl+X. Cut is copy + the existing undoable delete — the clipboard
+// itself is deliberately NOT part of history (undoing a cut restores the
+// notes but keeps the clipboard, exactly like every text editor).
+export function _editorCopySelection(cutting = false) {
+    if (S.drumEditMode || S.tempoMapMode) return false;
+    if (cutting && _clipboardWriteBlocked()) return true;
+    const idxs = _editorCurrentNoteIndices();
+    if (!idxs.length) { setStatus(`Select notes to ${cutting ? 'cut' : 'copy'} first.`); return true; }
+    const nn = notes();
+    _noteClipboard = _clipboardPackPure(idxs.map(i => nn[i]), S.currentArr, isKeysArr());
+    if (!_noteClipboard) return true;
+    if (cutting) {
+        S.history.exec(new DeleteNotesCmd(idxs));
+        host.draw();
+        host.updateStatus();
+    }
+    const n = _noteClipboard.notes.length;
+    setStatus(`${cutting ? 'Cut' : 'Copied'} ${n} note${n === 1 ? '' : 's'} — paste lands at the playhead.`);
+    return true;
+}
+
+// Ctrl+V — paste at the (snap-honouring) playhead as ONE undoable step,
+// leaving the pasted notes selected so a nudge or repeat-paste follows
+// naturally. Cross-track pasting is allowed between like tracks (with a
+// string-count clamp); keys ↔ fretted is refused (string/fret mean different
+// things there), and pasting NEW pitches into the read-only fretted roll is
+// refused like every other pitch write.
+export function _editorPasteAtPlayhead() {
+    if (S.drumEditMode || S.tempoMapMode) return false;
+    if (_clipboardWriteBlocked()) return true;
+    if (!_noteClipboard) { setStatus('Nothing to paste — copy or cut notes first.'); return true; }
+    if (_noteClipboard.keys !== isKeysArr()) {
+        setStatus('Can\'t paste between keys and fretted tracks — the note shapes don\'t translate.');
+        return true;
+    }
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return false;
+    const nn = notes();
+    const at = snapTime(Math.max(0, S.cursorTime || 0));
+    const plan = _clipboardPastePlanPure(_noteClipboard, at, _stringCountFor(arr));
+    if (!plan || !plan.notes.length) {
+        setStatus(plan && plan.laneSkipped
+            ? 'Nothing fits — this track has fewer strings than the copied notes use.'
+            : 'Nothing to paste.');
+        return true;
+    }
+    S.history.exec(new AddNotesCmd(nn, plan.notes, _withStableSelection));
+    S.sel.clear();
+    const added = new Set(plan.notes);
+    for (let i = 0; i < nn.length; i++) if (added.has(nn[i])) S.sel.add(i);
+    host.draw();
+    host.updateStatus();
+    const skippedNote = plan.laneSkipped
+        ? ` (${plan.laneSkipped} skipped — no such string on this track)` : '';
+    setStatus(`Pasted ${plan.notes.length} note${plan.notes.length === 1 ? '' : 's'} at the playhead${skippedNote}.`);
     return true;
 }
 
@@ -915,6 +1041,9 @@ export function _editorRunEofCommand(cmd) {
     case 'toggleGuideClap': return _editorToggleGuideClap();
     case 'toggleMetronome': return _editorToggleMetronome();
     case 'toggleMixer': return editorToggleMixerPanel();
+    case 'togglePlayAllTracks': return editorTogglePlayAllTracks();
+    case 'manageStemTracks': return editorToggleStemTracks();
+    case 'soloMyStem': return editorSoloMyStem();
     case 'toggleLoopAB': return _editorToggleLoopAB();
     case 'toggleLoopRegion': return editorToggleLoopRegion();
     case 'songFit': _editorSongFit(); return true;
@@ -926,6 +1055,7 @@ export function _editorRunEofCommand(cmd) {
     case 'toggleDrumDensity': return _editorToggleDrumDensity();
     case 'showTabPreview': return _editorShowTabPreview();
     case 'cycleViewMode': return host.editorCycleViewMode();
+    case 'toggleTabView': return editorToggleTabView();
     case 'movePartEarlier': return host.editorMovePart(-1);
     case 'movePartLater': return host.editorMovePart(+1);
     case 'showShortcutHelp': return _editorShowShortcutDiscovery('Shortcut help');
@@ -993,6 +1123,9 @@ export function _editorRunEofCommand(cmd) {
     case 'setAnchor': return _editorSetAnchorAtCursor();
     case 'selectLike': return _editorSelectLike();
     case 'duplicateSelection': return _editorDuplicateSelection();
+    case 'copySelection': return _editorCopySelection(false);
+    case 'cutSelection': return _editorCopySelection(true);
+    case 'pasteAtPlayhead': return _editorPasteAtPlayhead();
     case 'resnapSelection': return _editorResnapSelection();
     case 'addSection': return _editorAddSectionAtCursor();
     case 'addPhrase': return _editorAddPhraseAtCursor();
@@ -1212,6 +1345,20 @@ function showSectionMenu(cx, cy, time) {
     menu.classList.remove('hidden');
 }
 
+export function _editorSelectAllPolicyPure(e) {
+    // Select All is the unshifted Ctrl/Cmd+A only. Shift+Ctrl+A is a distinct
+    // chord (e.g. the EOF profile's Toggle Accent) and must fall through to the
+    // shortcut dispatch, not be swallowed here. CapsLock still reports the base
+    // key as 'A' without setting shiftKey, so it keeps working.
+    if (!e || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey
+            || String(e.key || '').toLowerCase() !== 'a') return null;
+
+    const target = e.target;
+    const isTextEditor = !!(target && typeof target.matches === 'function'
+        && target.matches('input, select, textarea, [contenteditable]:not([contenteditable="false"])'));
+    return isTextEditor ? 'text' : 'editor';
+}
+
 export function onKeyDown(e) {
     // Only handle when editor screen is visible
     const screen = document.getElementById('plugin-editor');
@@ -1253,6 +1400,42 @@ export function onKeyDown(e) {
         e.preventDefault();
         return;
     }
+
+    // Select All belongs to the active DAW surface, not Chromium's page-text
+    // selection. Claim it before the recording and Parts-view guards below;
+    // those read-only states must suppress the browser default without
+    // selecting editor objects hidden behind the current surface. Actual text
+    // editors retain their native Select All behavior, including inline rename.
+    const selectAllPolicy = _editorSelectAllPolicyPure(e);
+    if (selectAllPolicy === 'editor') {
+        e.preventDefault();
+        if (_recState === 'recording' || S.partsViewMode) return;
+        if (S.drumEditMode && S.drumTab) {
+            // Select every drum hit. No filter — the user wants every
+            // hit even off-screen, mirroring the guitar Ctrl+A path.
+            S.drumSel = new Set();
+            const hits = S.drumTab.hits || [];
+            for (let i = 0; i < hits.length; i++) S.drumSel.add(i);
+            host.draw();
+            return;
+        }
+        // Tempo-map mode: Ctrl+A selects every downbeat (PR 5a).
+        if (S.tempoMapMode) {
+            if (!S.tempoSelMulti) S.tempoSelMulti = new Set();
+            S.tempoSelMulti.clear();
+            const beats = S.beats || [];
+            for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) S.tempoSelMulti.add(i);
+            host.draw();
+            setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
+            return;
+        }
+        const nn = notes();
+        S.sel.clear();
+        for (let i = 0; i < nn.length; i++) S.sel.add(i);
+        host.draw();
+        return;
+    }
+    if (selectAllPolicy === 'text') return;
 
     if (e.key === ' ' && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
@@ -1474,109 +1657,15 @@ export function onKeyDown(e) {
         window.editorRedo();
         return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-        if (!e.target.matches('input, select, textarea')) {
-            e.preventDefault();
-            if (S.drumEditMode && S.drumTab) {
-                // Select every drum hit. No filter — the user wants every
-                // hit even off-screen, mirroring the guitar Ctrl+A path.
-                S.drumSel = new Set();
-                const hits = S.drumTab.hits || [];
-                for (let i = 0; i < hits.length; i++) S.drumSel.add(i);
-                host.draw();
-                return;
-            }
-            // Tempo-map mode: Ctrl+A selects every downbeat (PR 5a).
-            if (S.tempoMapMode) {
-                if (!S.tempoSelMulti) S.tempoSelMulti = new Set();
-                S.tempoSelMulti.clear();
-                const beats = S.beats || [];
-                for (let i = 0; i < beats.length; i++) if (beats[i] && beats[i].measure > 0) S.tempoSelMulti.add(i);
-                host.draw();
-                setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
-                return;
-            }
-            const nn = notes();
-            for (let i = 0; i < nn.length; i++) S.sel.add(i);
-            host.draw();
-            return;
-        }
-    }
     if ((e.ctrlKey || e.metaKey) && (e.key === 'd' || e.key === 'D')) {
-        // Duplicate the selection to the next position. Same mode/focus
-        // gate as copy/paste below; preventDefault so the browser's
-        // bookmark shortcut doesn't fire.
+        // Duplicate the selection to the next position. preventDefault so
+        // the browser's bookmark shortcut doesn't fire. (Copy/cut/paste are
+        // registry commands now — resolved by the shortcut profiles, listed
+        // in the Edit menu and the shortcut panel.)
         if (!S.drumEditMode && !S.tempoMapMode && S.sel.size
                 && !e.target.matches('input, select, textarea')) {
             e.preventDefault();
             _editorDuplicateSelection();
-            return;
-        }
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
-        // Copy/paste act on the guitar/keys arrangement's S.sel. In
-        // drum-edit mode the canvas shows the drum grid, so a paste here
-        // would mutate the hidden arrangement with no visual feedback —
-        // skip both shortcuts while drum-edit mode is active.
-        if (!S.drumEditMode && !S.tempoMapMode && S.sel.size && !e.target.matches('input, select, textarea')) {
-            e.preventDefault();
-            const nn = notes();
-            const selNotes = [...S.sel].map(i => nn[i]);
-            const baseTime = Math.min(...selNotes.map(n => n.time));
-            S.clipboard = {
-                notes: selNotes.map(n => ({
-                    time: n.time - baseTime,
-                    string: n.string,
-                    fret: n.fret,
-                    sustain: n.sustain || 0,
-                    techniques: { ...(n.techniques || {}) },
-                })),
-                baseTime,
-            };
-            setStatus(`Copied ${selNotes.length} notes`);
-            return;
-        }
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
-        if (!S.drumEditMode && !S.tempoMapMode && S.clipboard && S.clipboard.notes.length && !e.target.matches('input, select, textarea')) {
-            e.preventDefault();
-            const pasteTime = S.cursorTime;
-            const newNotes = S.clipboard.notes.map(n => ({
-                time: n.time + pasteTime,
-                string: n.string,
-                fret: n.fret,
-                sustain: n.sustain,
-                techniques: { ...(n.techniques || {}) },
-            }));
-            // Batch add via a compound command. Wrap both exec (sort
-            // can reshuffle) and rollback (splice shifts indices) in
-            // `_withStableSelection` so undo/redo can't leave `S.sel`
-            // pointing at unrelated notes.
-            const nn = notes();
-            const addCmd = {
-                _notes: newNotes,
-                exec() {
-                    _withStableSelection(() => {
-                        for (const n of this._notes) nn.push(n);
-                        nn.sort((a, b) => a.time - b.time);
-                    });
-                },
-                rollback() {
-                    _withStableSelection(() => {
-                        for (const n of this._notes) {
-                            const i = nn.indexOf(n);
-                            if (i >= 0) nn.splice(i, 1);
-                        }
-                    });
-                },
-            };
-            S.history.exec(addCmd);
-            // Select pasted notes
-            S.sel.clear();
-            for (const n of newNotes) { const i = nn.indexOf(n); if (i >= 0) S.sel.add(i); }
-            host.draw();
-            host.updateStatus();
-            setStatus(`Pasted ${newNotes.length} notes at cursor`);
             return;
         }
     }

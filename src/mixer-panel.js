@@ -90,6 +90,16 @@ export function _mixerClapState() {
     return _mixerClapStatePure(S.partMix, S.drumEditMode, S.currentArr);
 }
 
+// Band mode's per-KEY twin (host.partStripState): {audible, vol 0..1} for
+// any strip key, whole-map solo rule included — the engine's per-part gain
+// nodes ramp to exactly this, so the strips ARE the MIDI mixer.
+export function _mixerPartStripState(key) {
+    return {
+        audible: _mixerPartAudiblePure(S.partMix, key),
+        vol: _mixerPartStatePure(S.partMix, key).vol / 100,
+    };
+}
+
 function _panel() { return document.getElementById('editor-mixer-panel'); }
 
 // ── Strip rendering (memoized — never rides the draw loop) ───────────
@@ -125,6 +135,13 @@ function _renderParts(container) {
 
 // Seed the bus faders + blip checkbox from their prefs (owned by audio.js,
 // read through the host hook so this module stays audio-import-free).
+// The header's band-mode toggle mirrors the persisted pref (read through a
+// host hook so this module stays audio-import-free).
+function _renderPlayAll() {
+    const btn = document.getElementById('editor-mixer-play-all');
+    if (btn) btn.setAttribute('aria-pressed', host.playAllTracksEnabled() ? 'true' : 'false');
+}
+
 function _renderBuses() {
     const ui = host.mixUiState();
     for (const [bus, id] of [['ref', 'editor-mix-ref'], ['guide', 'editor-mix-guide'], ['click', 'editor-mix-click']]) {
@@ -155,6 +172,8 @@ function _refreshMixerButtons(open) {
 function _setPart(key, patch) {
     if (!S.partMix || typeof S.partMix !== 'object') S.partMix = {};
     S.partMix[key] = { ..._mixerPartStatePure(S.partMix, key), ...patch };
+    // Band mode ramps the part's live gain node off this (inert otherwise).
+    host.partMixChanged();
 }
 
 // One delegated listener pair on the (static) panel element — guarded so a
@@ -197,9 +216,12 @@ export function _mixerPanelRefresh() {
     const container = document.getElementById('editor-mixer-parts');
     if (!container) return;
     const parts = _mixerPartsPure(S.arrangements, S.drumTab);
-    const key = editGen + '|' + JSON.stringify(S.partMix) + '|' + parts.map(p => p.key + ':' + p.name).join(',');
+    const key = editGen + '|' + JSON.stringify(S.partMix) + '|'
+        + (host.playAllTracksEnabled() ? '1' : '0') + '|'
+        + parts.map(p => p.key + ':' + p.name).join(',');
     if (key === _lastKey) return;
     _lastKey = key;
+    _renderPlayAll();
     _renderParts(container);
 }
 

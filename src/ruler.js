@@ -46,6 +46,7 @@ import {
 import { S, editGen } from './state.js';
 import { _editorCommandById, editorShortcutProfile } from './shortcuts.js';
 import { _editorToggleTempoMapMode, _tempoMarkers } from './tempo.js';
+import { _feelRangesLive, _groupingAccentsLive } from './tempo-marks.js';
 import { setStatus } from './ui.js';
 
 // ── Map Health lens (P2-4): per-bar grid-vs-onset drift, three-state ──────────
@@ -79,7 +80,7 @@ export function _mapHealthResults() {
         return _mhMemo.result;
     }
     const onsets = (typeof _ensureOnsetsShifted === 'function') ? _ensureOnsetsShifted() : null;
-    const result = _mapHealthPure(beats, onsets);
+    const result = _mapHealthPure(beats, onsets, { feelRanges: _feelRangesLive() });
     _mhMemo = { gen, onsetsRef: raw, shift, beatsRef: beats, result };
     return result;
 }
@@ -160,6 +161,15 @@ export function _minimapTimePure(x, dur, labelW, w) {
 
 // Label every Nth measure so numbers never collide: N=1 while a bar gets
 // ≥ 34px, then the next power-of-two-ish step that clears the width.
+// P2-6: at bar widths where per-beat ticks are dropped (pxPerBeat < 6) but
+// the bar still has room (pxPerBar >= 28), SPEND the few sub-bar ticks on the
+// authored grouping's accents — `2+2+3` shows its two interior resets instead
+// of nothing. Position 0 is the barline itself (already drawn).
+export function _rulerGroupTickPure(posInBar, accentMap, pxPerBeat, pxPerBar) {
+    return !!(accentMap && posInBar > 0 && accentMap[posInBar] === 1
+        && pxPerBeat < 6 && pxPerBar >= 28);
+}
+
 export function _rulerBarLabelSkipPure(pxPerBar) {
     if (!Number.isFinite(pxPerBar) || pxPerBar <= 0) return 8;
     if (pxPerBar >= 34) return 1;
@@ -321,10 +331,12 @@ export function drawRuler(w) {
     ctx.font = '9px monospace';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
+    const groupAccents = _groupingAccentsLive();   // memoized — no per-frame build
     let barIdx = 0;
+    let curMeasure = -1, posInBar = -1;
     for (const b of beats) {
         const down = b.measure > 0;
-        if (down) barIdx++;
+        if (down) { barIdx++; curMeasure = b.measure; posInBar = 0; } else posInBar++;
         if (b.time < st || b.time > et) continue;
         const x = timeToX(b.time);
         if (x < LABEL_W || x > w) continue;
@@ -340,7 +352,17 @@ export function drawRuler(w) {
                 ctx.fillText(String(b.measure), x + 3, top + RULER_H * 0.42);
             }
         } else if (pxPerBeat >= 6) {
-            ctx.strokeStyle = '#23233c';
+            // A grouping accent reads brighter even at full tick density —
+            // the felt pulse stays visible among the even subdivisions.
+            const acc = groupAccents.get(curMeasure);
+            ctx.strokeStyle = (acc && acc[posInBar] === 1) ? '#3a3a66' : '#23233c';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x + 0.5, top + RULER_H * 0.72);
+            ctx.lineTo(x + 0.5, top + RULER_H);
+            ctx.stroke();
+        } else if (_rulerGroupTickPure(posInBar, groupAccents.get(curMeasure), pxPerBeat, pxPerBar)) {
+            ctx.strokeStyle = '#3a3a66';
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(x + 0.5, top + RULER_H * 0.72);
@@ -376,12 +398,25 @@ export function drawRuler(w) {
         if (x < LABEL_W || x > w) continue;
         const row = (Math.abs(x - mkLastX) < 44) ? Math.min(mkRow + 1, 2) : 0;
         mkLastX = x; mkRow = row;
-        const isTempo = mk.kind === 'tempo';
+        const isTempo = mk.kind === 'tempo' || mk.kind === 'ramp';
+        const isHold = mk.kind === 'hold';
+        const isFeel = mk.kind === 'feel';
         const cy = top + 1 + row * 8.5;
         const tw = ctx.measureText(mk.label).width;
-        ctx.fillStyle = isTempo ? 'rgba(56,189,248,0.16)' : 'rgba(167,139,250,0.16)';
+        ctx.fillStyle = isHold ? 'rgba(245,158,11,0.20)'
+            : isFeel ? 'rgba(52,211,153,0.18)'
+            : isTempo ? 'rgba(56,189,248,0.16)' : 'rgba(167,139,250,0.16)';
         ctx.fillRect(x + 2, cy, tw + 5, 8);
-        ctx.fillStyle = isTempo ? '#7dd3fc' : '#c4b5fd';
+        // AUTHORED chips (P2-5) read as deliberate: a solid outline derived
+        // chips don't get. Confirmed provenance = solid; anything else dashed.
+        if (mk.authored) {
+            ctx.strokeStyle = isHold ? '#f59e0b' : isFeel ? '#34d399' : '#a78bfa';
+            ctx.lineWidth = 0.75;
+            if (mk.provenance && mk.provenance !== 'confirmed') ctx.setLineDash([2, 2]);
+            ctx.strokeRect(x + 2, cy, tw + 5, 8);
+            ctx.setLineDash([]);
+        }
+        ctx.fillStyle = isHold ? '#fbbf24' : isFeel ? '#6ee7b7' : isTempo ? '#7dd3fc' : '#c4b5fd';
         ctx.fillText(mk.label, x + 4, cy + 0.5);
     }
 

@@ -29,6 +29,7 @@ import { host } from './host.js';
 import { KEYS_PATTERN, isKeysMode, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
 import { S, markSessionDirty } from './state.js';
+import { _marksSanitizePure } from './tempo-marks.js';
 import { disposeBackendSession, stopSessionProcesses } from './session-lifecycle.js';
 import { _ensureOnsetsShifted } from './audio.js';
 import { _firstDownbeatTimePure, _importBar1NudgePure, _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
@@ -2302,6 +2303,12 @@ export async function editorApplyCreateResult(data) {
     S.duration = data.duration || 0;
     S.offset = data.offset || 0;
     S.audioShift = data.audio_shift || 0;
+    // Authored tempo/meter marks (P2-5): reset at the same boundary as the
+    // grid — imports don't carry them, but without this the previous song's
+    // holds/groupings leak onto the new chart and persist on the next save.
+    // Sanitized (matches loadCDLC) so a future import that DOES ship them is
+    // validated at the load edge.
+    S.tempoMarks = _marksSanitizePure(data.tempo_marks);
     S.currentArr = 0;
     S.sel.clear();
     S.toneSel = null;
@@ -2542,6 +2549,11 @@ export async function editorBuild() {
                 // built pack's manifest (read back on load via data.audio_shift)
                 // so the alignment survives the first build, not just re-saves.
                 audio_shift: Number(S.audioShift) || 0,
+                // Chart-track <-> stem pairings — persisted as
+                // editor_stem_links in the built pack's manifest (the same
+                // wire the save body ships), so a pairing made while
+                // arranging survives the first Build, not just re-saves.
+                stem_links: S.stemLinks || {},
                 metadata: {
                     title: S.title,
                     artist: S.artist,

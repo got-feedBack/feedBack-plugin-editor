@@ -46,9 +46,10 @@ import {
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
     editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
-    editorToggleAuditionTrainer,
+    editorToggleAuditionTrainer, editorPlayAllTracksEnabled, editorTogglePlayAllTracks,
+    _partGainsApply,
 } from './audio.js';
-import { _mixerClapState, _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
+import { _mixerClapState, _mixerPanelRefresh, _mixerPartStripState, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import {
     _barSpanForTimes, _editorApplyScrollBounds,
     _editorClampScrollX, _loopReliftBeats,
@@ -120,6 +121,7 @@ import { _lintChipRefresh, editorToggleLintPopover, initPlayabilityLint } from '
 import { _drumPadStripRefresh, editorToggleDrumPadStrip, initDrumPadStrip, teardownDrumPadStrip } from './drum-pad-strip.js';
 import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip } from './fretboard-strip.js';
 import { EDITOR_MENUS, initMenuBar } from './menu-bar.js';
+import { _tabViewHideIfShown, _tabViewPing, editorToggleTabView, teardownTabView } from './tab-view-live.js';
 import { initToolbars } from './toolbars.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
 import { editorDismissSignpost } from './signposts.js';
@@ -128,13 +130,15 @@ import { _transportBarTick, initTransportBar } from './transport-bar.js';
 import {
     MIN_MEASURE, TempoGridCmd, TempoMapCmd, TempoOffsetCmd, _r3, _refreshTempoMapButton, _refreshTempoSyncInspector, _respaceWithLocksPure,
     _tempoFlattenToBpmPure, _tempoPivotTimePure,
-    _tempoHasMultipleMeasureBpmsPure, _tempoMapDraw, _tempoMapOnDragEnd, _tempoMeasureBeatCount,
+    _tempoHasMultipleMeasureBpmsPure, _tempoHoldMeasures, _tempoMapDraw, _tempoMapOnDragEnd, _tempoMeasureBeatCount,
     _tempoMeasureDenominator, _tempoMeasures, _tempoNormalizeDenominatorPure,
-    _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure,
-    _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones,
+    _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, editorZonesFeelFix,
+    _tempoRemapMarksByTime, _tempoSetMeasureBpmPure, editorScanTempoZones, editorApplyTempoZones,
     editorConfirmTempoZones, editorZonesSingleTempo, editorHealGrid, editorZonesOctaveFix
 } from './tempo.js';
 import { initTempoZones } from './tempo-zones.js';
+import { _tempoListRender, editorToggleTempoList, initTempoList } from './tempo-list.js';
+import { editorSoloMyStem, editorToggleStemTracks, initStemTracks } from './stem-tracks.js';
 import {
     drawAnchorLane,
     drawHandshapeLane, drawToneLane, editorApplyTonesModal, editorHideTonesModal,
@@ -227,8 +231,18 @@ function _cancelPendingDraw() {
 
 function drawNow() {
     if (!canvas) return;
+    // The toolbar LCDs refresh on EVERY draw, before any mode fork — undo/
+    // redo can change BPM / time signature while a lens (Tab view included)
+    // owns the timeline, and the readouts must not go stale behind it.
     updateBPMDisplay();
     updateTempoSigDisplay();
+    _tempoListRender();   // identity-keyed on S.tempoMarks — no-op unless marks changed
+    // Live Tab view: the engraved score OWNS the timeline area — ping the
+    // module (it shows the mount + re-renders on real changes) and skip the
+    // canvas chain. The else-branch hides the mount the moment any mode
+    // toggle clears the flag, so no toggle needs teardown knowledge.
+    if (S.tabViewMode) { _tabViewPing(); return; }
+    _tabViewHideIfShown();
     const w = canvas.width / DPR;
     const h = canvas.height / DPR;
     ctx.save();
@@ -507,6 +521,11 @@ setHostHooks({
     tempoResolvedMeasureIdx: (...a) => _tempoResolvedMeasureIdx(...a),
     partClapState: _mixerClapState,
     mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
+    // Band mode (multi-track MIDI playback): the strips are the mixer.
+    partStripState: (key) => _mixerPartStripState(key),
+    partMixChanged: () => _partGainsApply(false),
+    playAllTracksEnabled: () => editorPlayAllTracksEnabled(),
+    stripUiChanged: () => _mixerPanelRefresh(),
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML
@@ -563,6 +582,7 @@ window.editorApplyReplaceAudio = editorApplyReplaceAudio;
 
 // Sync-tempo dialog (sync-tempo.js owns the logic; HTML calls these by name).
 window.editorSyncTempo = editorSyncTempo;
+window.editorToggleTabView = (force) => editorToggleTabView(force);
 window.editorScanTempoZones = () => editorScanTempoZones();
 window.editorApplyTempoZones = () => editorApplyTempoZones();
 window.editorHealGrid = () => editorHealGrid();
@@ -728,6 +748,9 @@ window.__editorScreenTeardown = () => {
     // Stop any playback this injection owns — the audio graph outlives the
     // DOM, so a replaced screen would otherwise keep sounding.
     teardownAudio();  // stops playback + cancels the rAF loop (src/audio.js owns both)
+    // typeof-guarded for the sliced boot_teardown suite (its extracted env
+    // stubs only what it names — the same convention as the #98 hook below).
+    if (typeof teardownTabView === 'function') teardownTabView();   // engraving api dies with the mount DOM
     try { if (_editorScreenObs) { _editorScreenObs.disconnect(); _editorScreenObs = null; } } catch (_) {}
     try { if (_v3TopbarWatch) { _v3TopbarWatch.disconnect(); _v3TopbarWatch = null; } } catch (_) {}
     // The v3 layout ResizeObserver watches #v3-topbar, a shell-persistent node
@@ -1327,6 +1350,7 @@ window.editorHideLoadModal = () => document.getElementById('editor-load-modal').
 window.editorFilterSongs = filterSongs;
 window.editorLoadFile = (f) => { window.editorHideLoadModal(); loadCDLC(f); };
 window.editorSave = editorSave;   // first save → file explorer, then saves to it
+window.editorTogglePlayAllTracks = () => { editorTogglePlayAllTracks(); return true; };
 window.editorUndo = () => S.history && S.history.doUndo();
 window.editorRedo = () => S.history && S.history.doRedo();
 // Undo back to the last checkpoint (Ctrl+Alt+Z) — a coarse rewind past a whole
@@ -1441,7 +1465,9 @@ async function _editorFlattenSongToBpm(newBPM, opts = {}) {
     } else {
         // Rebuild grid only: seconds hold, beats re-lift (TempoGridCmd) —
         // today's flatten, for when the notes already sit on the recording.
-        S.history.exec(new TempoGridCmd(oldBeats, flat, 'flatten'));
+        const cmd = new TempoGridCmd(oldBeats, flat, 'flatten');
+        cmd.marks = _tempoRemapMarksByTime(oldBeats, flat);
+        S.history.exec(cmd);
         setStatus(`Beat grid rebuilt to a constant ${newBPM.toFixed(2)} BPM — notes kept their times. Undo restores the map.`);
     }
     updateBPMDisplay();
@@ -1453,7 +1479,7 @@ window.editorSongFit = _editorSongFit;
 window.editorSetBPM = async (val) => {
     const newBPM = parseFloat(val);
     if (!newBPM || newBPM <= 0 || S.beats.length < 2) return;
-    if (!S.tempoMapMode && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01)) {
+    if (!S.tempoMapMode && _tempoHasMultipleMeasureBpmsPure(S.beats, 0.01, _tempoHoldMeasures())) {
         // Variable tempo map + the inline BPM box (outside Tempo Map mode): the
         // per-measure editor can only fix ONE measure, so offer the whole-song
         // flatten escape hatch. Same conform/rebuild dialog Song Fit uses.
@@ -1985,7 +2011,12 @@ function init() {
     // The zone confirm bar's two APPLY verbs live in tempo.js (TempoGridCmd),
     // handed over as hooks so tempo-zones.js never imports tempo.js (cycle).
     initTempoZones({ confirm: editorConfirmTempoZones, single: editorZonesSingleTempo,
-        octave: editorZonesOctaveFix });
+        octave: editorZonesOctaveFix, feel: editorZonesFeelFix });
+    initTempoList();
+    window.editorToggleTempoList = editorToggleTempoList;
+    initStemTracks();
+    window.editorToggleStemTracks = editorToggleStemTracks;
+    window.editorSoloMyStem = editorSoloMyStem;
     // Registry commands run through `editorRunShortcutCommand` — the SAME
     // by-id dispatcher the shortcut panel's buttons use, which is what the
     // palette is (a click on a command, not a keypress). Going straight to

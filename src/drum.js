@@ -1135,6 +1135,7 @@ function _ensureDrumEditButton() {
                 S.tempoMapMode = false;
                 S.tempoSel = -1;
                 S.partsViewMode = false;
+                S.tabViewMode = false;
             }
             _refreshDrumEditButton();
             host.refreshTempoMapButton();

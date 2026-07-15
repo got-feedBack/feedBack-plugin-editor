@@ -11,6 +11,7 @@ import { EditHistory } from './history.js';
 import { isKeysMode, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning, _stringCountFor } from './lanes.js';
 import { _updateLoopRegionControls } from './loop.js';
+import { _marksSanitizePure } from './tempo-marks.js';
 import { _recState } from './midi-record.js';
 import { _restoreSuggestedMarks, _saveSuggestedMarks, _suggestedStorageKeyPure } from './notes.js';
 import { S, markSessionDirty, markSessionSaved } from './state.js';
@@ -161,6 +162,13 @@ export async function loadCDLC(filename, options = {}) {
         S.duration = data.duration || 0;
         S.offset = data.offset || 0;
         S.audioShift = data.audio_shift || 0;
+        // Authored tempo/meter marks (P2-5) — sanitized at the load boundary
+        // (hand-edited or future-versioned packs must never crash the editor).
+        S.tempoMarks = _marksSanitizePure(data.tempo_marks);
+        // Multitrack stems + chart pairings (studio-session ingest).
+        S.stems = Array.isArray(data.stems) ? data.stems : [];
+        S.stemLinks = (data.stem_links && typeof data.stem_links === 'object') ? data.stem_links : {};
+        S.stemMix = {};
         // Drum tab is loaded server-side when the manifest carries a
         // `drum_tab:` key and the file passes schema validation. Treat
         // a missing/falsey value as "no drums" so the +Drums modal can
@@ -539,6 +547,11 @@ function _buildSaveBody(forceFullSnapshot) {
         // backend can persist it into the pack manifest as `audio_shift` (read
         // back on load via data.audio_shift). Harmless if the backend ignores it.
         audio_shift: Number(S.audioShift) || 0,
+        // Authored tempo/meter marks (P2-5) ride every save the same way —
+        // persisted as the `editor_tempo_marks` manifest extension key.
+        tempo_marks: S.tempoMarks || [],
+        // Chart-track <-> stem pairings — persisted as editor_stem_links.
+        stem_links: S.stemLinks || {},
         // Always ship title/artist so archive saves persist in-session
         // metadata edits too. Backend merges with session metadata
         // (album/year captured at load time) so all four fields

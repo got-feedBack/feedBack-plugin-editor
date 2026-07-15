@@ -23,6 +23,7 @@
 // ════════════════════════════════════════════════════════════════════
 import { timeToX } from './geometry.js';
 import { S, editGen } from './state.js';
+import { _groupingAccentsByMeasurePure, _holdMeasuresPure } from './tempo-marks.js';
 
 /* @pure:tempo-suggest:start */
 // Downbeat indices at or after `fromIdx` (fromIdx itself first).
@@ -81,25 +82,31 @@ export function _suggestAnyOnsetInPure(onsets, lo, hi) {
 // onset support of ALL the bar's implied beats (the interior subdivisions plus
 // the closing downbeat), not the single downbeat onset — so a bar whose whole
 // pulse is played reads as far more certain than a bare, possibly-spurious
-// downbeat hit. Even subdivision (no grouping field exists yet). Mean support
-// in [0,1]; `startT` is the previous (already-accepted) downbeat, excluded.
-export function _suggestCombPure(onsets, startT, endT, beatsInBar, win) {
+// downbeat hit. Weighted-mean support in [0,1]; `startT` is the previous
+// (already-accepted) downbeat, excluded.
+// P2-6: with an authored grouping's `accentMap` ([1,0,1,0,1,0,0] for a
+// 2+2+3 seven), the accented positions carry DOUBLE weight — a phase aligned
+// with the FELT pulse now out-scores one that merely matches an even
+// subdivision. No map = uniform weights, bit-identical to the old mean.
+export function _suggestCombPure(onsets, startT, endT, beatsInBar, win, accentMap) {
     const nb = beatsInBar > 0 ? beatsInBar : 1;
     if (!(endT > startT)) return 0;
-    let sum = 0;
+    let sum = 0, wsum = 0;
     for (let j = 1; j <= nb; j++) {
         const tj = startT + (endT - startT) * (j / nb);
         const hit = _suggestOnsetNearPure(onsets, tj, win);
-        sum += hit ? hit.conf : 0;
+        const w = (accentMap && accentMap[j % nb] === 1) ? 2 : 1;
+        sum += (hit ? hit.conf : 0) * w;
+        wsum += w;
     }
-    return sum / nb;
+    return sum / wsum;
 }
 
 // Look around the local snap for a better bar-level comb. This does NOT widen
 // the single-hit snap rule by itself: a better candidate outside jumpTol still
 // stops the march below. It prevents a dense interior beat from masquerading as
 // the downbeat when the real barline is just outside the beat-relative window.
-function _suggestBestCombCandidatePure(onsets, startT, gridInt, beatsInBar, win, stretch, jumpTol) {
+function _suggestBestCombCandidatePure(onsets, startT, gridInt, beatsInBar, win, stretch, jumpTol, accentMap) {
     if (!Array.isArray(onsets) || !(gridInt > 0)) return null;
     const rawPad = win / gridInt;
     const lo = startT + gridInt * Math.max(0.01, stretch - jumpTol - rawPad);
@@ -109,7 +116,7 @@ function _suggestBestCombCandidatePure(onsets, startT, gridInt, beatsInBar, win,
         if (!Number.isFinite(o.t) || o.t <= lo || o.t > hi) continue;
         const rawStretch = (o.t - startT) / gridInt;
         if (!(rawStretch > 0)) continue;
-        const comb = _suggestCombPure(onsets, startT, o.t, beatsInBar, win);
+        const comb = _suggestCombPure(onsets, startT, o.t, beatsInBar, win, accentMap);
         if (!best || comb > best.comb || (comb === best.comb && Math.abs(o.t - (startT + gridInt * stretch)) < Math.abs(best.time - (startT + gridInt * stretch)))) {
             best = { time: o.t, rawStretch, comb };
         }
@@ -172,6 +179,26 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
     let stretch = 1;
     const stretchHist = [];
     let misses = 0;
+    // (c5 backfill) Miss-proposals awaiting retroactive confidence: a bar
+    // marched on bare prediction gets the floor confidence — but when a LATER
+    // corroborated hit (or a locked pin) lands, the marched path was right,
+    // so the misses between two corroborations are raised to a still-
+    // discounted share of the weaker flank. Trailing misses that never
+    // re-corroborate keep the floor (and still get dropped at the end).
+    const pendingMisses = [];
+    // `prevConf` carries the INTRINSIC strength (comb × consistency — the
+    // continuity penalty excluded) of the last corroboration: a closing hit's
+    // published conf is already discounted FOR the misses it follows, so
+    // using it here would double-count the very gap being backfilled.
+    let prevConf = 1;                     // the anchor is human-placed — full trust
+    const backfill = (intrinsic) => {
+        const lift = Math.min(prevConf, intrinsic) * 0.75;
+        for (const pi of pendingMisses) {
+            proposals[pi].conf = Math.max(proposals[pi].conf, lift);
+        }
+        pendingMisses.length = 0;
+        prevConf = intrinsic;
+    };
     let stopReason = 'end', stopDetail = 'end';
     const toIdx = Number.isInteger(o.toIdx) ? o.toIdx : null;
     for (let k = 1; k < downs.length; k++) {
@@ -181,8 +208,22 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
         const beatsInBar = d - prevDownIdx;   // beats in the PREVIOUS measure's span
         if (!(gridInt > 0) || beatsInBar < 1) { stopReason = 'lost'; break; }
         if (beats[d].locked) {
-            // Human-verified: never moved, resets the drift bookkeeping.
+            // Human-verified: never moved, resets the drift bookkeeping —
+            // and corroborates any marched bars behind it (c5 backfill).
             proposals.push({ i: d, time: beats[d].time, conf: 1, locked: true });
+            backfill(1);
+            prevDownIdx = d; prevOld = beats[d].time; prevNew = beats[d].time;
+            stretch = 1; stretchHist.length = 0; misses = 0;
+            continue;
+        }
+        // A HELD bar (P2-5 fermata): its span is non-metric BY DECLARATION —
+        // never window-snap inside it (the onsets there are the sustained
+        // chord, not a pulse) and never let its giant interval near the
+        // stretch median. The downbeat ENDING the hold is carried at its
+        // grid position and the drift bookkeeping resets — like a lock, but
+        // without claiming human confidence (provenance: carried).
+        if (o.holdMeasures && o.holdMeasures.has(beats[prevDownIdx].measure)) {
+            proposals.push({ i: d, time: beats[d].time, conf: 0.5, locked: false, carried: true });
             prevDownIdx = d; prevOld = beats[d].time; prevNew = beats[d].time;
             stretch = 1; stretchHist.length = 0; misses = 0;
             continue;
@@ -194,8 +235,10 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
         if (hit && hit.t > prevNew + eps) {
             let time = hit.t;
             let rawStretch = (time - prevNew) / gridInt;
-            let comb = _suggestCombPure(onsets, prevNew, time, beatsInBar, win);
-            const better = _suggestBestCombCandidatePure(onsets, prevNew, gridInt, beatsInBar, win, stretch, jumpTol);
+            const accentMap = o.accentsByMeasure
+                ? o.accentsByMeasure.get(beats[prevDownIdx].measure) : null;
+            let comb = _suggestCombPure(onsets, prevNew, time, beatsInBar, win, accentMap);
+            const better = _suggestBestCombCandidatePure(onsets, prevNew, gridInt, beatsInBar, win, stretch, jumpTol, accentMap);
             if (better && better.time !== time && better.comb > comb + combSwitchMargin) {
                 time = better.time;
                 rawStretch = better.rawStretch;
@@ -229,6 +272,7 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
             const consistency = Math.max(0, 1 - Math.abs(rawStretch - stretch) / jumpTol);
             const conf = Math.max(0, Math.min(1, comb * continuity * consistency));
             proposals.push({ i: d, time, conf, locked: false });
+            backfill(Math.max(0, Math.min(1, comb * consistency)));   // (c5) corroborates the marched bars behind it
             prevDownIdx = d; prevOld = beats[d].time; prevNew = time;
             misses = 0;
         } else {
@@ -240,6 +284,7 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
             }
             const time = Math.max(predicted, prevNew + eps);
             proposals.push({ i: d, time, conf: missConf, locked: false, miss: true });
+            pendingMisses.push(proposals.length - 1);
             prevDownIdx = d; prevOld = beats[d].time; prevNew = time;
             misses++;
             if (misses >= maxMiss) { stopReason = 'lost'; stopDetail = 'silence'; break; }
@@ -353,7 +398,16 @@ export function _suggestCompute(anchorIdx, onsets, opts) {
     const list = onsets || (_sug && _sug.onsets) || null;
     if (!list || !list.length) { _sug = null; return 0; }
     const useOpts = opts || (onsets ? undefined : (_sug && _sug.opts)) || undefined;
-    const { proposals, stopReason, stopDetail } = _suggestFitPure(S.beats, list, anchorIdx, useOpts);
+    // Held bars are carried, never fitted (P2-5) — the fermata's span is
+    // authored as non-metric. Never mutate the remembered opts object (the
+    // regenerate path reuses it): spread the hold set in fresh each compute.
+    const fitOpts = {
+        ...(useOpts || {}),
+        holdMeasures: _holdMeasuresPure(S.tempoMarks),
+        // P2-6: grouped bars corroborate on their FELT accents.
+        accentsByMeasure: _groupingAccentsByMeasurePure(S.tempoMarks),
+    };
+    const { proposals, stopReason, stopDetail } = _suggestFitPure(S.beats, list, anchorIdx, fitOpts);
     _sug = { anchorIdx, proposals, stopReason, stopDetail, onsets: list, opts: useOpts, gen: editGen };
     return proposals.length;
 }
