@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cut, and real Copy/Paste commands.** Copy and paste existed but were
+  hidden hardwired keys — invisible in the Edit menu, the shortcut panel, and
+  anywhere else you'd look, with no Cut at all. All three are first-class
+  commands now: **Edit ▸ Copy / Cut / Paste** (Ctrl+C / Ctrl+X / Ctrl+V; the
+  EOF profile keeps its Ctrl+X mute binding, so Cut is Shift+Del there).
+  Paste lands the phrase's first note at the playhead — snapped to your grid
+  like any other placement — keeps the internal timing intact, selects the
+  pasted notes, and is one undo. Pasting across tracks now behaves: notes on
+  strings the target track doesn't have are skipped and counted instead of
+  written invisibly, and keys ↔ fretted pasting is refused (the note shapes
+  don't translate). Undoing a cut restores the notes but keeps the clipboard,
+  like every text editor.
+
+### Fixed
+
+- **Pasted bend curves are no longer linked to the original.** Copying a bent
+  note shared the bend-curve data between the original and every paste —
+  editing any one of them silently edited them all. Copies are fully
+  independent now.
+
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
   its note shape: it's sized to the current note value (the snap step, so the box
