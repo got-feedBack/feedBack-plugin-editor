@@ -21,7 +21,16 @@
 /* @pure:alphatex:start */
 // [durTicks, alphaTex duration], largest first — greedy decomposition.
 const ATEX_LADDER = [[16, 1], [8, 2], [4, 4], [2, 8], [1, 16]];
-const TICKS_PER_BEAT = 4;   // the 16th grid
+const TICKS_PER_WHOLE = 16;   // one ladder tick = one sixteenth
+
+// alphaTex durations are absolute (a :8 token is an eighth in ANY meter),
+// so bar tick capacity must scale with the meter's denominator: a ruler
+// beat in x/8 is an eighth (2 ticks), in x/4 a quarter (4). Absent or
+// non-dividing denominators fall back to quarter-note beats.
+function _ticksPerBeat(den) {
+    const d = Number(den);
+    return (d > 0 && TICKS_PER_WHOLE % d === 0) ? TICKS_PER_WHOLE / d : 4;
+}
 
 // alphaTab's own octave convention: high E (MIDI 64) is "e5" — one octave
 // number HIGHER than the editor's midiToNote ("E4", the C4=60 flavour). The
@@ -84,8 +93,9 @@ export function _alphaTexFromNotesPure(opts) {
         // The containing bar: last downbeat index ≤ beta.
         let lo = 0, hi = dbs.length - 2;
         while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (dbs[mid] <= beta) lo = mid; else hi = mid - 1; }
-        const barTicks = (dbs[lo + 1] - dbs[lo]) * TICKS_PER_BEAT;
-        const tick = Math.max(0, Math.min(barTicks - 1, Math.round((beta - dbs[lo]) * TICKS_PER_BEAT)));
+        const tpb = _ticksPerBeat(beats[dbs[lo]].den);
+        const barTicks = (dbs[lo + 1] - dbs[lo]) * tpb;
+        const tick = Math.max(0, Math.min(barTicks - 1, Math.round((beta - dbs[lo]) * tpb)));
         const bucket = perBar[lo];
         if (!bucket.has(tick)) bucket.set(tick, []);
         bucket.get(tick).push(n);
@@ -103,7 +113,7 @@ export function _alphaTexFromNotesPure(opts) {
     for (let b = 0; b < perBar.length; b++) {
         const beatsInBar = dbs[b + 1] - dbs[b];
         const den = Number(beats[dbs[b]].den) || 4;
-        const barTicks = beatsInBar * TICKS_PER_BEAT;
+        const barTicks = beatsInBar * _ticksPerBeat(den);
         const tokens = [];
         const map = [];
         const sig = `${beatsInBar}/${den}`;
