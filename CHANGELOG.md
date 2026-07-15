@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bulk barline locks + friendlier Tempo Map selection.** Lock or unlock a
+  whole selection in one go: the tempo toolbar's new lock button (and the
+  `S` key, and the right-click menu) names exactly what it will do — "Lock
+  12 barlines" — applies one uniform state to the group (lock all unless
+  every one is already locked), and lands as ONE undoable edit that never
+  creates a false Save prompt (locks stay an editor preference). Selection
+  got friendlier too: **Ctrl/Cmd-click** toggles individual barlines, the
+  marquee focuses where your drag ended, selections are uncapped, and the
+  marker lane is split — direct edits (pole grabs, sub-beat rubato) live in
+  the top handle band while the tall lane body below belongs to marquee
+  selection, with the thin full-height barline itself still precisely
+  draggable anywhere.
+
 - **Metronome guide + whole-song tempo fits.** A click or reference stem can
   be locked as the session's **tempo guide** (the ♩ button in the Audio
   tracks manager): assisted mapping (`G`) then analyzes that track instead

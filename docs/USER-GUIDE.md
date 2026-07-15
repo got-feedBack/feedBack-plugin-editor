@@ -183,6 +183,10 @@ Three ways to set the tempo, from coarse to fine:
    - **Beat-lock**: lock a barline you've hand-verified so later automatic
      re-fits (Sync, Suggest, modulation) leave its time alone. Your manual edits
      are always kept — locking just protects a bar from the *next* auto-fit.
+     Works in bulk: select many barlines (drag a marquee across the lane,
+     Shift-click to extend, **Ctrl/Cmd-click** to toggle individual ones,
+     Ctrl/Cmd+A for all) and the lock button / `S` key locks or unlocks the
+     whole group as one undoable edit.
 
 ### Offset (audio alignment)
 
