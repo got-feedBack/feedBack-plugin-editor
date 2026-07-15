@@ -102,6 +102,20 @@ t('v3-only theme cycling hides outside the v3 layout', () => {
     assert.strictEqual(labels({ ...CTX, v3: true }).includes('Theme: Dark → Medium → Light'), true);
 });
 
+t('Score-staff trio renders as a radio from ctx.scoreStaff; absent ctx unchecks all', () => {
+    const staffItems = (ctx) => _menuModelPure(EDITOR_MENUS, rows, ctx)
+        .find((m) => m.title === 'View').items
+        .filter((i) => i.dispatch && i.dispatch.scoreStaff);
+    const withPref = staffItems({ ...CTX, scoreStaff: 'notation' });
+    assert.strictEqual(withPref.length, 3, 'tab / notation / both');
+    assert.deepStrictEqual(withPref.map((i) => i.label[0] === '✓'),
+        [false, true, false], 'exactly the active staff is checked');
+    assert.deepStrictEqual(withPref.map((i) => i.dispatch.scoreStaff),
+        ['tab', 'notation', 'both']);
+    const older = staffItems(CTX);   // ctx without scoreStaff (older caller)
+    assert.ok(older.every((i) => i.label[0] !== '✓'), 'degrades unchecked, never crashes');
+});
+
 t('Help ▸ User Guide surfaces, enabled, and dispatches to its toggle', () => {
     const model = _menuModelPure(EDITOR_MENUS, rows, CTX);
     const help = model.find((m) => m.title === 'Help');
