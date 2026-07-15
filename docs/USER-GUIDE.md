@@ -96,7 +96,9 @@ Select a note by clicking it; drag a box to select several. Then:
 - **Sustain** — drag a note's tail to shorten / lengthen (or **Note ▸**
   Shorten / Lengthen sustain; `[` / `]` in the EOF profile).
 - **Duplicate** the selection to the next position with `Ctrl+D`; **select all
-  matching** string/fret with `Ctrl+L`; **resnap** to the grid with `Shift+R`.
+  notes** with `Ctrl+A` (`Cmd+A` on macOS); **select all matching** string/fret
+  with `Ctrl+L`; **resnap** to the grid with `Shift+R`. Select All remains a
+  normal text command while editing a name or typing in a field.
 
 ### Techniques
 

@@ -144,9 +144,6 @@ export const S = {
 
     // Songs list cache
     songsList: null,
-
-    // Clipboard
-    clipboard: null, // { notes: [...], baseTime }
 };
 
 // ── Shared edit generation ──────────────────────────────────────────
