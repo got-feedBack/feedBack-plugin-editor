@@ -80,6 +80,36 @@ t('an accel compiles monotonically shortening beat gaps; the start stays anchore
     assert.ok(out[tail0].time < beats[tail0].time, 'accel shortens the span → tail moves earlier');
 });
 
+t('the compiled grid is STRICTLY monotonic end-to-end — every curve, both directions, across the tail boundary', () => {
+    // beatOf/timeOf binary-search a MONOTONIC grid: a single non-increasing
+    // (or duplicate) time silently corrupts note reprojection. The span itself
+    // is monotonic by construction (positive BPM), but the trailing block-shift
+    // at the span END is the seam a regression would open. Assert the WHOLE
+    // grid strictly increases — accel + rit (gaps lengthen the other way) ×
+    // every curve preset — not just that in-span gaps shorten.
+    for (const curve of ['linear', 'ease-in', 'ease-out']) {
+        for (const [bpmStart, bpmEnd] of [[120, 240], [240, 120]]) {
+            const beats = grid(6);
+            const out = _rampCompilePure(beats, RAMP({ bpmStart, bpmEnd, curve }));
+            assert.ok(out, `compiles ${curve} ${bpmStart}→${bpmEnd}`);
+            const sIdx = beats.findIndex(b => b.measure === 2);
+            assert.strictEqual(out[sIdx].time, beats[sIdx].time, 'span start still anchored');
+            for (let i = 1; i < out.length; i++) {
+                assert.ok(out[i].time > out[i - 1].time,
+                    `${curve} ${bpmStart}→${bpmEnd}: beat ${i} (${out[i].time}) must exceed ${i - 1} (${out[i - 1].time})`);
+            }
+        }
+    }
+    // And after the lock re-space: dropping a lock must never write a backwards
+    // grid either.
+    const locked = grid(6);
+    locked[locked.findIndex(b => b.measure === 3)].locked = true;
+    const relocked = _respaceWithLocksPure(locked, _rampCompilePure(locked, RAMP({ bpmStart: 240, bpmEnd: 120 })));
+    for (let i = 1; i < relocked.length; i++) {
+        assert.ok(relocked[i].time > relocked[i - 1].time, `locked re-space stays monotonic at ${i}`);
+    }
+});
+
 t('ease-out compiles differently from linear (front-loaded change)', () => {
     const beats = grid(6);
     const lin = _rampCompilePure(beats, RAMP());
