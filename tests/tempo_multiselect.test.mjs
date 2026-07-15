@@ -14,7 +14,8 @@ import {
     TempoGridCmd, _editorToggleSyncLock, _tempoDeletableBarlineIndicesPure,
     _tempoDeleteBarlinesPure, _tempoDeleteSelection, _tempoDirectEditBandPure,
     _tempoLockPlanPure, _tempoMarqueeDownbeatsPure, _tempoMarqueeSelectionPure,
-    _tempoSelectedDownbeatRunsPure, _tempoSelectDownbeatRange, _tempoToggleDownbeatSelectionPure,
+    _tempoPoleGrabTolerancePure, _tempoSelectedDownbeatRunsPure, _tempoSelectDownbeatRange,
+    _tempoToggleDownbeatSelectionPure,
 } from '../src/tempo.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 
@@ -56,6 +57,11 @@ t('the lane body stays available for marquee selection below the marker handles'
     assert.strictEqual(_tempoDirectEditBandPure(114, 100), true);
     assert.strictEqual(_tempoDirectEditBandPure(115, 100), false);
     assert.strictEqual(_tempoDirectEditBandPure(200, 100), false);
+});
+
+t('the full-height marker line keeps a precise drag target without consuming the marquee lane', () => {
+    assert.strictEqual(_tempoPoleGrabTolerancePure(110, 100), 8, 'top handle is forgiving');
+    assert.strictEqual(_tempoPoleGrabTolerancePure(150, 100), 2.5, 'body line is narrow but draggable');
 });
 
 t('_tempoMarqueeSelectionPure replaces or extends selection and focuses the drag end', () => {

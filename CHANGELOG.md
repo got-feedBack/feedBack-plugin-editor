@@ -65,7 +65,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tempo Map's lane body now supports reliable drag-marquee selection even under
   densely packed barlines; Shift-drag adds ranges and Ctrl/Cmd-click toggles
   individual marker handles. Lock/unlock applies atomically to every selected
-  barline, is undoable, and does not mark the feedpak dirty.
+  barline, is undoable, and does not mark the feedpak dirty. The thin visible
+  barline remains draggable through its full height, with the larger top handle
+  available as a forgiving target.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns

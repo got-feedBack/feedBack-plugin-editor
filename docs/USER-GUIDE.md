@@ -235,7 +235,8 @@ Three ways to set the tempo, from coarse to fine:
      hold **Shift** while dragging to add another range, or **Ctrl/Cmd-click**
      marker handles to toggle individual barlines. Press **S** or right-click
      any selected marker to lock/unlock the whole selection. Drag the small
-     handles along the top edge when you want to move a marker instead.
+     handles along the top edge—or the thin barline itself—when you want to
+     move a marker instead.
 
 ### Offset (audio alignment)
 

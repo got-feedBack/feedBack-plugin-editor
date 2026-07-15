@@ -55,6 +55,7 @@ import { _signpostFirstLock, _signpostNote } from './signposts.js';
 const TEMPO_HUD_H = 26;        // bottom strip height in tempo-map mode
 const TEMPO_POLE_HALF = 6;     // barline pole grab half-width (px)
 const TEMPO_HANDLE_H = 14;     // direct pole/sub-beat edits live only in this top band
+const TEMPO_LINE_GRAB_HALF = 2.5; // thin full-height line remains draggable
 const SUGGEST_HANDLE_TOP = 16; // ghost handle band offset (below pole handles)
 const SUGGEST_HANDLE_H = 11;   // ghost handle band height
 
@@ -1047,11 +1048,13 @@ export function _refreshTempoMapButton() {
 // Return the S.beats index of the sync-point pole (a downbeat) nearest
 // to canvas x within the pole grab zone, or -1. y must be inside the
 // grid region.
-export function _tempoSyncAtX(x, y) {
+export function _tempoSyncAtX(x, y, tolerance = TEMPO_POLE_HALF + 2) {
     if (!canvas) return -1;
     const gridBottom = canvas.height / DPR - TEMPO_HUD_H;
     if (y < (TIMELINE_TOP + WAVEFORM_H) || y > gridBottom) return -1;
-    let best = -1, bestDist = TEMPO_POLE_HALF + 2;
+    const grab = Number.isFinite(Number(tolerance)) && Number(tolerance) > 0
+        ? Number(tolerance) : TEMPO_POLE_HALF + 2;
+    let best = -1, bestDist = grab;
     const beats = S.beats || [];
     for (let i = 0; i < beats.length; i++) {
         if (beats[i].measure <= 0) continue;
@@ -1066,6 +1069,10 @@ export function _tempoSyncAtX(x, y) {
 // dense/zoomed-out grid cannot consume every possible marquee start point.
 export function _tempoDirectEditBandPure(y, gridTop) {
     return Number(y) >= Number(gridTop) && Number(y) <= Number(gridTop) + TEMPO_HANDLE_H;
+}
+
+export function _tempoPoleGrabTolerancePure(y, gridTop) {
+    return _tempoDirectEditBandPure(y, gridTop) ? TEMPO_POLE_HALF + 2 : TEMPO_LINE_GRAB_HALF;
 }
 
 // Sub-beat hit-test — the per-beat rubato drag's target. Same vertical
@@ -1277,7 +1284,11 @@ export function _tempoMapOnMouseDown(e, x, y) {
     // Click a sync-point pole to select it and start a drag.
     const gridTop = TIMELINE_TOP + WAVEFORM_H;
     const directEdit = _tempoDirectEditBandPure(y, gridTop);
-    const hit = directEdit ? _tempoSyncAtX(x, y) : -1;
+    // The large top handle is forgiving, but the visible pole itself remains
+    // draggable through the lane at a tight tolerance. That restores the
+    // familiar grab-anywhere-on-the-line gesture while leaving almost all of
+    // the lane body free to begin a marquee.
+    const hit = _tempoSyncAtX(x, y, _tempoPoleGrabTolerancePure(y, gridTop));
     if (hit >= 0) {
         // Ctrl/Cmd-click toggles one pole without beginning a drag — the DAW
         // complement to Shift-click range selection and body-lane marquee.
