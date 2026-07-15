@@ -211,9 +211,19 @@ def _coerce_track_session(value, invalid=_FIELD_ABSENT):
                         "name": str(raw.get("name") or "")[:120],
                         "parentId": parent_id, "pairedSourceId": paired})
         seen.add(tid)
-    guide = _track_session_id(value.get("tempoGuideSourceId")) or "master"
-    return {"version": 1, "tracks": out, "tempoGuideSourceId": guide,
-            "tempoGuideLocked": bool(value.get("tempoGuideLocked"))}
+    guide = _track_session_id(value.get("tempoGuideSourceId"))
+    removed_sources = []
+    raw_removed_sources = value.get("removedSourceIds", [])
+    if not isinstance(raw_removed_sources, list):
+        raw_removed_sources = []
+    for raw_id in raw_removed_sources:
+        source_id = _track_session_id(raw_id)
+        if source_id and source_id not in removed_sources:
+            removed_sources.append(source_id)
+    guide_mode = "metronome" if value.get("tempoGuideMode") == "metronome" else "audio"
+    return {"version": 2, "tracks": out, "removedSourceIds": removed_sources,
+            "tempoGuideSourceId": guide, "tempoGuideLocked": bool(value.get("tempoGuideLocked")),
+            "tempoGuideMode": guide_mode}
 
 
 def _parse_track_session(data: dict):

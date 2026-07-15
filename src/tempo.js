@@ -577,17 +577,20 @@ function _ensureTempoSyncInspector() {
     el.innerHTML = '<span class="text-gray-500">Barline:</span>'
         + '<span id="editor-tempo-sync-label" class="text-gray-200 font-medium min-w-[5.5rem]">No selection</span>'
         + '<span id="editor-tempo-sync-hint" class="text-gray-500"></span>'
+        + '<button type="button" id="editor-tempo-sync-accept-all" class="hidden px-2 py-0.5 rounded bg-emerald-700 text-white hover:bg-emerald-600" title="Apply every currently suggested barline as one undoable tempo-map edit">Accept Whole Fit</button>'
         + '<button type="button" id="editor-tempo-sync-songfit" class="px-2 py-0.5 rounded bg-dark-600 text-gray-200 hover:bg-dark-500" title="Song Fit — one place to line the chart up with the recording (shift, fit tempo, or set a constant tempo). The audio never moves.">Song Fit…</button>'
         + '<button type="button" id="editor-tempo-sync-insert" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Mark a barline at the playhead">Mark</button>'
         + '<button type="button" id="editor-tempo-sync-bar1" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Shift the grid, notes and sections so bar 1 lands at the playhead (the audio does not move)">Bar 1 here</button>'
         + '<button type="button" id="editor-tempo-sync-delete" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete selected barline">Delete</button>'
         + '<button type="button" id="editor-tempo-sync-modulate" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Metric modulation: new tempo = current × ratio, from this measure to the next tempo change (M)">Modulate…</button>';
     const songFitBtn = el.querySelector('#editor-tempo-sync-songfit');
+    const acceptAllBtn = el.querySelector('#editor-tempo-sync-accept-all');
     const insertBtn = el.querySelector('#editor-tempo-sync-insert');
     const bar1Btn = el.querySelector('#editor-tempo-sync-bar1');
     const deleteBtn = el.querySelector('#editor-tempo-sync-delete');
     const modulateBtn = el.querySelector('#editor-tempo-sync-modulate');
     if (songFitBtn) songFitBtn.onclick = () => { if (typeof window !== 'undefined' && window.editorSongFit) window.editorSongFit(); };
+    if (acceptAllBtn) acceptAllBtn.onclick = () => editorAcceptWholeTempoFit();
     if (insertBtn) insertBtn.onclick = () => _tempoInsertSyncPoint(S.cursorTime);
     if (bar1Btn) bar1Btn.onclick = () => _tempoSetBar1Here();
     if (deleteBtn) deleteBtn.onclick = () => { if (S.tempoSel >= 0) _tempoDeleteSyncPoint(S.tempoSel); };
@@ -609,6 +612,7 @@ export function _refreshTempoSyncInspector() {
     const denEl = document.getElementById('editor-tempo-sig-den');
     const insertBtn = document.getElementById('editor-tempo-sync-insert');
     const deleteBtn = document.getElementById('editor-tempo-sync-delete');
+    const acceptAllBtn = document.getElementById('editor-tempo-sync-accept-all');
     if (!el) return;
     const hasGrid = !!(S.beats && S.beats.length >= 2);
     const visible = !!S.tempoMapMode && hasGrid;
@@ -619,6 +623,12 @@ export function _refreshTempoSyncInspector() {
     const hint = document.getElementById('editor-tempo-sync-hint');
     if (label) label.textContent = state.label;
     if (hint) hint.textContent = state.hint;
+    if (acceptAllBtn) {
+        const active = visible && _suggestActive();
+        acceptAllBtn.classList.toggle('hidden', !active);
+        const whole = S.trackSession && S.trackSession.tempoGuideMode === 'metronome';
+        acceptAllBtn.textContent = whole ? 'Accept Whole Fit' : 'Accept All Suggestions';
+    }
     // The BPM / signature inputs are SHARED with normal (non-tempo-map) editing.
     // In tempo-map mode we gate them on the current sync-point selection; when
     // NOT in tempo-map mode we must restore them to their normal editable state,
@@ -1251,26 +1261,7 @@ export function _tempoMapOnMouseDown(e, x, y) {
             && y <= (TIMELINE_TOP + WAVEFORM_H) + SUGGEST_HANDLE_TOP + SUGGEST_HANDLE_H) {
         const gi = _suggestHitAt(x, TEMPO_POLE_HALF + 2);
         if (gi >= 0) {
-            const applied = _suggestApplyPure(S.beats, _suggestProposals(), gi);
-            if (applied) {
-                // Accepting a fit is a coarse rewind unit: stamp the state just
-                // BEFORE the accept (undoToCheckpoint lands ON the stamped
-                // command, keeping it applied), so Ctrl+Alt+Z rewinds the accept
-                // — and any edits after it — in one step. On an empty stack the
-                // stamp no-ops; the single-undo fallback still covers the accept.
-                S.history.checkpoint('Suggest fit');
-                S.history.exec(new TempoMapCmd(S.beats.map(b => ({ ...b })), applied, 'suggest-accept'));
-                S.tempoSel = gi;
-                // Forward regeneration: the accepted barline is now the
-                // authoritative anchor — recalculate only the unconfirmed
-                // future (with the remembered onsets).
-                const n = _suggestRegenerateFrom(gi);
-                host.updateBPMDisplay();
-                host.draw();
-                setStatus(n
-                    ? `Accepted through this barline — ${n} suggestion${n === 1 ? '' : 's'} regenerated ahead`
-                    : 'Accepted through this barline — no confident suggestions ahead (add an anchor and press G)');
-            }
+            editorAcceptTempoSuggestionsThrough(gi);
             return;
         }
     }
@@ -1357,6 +1348,45 @@ export function _tempoMapOnMouseDown(e, x, y) {
     // drum editor: a stationary press just clears (below), a drag rubber-bands.
     S.drag = { type: 'tempo-marquee', startX: x, startY: y, curX: x, curY: y, shift: e.shiftKey, moved: false };
     host.draw();
+}
+
+export function editorAcceptTempoSuggestionsThrough(throughIndex) {
+    const proposals = _suggestProposals();
+    const applied = _suggestApplyPure(S.beats, proposals, throughIndex);
+    if (!applied || !S.history) return false;
+    // Accepting a fit is a coarse rewind unit: one command restores the entire
+    // pre-accept map, including a whole click-track fit.
+    S.history.checkpoint('Suggest fit');
+    S.history.exec(new TempoMapCmd(S.beats.map(beat => ({ ...beat })), applied, 'suggest-accept'));
+    S.tempoSel = throughIndex;
+    const n = _suggestRegenerateFrom(throughIndex);
+    host.updateBPMDisplay();
+    host.draw();
+    setStatus(n
+        ? `Accepted through this barline — ${n} suggestion${n === 1 ? '' : 's'} regenerated ahead`
+        : 'Accepted through this barline — no confident suggestions ahead (add an anchor and press G)');
+    return true;
+}
+
+export function editorAcceptWholeTempoFit() {
+    const proposals = _suggestProposals();
+    if (!proposals.length || !S.history) {
+        setStatus('Generate a tempo fit before accepting it.');
+        return false;
+    }
+    const last = proposals[proposals.length - 1];
+    const inferred = proposals.filter(proposal => proposal.inferred).length;
+    const applied = _suggestApplyPure(S.beats, proposals, last.i);
+    if (!applied) return false;
+    S.history.checkpoint('Whole tempo fit');
+    S.history.exec(new TempoMapCmd(S.beats.map(beat => ({ ...beat })), applied, 'suggest-accept-all'));
+    S.tempoSel = last.i;
+    _suggestDismiss();
+    host.updateBPMDisplay();
+    host.draw();
+    setStatus(`Accepted the whole tempo fit (${proposals.length} barlines) as one undoable edit`
+        + (inferred ? ` — ${inferred} extrapolated barline${inferred === 1 ? '' : 's'} should be reviewed.` : '.'));
+    return true;
 }
 
 // Right-click in tempo-map mode: insert on open grid, or edit/delete

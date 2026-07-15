@@ -14,7 +14,7 @@ import { _downbeatTimes } from './loop.js';
 import { _recState } from './midi-record.js';
 import { getMousePos } from './mouse.js';
 import { S } from './state.js';
-import { _trackSessionFittedHeightsPure, _trackSessionLaneLayoutPure, _trackSessionRowsPure } from './track-session.js';
+import { _trackSessionFittedHeightsPure, _trackSessionLaneLayoutPure, _trackSessionRowsPure, refreshTrackSessionSelection } from './track-session.js';
 import { _refreshTempoMapButton } from './tempo.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
@@ -182,7 +182,8 @@ export function _partsViewDraw(w, h) {
         if (y0 + laneH <= TIMELINE_TOP || y0 >= h) continue;
         const arrIdx = row.type === 'transcription' ? _arrIndexForTarget(row.targetId) : -1;
         const armed = arrIdx >= 0 && arrIdx === S.currentArr;
-        ctx.fillStyle = row.type === 'folder' ? '#172033' : armed ? '#141432' : (p % 2 === 0 ? '#0c0c1c' : '#0f0f24');
+        const selected = row.id === S.selectedTrackId;
+        ctx.fillStyle = selected ? '#12324a' : row.type === 'folder' ? '#172033' : armed ? '#141432' : (p % 2 === 0 ? '#0c0c1c' : '#0f0f24');
         ctx.fillRect(0, y0, w, laneH);
         ctx.strokeStyle = '#1a1a35';
         ctx.lineWidth = 1;
@@ -234,6 +235,8 @@ export function _partsViewOnMouseDown(e, x, y) {
     const layout = _trackSessionLaneLayoutPure(rows, fitted, S.trackScrollY, TIMELINE_TOP).lanes;
     const row = _partsTrackRowAtYPure(layout, y);
     if (!row || row.type === 'folder') return;
+    S.selectedTrackId = row.id;
+    refreshTrackSessionSelection();
     if (row.type === 'audio') {
         S.focusedSourceId = row.sourceId;
         host.selectTrackSessionSource(row.sourceId);
@@ -251,8 +254,13 @@ export function _partsViewOnMouseDown(e, x, y) {
 }
 
 export function _partsViewOnDblClick(e) {
-    const { y } = getMousePos(e);
-    _partsViewOnMouseDown(e, getMousePos(e).x, y);
+    const { x, y } = getMousePos(e);
+    _partsViewOnMouseDown(e, x, y);
+    const rows = _unifiedRows();
+    const fitted = _trackSessionFittedHeightsPure(rows, S.trackHeights, S.trackViewportHeight);
+    const layout = _trackSessionLaneLayoutPure(rows, fitted, S.trackScrollY, TIMELINE_TOP).lanes;
+    const row = _partsTrackRowAtYPure(layout, y);
+    if (row && row.type === 'transcription') host.openTrackSessionTarget(row.targetId);
 }
 
 export function _editorTogglePartsView() {

@@ -5,6 +5,7 @@ import {
     _trackSessionLaneLayoutPure,
     _trackSessionDropPlacementPure,
     _trackSessionDensityPure,
+    _trackSessionDeletePure,
     _trackSessionFittedHeightsPure,
     _trackSessionMoveBeforePure,
     _trackSessionMovePure,
@@ -38,6 +39,40 @@ test('a transcription pairing is stable by opaque source id', () => {
     assert.strictEqual(paired.tracks.find(track => track.id === 'transcription:guitar').pairedSourceId, 'stem:0');
     const rejected = _trackSessionPairPure(paired, 'transcription:guitar', 'missing', sources, arrangements, null);
     assert.strictEqual(rejected.tracks.find(track => track.id === 'transcription:guitar').pairedSourceId, 'stem:0');
+});
+
+test('metronome guide mode survives normalization and invalid modes fall back safely', () => {
+    const click = _trackSessionNormalizePure({ ...base, tempoGuideMode: 'metronome' }, sources, arrangements, null);
+    assert.strictEqual(click.tempoGuideMode, 'metronome');
+    const invalid = _trackSessionNormalizePure({ ...base, tempoGuideMode: 'vst' }, sources, arrangements, null);
+    assert.strictEqual(invalid.tempoGuideMode, 'audio');
+});
+
+test('deleting an audio track is durable, repairs guide and pair references, and keeps source media non-destructive', () => {
+    const paired = _trackSessionPairPure({ ...base, tempoGuideSourceId: 'stem:0' }, 'transcription:guitar', 'stem:0', sources, arrangements, null);
+    const removed = _trackSessionDeletePure(paired, 'audio:stem:0', sources, arrangements, null);
+    assert.deepStrictEqual(removed.removedSourceIds, ['stem:0']);
+    assert.ok(!removed.tracks.some(track => track.sourceId === 'stem:0'));
+    assert.strictEqual(removed.tempoGuideSourceId, 'master');
+    assert.strictEqual(removed.tracks.find(track => track.targetId === 'guitar').pairedSourceId, '');
+    const reopened = _trackSessionNormalizePure(removed, sources, arrangements, null);
+    assert.ok(!reopened.tracks.some(track => track.sourceId === 'stem:0'), 'normalization does not resurrect it');
+});
+
+test('deleting a folder promotes its immediate children instead of deleting their tracks', () => {
+    const session = {
+        ...base,
+        tracks: [
+            { id: 'folder:1', type: 'folder', name: 'Band', parentId: '' },
+            { id: 'audio:stem:0', type: 'audio', sourceId: 'stem:0', parentId: 'folder:1' },
+            { id: 'transcription:guitar', type: 'transcription', targetId: 'guitar', parentId: 'folder:1', pairedSourceId: 'stem:0' },
+        ],
+    };
+    const removed = _trackSessionDeletePure(session, 'folder:1', sources, arrangements, null);
+    assert.ok(!removed.tracks.some(track => track.id === 'folder:1'));
+    assert.deepStrictEqual(removed.tracks.filter(track => track.id !== 'audio:master').map(track => [track.id, track.parentId]), [
+        ['audio:stem:0', ''], ['transcription:guitar', ''],
+    ]);
 });
 
 test('dropping on a folder nests the track and keeps rows visible', () => {

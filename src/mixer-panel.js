@@ -33,10 +33,12 @@ import { _editorEscHtml, setStatus } from './ui.js';
 // One strip per part: every arrangement, plus the drum tab as its own strip
 // (drums are a song-level sidecar, not an arrangement) — the same list shape
 // as the Parts view, keyed the way S.currentArr addresses parts (by index).
-export function _mixerPartsPure(arrangements, drumTab, audioSources = []) {
+export function _mixerPartsPure(arrangements, drumTab, audioSources = [], trackSession = null) {
     const parts = [];
+    const removedSources = new Set((trackSession && Array.isArray(trackSession.removedSourceIds))
+        ? trackSession.removedSourceIds : []);
     (audioSources || []).forEach(source => {
-        if (!source || !source.id) return;
+        if (!source || !source.id || removedSources.has(source.id)) return;
         parts.push({
             key: 'audio:' + source.id,
             name: source.name || (source.kind === 'master' ? 'Master Mix' : source.id),
@@ -157,15 +159,21 @@ function _msBtn(key, act, pressed, label, title) {
 }
 
 function _renderParts(container) {
-    const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.audioSources);
+    const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.audioSources, S.trackSession);
     if (!parts.length) {
         container.innerHTML = '<p class="text-[10px] text-gray-500">No tracks yet — strips appear as tracks are added.</p>';
         return;
     }
+    const selected = (S.trackSession && S.trackSession.tracks || [])
+        .find(track => track.id === S.selectedTrackId);
+    const selectedKey = selected && selected.type === 'audio' ? 'audio:' + selected.sourceId
+        : selected && selected.type === 'transcription'
+            ? (selected.targetId === 'drums' ? 'drums' : 'arr:' + (S.arrangements || [])
+                .findIndex((arr, i) => String((arr && arr.id) || ('arr:' + i)) === selected.targetId)) : '';
     container.innerHTML = parts.map(p => {
         const st = _mixerPartStatePure(S.partMix, p.key);
         const name = _editorEscHtml(p.name);
-        return `<div class="editor-mixer-strip ${p.kind === 'transcription' ? 'editor-mixer-transcription-strip' : 'editor-mixer-audio-strip'}" data-mix-row="${p.key}">`
+        return `<div class="editor-mixer-strip ${p.kind === 'transcription' ? 'editor-mixer-transcription-strip' : 'editor-mixer-audio-strip'}${p.key === selectedKey ? ' editor-mixer-selected' : ''}" data-mix-row="${p.key}">`
             + `<span class="editor-mixer-strip-type">${p.kind === 'audio' ? 'AUDIO' : 'MIDI'}</span>`
             + `<div class="editor-mixer-ms-row">`
             + _msBtn(p.key, 'mute', st.mute, 'M', 'Mute track')
@@ -332,8 +340,8 @@ export function _mixerPanelRefresh() {
     }
     const container = document.getElementById('editor-mixer-parts');
     if (!container) return;
-    const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.audioSources);
-    const key = editGen + '|' + JSON.stringify(S.partMix) + '|' + parts.map(p => p.key + ':' + p.name).join(',');
+    const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.audioSources, S.trackSession);
+    const key = editGen + '|' + S.selectedTrackId + '|' + JSON.stringify(S.partMix) + '|' + parts.map(p => p.key + ':' + p.name).join(',');
     if (key === _lastKey) return;
     _lastKey = key;
     _renderParts(container);

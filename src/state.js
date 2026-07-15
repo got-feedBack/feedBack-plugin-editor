@@ -69,7 +69,8 @@ export const S = {
     // Source-aware DAW track tree. Audio and transcription leaves share one
     // optional-folder order; durable pairings use stable ids, never indices.
     audioSources: [],
-    trackSession: { version: 1, tracks: [], tempoGuideSourceId: 'master', tempoGuideLocked: false },
+    trackSession: { version: 2, tracks: [], removedSourceIds: [], tempoGuideSourceId: 'master', tempoGuideLocked: false, tempoGuideMode: 'audio' },
+    selectedTrackId: '',
     focusedSourceId: 'master',
     activeAudioSourceId: 'master',
     // One Logic-style vertical geometry model for both header cells and

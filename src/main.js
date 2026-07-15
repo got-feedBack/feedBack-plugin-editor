@@ -514,7 +514,26 @@ setHostHooks({
             S.drumEditMode = false; S.partsViewMode = true; host.draw(); return;
         }
         const index = S.arrangements.findIndex((arr, i) => arr && ((arr.id && String(arr.id) === targetId) || (!arr.id && ('arr:' + i) === targetId)));
-        if (index >= 0) window.editorSelectArrangement(String(index));
+        if (index >= 0 && index !== S.currentArr) window.editorSelectArrangement(String(index));
+    },
+    openTrackSessionTarget: (targetId) => {
+        _finalizeActiveDrag();
+        S.partsViewMode = false;
+        S.tempoMapMode = false;
+        S.tempoSel = -1;
+        if (targetId === 'drums' && S.drumTab) {
+            S.drumEditMode = true;
+            S.drumSel = new Set();
+        } else {
+            S.drumEditMode = false;
+            const index = S.arrangements.findIndex((arr, i) => arr && ((arr.id && String(arr.id) === targetId) || (!arr.id && ('arr:' + i) === targetId)));
+            if (index >= 0) window.editorSelectArrangement(String(index));
+        }
+        _refreshPartsViewButton();
+        _refreshDrumEditButton();
+        _refreshTempoMapButton();
+        host.draw();
+        host.updateStatus();
     },
     selectTrackSessionSource: (sourceId) => activateTrackAudioSource(sourceId),
     mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),

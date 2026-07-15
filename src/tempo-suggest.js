@@ -127,6 +127,85 @@ export function _suggestMedianPure(vals) {
     return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+// An explicitly-declared click track is a stronger contract than ordinary
+// musical audio: each consolidated transient is one beat pulse. Walk that
+// sequence by the chart's authored beats-per-measure so tempo changes in the
+// click are followed directly instead of being rejected as performance drift.
+// If detection drops out, continue with the recent median pulse interval and
+// lower confidence — the user explicitly preferred a complete, editable fit
+// over the ordinary suggest engine's conservative early stop.
+export function _suggestMetronomeFitPure(beats, onsets, fromIdx, opts) {
+    const o = opts || {};
+    const downs = _suggestDownbeatsFromPure(beats, fromIdx);
+    if (downs.length < 2 || !Array.isArray(onsets) || !onsets.length) {
+        return { proposals: [], stopReason: 'end', stopDetail: 'end' };
+    }
+    const sorted = onsets.filter(onset => onset && Number.isFinite(onset.t))
+        .map(onset => ({ t: onset.t, s: Math.max(0, Math.min(1, Number(onset.s) || 0)) }))
+        .sort((a, b) => a.t - b.t);
+    const pulses = [];
+    for (const onset of sorted) {
+        const prior = pulses[pulses.length - 1];
+        if (prior && onset.t - prior.t <= 0.12) {
+            if (onset.s > prior.s) pulses[pulses.length - 1] = onset;
+        } else pulses.push(onset);
+    }
+    if (!pulses.length) return { proposals: [], stopReason: 'end', stopDetail: 'end' };
+    const nearestPulse = (time, after = -1) => {
+        let best = -1; let distance = Infinity;
+        for (let i = Math.max(0, after + 1); i < pulses.length; i++) {
+            const d = Math.abs(pulses[i].t - time);
+            if (d < distance) { best = i; distance = d; }
+            if (pulses[i].t > time && d > distance) break;
+        }
+        return best;
+    };
+    let pulseIndex = nearestPulse(beats[downs[0]].time);
+    if (pulseIndex < 0) return { proposals: [], stopReason: 'end', stopDetail: 'end' };
+    let prevDown = downs[0];
+    let prevTime = beats[prevDown].time;
+    const recentGaps = [];
+    const proposals = [];
+    const toIdx = Number.isInteger(o.toIdx) ? o.toIdx : null;
+    for (let k = 1; k < downs.length; k++) {
+        const down = downs[k];
+        if (toIdx !== null && down > toIdx) break;
+        const beatsInBar = down - prevDown;
+        if (beatsInBar < 1) break;
+        if (beats[down].locked) {
+            const reanchor = nearestPulse(beats[down].time, pulseIndex);
+            if (reanchor >= 0) pulseIndex = reanchor;
+            proposals.push({ i: down, time: beats[down].time, conf: 1, locked: true });
+            prevDown = down; prevTime = beats[down].time;
+            continue;
+        }
+        const targetPulse = pulseIndex + beatsInBar;
+        let time; let conf; let inferred = false;
+        if (targetPulse < pulses.length) {
+            for (let i = pulseIndex + 1; i <= targetPulse; i++) {
+                const gap = pulses[i].t - pulses[i - 1].t;
+                if (gap > 0) {
+                    recentGaps.push(gap);
+                    if (recentGaps.length > 12) recentGaps.shift();
+                }
+            }
+            pulseIndex = targetPulse;
+            time = pulses[pulseIndex].t;
+            conf = Math.max(0.55, pulses[pulseIndex].s);
+        } else {
+            const fallback = _suggestMedianPure(recentGaps)
+                || ((beats[down].time - beats[prevDown].time) / beatsInBar);
+            time = prevTime + Math.max(0.01, fallback) * beatsInBar;
+            conf = 0.18;
+            inferred = true;
+            pulseIndex = targetPulse;
+        }
+        proposals.push({ i: down, time, conf, locked: false, ...(inferred ? { inferred: true } : {}) });
+        prevDown = down; prevTime = time;
+    }
+    return { proposals, stopReason: 'end', stopDetail: 'metronome' };
+}
+
 // The suggestion engine. From the anchor downbeat, march the following
 // downbeats: prediction = previous accepted time + the CURRENT grid's own
 // interval for that bar, scaled by a drift-tracking stretch; snap to the
@@ -146,6 +225,7 @@ export function _suggestMedianPure(vals) {
 // excludes the anchor itself. stopReason: 'end' | 'lost'.
 export function _suggestFitPure(beats, onsets, fromIdx, opts) {
     const o = opts || {};
+    if (o.metronome) return _suggestMetronomeFitPure(beats, onsets, fromIdx, o);
     const winFrac = o.winFrac || 0.45;          // now a fraction of a BEAT (stays under the ½-beat eighth)
     const minWin = o.minWin || 0.025;
     const maxMiss = o.maxMiss || 4;

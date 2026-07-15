@@ -20,6 +20,8 @@ def _sample():
         ],
         "tempoGuideSourceId": "master",
         "tempoGuideLocked": True,
+        "tempoGuideMode": "metronome",
+        "removedSourceIds": ["stem:unused"],
     }
 
 
@@ -37,7 +39,18 @@ def test_track_session_round_trips_through_manifest_yaml():
     loaded = yaml.safe_load(yaml.safe_dump(manifest, sort_keys=False))
     session = _coerce_track_session(loaded["editor_track_session"])
     assert session["tempoGuideLocked"] is True
+    assert session["tempoGuideMode"] == "metronome"
+    assert session["removedSourceIds"] == ["stem:unused"]
     assert session["tracks"][2]["pairedSourceId"] == "stem:0"
+
+
+def test_removed_sources_and_guide_mode_are_bounded_and_type_safe():
+    payload = _sample()
+    payload["removedSourceIds"] = "stem:0"
+    payload["tempoGuideMode"] = "plugin"
+    clean = _coerce_track_session(payload)
+    assert clean["removedSourceIds"] == []
+    assert clean["tempoGuideMode"] == "audio"
 
 
 def test_only_safe_bounded_ids_and_known_track_shapes_persist():

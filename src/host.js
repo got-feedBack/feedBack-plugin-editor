@@ -45,6 +45,8 @@ export const host = {
     updateArrangementSelector: () => {},
     /** Select a source-aware transcription target (arrangement id or drums). */
     selectTrackSessionTarget: () => {},
+    /** Leave the unified tracks overview and open a transcription's native editor. */
+    openTrackSessionTarget: () => {},
     /** Activate an audio source used as the current reference. */
     selectTrackSessionSource: () => {},
     /** Dismiss the canvas context menu. */

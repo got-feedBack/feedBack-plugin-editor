@@ -143,7 +143,13 @@ only when you need it, then drag a track onto the folder to nest it or drag it
 before another track to reorder the session. Right-click any track and choose
 **Rename** to edit the current name directly in that left-pane row. Press
 **Enter** or click away to save; **Escape** cancels. The same command renames
-folders. Folders are organization only; they never alter the
+folders. A single click selects a track on both sides of the Tracks area;
+double-click a transcription to leave the overview and open its string, piano
+roll, or drum editor. Right-click **Delete Track** to remove an unwanted track.
+Deleting an audio row removes it from the arrangement and mixer while retaining
+its source media inside the project; deleting a folder promotes its children
+rather than deleting them. A feedpak must retain at least one transcription
+arrangement. Folders are organization only; they never alter the
 song, tempo map, or export.
 
 Drag a track or folder near a row's upper or lower edge to place it before or
@@ -167,7 +173,7 @@ at the bottom.
 
 Each transcription can choose an audio reference from its row. Select that
 transcription and the editor switches its audible waveform/onset reference to
-the paired stem; choose **Master mix (inherit)** to fall back to the current
+the paired stem; choose **Guide track (inherit)** to fall back to the current
 Tempo guide. Click an audio track itself to audition it directly.
 
 The **Tempo** control above the list is separate from those pairings. It is the
@@ -206,6 +212,13 @@ Three ways to set the tempo, from coarse to fine:
    - **`G` — Suggest fit**: from the selected barline, the editor proposes the
      next downbeats from the audio's onsets. Click a ghost handle to accept
      through it.
+   - For a clean click track, right-click its audio row and choose **Use as
+     Metronome Guide**. `G` then counts that guide's beat pulses through the
+     entire chart, follows click-track tempo changes, and extrapolates missing
+     detections at visibly lower confidence instead of stopping. Choose
+     **Accept Whole Fit** to apply every proposal as one edit; `Ctrl+Z` restores
+     the previous map. Click an individual ghost when you only want to accept
+     through that bar.
    - **`Shift+B` — Tap tempo**: tap along and the selected barline takes your
      tempo.
    - **`B` — Set BPM** for the selected barline; **`M` — metric modulation**

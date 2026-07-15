@@ -689,7 +689,7 @@ function _ensureTrackGain(sourceId) {
     const gain = S.audioCtx.createGain();
     const state = host.partStripState('audio:' + sourceId);
     gain.gain.value = state && state.audible !== false
-        ? Math.max(0, Math.min(1, Number(state.vol) || 0)) : 0;
+        ? Math.max(0, Math.min(10 ** (6 / 20), Number(state.vol) || 0)) : 0;
     gain.connect(_ensureRefGain() || S.audioCtx.destination);
     _attachMeterTap(gain, 'track:audio:' + sourceId);
     trackGainNodes.set(sourceId, gain);
@@ -698,10 +698,11 @@ function _ensureTrackGain(sourceId) {
 
 export function applyAudioTrackMix(immediate = false) {
     if (!S.audioCtx) return;
+    const removed = new Set((S.trackSession && S.trackSession.removedSourceIds) || []);
     for (const [sourceId, gain] of trackGainNodes) {
         const state = host.partStripState('audio:' + sourceId);
-        const value = state && state.audible !== false
-            ? Math.max(0, Math.min(1, Number(state.vol) || 0)) : 0;
+        const value = !removed.has(sourceId) && state && state.audible !== false
+            ? Math.max(0, Math.min(10 ** (6 / 20), Number(state.vol) || 0)) : 0;
         if (immediate) gain.gain.value = value;
         else gain.gain.setTargetAtTime(value, S.audioCtx.currentTime, 0.02);
     }
@@ -717,7 +718,8 @@ function _stopTrackAudioSources() {
 
 function _startTrackAudioSources(preRoll) {
     _stopTrackAudioSources();
-    const sources = (S.audioSources || []).filter(source => source && source.id);
+    const removed = new Set((S.trackSession && S.trackSession.removedSourceIds) || []);
+    const sources = (S.audioSources || []).filter(source => source && source.id && !removed.has(source.id));
     if (!sources.length) return 0;
     if (S.audioBuffer && S.activeAudioSourceId) {
         trackAudioCache.set(S.activeAudioSourceId, { url: S.audioUrl || '', buffer: S.audioBuffer });

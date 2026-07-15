@@ -93,6 +93,11 @@ t('one strip per arrangement, keyed by index, drums appended only with hits', ()
         { key: 'audio:master', name: 'Master Mix', kind: 'audio' },
         { key: 'audio:stem:0', name: 'Drums Stem', kind: 'audio' },
     ]);
+    assert.deepStrictEqual(_mixerPartsPure([], null,
+        [{ id: 'master', name: 'Master Mix' }, { id: 'stem:0', name: 'Drums Stem' }],
+        { removedSourceIds: ['stem:0'] }), [
+        { key: 'audio:master', name: 'Master Mix', kind: 'audio' },
+    ], 'deleted audio tracks do not survive in the mixer');
 });
 
 t('strip state defaults to audible unity and permits +6 dB headroom', () => {

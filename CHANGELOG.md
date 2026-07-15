@@ -51,6 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Closing the Mixer now reverses its drawer motion and slides below the
   workspace before hiding; startup stays instantly closed and reduced-motion
   users skip the animation.
+  Track rows now have a shared selected state across the header and timeline;
+  double-clicking a transcription opens its native editor. Right-click can
+  delete audio/transcription tracks or folders, with folder children promoted
+  safely and removed audio media retained non-destructively in the project.
+  An audio row can be declared the locked **Metronome Guide**: Suggest counts
+  its pulses across the whole chart, follows click-track tempo changes, marks
+  extrapolated gaps at lower confidence, and **Accept Whole Fit** commits every
+  proposal as one undoable tempo-map edit.
 
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns

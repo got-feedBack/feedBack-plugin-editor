@@ -25,9 +25,12 @@ const {
     _suggestHudTextPure, _suggestCompute, _suggestActive, _suggestProposals,
     _suggestDismiss, _suggestRegenerateFrom, _suggestHitAt,
     _suggestBeatWinPure, _suggestCombPure, _suggestMedianPure, _suggestAnyOnsetInPure,
+    _suggestMetronomeFitPure,
 } = await import('../src/tempo-suggest.js');
 const { S, bumpEditGen } = await import('../src/state.js');
 const { timeToX } = await import('../src/geometry.js');
+const { EditHistory } = await import('../src/history.js');
+const { editorAcceptWholeTempoFit } = await import('../src/tempo.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -104,6 +107,57 @@ t('silence stops the march and drops the trailing guesses', () => {
     assert.strictEqual(stopReason, 'lost');
     assert.strictEqual(proposals.length, 5, 'ends at the last corroborated downbeat');
     assert.ok(proposals.every(p => p.conf > 0.12), 'no bare guesses survive');
+});
+
+t('an explicit metronome guide maps the whole pulse train across tempo changes', () => {
+    const g = grid(10, 120);
+    const pulseTimes = [];
+    let time = 0;
+    for (let beat = 0; beat < 40; beat++) {
+        pulseTimes.push(time);
+        time += beat < 20 ? 0.5 : 0.6;
+    }
+    const click = pulseTimes.map((t, i) => ({ t, s: i % 4 === 0 ? 1 : 0.8 }));
+    const { proposals, stopReason } = _suggestMetronomeFitPure(g, click, 0);
+    assert.strictEqual(stopReason, 'end');
+    assert.strictEqual(proposals.length, 9, 'every remaining chart bar is proposed');
+    proposals.forEach((proposal, index) => {
+        assert.ok(Math.abs(proposal.time - pulseTimes[(index + 1) * 4]) < 1e-9);
+    });
+});
+
+t('metronome fitting consolidates one click transient and re-anchors at locked bars', () => {
+    const g = grid(6, 120);
+    g[12].time = 6.1;
+    g[12].locked = true;
+    const clicks = onsetsAllBeats(120, 6).flatMap(onset => [onset, { t: onset.t + 0.015, s: 0.2 }]);
+    clicks[12 * 2].t = 6.1;
+    const { proposals } = _suggestMetronomeFitPure(g, clicks, 0);
+    const locked = proposals.find(proposal => proposal.i === 12);
+    assert.ok(locked && locked.locked);
+    assert.strictEqual(locked.time, 6.1);
+    assert.strictEqual(proposals.at(-1).i, 20, 'duplicate detector hits do not consume extra beats');
+});
+
+t('Accept Whole Fit commits every metronome proposal as one undoable command', () => {
+    const beats = grid(6, 120);
+    const before = beats.map(beat => beat.time);
+    Object.assign(S, {
+        tempoMapMode: true,
+        beats,
+        arrangements: [],
+        drumTab: null,
+        sections: [],
+        history: new EditHistory(),
+        tempoSel: 0,
+    });
+    const clicks = onsetsAllBeats(100, 6);
+    assert.strictEqual(_suggestCompute(0, clicks, { metronome: true }), 5);
+    assert.strictEqual(editorAcceptWholeTempoFit(), true);
+    assert.strictEqual(_suggestActive(), false, 'whole acceptance dismisses the proposal surface');
+    assert.notDeepStrictEqual(S.beats.map(beat => beat.time), before);
+    S.history.doUndo();
+    assert.deepStrictEqual(S.beats.map(beat => beat.time), before, 'one undo restores the entire prior map');
 });
 
 t('a locked downbeat is pinned at its own time with full confidence', () => {

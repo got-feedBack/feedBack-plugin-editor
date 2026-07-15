@@ -40,7 +40,7 @@ const S = {
         { id: 'stem:bass', url: '/bass', offset: 0 },
     ],
 };
-const host = { partStripState: () => ({ audible: true, vol: 1 }) };
+const host = { partStripState: () => ({ audible: true, vol: 10 ** (6 / 20) }) };
 const env = new Function('S', 'host', '_attachMeterTap', '_ensureRefGain', '_audioBufferStartPure',
     `const playingTrackSources = new Map(); const trackGainNodes = new Map();
      const trackAudioCache = new Map([
@@ -62,6 +62,8 @@ assert.ok(nodes.every(node => node.starts[0][0] === 10.5), 'all sources share on
 assert.strictEqual(env.playing.get('stem:drums').starts[0][1], 11.75, 'per-source offset is honored');
 assert.strictEqual(S.audioSource, env.playing.get('master'), 'focused source remains the waveform reference');
 assert.strictEqual(env.gains.size, 3, 'each source owns an independent fader gain');
+assert.ok([...env.gains.values()].every(node => Math.abs(node.gain.value - 10 ** (6 / 20)) < 1e-9),
+    'audio gain nodes honor the channel strip\'s +6 dB headroom');
 env.stop();
 assert.ok(nodes.every(node => node.stopped), 'stop silences every source');
 assert.strictEqual(env.playing.size, 0);

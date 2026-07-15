@@ -78,6 +78,15 @@ snap but must never silently move a mark. Long gaps must not silently infer a
 measure count. Odd-meter and complex songs are mapped by bounded phrases with
 explicit meter/grouping markers.
 
+An audio source explicitly declared as a **metronome guide** is the deliberate
+exception to bounded performance-onset marching. Its consolidated transients
+are treated as authored beat pulses, so the mapper may propose the whole chart,
+including click-track tempo changes. Missing detections are extrapolated from
+the recent pulse interval and must carry lower confidence. The result remains a
+proposal: **Accept Whole Fit** commits it as one undoable command, and individual
+accept-through remains available. Merely naming a file “click” never enables
+this policy; the user must opt in on the audio track.
+
 ## Pitch-Preserving Slow Playback
 
 Audition speed is a transport transform applied after source-to-musical
@@ -101,6 +110,8 @@ shows `m:ss.mmm` or SMPTE. All lanes use the ruler's single x/time conversion.
 - The tail after the last confirmed downbeat is labeled **Unmapped**.
 - Locked anchors remain visibly distinct.
 - Status text names the musical result and provides an undo path.
+- Whole-song metronome fits distinguish detected and extrapolated proposals and
+  never commit without an explicit accept.
 
 ## Delivery Slices
 

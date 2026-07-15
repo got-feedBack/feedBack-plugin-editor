@@ -796,9 +796,10 @@ function _editorTempoSuggestFit() {
     // With a multi-selection, fit only the selected RANGE: anchor at its first
     // downbeat and bound the march at its last.
     let anchor = S.tempoSel;
-    let opts;
+    let opts = S.trackSession && S.trackSession.tempoGuideMode === 'metronome'
+        ? { metronome: true } : undefined;
     const range = _tempoSelRangePure(S.beats, S.tempoSelMulti);
-    if (range) { anchor = range.lo; opts = { toIdx: range.hi }; }
+    if (range) { anchor = range.lo; opts = { ...(opts || {}), toIdx: range.hi }; }
     if (anchor < 0 || !(S.beats[anchor] && S.beats[anchor].measure > 0)) {
         anchor = S.beats.findIndex(b => b && b.measure > 0);
     }
@@ -810,8 +811,11 @@ function _editorTempoSuggestFit() {
     _zonesDismiss();   // one proposal surface at a time — G replaces the zone bands
     const n = _suggestCompute(anchor, onsets, opts);
     host.draw();
+    const metronome = !!(opts && opts.metronome);
     setStatus(n
-        ? (opts
+        ? (metronome
+            ? `Metronome guide mapped ${n} barline${n === 1 ? '' : 's'} through the chart — review, then Accept Whole Fit or click a ghost to accept through it`
+            : opts
             ? `Suggested a fit for the selected range (${n} barline${n === 1 ? '' : 's'}) — click a ghost handle to accept through it; Esc dismisses`
             : `Suggested ${n} barline${n === 1 ? '' : 's'} ahead of the anchor — click a ghost handle to accept through it; Esc dismisses`)
         : 'No confident suggestions from here — verify this anchor (drag it onto the downbeat) and press G again.');
