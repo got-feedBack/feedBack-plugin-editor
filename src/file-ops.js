@@ -177,7 +177,7 @@ export async function loadCDLC(filename, options = {}) {
         resetTrackAudioCache();
         // One ordered DAW session tree blends audio and transcription tracks.
         // Older servers omit these fields; the normalizer supplies Master Mix.
-        installTrackSession(data.track_session, data.audio_sources);
+        installTrackSession(data.track_session, _seedMasterSourcePure(data.audio_sources, data.audio_url));
         // Exit drum-edit mode on song change so we don't carry a stale
         // selection into a sloppak whose hits[] is different.
         S.drumEditMode = false;
@@ -809,6 +809,21 @@ export async function editorSaveAs() {
 // after a library save that succeeded).
 export function _saveShouldPickPure(hasHandle, hasPickerApi, sessionCanExport) {
     return !hasHandle && !!hasPickerApi && !!sessionCanExport;
+}
+
+// Older servers omit `audio_sources`; the normalizer then synthesizes a Master
+// Mix with an empty URL, which activateTrackAudioSource rejects before it can
+// check the decoded cache — so clicking Master Mix falsely reports "unavailable"
+// even though the audio is loaded. Seed the master source with data.audio_url
+// when the payload has no usable master, leaving populated sources untouched.
+export function _seedMasterSourcePure(sources, audioUrl) {
+    if (!audioUrl) return sources;
+    const arr = Array.isArray(sources) ? sources : [];
+    if (arr.some(s => s && s.id === 'master' && s.url)) return sources;
+    return [
+        { id: 'master', name: 'Master Mix', kind: 'master', url: audioUrl },
+        ...arr.filter(s => s && s.id !== 'master'),
+    ];
 }
 export async function editorSave() {
     if (!S.sessionId) return false;

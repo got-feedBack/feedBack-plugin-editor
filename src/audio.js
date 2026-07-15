@@ -123,6 +123,9 @@ export async function activateTrackAudioSource(sourceId) {
     }
     const cached = trackAudioCache.get(sourceId);
     if (cached && cached.url === source.url) {
+        // A slower in-flight decode (a stem still loading) must not finish and
+        // overwrite this cached source — advance the load generation first.
+        cancelAudioLoad();
         _installDecodedAudio(cached.buffer, source.url, sourceId, sourceId !== 'master');
         host.draw();
         setStatus('Reference source: ' + source.name);
@@ -152,6 +155,9 @@ export async function loadAudio(url, options = {}) {
     const sourceId = options.sourceId || 'master';
     const cached = trackAudioCache.get(sourceId);
     if (cached && cached.url === url) {
+        // Same guard as activateTrackAudioSource: kill any in-flight decode so
+        // it can't complete afterward and replace this cached buffer.
+        cancelAudioLoad();
         _installDecodedAudio(cached.buffer, url, sourceId, !!options.preserveTimeline);
         return true;
     }

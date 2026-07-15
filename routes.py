@@ -21,6 +21,18 @@ def _stem_source_name(stem, fallback):
     return name.strip()[:160] if isinstance(name, str) and name.strip() else fallback
 
 
+def _editor_stem_cache_basename(audio_id, index, sid):
+    """Cached-stem filename stem that stays unique per source.
+
+    Distinct stem ids can sanitize to the same string (``drums/kit`` and
+    ``drums:kit`` both become ``drums_kit``), so the sanitized id alone would
+    let one copied stem overwrite another and every URL would then play the
+    last-copied file. The per-source ``index`` keeps the paths distinct.
+    """
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", str(sid))
+    return f"editor_stem_{audio_id}_{index}_{safe}"
+
+
 def _normalize_generated_xml_encoding(paths):
     """Rewrite converter XML as UTF-8 when legacy metadata bytes leak through.
 
@@ -3781,7 +3793,7 @@ def setup(app, context):
             # mixer can load and balance them live. Only for genuine
             # multi-stem sloppaks — a single-`full` sloppak has nothing to mix.
             _stem_urls = []
-            for _s in loaded.stems:
+            for _index, _s in enumerate(loaded.stems):
                 _sid = (_s.get("id") or "").strip()
                 if not _sid or _sid == "full":
                     continue
@@ -3789,8 +3801,8 @@ def setup(app, context):
                 if _sp is None or not _sp.exists():
                     continue
                 _sext = _sp.suffix or ".ogg"
-                _safe_sid = re.sub(r"[^a-zA-Z0-9_-]", "_", _sid)
-                _sdest = STORAGE_DIR / f"editor_stem_{audio_id}_{_safe_sid}{_sext}"
+                _base = _editor_stem_cache_basename(audio_id, _index, _sid)
+                _sdest = STORAGE_DIR / f"{_base}{_sext}"
                 try:
                     shutil.copy2(_sp, _sdest)
                 except OSError:
@@ -3798,7 +3810,7 @@ def setup(app, context):
                 _stem_urls.append({
                     "id": _sid,
                     "name": _stem_source_name(_s, _sid),
-                    "url": f"{STORAGE_URL}/editor_stem_{audio_id}_{_safe_sid}{_sext}",
+                    "url": f"{STORAGE_URL}/{_base}{_sext}",
                 })
 
             result = _song_to_dict(song, audio_url)

@@ -664,8 +664,12 @@ export function onWheel(e) {
         S.scrollX = timeBefore - (x - LABEL_W) / S.zoom;
         S.scrollX = _editorClampScrollX(S.scrollX);
     } else {
-        // Scroll = pan
-        S.scrollX = _editorClampScrollX(S.scrollX + e.deltaY / S.zoom * 2);
+        // Scroll = pan. A horizontal-dominant gesture (trackpad swipe) pans by
+        // deltaX; a plain vertical wheel still pans by deltaY. Without this a
+        // horizontal swipe is preventDefault'd yet moves the timeline by the
+        // tiny deltaY, so the gesture reads as dead.
+        const pan = Math.abs(e.deltaX || 0) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        S.scrollX = _editorClampScrollX(S.scrollX + pan / S.zoom * 2);
     }
     host.updateZoomDisplay();
     host.draw();

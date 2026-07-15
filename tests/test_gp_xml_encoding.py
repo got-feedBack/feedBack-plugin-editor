@@ -28,3 +28,4 @@ def test_generated_utf8_xml_is_left_byte_identical(tmp_path):
     path.write_bytes(payload)
 
     _normalize_generated_xml_encoding([path])
+    assert path.read_bytes() == payload
