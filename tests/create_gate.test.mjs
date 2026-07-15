@@ -27,6 +27,12 @@ t('from-scratch: needs a title AND at least one instrument in the roster', () =>
     assert.strictEqual(_createGateOpen({ roster: ['Drums'] }, inp({ hasTitle: true })), true);
 });
 
+t('a staged MIDI alone opens the gate (like a GP file — the fix for the dead-end import)', () => {
+    assert.strictEqual(_createGateOpen({ midiFiles: [{ name: 'dkcjungle-2.mid' }], roster: [] }, inp()), true);
+    assert.strictEqual(_createGateOpen({ midiFiles: [], roster: [] }, inp()), false, 'empty list is not a stage');
+    assert.strictEqual(_createGateOpen({ midiFiles: null, roster: [] }, inp()), false);
+});
+
 t('gp file wins regardless of roster/title', () => {
     assert.strictEqual(_createGateOpen({ gpPath: '/song.gp', roster: [] }, inp()), true);
     assert.strictEqual(_createGateOpen({ gpPath: null, roster: [] }, inp({ hasTitle: true })), false);

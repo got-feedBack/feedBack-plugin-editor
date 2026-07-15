@@ -135,7 +135,7 @@ export function editorShowCreateModal() {
         roster: ['Lead'],
         gpPath: null, tracks: null, gpName: null, gpHasEmbedded: false, gpSyncCount: 0,
         eofFiles: null, eofName: null,
-        audioUrl: null, audioName: null, audioDuration: null, audioFile: null, midiInfo: null,
+        audioUrl: null, audioName: null, audioDuration: null, audioFile: null, midiInfo: null, midiFiles: null,
         artPath: null, previewPath: null,
         gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null, autoSyncCoupled: false,
         // GoPlayAlong sync sidecar (goplayalong.com): a <track> .xml that carries
@@ -665,6 +665,9 @@ export function _createGateOpen(state, flags) {
     if (!state || !flags) return false;
     if (state.gpPath) return true;
     if (state.eofFiles && state.eofFiles.length) return true;
+    // A staged MIDI alone creates a project (like a GP file — the title is
+    // defaulted from the filename at stage time, so the blank path can run).
+    if (state.midiFiles && state.midiFiles.length) return true;
     var instruments = ['Lead', 'Rhythm', 'Keys', 'Bass', 'Drums'];
     var hasInstrument = !!(state.roster && state.roster.some(function (r) {
         return instruments.indexOf(r) >= 0;
@@ -953,10 +956,31 @@ async function _stageGoplayalong(file) {
     }
 }
 
+/* @pure:midi-create:start */
+// The default project title for a MIDI-only create: the filename stem,
+// underscores/dashes read as spaces. Never empty (the blank-create backend
+// requires a title).
+function _midiDefaultTitlePure(filename) {
+    const stem = String(filename || '').replace(/\.[^.]*$/, '');
+    const t = stem.replace(/[_-]+/g, ' ').trim();
+    return t || 'MIDI import';
+}
+/* @pure:midi-create:end */
+export { _midiDefaultTitlePure };
+
 function _stageMidi(files) {
     createState.midiInfo = files.length === 1 ? files[0].name : (files.length + ' MIDI files');
+    // Keep the FILE, not just its name — Create feeds it straight into the
+    // track picker so the user never has to re-pick what they just staged.
+    createState.midiFiles = files;
+    // A MIDI alone is a real project now: default the title from the file so
+    // the (title-requiring) create path can run — visible and editable.
+    const titleEl = document.getElementById('editor-create-title');
+    if (titleEl && !titleEl.value.trim()) {
+        titleEl.value = _midiDefaultTitlePure(files[0] && files[0].name);
+    }
     const iStatus = document.getElementById('editor-create-import-status');
-    if (iStatus) iStatus.textContent = 'MIDI added — after Create, add Keys / Drums from it in the editor (+Keys / +Drums).';
+    if (iStatus) iStatus.textContent = 'MIDI staged — Create opens it and lets you pick which tracks to chart.';
 }
 
 // Grey the YouTube field while a master-audio FILE is staged (file wins).
@@ -1069,6 +1093,7 @@ export function editorStagedRemove(role) {
         _refreshGpAudioUI();
     } else if (role === 'midi') {
         createState.midiInfo = null;
+        createState.midiFiles = null;
     }
     const iStatus = document.getElementById('editor-create-import-status');
     if (iStatus) iStatus.textContent = '';
@@ -1826,6 +1851,37 @@ export async function editorRefineSync() {
 // dead definition is removed, not promoted. Restoring its intent (roster
 // validation, and audio optional for a draft-now project) is a product change
 // and belongs in its own PR.
+// MIDI-only create: a blank (draft) create seeded with a Keys placeholder,
+// then the staged file feeds straight into the Add-Keys track picker — the
+// user picks which of the MIDI's tracks to chart, each imports as its own
+// arrangement, and the placeholder is removed once real tracks landed.
+async function _editorDoMidiCreate() {
+    const titleEl = document.getElementById('editor-create-title');
+    if (titleEl && !titleEl.value.trim()) {
+        titleEl.value = _midiDefaultTitlePure(
+            createState.midiFiles[0] && createState.midiFiles[0].name);
+    }
+    // The blank-create backend requires >=1 seeded arrangement; if the user
+    // hasn't picked any, seed a Keys placeholder and FLAG it so the track
+    // import can clean it up once real parts exist.
+    let seeded = false;
+    if (!createState.roster || !createState.roster.length) {
+        createState.roster = ['Keys'];
+        seeded = true;
+    }
+    const file = createState.midiFiles[0];
+    await _editorDoBlankCreate();
+    if (!S.sessionId || !S.arrangements.length) return;   // create failed — its status stands
+    if (seeded) S._midiSeedArrIdx = 0;
+    // Feed the staged file straight into the existing track picker (the one
+    // surface that already knows channels/pairs/drums) — no re-pick.
+    if (typeof window.editorShowAddKeysModal === 'function'
+        && typeof window._editorKeysHandleFile === 'function') {
+        window.editorShowAddKeysModal();
+        window._editorKeysHandleFile(file);
+    }
+}
+
 export async function editorDoCreate() {
     // One menu, no mode toggle — route on what was provided: a Guitar Pro file
     // wins, then EOF XML arrangement(s), else a from-scratch (draft) create
@@ -1833,6 +1889,8 @@ export async function editorDoCreate() {
     if (!createState.gpPath) {
         if (createState.eofFiles && createState.eofFiles.length) {
             await _editorDoEofCreate();
+        } else if (createState.midiFiles && createState.midiFiles.length) {
+            await _editorDoMidiCreate();
         } else {
             await _editorDoBlankCreate();
         }

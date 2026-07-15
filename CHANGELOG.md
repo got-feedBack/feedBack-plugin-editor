@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A MIDI file is a project now.** Dropping a `.mid`/`.midi` into New Song
+  used to dead-end: the file was noted, then forgotten, and Create stayed
+  disabled. Now a staged MIDI alone enables Create (the title pre-fills from
+  the filename), and Create opens straight into the track picker with the
+  file already parsed — no re-picking. And the picker **actually unpacks
+  multitrack MIDI**: every track you check imports as its own chart track,
+  named after the MIDI track ("Keys — Bass, Baby."), instead of silently
+  importing only the first. The MIDI's own tempo map is offered as the
+  project grid as before, and the temporary placeholder track the create
+  needs is cleaned up automatically once your real tracks land.
+
 - **The note-entry caret now previews the note you're about to type.** In String
   view with nothing selected, the dashed cell that marks the entry point earns
   its note shape: it's sized to the current note value (the snap step, so the box
