@@ -72,7 +72,7 @@ export const S = {
     // as a playback bug. `stems` is the /load payload's [{id, url}] list
     // (present only when the pack has ≥2 real stems); both reset on song load.
     stems: [],
-    stemMix: {},
+    stemMix: Object.create(null),
 
     // Tempo Map mode — EOF-style: drag the song-wide beat grid's measure
     // downbeats ("sync points") to fit it to the audio; BPM is derived

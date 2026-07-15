@@ -41,7 +41,7 @@ t('strip state defaults to audible unity; volume clamps into [0, 100]', () => {
 // ── Gains: the DAW rule as numbers ───────────────────────────────────
 
 t('unity mix → every stem at gain 1', () => {
-    assert.deepStrictEqual(P._stemGainsPure({}, IDS),
+    assert.deepStrictEqual({ ...P._stemGainsPure({}, IDS) },
         { guitar: 1, bass: 1, drums: 1, vocals: 1 });
 });
 
@@ -54,10 +54,10 @@ t('mute zeroes one stem; volume scales linearly', () => {
 
 t('any solo isolates the soloed stems — this IS "hear just the guitar"', () => {
     const g = P._stemGainsPure({ guitar: { solo: true } }, IDS);
-    assert.deepStrictEqual(g, { guitar: 1, bass: 0, drums: 0, vocals: 0 });
+    assert.deepStrictEqual({ ...g }, { guitar: 1, bass: 0, drums: 0, vocals: 0 });
     // Two solos both sound; the rest stay silent.
     const g2 = P._stemGainsPure({ guitar: { solo: true }, bass: { solo: true, vol: 50 } }, IDS);
-    assert.deepStrictEqual(g2, { guitar: 1, bass: 0.5, drums: 0, vocals: 0 });
+    assert.deepStrictEqual({ ...g2 }, { guitar: 1, bass: 0.5, drums: 0, vocals: 0 });
 });
 
 t('mute beats solo on the same strip', () => {
@@ -71,8 +71,18 @@ t('a stale solo for a stem NOT in this song does not gate the real stems', () =>
     // _stemAnySoloPure walks the song's ids, not the map's keys, so a
     // leftover entry from another song's stem set is inert.
     assert.strictEqual(P._stemAnySoloPure({ piano: { solo: true } }, IDS), false);
-    assert.deepStrictEqual(P._stemGainsPure({ piano: { solo: true } }, IDS),
+    assert.deepStrictEqual({ ...P._stemGainsPure({ piano: { solo: true } }, IDS) },
         { guitar: 1, bass: 1, drums: 1, vocals: 1 });
+});
+
+t('"__proto__" as a stem id is an ordinary key, not the prototype accessor', () => {
+    // Pack data names the stems, so hostile ids must not walk the prototype
+    // chain — the gains map is null-prototype and writes land as own keys.
+    const ids = ['guitar', '__proto__'];
+    const g = P._stemGainsPure({ ['__proto__']: { vol: 30 } }, ids);
+    assert.strictEqual(Object.getPrototypeOf(g), null);
+    assert.strictEqual(g['__proto__'], 0.3);
+    assert.strictEqual(g.guitar, 1);
 });
 
 // ── Unity detection: the combined-mix fallback boundary ──────────────

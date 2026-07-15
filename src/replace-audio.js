@@ -101,7 +101,7 @@ export async function editorApplyReplaceAudio() {
         // stale — drop them and hide the Stems strips.
         _stemResetForNewSong();
         S.stems = [];
-        S.stemMix = {};
+        S.stemMix = Object.create(null);
         if (S.cursorTime > S.duration) S.cursorTime = 0;
         _editorApplyScrollBounds();
         document.getElementById('editor-play-btn').disabled = false;

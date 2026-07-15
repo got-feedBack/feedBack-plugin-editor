@@ -2187,7 +2187,9 @@ export async function editorApplyCreateResult(data) {
     // Create-mode packs start life with a single master track — no stems.
     _stemResetForNewSong();
     S.stems = [];
-    S.stemMix = {};
+    // Null-prototype: stem ids come from pack data, so "__proto__" etc. must
+    // behave as ordinary keys.
+    S.stemMix = Object.create(null);
     // Create-mode import — the source builds tuning to the actual string count,
     // so length 6 means a genuine 6-string bass / standard guitar (not a
     // padded tuning). Seed `_extendedStrings` to keep `_stringCountFor` honest.

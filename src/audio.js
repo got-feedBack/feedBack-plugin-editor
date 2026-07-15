@@ -1323,7 +1323,7 @@ export function _stemAnySoloPure(stemMix, ids) {
  */
 export function _stemGainsPure(stemMix, ids) {
     const anySolo = _stemAnySoloPure(stemMix, ids);
-    const gains = {};
+    const gains = Object.create(null);
     for (const id of (ids || [])) {
         const st = _stemStripStatePure(stemMix, id);
         const audible = !st.mute && (!anySolo || st.solo);

@@ -248,7 +248,7 @@ function _setPart(key, patch) {
  * host.stemMixChanged() so the engine can lazy-load / ramp / re-path.
  */
 function _setStem(key, patch) {
-    if (!S.stemMix || typeof S.stemMix !== 'object') S.stemMix = {};
+    if (!S.stemMix || typeof S.stemMix !== 'object') S.stemMix = Object.create(null);
     S.stemMix[key] = { ..._mixerPartStatePure(S.stemMix, key), ...patch };
     host.stemMixChanged();
 }

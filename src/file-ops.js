@@ -138,7 +138,9 @@ export async function loadCDLC(filename, options = {}) {
         // song's decoded stem buffers/sources before the new list installs.
         _stemResetForNewSong();
         S.stems = Array.isArray(data.stems) ? data.stems : [];
-        S.stemMix = {};
+        // Null-prototype: stem ids come from pack data, so "__proto__" etc.
+        // must behave as ordinary keys.
+        S.stemMix = Object.create(null);
         // Sloppak sources don't pad tuning to 6 slots like RS XML does,
         // so a bass arrangement arriving with tuning.length === 6 from
         // a sloppak is a genuine 6-string bass (not padded 4-string).
