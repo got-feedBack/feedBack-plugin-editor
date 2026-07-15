@@ -233,6 +233,7 @@ export const EDITOR_MENUS = Object.freeze([
         { sep: true },
         { hdr: 'Barlines (Tempo Map)' },
         { cmd: 'tempoSuggestFit', needs: 'tempoMap' },
+        { cmd: 'tempoAcceptWholeFit', needs: 'tempoMap' },
         { cmd: 'tempoInsertSync', needs: 'tempoMap' },
         { cmd: 'tempoDeleteSync', needs: 'tempoMap' },
         { cmd: 'tempoToggleSyncLock', needs: 'tempoMap' },

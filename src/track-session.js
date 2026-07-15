@@ -23,14 +23,15 @@
 // Removing an audio track is NON-DESTRUCTIVE: the source id goes into
 // `removedSourceIds` and the media stays in the pack. The tempo-guide
 // fields (which source is the timing reference, and whether it is locked)
-// persist here too; their behavior ships separately.
+// persist here too; assisted mapping (G) reads them — a LOCKED guide is
+// what tempo analysis listens to (see editorToggleTempoGuide below).
 //
 // This module is the model slice: pure tree ops + install/save wiring.
 // The unified Tracks surface that renders the tree arrives in a follow-up
 // (see the docked mixer panel / parts view for today's surfaces).
 // ════════════════════════════════════════════════════════════════════
 import { _partViewKeyPure } from './keys.js';
-import { S } from './state.js';
+import { S, markSessionDirty } from './state.js';
 
 const MASTER_ID = 'master';
 const DRUM_TARGET_ID = 'drums';
@@ -347,4 +348,39 @@ export function trackSessionSavePayload() {
     const sources = _liveSources();
     if (_trackSessionIsDefaultPure(S.trackSession, sources, S.arrangements, S.drumTab)) return null;
     return _trackSessionNormalizePure(S.trackSession, sources, S.arrangements, S.drumTab);
+}
+
+// ── Tempo guide: the timing-reference role ───────────────────────────
+// One audio source can be declared the session's tempo reference. LOCKING
+// is the commitment: a locked guide is what assisted mapping (G) analyzes,
+// even though playback keeps following the session recording. Mode
+// 'metronome' additionally declares the source to BE a click track (each
+// transient = one beat pulse — the stronger analysis contract).
+export function editorTempoGuideState() {
+    const tree = S.trackSession || {};
+    return {
+        sourceId: typeof tree.tempoGuideSourceId === 'string' ? tree.tempoGuideSourceId : '',
+        locked: !!tree.tempoGuideLocked,
+        mode: tree.tempoGuideMode === 'metronome' ? 'metronome' : 'audio',
+    };
+}
+
+// Toggle `sourceId` as the locked guide (default mode: metronome). Toggling
+// the active guide off returns to the default — first source, unlocked,
+// plain audio analysis. Session state, persisted with the tree — so it
+// dirties the session, but it is not a chart edit (no history command).
+export function editorToggleTempoGuide(sourceId, mode = 'metronome') {
+    const sources = _liveSources();
+    const model = _trackSessionNormalizePure(S.trackSession, sources, S.arrangements, S.drumTab);
+    const wanted = mode === 'metronome' ? 'metronome' : 'audio';
+    const active = model.tempoGuideLocked && model.tempoGuideSourceId === sourceId
+        && model.tempoGuideMode === wanted;
+    S.trackSession = _trackSessionNormalizePure({
+        ...model,
+        tempoGuideSourceId: active ? (sources[0] ? sources[0].id : '') : sourceId,
+        tempoGuideLocked: !active,
+        tempoGuideMode: active ? 'audio' : wanted,
+    }, sources, S.arrangements, S.drumTab);
+    markSessionDirty();
+    return !active;
 }

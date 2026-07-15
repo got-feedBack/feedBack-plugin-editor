@@ -26,6 +26,7 @@ import { S, markSessionDirty } from './state.js';
 import { host } from './host.js';
 import { setStatus, _editorPromptText } from './ui.js';
 import { _partViewKeyPure } from './keys.js';
+import { editorTempoGuideState, editorToggleTempoGuide } from './track-session.js';
 
 /* @pure:stem-tracks:start */
 // The manager's row model: one row per stem, in S.stems order, with its
@@ -101,17 +102,24 @@ function _render() {
             const sel = paired && paired.key === k ? ' selected' : '';
             return `<option value="${_esc(k)}"${sel}>${_esc(a.name || 'track')}</option>`;
         })).join('');
+    const guide = editorTempoGuideState();
     list.innerHTML = rows.length
-        ? rows.map((r, i) =>
-            `<div class="flex items-center gap-2 py-1" data-stem-id="${_esc(r.id)}">`
+        ? rows.map((r, i) => {
+            const isGuide = guide.locked && guide.sourceId === r.id;
+            return `<div class="flex items-center gap-2 py-1" data-stem-id="${_esc(r.id)}">`
             + `<span class="flex flex-col leading-none">`
             + `<button data-stem-move="up" ${i === 0 ? 'disabled' : ''} class="text-gray-500 hover:text-white disabled:opacity-30" title="Move up">▴</button>`
             + `<button data-stem-move="down" ${i === rows.length - 1 ? 'disabled' : ''} class="text-gray-500 hover:text-white disabled:opacity-30" title="Move down">▾</button>`
             + `</span>`
             + `<button data-stem-rename class="flex-1 truncate text-left text-gray-200 hover:text-white" title="Rename this track">${_esc(r.id)}</button>`
+            + `<button data-stem-guide class="${isGuide ? 'text-accent' : 'text-gray-500'} hover:text-white px-1" `
+            + `title="${isGuide ? 'Locked metronome guide — assisted tempo mapping (G) analyzes this track. Click to unlock.'
+                : 'Lock as the metronome guide: declare this track the click/timing reference — assisted tempo mapping (G) analyzes it instead of the main recording.'}"`
+            + ` aria-pressed="${isGuide}">♩</button>`
             + `<select data-stem-pair aria-label="Chart track transcribing ${_esc(r.id)}" class="bg-dark-700 text-xs rounded px-1 py-0.5 max-w-[10rem]">${arrOptions(r.pairedWith)}</select>`
             + `<button data-stem-delete class="text-red-400 hover:text-red-300 px-1" title="Remove this track from the pack">✕</button>`
-            + `</div>`).join('')
+            + `</div>`;
+        }).join('')
         : '<p class="py-2 text-gray-500">No audio tracks yet — Import adds any number of them (wav / ogg / opus / mp3 / flac).</p>';
 }
 
@@ -155,6 +163,14 @@ function _onListClick(e) {
             if (raw === null || raw === sid) return;
             _submitStemOp({ op: 'rename', id: sid, new_id: raw }, `Renamed to ${raw}.`, 'rename');
         })();
+    } else if (e.target.closest('[data-stem-guide]')) {
+        // Frontend-only state (rides the track-session tree on Save/Build) —
+        // no backend op, so no _submitStemOp round-trip.
+        const locked = editorToggleTempoGuide(sid, 'metronome');
+        setStatus(locked
+            ? `“${sid}” locked as the metronome guide — assisted tempo mapping (G) now analyzes it.`
+            : 'Metronome guide unlocked — assisted tempo mapping analyzes the main recording again.');
+        _render();
     } else if (e.target.closest('[data-stem-delete]')) {
         _submitStemOp({ op: 'delete', id: sid }, `Removed ${sid}.`, 'delete');
     }

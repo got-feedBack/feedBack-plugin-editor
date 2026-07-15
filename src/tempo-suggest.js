@@ -134,6 +134,154 @@ export function _suggestMedianPure(vals) {
     return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+// Whole-fit tail (guide/complete mode): after the conservative march stops,
+// append INFERRED proposals for every remaining authored downbeat so the fit
+// reaches chart end. Detected proposals stay untouched; the tail extrapolates
+// the most recent fitted interval (drift scale clamped to [0.25, 4]) at floor
+// confidence with an `inferred: true` flag — visibly low-confidence, editable,
+// and NEVER auto-committed (this function only shapes proposals; commit stays
+// behind the explicit accept verbs). A locked downbeat ahead re-anchors the
+// tail: the intervening downbeats interpolate proportionally onto it.
+export function _suggestCompleteTailPure(beats, fromIdx, result, opts) {
+    const base = result || { proposals: [], stopReason: 'end', stopDetail: 'end' };
+    const proposals = Array.isArray(base.proposals) ? base.proposals.map(p => ({ ...p })) : [];
+    const downs = _suggestDownbeatsFromPure(beats, fromIdx);
+    if (downs.length < 2) return { ...base, proposals };
+    const toIdx = opts && Number.isInteger(opts.toIdx) ? opts.toIdx : Infinity;
+    let lastIdx = proposals.length ? proposals[proposals.length - 1].i : downs[0];
+    let lastTime = proposals.length ? proposals[proposals.length - 1].time : beats[lastIdx].time;
+    const previous = proposals.length > 1
+        ? proposals[proposals.length - 2]
+        : { i: downs[0], time: beats[downs[0]].time };
+    const oldSpan = beats[lastIdx].time - beats[previous.i].time;
+    const newSpan = lastTime - previous.time;
+    let scale = oldSpan > 0 && newSpan > 0 ? newSpan / oldSpan : 1;
+    scale = Math.max(0.25, Math.min(4, scale));
+    let pos = downs.findIndex(i => i === lastIdx) + 1;
+    while (pos > 0 && pos < downs.length && downs[pos] <= toIdx) {
+        let lockPos = -1;
+        for (let k = pos; k < downs.length && downs[k] <= toIdx; k++) {
+            if (beats[downs[k]].locked) { lockPos = k; break; }
+        }
+        if (lockPos >= 0 && beats[downs[lockPos]].time > lastTime) {
+            const lockIdx = downs[lockPos];
+            const gridSpan = beats[lockIdx].time - beats[lastIdx].time;
+            for (; pos <= lockPos; pos++) {
+                const i = downs[pos];
+                const frac = gridSpan > 0 ? (beats[i].time - beats[lastIdx].time) / gridSpan : 1;
+                const time = lastTime + frac * (beats[lockIdx].time - lastTime);
+                proposals.push({ i, time, conf: i === lockIdx ? 1 : 0.08,
+                    locked: i === lockIdx, ...(i === lockIdx ? {} : { inferred: true }) });
+            }
+            lastIdx = lockIdx;
+            lastTime = beats[lockIdx].time;
+            scale = 1;
+            continue;
+        }
+        const i = downs[pos++];
+        const time = Math.max(lastTime + 0.01,
+            lastTime + (beats[i].time - beats[lastIdx].time) * scale);
+        proposals.push({ i, time, conf: 0.08, locked: false, inferred: true });
+        lastIdx = i;
+        lastTime = time;
+    }
+    return {
+        proposals,
+        stopReason: 'end',
+        stopDetail: base.stopReason === 'lost' ? `inferred-${base.stopDetail || 'lost'}` : base.stopDetail,
+    };
+}
+
+// An explicitly-declared click track is a stronger contract than ordinary
+// musical audio: each consolidated transient is one beat pulse. Walk that
+// sequence by the chart's authored beats-per-measure so tempo changes in the
+// click are followed directly instead of being rejected as performance drift.
+// If detection drops out, continue with the recent median pulse interval and
+// lower confidence — the user explicitly preferred a complete, editable fit
+// over the ordinary suggest engine's conservative early stop.
+export function _suggestMetronomeFitPure(beats, onsets, fromIdx, opts) {
+    const o = opts || {};
+    const downs = _suggestDownbeatsFromPure(beats, fromIdx);
+    if (downs.length < 2 || !Array.isArray(onsets) || !onsets.length) {
+        return { proposals: [], stopReason: 'end', stopDetail: 'end' };
+    }
+    const sorted = onsets.filter(onset => onset && Number.isFinite(onset.t))
+        .map(onset => ({ t: onset.t, s: Math.max(0, Math.min(1, Number(onset.s) || 0)) }))
+        .sort((a, b) => a.t - b.t);
+    const pulses = [];
+    for (const onset of sorted) {
+        const prior = pulses[pulses.length - 1];
+        if (prior && onset.t - prior.t <= 0.12) {
+            if (onset.s > prior.s) pulses[pulses.length - 1] = onset;
+        } else pulses.push(onset);
+    }
+    if (!pulses.length) return { proposals: [], stopReason: 'end', stopDetail: 'end' };
+    const nearestPulse = (time, after = -1) => {
+        let best = -1; let distance = Infinity;
+        for (let i = Math.max(0, after + 1); i < pulses.length; i++) {
+            const d = Math.abs(pulses[i].t - time);
+            if (d < distance) { best = i; distance = d; }
+            if (pulses[i].t > time && d > distance) break;
+        }
+        return best;
+    };
+    let pulseIndex = nearestPulse(beats[downs[0]].time);
+    if (pulseIndex < 0) return { proposals: [], stopReason: 'end', stopDetail: 'end' };
+    let prevDown = downs[0];
+    let prevTime = beats[prevDown].time;
+    const recentGaps = [];
+    const proposals = [];
+    const toIdx = Number.isInteger(o.toIdx) ? o.toIdx : null;
+    for (let k = 1; k < downs.length; k++) {
+        const down = downs[k];
+        if (toIdx !== null && down > toIdx) break;
+        const beatsInBar = down - prevDown;
+        if (beatsInBar < 1) break;
+        const targetPulse = pulseIndex + beatsInBar;
+        if (beats[down].locked) {
+            // A lock preserves this barline's authored source time; it does
+            // not authorize an implicit missing/extra beat. Keep advancing by
+            // the chart's authored beat count so one stale lock cannot shift
+            // every later suggestion onto the wrong click phase.
+            const availableTarget = Math.min(targetPulse, pulses.length - 1);
+            for (let i = pulseIndex + 1; i <= availableTarget; i++) {
+                const gap = pulses[i].t - pulses[i - 1].t;
+                if (gap > 0) {
+                    recentGaps.push(gap);
+                    if (recentGaps.length > 12) recentGaps.shift();
+                }
+            }
+            pulseIndex = targetPulse;
+            proposals.push({ i: down, time: beats[down].time, conf: 1, locked: true });
+            prevDown = down; prevTime = beats[down].time;
+            continue;
+        }
+        let time; let conf; let inferred = false;
+        if (targetPulse < pulses.length) {
+            for (let i = pulseIndex + 1; i <= targetPulse; i++) {
+                const gap = pulses[i].t - pulses[i - 1].t;
+                if (gap > 0) {
+                    recentGaps.push(gap);
+                    if (recentGaps.length > 12) recentGaps.shift();
+                }
+            }
+            pulseIndex = targetPulse;
+            time = pulses[pulseIndex].t;
+            conf = Math.max(0.55, pulses[pulseIndex].s);
+        } else {
+            const fallback = _suggestMedianPure(recentGaps)
+                || ((beats[down].time - beats[prevDown].time) / beatsInBar);
+            time = prevTime + Math.max(0.01, fallback) * beatsInBar;
+            conf = 0.18;
+            inferred = true;
+            pulseIndex = targetPulse;
+        }
+        proposals.push({ i: down, time, conf, locked: false, ...(inferred ? { inferred: true } : {}) });
+        prevDown = down; prevTime = time;
+    }
+    return { proposals, stopReason: 'end', stopDetail: 'metronome' };
+}
+
 // The suggestion engine. From the anchor downbeat, march the following
 // downbeats: prediction = previous accepted time + the CURRENT grid's own
 // interval for that bar, scaled by a drift-tracking stretch; snap to the
@@ -153,6 +301,8 @@ export function _suggestMedianPure(vals) {
 // excludes the anchor itself. stopReason: 'end' | 'lost'.
 export function _suggestFitPure(beats, onsets, fromIdx, opts) {
     const o = opts || {};
+    // A locked metronome guide is a different contract: pulses ARE beats.
+    if (o.metronome) return _suggestMetronomeFitPure(beats, onsets, fromIdx, o);
     const winFrac = o.winFrac || 0.45;          // now a fraction of a BEAT (stays under the ½-beat eighth)
     const minWin = o.minWin || 0.025;
     const maxMiss = o.maxMiss || 4;
@@ -302,7 +452,10 @@ export function _suggestFitPure(beats, onsets, fromIdx, opts) {
         if (stopDetail === 'end') stopDetail = 'silence';
     }
     for (const p of proposals) delete p.miss;   // internal flag; keep the public shape
-    return { proposals, stopReason, stopDetail };
+    const result = { proposals, stopReason, stopDetail };
+    // Whole-fit mode: carry the conservative result to chart end with an
+    // honest low-confidence tail (see _suggestCompleteTailPure).
+    return o.complete ? _suggestCompleteTailPure(beats, fromIdx, result, o) : result;
 }
 
 // Apply proposals up to and including the one for downbeat `throughI`:
@@ -325,6 +478,7 @@ export function _suggestApplyPure(beats, proposals, throughI) {
     for (const [i, t] of newTime) out[i].time = t;
     // Re-space interiors between consecutive downbeats where an edge moved.
     let a = -1;
+    let previousDownbeat = -1;
     for (let i = 0; i < beats.length; i++) {
         if (!(beats[i].measure > 0)) continue;
         if (a >= 0) {
@@ -337,7 +491,24 @@ export function _suggestApplyPure(beats, proposals, throughI) {
                 }
             }
         }
+        previousDownbeat = a;
         a = i;
+    }
+    // The canonical grid has an open final measure: there is usually no
+    // closing downbeat to act as the far edge. When an accept reaches the
+    // final authored downbeat, carry its most recent fitted beat interval
+    // through the remaining interior beats instead of leaving the last bar on
+    // the old tempo. This preserves topology and TempoMapCmd's equal-length
+    // invariant while making the accepted fit actually reach chart end.
+    if (a >= 0 && previousDownbeat >= 0 && newTime.has(a) && a < beats.length - 1) {
+        const oldSpan = beats[a].time - beats[previousDownbeat].time;
+        const newSpan = out[a].time - out[previousDownbeat].time;
+        if (oldSpan > 0 && newSpan > 0) {
+            const scale = newSpan / oldSpan;
+            for (let j = a + 1; j < beats.length; j++) {
+                out[j].time = out[a].time + (beats[j].time - beats[a].time) * scale;
+            }
+        }
     }
     return out;
 }

@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Metronome guide + whole-song tempo fits.** A click or reference stem can
+  be locked as the session's **tempo guide** (the ♩ button in the Audio
+  tracks manager): assisted mapping (`G`) then analyzes that track instead
+  of the main mix, treating each click as one beat — so tempo changes in
+  the click are followed directly, and the guide role persists with the
+  song. `G` on ordinary audio now proposes all the way to the final
+  authored barline too: the onset-supported prefix keeps its measured
+  confidence, and everything past a confidence break continues as visibly
+  low-confidence, editable estimates that are never committed on their own.
+  A new **Accept Whole Fit** button (and command) takes the entire proposal
+  — including the open final measure, whose interior beats now ride the
+  accepted tempo instead of staying on the old grid — as ONE undoable edit.
+  The fit's anchor is always the focused barline, locked or not; a stale
+  multi-selection no longer resets analysis toward the beginning or caps
+  the march. In the click-track engine, a locked barline keeps its authored
+  time without disturbing the pulse walk, so one stale lock can't
+  phase-shift every later suggestion.
+
 - **Tracks are now first-class, persistent objects.** A song's tracks — the
   master recording, studio stems, and every transcription part, optionally
   grouped into folders — form one ordered tree the editor remembers across

@@ -5,9 +5,10 @@
 // the commands refresh in the composition root goes through host.
 
 import { AddAnchorCmd, AddHandshapeCmd, AddToneChangeCmd, RemoveAnchorCmd, RemoveHandshapeCmd, RemoveToneChangeCmd, _anchorLaneTopY, _currentAnchorArr, _currentToneArr, _ensureTones, _handshapeLaneTopY, _readAnchorSnapshot, onAnchorLaneContextMenu, onHandshapeLaneContextMenu, onToneLaneContextMenu } from './annotation-lanes.js';
-import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsetsShifted, editorTogglePlayAllTracks, startPlayback, stopPlayback } from './audio.js';
+import { _editBlipAt, _editorToggleFollow, _editorToggleGuideClap, _editorToggleLoopAB, _editorToggleMetronome, _editorToggleOnsetStrip, _editorToggleSnapMode, _ensureOnsetsShifted, editorTogglePlayAllTracks, ensureGuideOnsetsShifted, startPlayback, stopPlayback } from './audio.js';
 import { editorSuggestFingers } from './anchor-resolve.js';
-import { _suggestActive, _suggestCompute, _suggestDismiss } from './tempo-suggest.js';
+import { _suggestActive, _suggestCompute, _suggestDismiss, _suggestProposals } from './tempo-suggest.js';
+import { _trackSessionSourcesPure } from './track-session.js';
 import { _zonesDismiss } from './tempo-zones.js';
 import { editorToggleMixerPanel } from './mixer-panel.js';
 import { canvas } from './canvas.js';
@@ -34,7 +35,7 @@ import { _editorShowTabPreview, _tabPreviewKeyPolicyPure } from './tab-preview.j
 import { editorOpenCommandPalette } from './command-palette.js';
 import { editorToggleTabView } from './tab-view-live.js';
 import { editorExportGp5 } from './gp5-export.js';
-import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSelection, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup, _tempoSelRangePure } from './tempo.js';
+import { TempoGridCmd, _editorModulateTempoAtSelection, _editorTapTempoAtSelection, _editorToggleSyncLock, _editorToggleTempoMapMode, _tapTempoHandleKey, _tempoDeleteSelection, _tempoInsertSyncPoint, _tempoMapOnContextMenu, _tempoMeasureBeatCount, _tempoMeasureDenominator, _tempoPromptMeasureBpm, _tempoSetBeatsPerMeasure, _tempoSetDenominatorOnBeatsPure, _tempoPromptPickup, _tempoSelRangePure, editorAcceptWholeTempoFit } from './tempo.js';
 import { _tourNoteAction } from './tour.js';
 import { _signpostNote } from './signposts.js';
 import { _editorPromptText, setStatus } from './ui.js';
@@ -906,25 +907,74 @@ function _editorPromptTempoBpmAtSelection() {
     return true;
 }
 
+// Which audio the suggest engine should analyze: the LOCKED tempo guide when
+// one is set (a stem declared to be the timing reference — often a click
+// track), else the session recording. Lock is the commitment: an unlocked
+// guide never reroutes analysis. Pure so tests pin the decision table.
+export function _tempoGuideAnalysisPure(trackSession) {
+    if (!trackSession || !trackSession.tempoGuideLocked) return null;
+    const sourceId = typeof trackSession.tempoGuideSourceId === 'string'
+        ? trackSession.tempoGuideSourceId : '';
+    if (!sourceId) return null;
+    return { sourceId, metronome: trackSession.tempoGuideMode === 'metronome' };
+}
+
+// Anchor + engine opts for a G fit. The FOCUSED marker always wins — locked
+// or not — so a stale multi-selection can never send analysis back toward
+// the beginning; the selection is only an anchor fallback when nothing has
+// focus, and it no longer caps the march (fits propose to chart end: the
+// metronome branch by contract, the ordinary branch via the low-confidence
+// completion tail).
+export function _tempoSuggestScopePure(beats, tempoSel, tempoSelMulti, metronome) {
+    const active = Number.isInteger(tempoSel) && beats && beats[tempoSel]
+        && beats[tempoSel].measure > 0 ? tempoSel : -1;
+    let anchor = active;
+    const range = _tempoSelRangePure(beats, tempoSelMulti);
+    const opts = metronome ? { metronome: true } : { complete: true };
+    if (anchor < 0 && range) anchor = range.lo;
+    return { anchor, opts };
+}
+
 // Assisted mapping (G): propose an onset fit for the downbeats ahead of the
 // anchor — the selected barline, or the first downbeat when none is selected.
-// Proposal-only; accepting is a ghost-handle click handled in tempo.js.
-function _editorTempoSuggestFit() {
+// Proposal-only; accepting is a ghost-handle click or the Accept buttons,
+// all handled in tempo.js. Async: a locked guide stem may need a one-time
+// fetch+decode+analysis before the fit can run.
+async function _editorTempoSuggestFit() {
     if (!S.tempoMapMode) {
         setStatus('Enter Tempo Map (T) first — Suggest fits the barlines to the recording.');
         return true;
     }
-    const onsets = _ensureOnsetsShifted();
-    if (!onsets || !onsets.length) {
-        setStatus('Suggest needs the recording’s onset analysis — load audio first.');
-        return true;
+    const guide = _tempoGuideAnalysisPure(S.trackSession);
+    let onsets;
+    if (guide && guide.sourceId !== 'master') {
+        const source = _trackSessionSourcesPure(S.audioUrl, S.stems)
+            .find(item => item.id === guide.sourceId);
+        if (!source || !source.url) {
+            setStatus('The tempo guide track could not be found — pick another guide in Manage Tracks.');
+            return true;
+        }
+        setStatus(`Analyzing the tempo guide “${source.name}”…`);
+        onsets = await ensureGuideOnsetsShifted(source.id, source.url);
+        // Revalidate after the await: still in Tempo Map, guide unchanged —
+        // the user may have exited the mode or re-pointed the guide while
+        // the stem decoded.
+        const still = _tempoGuideAnalysisPure(S.trackSession);
+        if (!S.tempoMapMode || !still || still.sourceId !== guide.sourceId) return true;
+        if (!onsets || !onsets.length) {
+            setStatus('The tempo guide’s audio could not be analyzed — check the stem, or unlock the guide.');
+            return true;
+        }
+    } else {
+        onsets = _ensureOnsetsShifted();
+        if (!onsets || !onsets.length) {
+            setStatus('Suggest needs the recording’s onset analysis — load audio first.');
+            return true;
+        }
     }
-    // With a multi-selection, fit only the selected RANGE: anchor at its first
-    // downbeat and bound the march at its last.
-    let anchor = S.tempoSel;
-    let opts;
-    const range = _tempoSelRangePure(S.beats, S.tempoSelMulti);
-    if (range) { anchor = range.lo; opts = { toIdx: range.hi }; }
+    const scope = _tempoSuggestScopePure(S.beats, S.tempoSel, S.tempoSelMulti,
+        !!(guide && guide.metronome));
+    let anchor = scope.anchor;
     if (anchor < 0 || !(S.beats[anchor] && S.beats[anchor].measure > 0)) {
         anchor = S.beats.findIndex(b => b && b.measure > 0);
     }
@@ -934,12 +984,15 @@ function _editorTempoSuggestFit() {
     }
     S.tempoSel = anchor;
     _zonesDismiss();   // one proposal surface at a time — G replaces the zone bands
-    const n = _suggestCompute(anchor, onsets, opts);
+    const n = _suggestCompute(anchor, onsets, scope.opts);
+    host.updateBPMDisplay();   // surfaces the Accept Whole Fit button
     host.draw();
+    const inferred = _suggestProposals().filter(p => p.inferred).length;
+    const inferredTail = inferred
+        ? ` (${inferred} low-confidence continuation${inferred === 1 ? '' : 's'})` : '';
+    const from = guide && guide.metronome ? ' from the metronome guide' : '';
     setStatus(n
-        ? (opts
-            ? `Suggested a fit for the selected range (${n} barline${n === 1 ? '' : 's'}) — click a ghost handle to accept through it; Esc dismisses`
-            : `Suggested ${n} barline${n === 1 ? '' : 's'} ahead of the anchor — click a ghost handle to accept through it; Esc dismisses`)
+        ? `Suggested ${n} barline${n === 1 ? '' : 's'}${from}${inferredTail} — click a ghost handle to accept through it, or Accept Whole Fit; Esc dismisses`
         : 'No confident suggestions from here — verify this anchor (drag it onto the downbeat) and press G again.');
     return true;
 }
@@ -1139,6 +1192,10 @@ export function _editorRunEofCommand(cmd) {
     case 'tempoBeatUnit': return _editorPromptTempoBeatUnitAtSelection();
     case 'tempoSetBpm': return _editorPromptTempoBpmAtSelection();
     case 'tempoSuggestFit': return _editorTempoSuggestFit();
+    case 'tempoAcceptWholeFit':
+        if (S.tempoMapMode) editorAcceptWholeTempoFit();
+        else setStatus('Enter Tempo Map (T) first — Accept Whole Fit commits the active suggestions.');
+        return true;
     case 'tempoModulate': return _editorModulateTempoAtSelection();
     case 'tempoTapBpm': return _editorTapTempoAtSelection();
     case 'tempoInsertSync': return _editorInsertTempoSyncAtCursor();
@@ -1531,6 +1588,7 @@ export function onKeyDown(e) {
             && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
         _suggestDismiss();
+        host.updateBPMDisplay();   // retire the Accept Whole Fit button too
         host.draw();
         setStatus('Suggestions dismissed');
         return;

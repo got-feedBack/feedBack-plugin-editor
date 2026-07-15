@@ -143,6 +143,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'tempoModulate', label: 'Metric modulation at selected barline', group: 'Tempo map', status: 'ready', keys: { feedback: 'M (Tempo Map)', eof: 'M (Tempo Map)' } },
     { id: 'tempoTapBpm', label: 'Tap tempo for selected barline', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+B (Tempo Map)', eof: 'Shift+B (Tempo Map)' } },
     { id: 'tempoSuggestFit', label: 'Suggest barline fit from anchor (onsets)', group: 'Tempo map', status: 'ready', keys: { feedback: 'G (Tempo Map)', eof: 'G (Tempo Map)' } },
+    { id: 'tempoAcceptWholeFit', label: 'Accept whole tempo fit (all suggestions)', group: 'Tempo map', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'tempoInsertSync', label: 'Mark barline at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
     { id: 'tempoDeleteSync', label: 'Delete selected barline', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
     { id: 'tempoToggleSyncLock', label: 'Lock/unlock selected barline', group: 'Tempo map', status: 'ready', keys: { feedback: 'S (Tempo Map)', eof: 'S (Tempo Map)' } },
