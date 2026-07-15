@@ -57,6 +57,123 @@ def test_apply_write_remove_and_absent_noop():
     assert "editor_tempo_marks" not in manifest
 
 
+def test_coerce_fractional_fields_drop_not_truncate():
+    """Item 2 (review #276): int() truncated fractions — measure 3.9 became 3,
+    silently MOVING a mark despite the frontend's exact-integer rules. A
+    fractional value in any integer field now DROPS the entry."""
+    assert routes._coerce_tempo_marks([{"measure": 3.9, "kind": "hold"}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 7.9, "den": 8}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 7, "den": 8.9}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 7, "den": 8,
+          "grouping": [2, 2, 3.9]}]) == []
+
+
+def test_coerce_integral_floats_accepted_as_ints():
+    """The chosen rule: exact finite integers only, where an INTEGRAL-valued
+    float (3.0) counts — JSON round-trips through some encoders float-ize
+    whole numbers. The output is normalized back to int."""
+    (m,) = routes._coerce_tempo_marks(
+        [{"measure": 3.0, "kind": "meter", "num": 7.0, "den": 8.0,
+          "grouping": [2.0, 2, 3]}])
+    assert m == {"measure": 3, "kind": "meter", "num": 7, "den": 8,
+                 "grouping": [2, 2, 3]}
+    assert all(isinstance(v, int) and not isinstance(v, bool)
+               for v in (m["measure"], m["num"], m["den"], *m["grouping"]))
+
+
+def test_coerce_booleans_drop_every_integer_field():
+    """bool is an int subclass — int(True) == 1 slipped through as a real
+    measure/numerator/grouping entry. Booleans are not integers here."""
+    assert routes._coerce_tempo_marks([{"measure": True, "kind": "hold"}]) == []
+    assert routes._coerce_tempo_marks([{"measure": False, "kind": "hold"}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": True, "den": 8}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 7, "den": True}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 7, "den": 8,
+          "grouping": [True, 3, 3]}]) == []
+
+
+def test_coerce_numeric_strings_drop():
+    """int("3") used to succeed; the frontend never sends strings, so a
+    string in an integer field is corruption and drops the entry."""
+    assert routes._coerce_tempo_marks([{"measure": "3", "kind": "hold"}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": "7", "den": 8}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 7, "den": "8"}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 7, "den": 8,
+          "grouping": ["2", "2", "3"]}]) == []
+
+
+def test_coerce_nan_inf_drop_and_never_crash():
+    """int(float('inf')) raises OverflowError, which the old except clause
+    did not catch — a hand-edited pack could crash the load. NaN/±inf now
+    drop the entry, quietly, in every integer field."""
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        assert routes._coerce_tempo_marks([{"measure": bad, "kind": "hold"}]) == []
+        assert routes._coerce_tempo_marks(
+            [{"measure": 1, "kind": "meter", "num": bad, "den": 8}]) == []
+        assert routes._coerce_tempo_marks(
+            [{"measure": 1, "kind": "meter", "num": 7, "den": bad}]) == []
+        assert routes._coerce_tempo_marks(
+            [{"measure": 1, "kind": "meter", "num": 7, "den": 8,
+              "grouping": [2, 2, bad]}]) == []
+
+
+def test_coerce_out_of_range_integers_still_drop():
+    assert routes._coerce_tempo_marks([{"measure": 0, "kind": "hold"}]) == []
+    assert routes._coerce_tempo_marks([{"measure": -1, "kind": "hold"}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 0, "den": 8}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 33, "den": 8}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 7, "den": 3}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 7, "den": 8,
+          "grouping": [0, 7]}]) == []
+    assert routes._coerce_tempo_marks(
+        [{"measure": 1, "kind": "meter", "num": 7, "den": 8,
+          "grouping": [-1, 8]}]) == []
+
+
+def test_save_boundary_rejects_same_as_load():
+    """The request path (_parse_tempo_marks → _coerce) and the manifest load
+    path (_coerce directly) share one validator: bad entries drop at BOTH
+    boundaries, good neighbors survive."""
+    wire = [
+        {"measure": 3.9, "kind": "hold"},
+        {"measure": True, "kind": "hold"},
+        {"measure": "3", "kind": "hold"},
+        {"measure": float("inf"), "kind": "hold"},
+        {"measure": 1, "kind": "meter", "num": 7, "den": 8, "grouping": [2, 2, 3.9]},
+        {"measure": 2, "kind": "hold"},                       # the one survivor
+    ]
+    parsed = routes._parse_tempo_marks({"tempo_marks": wire})
+    assert parsed == [{"measure": 2, "kind": "hold", "factor": 2.0}]
+    manifest = {}
+    routes._apply_tempo_marks(manifest, parsed)
+    assert routes._coerce_tempo_marks(manifest["editor_tempo_marks"]) == parsed
+
+
+def test_exact_int_unit():
+    """The reusable validator a stacked PR can lean on (P2-6+): exact finite
+    integers (int or integral float) or None."""
+    assert routes._exact_int(3) == 3
+    assert routes._exact_int(3.0) == 3
+    assert routes._exact_int(-2) == -2
+    assert routes._exact_int(0) == 0
+    for bad in (3.9, True, False, float("nan"), float("inf"), float("-inf"),
+                "3", None, [], {}):
+        assert routes._exact_int(bad) is None, repr(bad)
+
+
 def test_round_trip_save_shape_is_load_shape():
     """What _apply writes, _coerce reads back byte-identically (the manifest
     round-trip a save -> reopen performs), including stable ordering."""

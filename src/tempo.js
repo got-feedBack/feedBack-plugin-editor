@@ -38,8 +38,8 @@ import { host } from './host.js';
 import { lanes } from './lanes.js';
 import { S, editGen } from './state.js';
 import {
-    _groupingParsePure, _holdMeasuresPure, _marksAtPure, _marksRemapPure,
-    editorSetMeterGrouping, editorToggleHoldBar,
+    _groupingParsePure, _holdMeasuresPure, _marksAtPure, _marksMeterReconcilePure,
+    _marksRemapPure, editorSetMeterGrouping, editorToggleHoldBar,
 } from './tempo-marks.js';
 import {
     _suggestActive, _suggestApplyPure, _suggestAvgConf, _suggestDismiss,
@@ -1512,6 +1512,25 @@ function _tempoRemapMarksForRenumber(oldToNew) {
     return { before, after };
 }
 
+// A time-signature edit and the bar's authored meter mark must move as ONE
+// undoable command (review #276 item 3) — changing 7/8 (2+2+3) to 4/4 while
+// the mark survived displayed "4/4 (2+2+3)" and fed a seven-slot accent map
+// to consumers. Reads the EFFECTIVE new signature straight off the new grid
+// (so the clamp in _tempoSetBeatsPerMeasurePure can never desynchronize it)
+// and returns the TempoGridCmd marks snapshot, or null when the bar carries
+// no mark that needs to change.
+function _tempoReconcileMeterMarkForTimesig(newBeats, d) {
+    const b = newBeats[d];
+    if (!b || b.measure < 1 || !S.tempoMarks || !S.tempoMarks.length) return null;
+    let ndb = newBeats.length;
+    for (let i = d + 1; i < newBeats.length; i++) {
+        if (newBeats[i].measure > 0) { ndb = i; break; }
+    }
+    const after = _marksMeterReconcilePure(
+        S.tempoMarks, b.measure, ndb - d, _tempoNormalizeDenominatorPure(b.den));
+    return after === S.tempoMarks ? null : { before: S.tempoMarks, after };
+}
+
 /* @pure:tempo-barline-append:start */
 export function _tempoAppendBarlinePure(beats, time, minGap = 0.05) {
     if (!Array.isArray(beats) || beats.length < 1 || !Number.isFinite(time)) return null;
@@ -2001,19 +2020,23 @@ export function _tempoSetBeatsPerMeasure(d, newCount) {
     const newBeats = _tempoSetBeatsPerMeasurePure(beats, d, newCount, S.duration, _r3);
     if (!newBeats) return;
     _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig');
+    cmd.marks = _tempoReconcileMeterMarkForTimesig(newBeats, d);
+    S.history.exec(cmd);
     host.updateTempoSigDisplay();
     host.draw();
 }
 
-function _tempoSetTimeSignature(d, numerator, denominator) {
+export function _tempoSetTimeSignature(d, numerator, denominator) {
     const beats = S.beats || [];
     let newBeats = _tempoSetBeatsPerMeasurePure(beats, d, numerator, S.duration, _r3);
     if (!newBeats) return false;
     newBeats = _tempoSetDenominatorOnBeatsPure(newBeats, d, denominator);
     if (!newBeats) return false;
     _tempoRenumberMeasures(newBeats);
-    S.history.exec(new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig'));
+    const cmd = new TempoGridCmd(beats.map(b => ({ ...b })), newBeats, 'timesig');
+    cmd.marks = _tempoReconcileMeterMarkForTimesig(newBeats, d);
+    S.history.exec(cmd);
     host.updateTempoSigDisplay();
     host.draw();
     return true;

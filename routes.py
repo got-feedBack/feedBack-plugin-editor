@@ -111,6 +111,27 @@ _TEMPO_MARK_KINDS = {"meter", "hold"}
 _TEMPO_MARK_PROVENANCE = {"confirmed", "detected", "suggested", "imported", "carried"}
 
 
+def _exact_int(value):
+    """`value` as an exact finite integer, or None.
+
+    The strict rule for every persisted integer mark field (measure, meter
+    num/den, grouping entries — review #276 item 2): accept an int or an
+    INTEGRAL-valued float (3 and 3.0 — JSON round-trips through some encoders
+    float-ize whole numbers); reject everything else. In particular: bool is
+    an int subclass but True is not the number 1 here; a fractional float
+    (3.9) must DROP the entry, never silently truncate to 3; NaN/±inf would
+    crash a bare int() (OverflowError isn't a ValueError); and strings are
+    corruption, not numbers, on this wire.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():  # False for NaN/±inf
+        return int(value)
+    return None
+
+
 def _coerce_tempo_marks(value):
     """`editor_tempo_marks` as a sanitized list of authored tempo/meter marks.
 
@@ -129,31 +150,23 @@ def _coerce_tempo_marks(value):
     for m in value[:2000]:
         if not isinstance(m, dict):
             continue
-        try:
-            measure = int(m.get("measure"))
-        except (TypeError, ValueError):
-            continue
+        measure = _exact_int(m.get("measure"))
         kind = m.get("kind")
-        if measure < 1 or kind not in _TEMPO_MARK_KINDS or (measure, kind) in seen:
+        if measure is None or measure < 1 or kind not in _TEMPO_MARK_KINDS \
+                or (measure, kind) in seen:
             continue
         entry = {"measure": measure, "kind": kind}
         if kind == "meter":
-            try:
-                num = int(m.get("num"))
-                den = int(m.get("den"))
-            except (TypeError, ValueError):
-                continue
-            if not (1 <= num <= 32) or den not in (2, 4, 8, 16):
+            num = _exact_int(m.get("num"))
+            den = _exact_int(m.get("den"))
+            if num is None or den is None or not (1 <= num <= 32) or den not in (2, 4, 8, 16):
                 continue
             entry["num"] = num
             entry["den"] = den
             grouping = m.get("grouping")
             if isinstance(grouping, list) and grouping:
-                try:
-                    parts = [int(v) for v in grouping]
-                except (TypeError, ValueError):
-                    continue
-                if any(v < 1 for v in parts) or sum(parts) != num:
+                parts = [_exact_int(v) for v in grouping]
+                if any(v is None or v < 1 for v in parts) or sum(parts) != num:
                     continue
                 entry["grouping"] = parts
         else:  # hold

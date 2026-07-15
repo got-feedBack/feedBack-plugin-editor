@@ -110,6 +110,24 @@ function _marksRemapPure(marks, oldToNew) {
     return out.sort((a, b) => (a.measure - b.measure) || (a.kind < b.kind ? -1 : 1));
 }
 
+// A bar's time signature changed under an authored meter mark (review #276
+// item 3): keep the grouping only if it still honestly describes the new bar
+// (sums to the new numerator — e.g. a den-only 7/8 → 7/4 change), retagging
+// the mark's num/den; otherwise DROP the mark — stale authored data is
+// cleared, never guessed (a 2+2+3 accent map on a 4/4 bar is a lie to every
+// consumer). Returns the input array BY IDENTITY when nothing changes, so
+// callers can skip the command snapshot.
+function _marksMeterReconcilePure(marks, measure, num, den) {
+    const list = Array.isArray(marks) ? marks : [];
+    const cur = list.find(m => m.measure === measure && m.kind === 'meter');
+    if (!cur || (cur.num === num && cur.den === den)) return marks;
+    const g = cur.grouping;
+    if (Array.isArray(g) && g.length && g.reduce((a, b) => a + b, 0) === num) {
+        return _marksUpsertPure(list, { ...cur, num, den });
+    }
+    return _marksRemovePure(list, measure, 'meter');
+}
+
 // "2+2+3" → [2,2,3] validated against the bar's numerator; '' clears.
 // null = unusable input (reject, keep the field as-is).
 function _groupingParsePure(text, num) {
@@ -129,8 +147,8 @@ function _groupingLabelPure(num, den, grouping) {
 
 export {
     TEMPO_MARK_PROVENANCE, _groupingLabelPure, _groupingParsePure, _holdMeasuresPure,
-    _markNormPure, _marksAtPure, _marksRemapPure, _marksRemovePure, _marksSanitizePure,
-    _marksUpsertPure,
+    _markNormPure, _marksAtPure, _marksMeterReconcilePure, _marksRemapPure,
+    _marksRemovePure, _marksSanitizePure, _marksUpsertPure,
 };
 
 // One undoable command per marker edit. Marks don't move beats in this
