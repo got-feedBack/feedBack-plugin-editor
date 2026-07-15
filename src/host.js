@@ -191,6 +191,21 @@ export const host = {
      * through here so it stays audio-import-free.
      */
     mixUiState: () => ({ pcts: { ref: 100, guide: 35, click: 25 }, blip: true }),
+    /**
+     * Per-part strip state BY KEY ('arr:<idx>' / 'drums') for band-mode
+     * MIDI playback: {audible, vol 0..1} with the whole-map solo rule.
+     * Owned by src/mixer-panel.js; inert default = every part at unity.
+     */
+    partStripState: () => ({ audible: true, vol: 1 }),
+    /**
+     * A Tracks strip changed (band mode ramps its per-part gain live), or
+     * the play-all mode itself toggled — panel/engine cross-notify without
+     * an import cycle. Inert defaults for bare-host unit tests.
+     */
+    partMixChanged: () => {},
+    stripUiChanged: () => {},
+    /** The persisted band-mode pref, read by the panel's header toggle. */
+    playAllTracksEnabled: () => false,
 };
 
 export function setHostHooks(hooks) { Object.assign(host, hooks); }

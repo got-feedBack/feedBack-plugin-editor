@@ -29,7 +29,7 @@ import {
 import { host } from './host.js';
 import { _pickOnsetsPure, _spectralFluxOnsetsPlan, _spectralFluxStep } from './onsets.js';
 import { _tourNoteAction } from './tour.js';
-import { _rollMidiForNote, _rollPitchCtx, midiToFreq } from './keys.js';
+import { _rollMidiForNote, _rollPitchCtx, _rollPitchCtxFor, midiToFreq } from './keys.js';
 import { _recState } from './midi-record.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
@@ -1042,6 +1042,7 @@ const GUIDE_TICK_MS = 25;      // scheduler cadence
 let _guideTimer = null;
 let _guideScheduledUntil = 0;  // chart-seconds watermark (exclusive)
 let _guideVoices = [];         // queued {osc, gain, until} for cancel-on-seek
+let _bandFiredKeys = new Set();   // band-mode cross-tick dedupe (part-scoped)
 let _guideLastFiredKey = null; // last-fired 1 ms bucket key, PERSISTED across
                                // ticks so a chord straddling a window boundary
                                // (same bucket, split by the 25 ms tick) can't
@@ -1316,6 +1317,21 @@ function _guideSourceTimes() {
         const hits = (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab.hits : [];
         return _guideSanitizeTimesPure(hits.map(h => h.t));
     }
+    // Band mode (play all tracks): the song is bounded by EVERY part's
+    // events — all arrangements' notes AND the drum grid's hits (drum
+    // charts live in S.drumTab, not an arrangement) — so a bass outro or a
+    // late drum hit past the lead's last note stays reachable, and a
+    // drum-only chart still has a song at all (review #280, item 8).
+    // Checked BEFORE the no-arrangements early-out for the same reason.
+    if (editorPlayAllTracksEnabled()) {
+        const all = [];
+        for (const a of S.arrangements) {
+            if (a && Array.isArray(a.notes)) for (const n of a.notes) all.push(n.time);
+        }
+        const hits = (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab.hits : [];
+        for (const h of hits) all.push(h.t);
+        return _guideSanitizeTimesPure(all);
+    }
     if (!S.arrangements.length) return [];
     return _guideSanitizeTimesPure(notes().map(n => n.time));
 }
@@ -1343,13 +1359,129 @@ function _guidePitchedEvents() {
     })));
 }
 
-function _guideClapVoiceAt(when) {
+/* @pure:midi-playback:start */
+// ── Multi-track MIDI playback (chart playback, DAW 1.x) ──────────────
+// "Play all tracks": every part's charted notes voice their GM instrument
+// simultaneously — the arrangement as a BAND — and the Mixer's Tracks strips
+// become a real mixer over them (per-part gain nodes, the same architecture
+// as per-stem gains). OFF = today's behavior (active part only), bit-
+// identical. Drum parts clap (GM percussion is a follow-up).
+//
+// The band roster: one entry per mixable part, in strip order — the SAME
+// keys the mixer panel uses ('arr:<idx>' / 'drums'), so the strips and the
+// engine can never disagree about who is who.
+function _bandPartsPure(arrangements, drumTab) {
+    const out = [];
+    (arrangements || []).forEach((a, i) => {
+        if (a) out.push({ key: 'arr:' + i, idx: i, name: a.name || ('Track ' + (i + 1)) });
+    });
+    if (drumTab && Array.isArray(drumTab.hits) && drumTab.hits.length) {
+        out.push({ key: 'drums', idx: -1, name: 'Drums' });
+    }
+    return out;
+}
+// Part-scoped cross-tick dedupe key (two parts firing the same millisecond
+// must BOTH sound — a single scalar key would swallow the second one).
+function _bandFiredKeyPure(partKey, t) {
+    return partKey + '|' + Math.round(t * 1000);
+}
+/* @pure:midi-playback:end */
+
+// The persisted mode pref ('1' = the band plays; default off).
+let _playAllPref = null;
+export function editorPlayAllTracksEnabled() {
+    if (_playAllPref === null) {
+        try { _playAllPref = localStorage.getItem('editorPlayAllTracks') === '1'; }
+        catch (_) { _playAllPref = false; }
+    }
+    return _playAllPref;
+}
+export function editorTogglePlayAllTracks() {
+    _playAllPref = !editorPlayAllTracksEnabled();
+    try { localStorage.setItem('editorPlayAllTracks', _playAllPref ? '1' : '0'); } catch (_) { /* pref just won't persist */ }
+    // A live toggle mid-play: everything queued in the lookahead window
+    // belongs to the OLD mode (single guide voice ↔ the whole band), so
+    // cancel it and restart the schedule window at the current transport
+    // time — the next tick refills in the new mode (review #280, item 9).
+    // Web Audio lets a started one-shot be stop()ped and a wavetable
+    // envelope cancel()ed (gmVoiceAt's adapter), so queued voices die now;
+    // only a clap tail already sounding (<60 ms) decays on its own.
+    if (S.playing && S.audioCtx) {
+        _guideResetSchedule();
+        _guideScheduledUntil = _transportChartTimePure(
+            S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _auditionRate());
+    }
+    setStatus(_playAllPref
+        ? 'All tracks play their instruments — mix them with the Tracks strips (Shift+C). The recording is unaffected.'
+        : 'Back to the single guide voice — only the current track sounds.');
+    host.stripUiChanged();
+    return true;
+}
+
+// One GainNode per part key, summing into the guide bus — the Tracks strips
+// ramp these live (~20 ms, the house fader rule), so a mute/solo/volume
+// gesture never restarts or pops. Lazy per key; dropped on teardown.
+let _partGains = null;
+function _ensurePartGain(key) {
+    const bus = _ensureMasterBus();
+    if (!bus) return null;
+    if (!_partGains) _partGains = {};
+    if (!_partGains[key]) {
+        const g = S.audioCtx.createGain();
+        // A fresh GainNode starts at Web Audio unity — seat it at the
+        // strip's CURRENT mute/solo/volume before anything connects or
+        // schedules through it, or a muted / solo'd-away / turned-down
+        // part leaks its first note at full level (review #280, item 10).
+        // The ~20 ms ramps of _partGainsApply take over from here.
+        const st = host.partStripState(key);
+        g.gain.value = st.audible ? st.vol : 0;
+        g.connect(bus.guideGain);
+        _partGains[key] = g;
+    }
+    return _partGains[key];
+}
+export function _partGainsApply(immediate) {
+    if (!_partGains || !S.audioCtx) return;
+    const now = S.audioCtx.currentTime;
+    for (const key of Object.keys(_partGains)) {
+        const st = host.partStripState(key);
+        const target = st.audible ? st.vol : 0;
+        const g = _partGains[key].gain;
+        if (immediate) { g.cancelScheduledValues(now); g.setValueAtTime(target, now); }
+        else g.setTargetAtTime(target, now, 0.02);
+    }
+}
+function _partGainsReset() {
+    if (_partGains) {
+        for (const key of Object.keys(_partGains)) {
+            try { _partGains[key].disconnect(); } catch (_) { /* context gone */ }
+        }
+    }
+    _partGains = null;
+}
+
+// Per-part pitched events (chart truth: the same converter the roll uses,
+// per arrangement) — drum parts return [] here; their hits clap instead.
+function _bandPartPitchedEvents(idx) {
+    const arr = S.arrangements[idx];
+    if (!arr || /^drums/i.test(arr.name || '')) return [];
+    const rctx = _rollPitchCtxFor(arr);
+    return _gmSanitizeEventsPure((arr.notes || []).map(n => ({
+        t: n.time,
+        midi: _rollMidiForNote(n, rctx),
+        sus: n.sustain,
+    })));
+}
+
+function _guideClapVoiceAt(when, target, scale) {
     const bus = _ensureMasterBus();
     if (!bus) return;
     // The part's strip volume (mixer panel, B6) scales the clap peak; at
     // zero the voice is skipped entirely (an exponential ramp target must
     // stay positive, and a silent oscillator is pointless bookkeeping).
-    const partVol = host.partClapState().vol;
+    // Band mode passes an explicit per-part TARGET (the part's gain node
+    // owns the strip level there) and a unit scale.
+    const partVol = Number.isFinite(scale) ? scale : host.partClapState().vol;
     if (!(partVol > 0)) return;
     const ctx = S.audioCtx;
     const osc = ctx.createOscillator();
@@ -1362,7 +1494,7 @@ function _guideClapVoiceAt(when) {
     g.gain.exponentialRampToValueAtTime(0.8 * Math.min(1, partVol), when + 0.003);
     g.gain.exponentialRampToValueAtTime(0.0001, when + 0.048);
     osc.connect(g);
-    g.connect(bus.guideGain);
+    g.connect(target || bus.guideGain);
     osc.start(when);
     osc.stop(when + 0.06);
     _guideVoices.push({ osc, gain: g, until: when + 0.06 });
@@ -1428,6 +1560,9 @@ function _guideResetSchedule() {
     _guideCancelVoices();
     _guideScheduledUntil = S.cursorTime || 0;
     _guideLastFiredKey = null;  // a seek/wrap breaks cross-tick dedupe continuity
+    // Same rule for the band's part-scoped keys (typeof-guarded: the sliced
+    // compose_transport suite extracts this function without module state).
+    if (typeof _bandFiredKeys !== 'undefined') _bandFiredKeys.clear();
 }
 
 function _guideTick() {
@@ -1453,7 +1588,66 @@ function _guideTick() {
     // scheduler, not in _guideSourceTimes, so it never touches song duration.
     // The pitched GM voice IS this part's guide voice, so it sits inside the
     // same gate as the clap fallback.
-    if (claps && host.partClapState().audible) {
+    // Band mode gates on the REAL roster, not S.arrangements.length — a
+    // drum-only chart has no arrangements but is still a band of one
+    // (review #280, item 8).
+    const bandParts = (claps && editorPlayAllTracksEnabled() && !S.drumEditMode)
+        ? _bandPartsPure(S.arrangements, S.drumTab) : null;
+    if (bandParts && bandParts.length) {
+        // ── Band mode (multi-track MIDI playback) ────────────────────
+        // EVERY part voices its own GM instrument through its own gain node
+        // (the Tracks strips mix them live); drum parts clap. The per-part
+        // gain owns the strip level, so voices schedule at unit scale, and
+        // the dedupe key is part-scoped (two parts on the same millisecond
+        // must both sound).
+        _partGainsApply(false);
+        for (const part of bandParts) {
+            const target = _ensurePartGain(part.key);
+            if (!target) continue;
+            const arr = part.idx >= 0 ? S.arrangements[part.idx] : null;
+            // Percussion claps its rhythm: the drum-grid sidecar OR a
+            // drum-encoded arrangement (a created/imported/legacy "Drums"
+            // part — no pitch, so _bandPartPitchedEvents returns []). Both
+            // route through this part's gain, so without this a drum
+            // ARRANGEMENT would voice neither GM nor clap and go silent
+            // (review #280 follow-up).
+            const clapTimes = part.key === 'drums'
+                ? (S.drumTab.hits || []).map(h => h.t)
+                : (arr && /^drums/i.test(arr.name || '') ? (arr.notes || []).map(n => n.time) : null);
+            if (clapTimes) {
+                const times = _guideSanitizeTimesPure(clapTimes);
+                for (const t of _guideClapTimesInWindowPure(times, from, to)) {
+                    const k = _bandFiredKeyPure(part.key, t);
+                    if (_bandFiredKeys.has(k)) continue;
+                    _bandFiredKeys.add(k);
+                    _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime, _auditionRate()), target, 1);
+                }
+                continue;
+            }
+            const gm = editorGmVoiceFor(_gmKindPure(arr && arr.name));
+            const ready = gm !== null && gmPresetReady(gm);
+            if (gm !== null && !ready) ensureGmPreset(gm, S.audioCtx);   // clap while it loads
+            const groups = _gmEventsInWindowPure(_bandPartPitchedEvents(part.idx), from, to, 4);
+            for (const gp of groups) {
+                const k = _bandFiredKeyPure(part.key, gp.t);
+                if (_bandFiredKeys.has(k)) continue;
+                _bandFiredKeys.add(k);
+                const when = _guideChartToCtxPure(gp.t, S.playStartWall, S.playStartTime, _auditionRate());
+                if (ready) {
+                    for (const v of gp.voices) {
+                        const voice = gmVoiceAt(S.audioCtx, target, gm, when, v.midi,
+                            _gmVoiceDurationPure(v.sus) / _auditionRate());
+                        if (voice) { _guideVoices.push(voice); continue; }
+                        _guideClapVoiceAt(when, target, 1);   // ONE clap for the bucket
+                        break;
+                    }
+                } else {
+                    _guideClapVoiceAt(when, target, 1);
+                }
+            }
+        }
+        if (_bandFiredKeys.size > 4096) _bandFiredKeys.clear();   // bounded scratch
+    } else if (claps && host.partClapState().audible) {
         // Pitched GM mode (DAW 1.2): same charted times, instrument voices.
         // Falls back to the clap whenever the preset isn't ready (loading,
         // offline, no source) — the guide is never silent while enabled.
@@ -1819,6 +2013,7 @@ export function initAudio() {
 export function teardownAudio() {
     cancelAudioLoad();
     _cancelOnsetJob();
+    _partGainsReset();
     try { if (S.audioSource) { S.audioSource.stop(); S.audioSource = null; } } catch (_) { /* already stopped */ }
     _stopRefMedia();
     try { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } } catch (_) { /* no frame queued */ }

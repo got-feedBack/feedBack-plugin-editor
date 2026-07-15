@@ -119,7 +119,12 @@ export function _rollLockNotice() {
 // packing IS the roll pitch).
 export function _rollPitchCtx() {
     if (!S.arrangements.length) return null;
-    const arr = S.arrangements[S.currentArr];
+    return _rollPitchCtxFor(S.arrangements[S.currentArr]);
+}
+
+// The per-arrangement form (multi-track MIDI playback schedules EVERY part,
+// not just the current one): same rules, arr injected.
+export function _rollPitchCtxFor(arr) {
     if (!arr || KEYS_PATTERN.test(arr.name || '')) return null;
     const laneCount = _stringCountFor(arr);
     const tuning = (Array.isArray(arr.tuning) ? arr.tuning : []).slice(0, laneCount);

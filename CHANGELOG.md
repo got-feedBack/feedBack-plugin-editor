@@ -29,6 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the editor never draws a connection the music doesn't have.
 ### Added
 
+- **Play all tracks — the chart plays as a band, mixed by the Mixer.** The
+  new **All tracks** toggle in the Mixer header (also in the Transport menu
+  and the command palette) makes EVERY track voice its instrument at once —
+  lead and rhythm as guitars, bass as bass, the drum grid clapping along —
+  instead of only the current track's guide voice. The Tracks strips become
+  a real mixer over the band: per-track volume, mute and solo ramp live
+  gain nodes (~20 ms, never a pop, never a restart), with the usual DAW
+  rule — mute wins, any solo isolates. The recording is untouched (its
+  fader is separate, as always), instruments still fall back to a clap
+  while their sound loads, and the transport now reaches every track's last
+  note — a bass outro past the lead's final chord no longer cuts off. The
+  choice persists as an editor preference.
 - **Tempo ramps — a ritardando is ONE thing now.** Select a run of barlines
   in the Tempo Map, right-click ▸ **Ramp the range (accel/rit)…**, give it
   "start → end" BPM, and the whole gesture becomes one authored object: the
