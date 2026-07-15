@@ -46,9 +46,10 @@ import {
     _editorToggleSnapMode, _mixLoadPct, cancelAudioLoad, editorEditBlipEnabled,
     editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
-    editorToggleAuditionTrainer,
+    editorToggleAuditionTrainer, editorPlayAllTracksEnabled, editorTogglePlayAllTracks,
+    _partGainsApply,
 } from './audio.js';
-import { _mixerClapState, _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
+import { _mixerClapState, _mixerPanelRefresh, _mixerPartStripState, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import {
     _barSpanForTimes, _editorApplyScrollBounds,
     _editorClampScrollX, _loopReliftBeats,
@@ -507,6 +508,11 @@ setHostHooks({
     tempoResolvedMeasureIdx: (...a) => _tempoResolvedMeasureIdx(...a),
     partClapState: _mixerClapState,
     mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
+    // Band mode (multi-track MIDI playback): the strips are the mixer.
+    partStripState: (key) => _mixerPartStripState(key),
+    partMixChanged: () => _partGainsApply(false),
+    playAllTracksEnabled: () => editorPlayAllTracksEnabled(),
+    stripUiChanged: () => _mixerPanelRefresh(),
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML
@@ -1326,6 +1332,7 @@ window.editorHideLoadModal = () => document.getElementById('editor-load-modal').
 window.editorFilterSongs = filterSongs;
 window.editorLoadFile = (f) => { window.editorHideLoadModal(); loadCDLC(f); };
 window.editorSave = editorSave;   // first save → file explorer, then saves to it
+window.editorTogglePlayAllTracks = () => { editorTogglePlayAllTracks(); return true; };
 window.editorUndo = () => S.history && S.history.doUndo();
 window.editorRedo = () => S.history && S.history.doRedo();
 // Undo back to the last checkpoint (Ctrl+Alt+Z) — a coarse rewind past a whole

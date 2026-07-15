@@ -200,6 +200,7 @@ export const EDITOR_MENUS = Object.freeze([
         { loopSnap: 'free', label: 'Free' },
         { sep: true },
         { cmd: 'toggleMetronome' },
+        { cmd: 'togglePlayAllTracks' },
         { cmd: 'toggleGuideClap' },
         // Guide voice (DAW 1.2/1.5): what the guide toggle SOUNDS like —
         // the clap, or the charted pitches on a GM instrument. The
