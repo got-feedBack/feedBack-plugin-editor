@@ -41,7 +41,12 @@ const event = (over = {}) => ({
 
 assert.strictEqual(_editorSelectAllPolicyPure(event()), 'editor');
 assert.strictEqual(_editorSelectAllPolicyPure(event({ ctrlKey: false, metaKey: true })), 'editor');
-assert.strictEqual(_editorSelectAllPolicyPure(event({ key: 'A', shiftKey: true })), 'editor');
+// CapsLock reports key 'A' without setting shiftKey — still plain Select All.
+assert.strictEqual(_editorSelectAllPolicyPure(event({ key: 'A', shiftKey: false })), 'editor');
+// Shift+Ctrl+A is a different chord (EOF Toggle Accent). It must NOT be claimed
+// as Select All; it falls through to the shortcut-profile dispatch.
+assert.strictEqual(_editorSelectAllPolicyPure(event({ key: 'A', shiftKey: true })), null);
+assert.strictEqual(_editorSelectAllPolicyPure(event({ shiftKey: true })), null);
 assert.strictEqual(_editorSelectAllPolicyPure(event({ target: target('input') })), 'text');
 assert.strictEqual(_editorSelectAllPolicyPure(event({ target: target('contenteditable') })), 'text');
 assert.strictEqual(_editorSelectAllPolicyPure(event({ altKey: true })), null);
@@ -68,5 +73,13 @@ const textSelect = event({ target: target('input') });
 onKeyDown(textSelect);
 assert.ok(!textSelect.defaultPrevented, 'editable fields retain native text Select All');
 assert.deepStrictEqual([...S.sel], []);
+
+// Shift+Ctrl+A must not be hijacked by Select All — otherwise the EOF profile's
+// Toggle Accent chord is dead. The default 'feedback' profile has no binding for
+// it, so nothing selects and nothing is prevented by the select-all gate.
+S.sel.clear();
+const accentChord = event({ key: 'A', shiftKey: true });
+onKeyDown(accentChord);
+assert.deepStrictEqual([...S.sel], [], 'Shift+Ctrl+A does not select all notes');
 
 console.log('select-all shortcut policy passed');

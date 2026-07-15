@@ -1213,7 +1213,11 @@ function showSectionMenu(cx, cy, time) {
 }
 
 export function _editorSelectAllPolicyPure(e) {
-    if (!e || !(e.ctrlKey || e.metaKey) || e.altKey
+    // Select All is the unshifted Ctrl/Cmd+A only. Shift+Ctrl+A is a distinct
+    // chord (e.g. the EOF profile's Toggle Accent) and must fall through to the
+    // shortcut dispatch, not be swallowed here. CapsLock still reports the base
+    // key as 'A' without setting shiftKey, so it keeps working.
+    if (!e || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey
             || String(e.key || '').toLowerCase() !== 'a') return null;
 
     const target = e.target;
