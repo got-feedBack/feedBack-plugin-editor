@@ -94,6 +94,42 @@ export function _gmVarPure(gm) {
     return file ? '_tone_' + file.slice(0, -3) : null;
 }
 
+// ── GM percussion (the drum KIT, not a pitched program) ─────────────
+// webaudiofontdata one-shots: file `128<note>_0_FluidR3_GM_sf2_file.js`,
+// global `_drum_<note>_0_FluidR3_GM_sf2_file` (the '128' filename prefix is
+// dropped in the variable name — pinned by test, it's easy to get wrong).
+export function _gmDrumFilePure(note) {
+    const n = Number(note);
+    if (!Number.isInteger(n) || n < 35 || n > 81) return null;
+    return '128' + n + '_0_' + GM_SOUNDFONT + '.js';
+}
+export function _gmDrumVarPure(note) {
+    const n = Number(note);
+    if (!Number.isInteger(n) || n < 35 || n > 81) return null;
+    return '_drum_' + n + '_0_' + GM_SOUNDFONT;
+}
+
+// Chart drum piece → the GM percussion note that VOICES it (the inverse of
+// the pad strip's GM_DRUM_MAP, made explicit so every chartable piece has
+// exactly one sound; 'stack' has no GM home and borrows the china).
+export const DRUM_PIECE_GM_NOTE = Object.freeze({
+    kick: 36, snare: 38, snare_xstick: 37,
+    hh_closed: 42, hh_pedal: 44, hh_open: 46,
+    tom_floor: 41, tom_low: 45, tom_mid: 47, tom_hi: 50,
+    crash_l: 49, crash_r: 57, splash: 55, china: 52, stack: 52,
+    ride: 51, ride_bell: 53, bell: 56,
+});
+
+// Per-hit drum gain: the authored velocity (drumTab hit `.v`, 0–127, default
+// 100 — see drum.js) normalized to 0–1, then scaled by the part/guide level.
+// Carries the chart's dynamics into the kit — ghost notes (v=35 ≈ 0.28) stay
+// quiet under accents instead of every hit playing flat. gmDrumVoiceAt clamps
+// the 0.05 floor. Default v=100 → 0.79, ~the old fixed 0.75 level.
+export function _drumHitGainPure(v, scale) {
+    const norm = (Number.isFinite(v) ? v : 100) / 127;
+    return norm * (Number.isFinite(scale) ? scale : 1);
+}
+
 // Source order: 'auto' walks plugin → org → cdn; a valid pinned source is
 // honored alone; garbage degrades to auto (never to silence).
 export function _gmSourceOrderPure(sourcePref) {
@@ -306,6 +342,53 @@ export function ensureGmPreset(gm, ctx) {
     })();
     _presetLoading.set(gm, p);
     return p;
+}
+
+// Drum one-shots share the melodic machinery through a disjoint keyspace
+// ('drum:<note>' in the same _presets map — a program number can never
+// collide with the prefixed string key).
+export function gmDrumReady(note) { return _presets.has('drum:' + Number(note)); }
+export function ensureGmDrum(note, ctx) {
+    const key = 'drum:' + Number(note);
+    if (_presets.has(key) || _presetLoading.has(key)) return _presetLoading.get(key) || Promise.resolve();
+    const file = _gmDrumFilePure(note), varName = _gmDrumVarPure(note);
+    if (!file || !ctx) return Promise.resolve();
+    const p = (async () => {
+        try {
+            const player = await _ensurePlayer();
+            if (!player) throw new Error('WebAudioFontPlayer unavailable');
+            const preset = await _loadFromChain(file, varName);
+            if (!preset) throw new Error('no source served ' + file);
+            player.adjustPreset(ctx, preset);
+            _presets.set(key, preset);
+        } catch (e) {
+            if (!_presetError) {
+                _presetError = String(e && e.message || e);
+                setStatus('Drum sounds unavailable (still ticking) — ' + _presetError);
+            }
+        } finally {
+            _presetLoading.delete(key);
+        }
+    })();
+    _presetLoading.set(key, p);
+    return p;
+}
+
+// One drum hit. A one-shot: the note IS the sound; 2 s covers every decay
+// in the kit (cymbals) and the player stops shorter samples naturally.
+export function gmDrumVoiceAt(ctx, target, note, when, velocity) {
+    const preset = _presets.get('drum:' + Number(note));
+    if (!preset || !_player || !ctx || !target) return null;
+    let env = null;
+    const vol = Math.max(0.05, Math.min(1, Number.isFinite(velocity) ? velocity : 0.7));
+    try {
+        env = _player.queueWaveTable(ctx, target, preset, when, Number(note), 2, vol);
+    } catch (_) { return null; }
+    return {
+        osc: { stop() { try { env.cancel(); } catch (_) {} } },
+        gain: { disconnect() {} },
+        until: when + 2,
+    };
 }
 
 // Schedule one pitched voice through the caller's bus (audio.js passes the
