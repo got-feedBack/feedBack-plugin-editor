@@ -134,9 +134,14 @@ export function editorShowCreateModal() {
     createState = {
         mode: 'blank',
         roster: ['Lead'],
+        // Provenance for the default roster: false until the user actually
+        // edits the roster UI. The MIDI-only create keys its seed-placeholder
+        // decision on THIS, not on the roster's value — an untouched default
+        // is boilerplate, but an explicitly re-built ['Lead'] is intent.
+        rosterTouched: false,
         gpPath: null, tracks: null, gpName: null, gpHasEmbedded: false, gpSyncCount: 0,
         eofFiles: null, eofName: null,
-        audioUrl: null, audioName: null, audioDuration: null, audioFile: null, midiInfo: null,
+        audioUrl: null, audioName: null, audioDuration: null, audioFile: null, midiInfo: null, midiFiles: null,
         artPath: null, previewPath: null,
         gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null, autoSyncCoupled: false,
         // GoPlayAlong sync sidecar (goplayalong.com): a <track> .xml that carries
@@ -666,6 +671,9 @@ export function _createGateOpen(state, flags) {
     if (!state || !flags) return false;
     if (state.gpPath) return true;
     if (state.eofFiles && state.eofFiles.length) return true;
+    // A staged MIDI alone creates a project (like a GP file — the title is
+    // defaulted from the filename at stage time, so the blank path can run).
+    if (state.midiFiles && state.midiFiles.length) return true;
     var instruments = ['Lead', 'Rhythm', 'Keys', 'Bass', 'Drums'];
     var hasInstrument = !!(state.roster && state.roster.some(function (r) {
         return instruments.indexOf(r) >= 0;
@@ -762,6 +770,9 @@ function _populateRosterPalette() {
 }
 
 function _toggleRosterRole(id) {
+    // Any add/remove (including remove-then-re-add of the default) is explicit
+    // intent — see rosterTouched in editorShowCreateModal.
+    createState.rosterTouched = true;
     const i = createState.roster.indexOf(id);
     if (i >= 0) createState.roster.splice(i, 1);
     else createState.roster.push(id);
@@ -954,10 +965,68 @@ async function _stageGoplayalong(file) {
     }
 }
 
+/* @pure:midi-create:start */
+// The default project title for a MIDI-only create: the filename stem,
+// underscores/dashes read as spaces. Never empty (the blank-create backend
+// requires a title).
+function _midiDefaultTitlePure(filename) {
+    const stem = String(filename || '').replace(/\.[^.]*$/, '');
+    const t = stem.replace(/[_-]+/g, ' ').trim();
+    return t || 'MIDI import';
+}
+
+// ONE MIDI slot: Create feeds exactly one file into the track picker, so the
+// LAST pick wins — over a multi-select and over anything staged earlier — and
+// the status says which file is staged and what it replaced. (Multi-file
+// import is a Create-window redesign, not a silent first-file-wins.) Pure
+// over filenames so the slot rule is unit-testable.
+function _midiStageSlotPure(prevName, names) {
+    const name = String(names[names.length - 1] || '');
+    const dropped = names.slice(0, -1).map(String).filter((n) => n !== name);
+    if (prevName && prevName !== name && !dropped.includes(prevName)) dropped.unshift(String(prevName));
+    const status = dropped.length
+        ? ('One MIDI per project for now — staged "' + name + '", replacing '
+           + dropped.map((n) => '"' + n + '"').join(', ')
+           + '. Create opens it and lets you pick which tracks to chart.')
+        : ('MIDI staged: "' + name + '" — Create opens it and lets you pick which tracks to chart.');
+    return { name, dropped, status };
+}
+
+// Should the MIDI create replace the modal roster with a removable placeholder
+// seed? PROVENANCE-driven, not value-driven: an untouched roster is modal
+// boilerplate whatever it contains, while a roster the user actually edited is
+// intent and stays — even when they rebuilt the exact default. An emptied
+// roster still gets the seed: the blank-create backend requires >=1
+// arrangement. 'Lead' (not Keys) because that backend accepts Lead/Rhythm/Bass
+// rosters only today — the placeholder is removed post-import anyway, so its
+// instrument never matters.
+function _midiSeedRosterPure(roster, touched) {
+    const r = Array.isArray(roster) ? roster.slice() : [];
+    if (r.length && touched) return { roster: r, seeded: false };
+    return { roster: ['Lead'], seeded: true };
+}
+/* @pure:midi-create:end */
+export { _midiDefaultTitlePure, _midiStageSlotPure, _midiSeedRosterPure };
+
 function _stageMidi(files) {
-    createState.midiInfo = files.length === 1 ? files[0].name : (files.length + ' MIDI files');
+    // Single slot — staging again REPLACES what was staged (and the status
+    // admits it) instead of silently keeping only files[0] at Create time.
+    const prevName = (createState.midiFiles && createState.midiFiles[0])
+        ? createState.midiFiles[0].name : null;
+    const file = files[files.length - 1];
+    const slot = _midiStageSlotPure(prevName, files.map((f) => f.name));
+    createState.midiInfo = slot.name;
+    // Keep the FILE, not just its name — Create feeds it straight into the
+    // track picker so the user never has to re-pick what they just staged.
+    createState.midiFiles = [file];
+    // A MIDI alone is a real project now: default the title from the file so
+    // the (title-requiring) create path can run — visible and editable.
+    const titleEl = document.getElementById('editor-create-title');
+    if (titleEl && !titleEl.value.trim()) {
+        titleEl.value = _midiDefaultTitlePure(file && file.name);
+    }
     const iStatus = document.getElementById('editor-create-import-status');
-    if (iStatus) iStatus.textContent = 'MIDI added — after Create, add Keys / Drums from it in the editor (+Keys / +Drums).';
+    if (iStatus) iStatus.textContent = slot.status;
 }
 
 // Grey the YouTube field while a master-audio FILE is staged (file wins).
@@ -1070,6 +1139,7 @@ export function editorStagedRemove(role) {
         _refreshGpAudioUI();
     } else if (role === 'midi') {
         createState.midiInfo = null;
+        createState.midiFiles = null;
     }
     const iStatus = document.getElementById('editor-create-import-status');
     if (iStatus) iStatus.textContent = '';
@@ -1827,6 +1897,43 @@ export async function editorRefineSync() {
 // dead definition is removed, not promoted. Restoring its intent (roster
 // validation, and audio optional for a draft-now project) is a product change
 // and belongs in its own PR.
+// MIDI-only create: a blank (draft) create seeded with a Keys placeholder,
+// then the staged file feeds straight into the Add-Keys track picker — the
+// user picks which of the MIDI's tracks to chart, each imports as its own
+// arrangement, and the placeholder is removed once real tracks landed.
+async function _editorDoMidiCreate() {
+    const titleEl = document.getElementById('editor-create-title');
+    if (titleEl && !titleEl.value.trim()) {
+        titleEl.value = _midiDefaultTitlePure(
+            createState.midiFiles[0] && createState.midiFiles[0].name);
+    }
+    // The blank-create backend requires >=1 seeded arrangement. Whether the
+    // modal's roster is boilerplate is a PROVENANCE question, not a value
+    // one: rosterTouched flips the moment the user edits the roster UI, so an
+    // untouched default is replaced with a flagged placeholder the import
+    // cleans up, while an explicitly-built roster — even one equal to the
+    // default ['Lead'] — is real intent and stays (their parts + the MIDI
+    // tracks).
+    const seedPlan = _midiSeedRosterPure(createState.roster, createState.rosterTouched);
+    createState.roster = seedPlan.roster;
+    const seeded = seedPlan.seeded;
+    const file = createState.midiFiles[0];
+    await _editorDoBlankCreate();
+    if (!S.sessionId || !S.arrangements.length) return;   // create failed — its status stands
+    // Bind the seed flag to THIS session. If the user cancels the picker
+    // below (no import), _maybeRemoveMidiSeed never runs and the flag survives
+    // on shared S — loadCDLC doesn't clear it — so without the session tag a
+    // later import on a DIFFERENT song would delete that song's arrangement 0.
+    if (seeded) { S._midiSeedArrIdx = 0; S._midiSeedSession = S.sessionId; }
+    // Feed the staged file straight into the existing track picker (the one
+    // surface that already knows channels/pairs/drums) — no re-pick.
+    if (typeof window.editorShowAddKeysModal === 'function'
+        && typeof window._editorKeysHandleFile === 'function') {
+        window.editorShowAddKeysModal();
+        window._editorKeysHandleFile(file);
+    }
+}
+
 export async function editorDoCreate() {
     // One menu, no mode toggle — route on what was provided: a Guitar Pro file
     // wins, then EOF XML arrangement(s), else a from-scratch (draft) create
@@ -1834,6 +1941,8 @@ export async function editorDoCreate() {
     if (!createState.gpPath) {
         if (createState.eofFiles && createState.eofFiles.length) {
             await _editorDoEofCreate();
+        } else if (createState.midiFiles && createState.midiFiles.length) {
+            await _editorDoMidiCreate();
         } else {
             await _editorDoBlankCreate();
         }

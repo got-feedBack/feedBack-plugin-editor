@@ -30,6 +30,19 @@ let _addKeysSortedTracks = [];
 // delegation round-trip) from a superseded file can't append a stale result.
 let _addKeysReqSeq = 0;
 
+/* @pure:midi-unpack:start */
+// The arrangement name for one unpacked MIDI track. Kind inference is
+// NAME-driven (KEYS_PATTERN, start-anchored) and the imported notes use the
+// roll's keys packing — so the name MUST read as keys or the editor would
+// interpret the packing as fretted lanes. 'Keys — <track name>' keeps the
+// kind honest AND the source track identifiable.
+function _midiKeysArrNamePure(trackName, fallbackIndex) {
+    const t = String(trackName || '').trim();
+    return 'Keys — ' + (t || ('Track ' + fallbackIndex));
+}
+/* @pure:midi-unpack:end */
+export { _midiKeysArrNamePure };
+
 export function editorShowAddKeysModal() {
     if (S.format !== 'sloppak') return;
     document.getElementById('editor-add-keys-modal').classList.remove('hidden');
@@ -51,6 +64,13 @@ export function editorHideAddKeysModal() {
 
 export async function editorKeysFileSelected(input) {
     const file = input.files && input.files[0];
+    if (!file) return;
+    return _editorKeysHandleFile(file);
+}
+
+// The File-object form: the MIDI-only create path feeds the STAGED file
+// here directly, so the user never re-picks what they just staged.
+export async function _editorKeysHandleFile(file) {
     if (!file) return;
     const statusEl = document.getElementById('editor-add-keys-status');
     statusEl.textContent = 'Parsing ' + file.name + '...';
@@ -246,38 +266,66 @@ export async function editorDoAddKeys() {
     const pickedList = positions.map(p => _addKeysSortedTracks[p]).filter(Boolean);
     if (!pickedList.length) { statusEl.textContent = 'No track selected.'; goBtn.disabled = false; return; }
     const trackIndices = pickedList.map(p => Number(p.index) || 0);
-    // MIDI keys import is single-track; use the first selected track + channel.
-    const picked = pickedList[0];
-    const trackIndex = Number(picked.index) || 0;
-    const channelFilter = (picked.channel_filter == null) ? null : Number(picked.channel_filter);
 
     try {
-        const url = _addKeysSourceFormat === 'midi'
-            ? '/api/plugins/editor/import-keys-midi'
-            : '/api/plugins/editor/import-keys';
         const audioOffset = host.effectiveAudioOffset();
-        const body = _addKeysSourceFormat === 'midi'
-            ? { midi_path: _addKeysSourcePath, track_index: trackIndex, audio_offset: audioOffset,
-                channel_filter: channelFilter }
-            : { gp_path: _addKeysSourcePath, track_indices: trackIndices, audio_offset: audioOffset };
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        const data = await resp.json();
-        if (data.error) {
-            statusEl.textContent = 'Error: ' + data.error;
-            goBtn.disabled = false;
-            return;
+        let data;
+        let arrangements;
+        let xmlPaths = [];
+        if (_addKeysSourceFormat === 'midi') {
+            // MIDI unpack: EVERY selected track imports, one arrangement each
+            // (was: silently only the first). ONE batch request — the endpoint
+            // rmtree's its temp dir after responding, so a per-track request
+            // loop would find no file on the second track. Names carry the
+            // MIDI track name under a keys-safe prefix — kind inference is
+            // name-driven and the notes use keys packing.
+            const resp = await fetch('/api/plugins/editor/import-keys-midi', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    midi_path: _addKeysSourcePath,
+                    audio_offset: audioOffset,
+                    tracks: pickedList.map(p => ({
+                        index: Number(p.index) || 0,
+                        channel_filter: (p.channel_filter == null) ? null : Number(p.channel_filter),
+                    })),
+                }),
+            });
+            data = await resp.json();
+            if (data.error) {
+                statusEl.textContent = 'Error: ' + data.error;
+                goBtn.disabled = false;
+                return;
+            }
+            arrangements = Array.isArray(data.arrangements)
+                ? data.arrangements
+                : (data.arrangement ? [data.arrangement] : []);
+            // EVERY selection — including a single track — carries its source
+            // name (review #284 item 20: a lone import must not fall back to
+            // a generic server-side 'Keys').
+            arrangements.forEach((arr, i) => {
+                const picked = pickedList[i];
+                if (arr && picked) arr.name = _midiKeysArrNamePure(picked.name, picked.index);
+            });
+        } else {
+            const resp = await fetch('/api/plugins/editor/import-keys', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ gp_path: _addKeysSourcePath, track_indices: trackIndices, audio_offset: audioOffset }),
+            });
+            data = await resp.json();
+            if (data.error) {
+                statusEl.textContent = 'Error: ' + data.error;
+                goBtn.disabled = false;
+                return;
+            }
+            // The GP path may return several arrangements (one per non-merged
+            // keys track). Append each in order.
+            arrangements = Array.isArray(data.arrangements)
+                ? data.arrangements
+                : (data.arrangement ? [data.arrangement] : []);
+            xmlPaths = Array.isArray(data.xml_paths) ? data.xml_paths : [];
         }
-
-        // The GP path may return several arrangements (one per non-merged keys
-        // track); the MIDI path returns one. Append each in order.
-        const arrangements = Array.isArray(data.arrangements)
-            ? data.arrangements
-            : (data.arrangement ? [data.arrangement] : []);
-        const xmlPaths = Array.isArray(data.xml_paths) ? data.xml_paths : [];
         let allOk = arrangements.length > 0;
         for (let i = 0; i < arrangements.length; i++) {
             const ok = await _editorAppendKeysArrangement(arrangements[i], statusEl, {
@@ -288,6 +336,10 @@ export async function editorDoAddKeys() {
         if (!allOk) {
             goBtn.disabled = false;
         } else {
+            // MIDI-only create seeded a placeholder Keys arrangement so the
+            // blank-create backend would accept the session — real tracks
+            // just landed, so remove it if it's still the untouched seed.
+            await _maybeRemoveMidiSeed();
             // Offer the MIDI's own tempo/time-signature grid (DAW 3.2). No-op
             // for the GP path (no tempo_map) or a gridless MIDI.
             _maybeOfferMidiTempoMap(data.tempo_map);
@@ -296,6 +348,52 @@ export async function editorDoAddKeys() {
         statusEl.textContent = 'Failed: ' + e.message;
         goBtn.disabled = false;
     }
+}
+
+/* @pure:midi-unpack2:start */
+// Is this arrangement still the untouched placeholder the MIDI-only create
+// seeded? Only then may the auto-cleanup remove it: the flagged index, the
+// seeded name, zero notes — anything else is user work and stays.
+function _midiSeedRemovablePure(arr, idx, flagIdx, total) {
+    return !!(Number.isInteger(flagIdx) && idx === flagIdx && total > 1
+        && arr && arr.name === 'Lead'
+        && (!arr.notes || arr.notes.length === 0)
+        && (!arr.chords || arr.chords.length === 0));
+}
+/* @pure:midi-unpack2:end */
+export { _midiSeedRemovablePure };
+
+async function _maybeRemoveMidiSeed() {
+    const flagIdx = S._midiSeedArrIdx;
+    if (flagIdx === undefined) return;
+    const flagSession = S._midiSeedSession;
+    delete S._midiSeedArrIdx;       // one shot, success or refusal
+    delete S._midiSeedSession;
+    // The seed belongs to the session that created it. A flag left behind by a
+    // cancelled picker must not delete arrangement 0 of a DIFFERENT song the
+    // user opened afterwards (loadCDLC carries the flag over unchanged).
+    if (flagSession !== S.sessionId) return;
+    const arr = S.arrangements[flagIdx];
+    if (!_midiSeedRemovablePure(arr, flagIdx, flagIdx, S.arrangements.length)) return;
+    if (S.sessionId) {
+        try {
+            const resp = await fetch('/api/plugins/editor/remove-arrangement', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: S.sessionId, arrangement_index: flagIdx }),
+            });
+            const result = await resp.json();
+            if (result.error) return;   // the placeholder stays — harmless
+        } catch (_) { return; }
+    }
+    S.arrangements.splice(flagIdx, 1);
+    // Same rationale as editorRemoveArrangement: indices shifted under the
+    // history stack — drop it (the session is one import old anyway).
+    if (S.history) S.history.reset();
+    S.currentArr = Math.min(Math.max(0, S.currentArr - 1), S.arrangements.length - 1);
+    host.updateArrangementSelector();
+    host.draw();
+    host.updateStatus();
 }
 
 // Read a File as base64 (no data: prefix) for endpoints that take inline bytes.

@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the editor never draws a connection the music doesn't have.
 ### Added
 
+- **A MIDI file is a project now.** Dropping a `.mid`/`.midi` into New Song
+  used to dead-end: the file was noted, then forgotten, and Create stayed
+  disabled. Now a staged MIDI alone enables Create (the title pre-fills from
+  the filename), and Create opens straight into the track picker with the
+  file already parsed — no re-picking. And the picker **actually unpacks
+  multitrack MIDI**: every track you check imports as its own chart track,
+  named after the MIDI track ("Keys — Bass, Baby."), instead of silently
+  importing only the first. The MIDI's own tempo map is offered as the
+  project grid as before, and the temporary placeholder track the create
+  needs is cleaned up automatically once your real tracks land.
 - **Import a Guitar Pro or MIDI file, press play, hear music.** Transcription
   tracks now sound out of the box, including alongside recordings and stems:
   **every track plays its instrument** (band mode defaults on), and the guide

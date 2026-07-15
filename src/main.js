@@ -63,7 +63,7 @@ import {
     editorDoAddKeys, editorDoImportGuitar, editorHideAddKeysModal,
     editorHideImportGuitarModal, editorImportGuitarDestChanged,
     editorImportGuitarFileSelected, editorImportGuitarRefreshReplaceTargets,
-    editorKeysFileSelected, editorShowAddKeysModal, editorShowImportGuitarModal
+    _editorKeysHandleFile, editorKeysFileSelected, editorShowAddKeysModal, editorShowImportGuitarModal
 } from './import.js';
 import {
     editorDoAddDrums, editorDrumsFileSelected, editorDrumsGPSelected,
@@ -531,6 +531,7 @@ setHostHooks({
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML
 // calls these by name so they must live on window).
 window.editorShowAddKeysModal = editorShowAddKeysModal;
+window._editorKeysHandleFile = _editorKeysHandleFile;   // MIDI-only create feeds the staged file here
 window.editorHideAddKeysModal = editorHideAddKeysModal;
 window.editorKeysFileSelected = editorKeysFileSelected;
 window.editorDoAddKeys = editorDoAddKeys;

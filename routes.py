@@ -6298,19 +6298,49 @@ def setup(app, context):
         if not validated:
             return JSONResponse({"error": "MIDI file not found"}, 400)
         midi_path = str(validated)
-        if track_index is None:
-            return JSONResponse({"error": "track_index required"}, 400)
-        try:
-            track_index = int(track_index)
-        except (TypeError, ValueError):
-            return JSONResponse({"error": "track_index must be an integer"}, 400)
+        # BATCH form (multitrack unpack): `tracks` = [{index, channel_filter}]
+        # converts every entry BEFORE the one temp-dir cleanup — the legacy
+        # single-track body used to rmtree after its first conversion, which
+        # made a per-track request loop find no file on the second track.
+        batch_raw = data.get("tracks")
+        batch = []
+        if isinstance(batch_raw, list) and batch_raw:
+            for entry in batch_raw[:64]:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    b_idx = int(entry.get("index"))
+                except (TypeError, ValueError):
+                    continue
+                b_cf = entry.get("channel_filter")
+                try:
+                    b_cf = None if (b_cf is None or b_cf == "") else int(b_cf)
+                except (TypeError, ValueError):
+                    b_cf = None
+                batch.append((b_idx, b_cf))
+            if not batch:
+                return JSONResponse({"error": "tracks must carry integer indices"}, 400)
+        else:
+            if track_index is None:
+                return JSONResponse({"error": "track_index required"}, 400)
+            try:
+                track_index = int(track_index)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "track_index must be an integer"}, 400)
+            batch.append((track_index, channel_filter))
 
         def _convert():
             # Read the MIDI's own tempo/sig/beat grid in the SAME worker (the
             # temp dir is rmtree'd right after this returns) so the client can
             # offer it as the project grid (DAW 3.2). Shifted by audio_offset to
             # match where the notes below land. Empty {} when unavailable.
-            tempo_map = _safe_midi_tempo_map(midi_path, track_index, audio_offset)
+            tempo_map = _safe_midi_tempo_map(midi_path, batch[0][0], audio_offset)
+            out = []
+            for b_idx, b_cf in batch:
+                out.append(_convert_one(b_idx, b_cf))
+            return out, tempo_map
+
+        def _convert_one(track_index, channel_filter):
             wire = convert_midi_track_to_keys_wire(
                 midi_path, track_index, audio_offset, "Keys",
                 channel_filter=channel_filter,
@@ -6347,24 +6377,26 @@ def setup(app, context):
                         "link_next": False,
                     },
                 })
-            return arr_data, tempo_map
+            return arr_data
 
         try:
-            arr_data, tempo_map = await asyncio.get_event_loop().run_in_executor(None, _convert)
+            arr_list, tempo_map = await asyncio.get_event_loop().run_in_executor(None, _convert)
         except Exception as e:
             import traceback
             traceback.print_exc()
             return JSONResponse({"error": str(e)}, 500)
 
-        # Clean up the MIDI temp dir now that conversion is complete — the
-        # client no longer needs to reference midi_path after this response.
+        # Clean up the MIDI temp dir now that EVERY conversion is complete —
+        # the client no longer needs to reference midi_path after this response.
         try:
             shutil.rmtree(Path(midi_path).parent)
         except OSError as _cleanup_err:
             import warnings
             warnings.warn(f"Could not clean up MIDI temp dir: {_cleanup_err}")
 
-        return {"arrangement": arr_data, "tempo_map": tempo_map}
+        # Legacy single-track callers read `arrangement`; the batch form reads
+        # `arrangements` (same order as the request's `tracks`).
+        return {"arrangement": arr_list[0], "arrangements": arr_list, "tempo_map": tempo_map}
 
     # ── Convert GP tracks to arrangement and open in editor ──────────
 
