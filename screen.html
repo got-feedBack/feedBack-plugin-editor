@@ -459,7 +459,7 @@
 
 <!-- Create custom song modal -->
 <div id="editor-create-modal" class="hidden absolute inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,0.7)">
-    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-4xl max-h-[85vh] flex flex-col overflow-y-auto">
+    <div class="bg-dark-700 rounded-xl border border-gray-700 w-full max-w-5xl mx-4 max-h-[88vh] flex flex-col overflow-y-auto">
         <div class="flex items-center justify-between px-4 py-3 border-b border-gray-700 shrink-0">
             <span class="text-sm font-medium">Create New Arrangement</span>
             <button onclick="editorHideCreateModal()" class="text-gray-500 hover:text-white">&times;</button>
@@ -469,7 +469,7 @@
             <!-- One import-first menu. Files define the track roster; metadata
                  remains editable alongside it. -->
             <p class="text-[11px] text-gray-500">
-                Add the session files, choose one audio source as Master / Guide, then create the project.
+                Add the session files, choose one audio source as the Guide, then create the project.
             </p>
 
             <!-- Two columns so the modal is wide, not tall: LEFT = where the chart
@@ -496,11 +496,10 @@
                 <div id="editor-create-import-status" class="text-[11px] text-gray-500"></div>
             </div>
 
-            <!-- Unified imported-track roster. The guide selector is exclusive
-                 even though it is presented as a compact checkbox-like control. -->
+            <!-- Unified imported-track roster. Guide is an exclusive audio-only choice. -->
             <div id="editor-create-tracks" class="space-y-1">
                 <div class="editor-create-track-head">
-                    <span>Use</span><span>Track</span><span>Type</span><span>Details</span><span>Master / Guide</span><span></span>
+                    <span>Use</span><span>Track</span><span>Type</span><span>Guide</span><span></span>
                 </div>
                 <div id="editor-create-track-list" class="max-h-64 overflow-y-auto bg-dark-800 rounded"></div>
             </div>
@@ -892,8 +891,8 @@
                 <li><strong>From an import</strong> — <em>File ▸ Import</em> reads Guitar Pro (GP3–GP8), MIDI (with its tempo map), community arrangement XML, GoPlayAlong sync sidecars, and existing <code>.feedpak</code> files. All normalize into one model, so editing is the same afterward.</li>
             </ul>
             <figure>
-                <img src="/api/plugins/editor/assets/guide/import.png" alt="The Create New Arrangement dialog: add files, review every imported track, and select the Master / Guide audio source.">
-                <figcaption><strong>New…</strong> uses one track table for audio, Guitar Pro, MIDI, and XML. Pick one audio row as Master / Guide for tempo mapping.</figcaption>
+                <img src="/api/plugins/editor/assets/guide/import.png" alt="The Create New Arrangement dialog: add files, review every imported track, and select the Guide audio source.">
+                <figcaption><strong>New…</strong> uses one track table for audio, Guitar Pro, MIDI, and XML. Pick one audio row as the Guide for tempo mapping.</figcaption>
             </figure>
             <p class="tip">Nothing touches your library until you <strong>Build</strong> (§9). Save early with <kbd>Ctrl</kbd>+<kbd>S</kbd>.</p>
 

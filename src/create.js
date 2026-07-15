@@ -1,8 +1,8 @@
 // ════════════════════════════════════════════════════════════════════
 // Song creation — everything between "New…" and a loaded chart.
 //
-// The format picker, the sloppak-create modal, the roster ("what are you
-// arranging?"), the MusicBrainz metadata match, and the album-art picker. They
+// The format picker, the sloppak-create modal, the unified import roster,
+// the MusicBrainz metadata match, and the album-art picker. They
 // travel together because they are one flow over one object: `createState`,
 // which is reset when the modal opens and read by every step after it.
 //
@@ -141,7 +141,7 @@ export function editorShowCreateModal() {
         gpPath: null, tracks: null, gpName: null, gpHasEmbedded: false, gpSyncCount: 0,
         eofFiles: null, eofName: null,
         audioUrl: null, audioName: null, audioDuration: null, audioFile: null,
-        audioTracks: [], guideTrackId: '',
+        audioTracks: [], guideTrackId: '', youtubeSelected: true,
         midiInfo: null, midiFiles: null, midiPath: null, midiTracks: [],
         artPath: null, previewPath: null,
         gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null, autoSyncCoupled: false,
@@ -637,7 +637,10 @@ async function uploadCreateAudio() {
             || document.getElementById('editor-create-status'),
     });
     if (!url) return false;
-    createState.audioTracks.push({ id: 'youtube', name: 'YouTube audio', url, duration: null, file: null });
+    createState.audioTracks.push({
+        id: 'youtube', name: 'YouTube audio', url, duration: null, file: null,
+        selected: createState.youtubeSelected !== false,
+    });
     if (!createState.guideTrackId) createState.guideTrackId = 'youtube';
     _syncCreateGuide();
     renderStaged();
@@ -663,13 +666,15 @@ export function _createGateOpen(state, flags) {
 }
 
 function _createHasAudioInput() {
-    if ((createState.audioTracks || []).length) return true;
-    return !!((document.getElementById('editor-create-yt-url')?.value) || '').trim();
+    if ((createState.audioTracks || []).some(track => track && track.selected !== false)) return true;
+    return createState.youtubeSelected !== false
+        && !!((document.getElementById('editor-create-yt-url')?.value) || '').trim();
 }
 
 function _createHasPendingYoutube() {
     const yt = ((document.getElementById('editor-create-yt-url')?.value) || '').trim();
-    return !!(yt && !(createState.audioTracks || []).some(track => track.id === 'youtube'));
+    return createState.youtubeSelected !== false
+        && !!(yt && !(createState.audioTracks || []).some(track => track.id === 'youtube'));
 }
 
 // The spec-complete metadata typed in the create modal, so a Guitar Pro / EOF
@@ -732,33 +737,33 @@ function _createTrackRowsPure(state, youtubeUrl) {
     const rows = [];
     for (const track of (state && state.audioTracks) || []) {
         rows.push({ id: String(track.id), name: String(track.name || 'Audio'), kind: 'audio',
-            detail: '', selected: true, guideEligible: true });
+            selected: track.selected !== false, selectable: true, guideEligible: true });
     }
     if (String(youtubeUrl || '').trim()
             && !((state && state.audioTracks) || []).some(track => track.id === 'youtube')) {
         rows.push({ id: 'youtube', name: String(youtubeUrl).trim(), kind: 'youtube',
-            detail: '', selected: true, guideEligible: true });
+            selected: !state || state.youtubeSelected !== false, selectable: true, guideEligible: true });
     }
     for (const track of (state && state.tracks) || []) {
         rows.push({ id: 'gp:' + track.index, name: String(track.name || ('Track ' + track.index)),
-            kind: 'guitar-pro', detail: (Number(track.notes) || 0) + ' notes',
+            kind: 'guitar-pro',
             selected: track.selected !== false && Number(track.notes) > 0,
             selectable: true, guideEligible: false });
     }
     for (const track of (state && state.midiTracks) || []) {
         rows.push({ id: 'midi:' + track.index, name: String(track.name || ('Track ' + track.index)),
-            kind: 'midi', detail: (Number(track.notes) || 0) + ' notes',
+            kind: 'midi',
             selected: track.selected !== false && Number(track.notes) > 0,
             selectable: true, guideEligible: false });
     }
     for (const [index, file] of (((state && state.eofFiles) || []).entries())) {
         rows.push({ id: 'xml:' + index, name: String(file.name || ('XML ' + (index + 1))),
-            kind: 'xml', detail: 'Arrangement source', selected: true,
+            kind: 'xml', selected: true,
             selectable: false, guideEligible: false });
     }
     if (state && state.goplayalongFile) {
         rows.push({ id: 'sync:goplayalong', name: String(state.goplayalongFile.name || 'Sync XML'),
-            kind: 'sync', detail: 'Tempo sync source', selected: true,
+            kind: 'sync', selected: true,
             selectable: false, guideEligible: false });
     }
     return rows;
@@ -770,7 +775,7 @@ function _createGuideIdPure(rows, requested) {
 }
 
 function _createAudioPayloadPure(audioTracks, guideId) {
-    const tracks = (audioTracks || []).filter(track => track && track.url);
+    const tracks = (audioTracks || []).filter(track => track && track.url && track.selected !== false);
     const guide = tracks.find(track => track.id === guideId) || tracks[0] || null;
     const ordered = guide ? [guide, ...tracks.filter(track => track !== guide)] : [];
     return {
@@ -1030,13 +1035,11 @@ function renderStaged() {
         wrap.innerHTML = rows.map(row => {
             const id = _editorEscHtml(row.id);
             const name = _editorEscHtml(row.name);
-            const include = row.guideEligible
-                ? '<input type="checkbox" checked disabled aria-label="Audio track included">'
-                : row.selectable === false
+            const include = row.selectable === false
                     ? '<input type="checkbox" checked disabled aria-label="Source included">'
                     : `<input type="checkbox" data-create-select="${id}" ${row.selected ? 'checked' : ''} aria-label="Include ${name}">`;
             const guide = row.guideEligible
-                ? `<input type="checkbox" data-create-guide="${id}" ${row.id === createState.guideTrackId ? 'checked' : ''} aria-label="Use ${name} as Master and tempo guide">`
+                ? `<input type="radio" name="editor-create-guide" data-create-guide="${id}" ${row.id === createState.guideTrackId ? 'checked' : ''} ${row.selected ? '' : 'disabled'} aria-label="Use ${name} as tempo guide">`
                 : '<span class="text-gray-700">—</span>';
             const remove = row.kind === 'audio'
                 ? `<button type="button" data-create-remove="${id}" title="Remove audio track">×</button>`
@@ -1053,7 +1056,6 @@ function renderStaged() {
             return `<div class="editor-create-track-row"><span>${include}</span>`
                 + `<span class="editor-create-track-name" title="${name}">${name}</span>`
                 + `<span class="editor-create-track-type">${_trackTypeLabel(row.kind)}</span>`
-                + `<span class="editor-create-track-detail">${_editorEscHtml(row.detail || '')}</span>`
                 + `<span class="editor-create-track-guide">${guide}</span><span>${remove}</span></div>`;
         }).join('');
     }
@@ -1096,6 +1098,7 @@ export function editorStagedRemove(role) {
 export function editorYtUrlInput() {
     // A YouTube URL is an alternative audio source (resolved at Create). It
     // doesn't gate the button (audio is optional) but should show in the list.
+    createState.youtubeSelected = true;
     if (!createState.guideTrackId) createState.guideTrackId = 'youtube';
     _syncCreateGuide();
     renderStaged();
@@ -1711,9 +1714,17 @@ export function initCreate() {
         const rowId = e.target && e.target.getAttribute?.('data-create-select');
         if (!rowId) return;
         const [kind, rawIndex] = rowId.split(':');
-        const list = kind === 'gp' ? createState.tracks : kind === 'midi' ? createState.midiTracks : null;
-        const track = (list || []).find(item => String(item.index) === rawIndex);
+        const list = kind === 'gp' ? createState.tracks : kind === 'midi' ? createState.midiTracks
+            : kind === 'audio' ? createState.audioTracks : null;
+        const track = kind === 'audio'
+            ? (list || []).find(item => String(item.id) === rowId)
+            : (list || []).find(item => String(item.index) === rawIndex);
         if (track) track.selected = !!e.target.checked;
+        if (rowId === 'youtube') createState.youtubeSelected = !!e.target.checked;
+        if (kind === 'audio' || rowId === 'youtube') {
+            _syncCreateGuide();
+            renderStaged();
+        }
         updateCreateButton();
     });
     host.addGlobalListener(document, 'click', (e) => {

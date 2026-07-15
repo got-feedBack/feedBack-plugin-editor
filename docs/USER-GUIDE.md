@@ -32,11 +32,11 @@ You begin one of two ways:
 
 In **New…**, use **Add File** for audio, Guitar Pro, MIDI, or XML. Every audio
 source and every chart track appears in one table. Check the tracks to import,
-then choose one audio row in **Master / Guide** as the recording the tempo map
+then choose one audio row in **Guide** as the recording the tempo map
 follows. You can add several audio files; they remain separate source tracks.
 The YouTube field adds another possible audio source.
 
-![The Create New Arrangement dialog: add session files, review every imported track in one table, and choose a Master / Guide audio source.](../assets/guide/import.png)
+![The Create New Arrangement dialog: add session files, review every imported track in one table, and choose a Guide audio source.](../assets/guide/import.png)
 
 Import lives under the **File** menu (Import ▸ …). MIDI and XML/GP imports keep
 their note data; a GoPlayAlong sidecar brings bar→time sync points only (no

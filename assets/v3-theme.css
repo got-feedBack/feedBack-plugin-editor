@@ -509,10 +509,11 @@ html.fb-immersive #plugin-editor .editor-root {
 }
 
 /* ── Create: one DAW-style imported-track roster ─────────────────── */
+#plugin-editor #editor-create-modal > div { width: min(64rem, calc(100% - 2rem)); max-width: 64rem; }
 #plugin-editor .editor-create-track-head,
 #plugin-editor .editor-create-track-row {
     display: grid;
-    grid-template-columns: 2.25rem minmax(8rem, 1fr) 5.5rem 5.5rem 6.5rem 1.5rem;
+    grid-template-columns: 2.25rem minmax(10rem, 1fr) 5.5rem 3.5rem 1.5rem;
     align-items: center;
     column-gap: 0.5rem;
 }
@@ -527,7 +528,6 @@ html.fb-immersive #plugin-editor .editor-root {
 #plugin-editor .editor-create-track-row:last-child { border-bottom: 0; }
 #plugin-editor .editor-create-track-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #plugin-editor .editor-create-track-type { color: #67e8f9; font-size: 0.65rem; text-transform: uppercase; }
-#plugin-editor .editor-create-track-detail { color: #64748b; }
 #plugin-editor .editor-create-track-guide { text-align: center; }
 #plugin-editor .editor-create-track-row input { accent-color: #22d3ee; }
 #plugin-editor .editor-create-track-row button { color: #64748b; font-size: 1rem; }
