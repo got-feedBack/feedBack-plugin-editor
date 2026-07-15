@@ -290,6 +290,23 @@ def _stems_reorder_pure(stems, order):
     return [dict(by_id[i]) for i in order]
 
 
+def _reorder_with_hidden(stems, order):
+    """Reorder ONLY the entries the manager surfaced (those named in `order`),
+    keeping hidden entries — the `full` mix the manager never shows, plus any
+    entry the payload dropped (missing file, path escape) — at the front.
+
+    The frontend's `order` is a permutation of the *surfaced* subset, never of
+    the whole manifest stems list (which carries `full`). Validating `order`
+    against the full list rejected every real reorder; validating against the
+    surfaced subset (the ids `order` names) is the honest contract. A foreign
+    or duplicate id still fails via `_stems_reorder_pure`. None on failure."""
+    keep = set(order) if isinstance(order, list) else set()
+    reordered = _stems_reorder_pure([e for e in stems if e["id"] in keep], order)
+    if reordered is None:
+        return None
+    return [dict(e) for e in stems if e["id"] not in keep] + reordered
+
+
 def _coerce_stem_links(value):
     """`editor_stem_links` as a sanitized {chart-track key → stem id} dict.
     Same manifest-extension retention contract as `editor_tempo_marks`."""
@@ -5752,9 +5769,9 @@ def setup(app, context):
                 stems = renamed
                 _sync_links(lambda v: new if v == old else v)
             elif op == "reorder":
-                stems2 = _stems_reorder_pure(stems, data.get("order"))
+                stems2 = _reorder_with_hidden(stems, data.get("order"))
                 if stems2 is None:
-                    return JSONResponse({"error": "order must be a full permutation"}, 400)
+                    return JSONResponse({"error": "order must be a permutation of the listed tracks"}, 400)
                 stems = stems2
             elif op == "delete":
                 sid = data.get("id")
@@ -5794,12 +5811,10 @@ def setup(app, context):
                 hit["id"] = new
                 _sync_links(lambda v: new if v == old else v)
             elif op == "reorder":
-                order = data.get("order")
-                ids = [e["id"] for e in stem_files]
-                if not isinstance(order, list) or sorted(order) != sorted(ids):
-                    return JSONResponse({"error": "order must be a full permutation"}, 400)
-                by_id = {e["id"]: e for e in stem_files}
-                stem_files = [by_id[i] for i in order]
+                stems2 = _reorder_with_hidden(stem_files, data.get("order"))
+                if stems2 is None:
+                    return JSONResponse({"error": "order must be a permutation of the listed tracks"}, 400)
+                stem_files = stems2
             elif op == "delete":
                 sid = data.get("id")
                 hit = next((e for e in stem_files if e["id"] == sid), None)

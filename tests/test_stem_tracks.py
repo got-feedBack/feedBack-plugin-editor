@@ -31,6 +31,25 @@ def test_stems_reorder_pure_requires_full_permutation():
     assert routes._stems_reorder_pure(stems, ["c", "a", "x"]) is None, "foreign id refused"
 
 
+def test_reorder_with_hidden_keeps_full_and_reorders_managed():
+    # A real sloppak manifest carries a `full` mix entry the manager hides
+    # (load + _stem_state_payload both skip it). The frontend's `order` is a
+    # permutation of only the SURFACED stems, so it never names `full`.
+    # Pre-fix, validating that order against the whole list (incl. `full`)
+    # rejected every reorder with 400. `full` must be kept, managed reordered.
+    stems = [{"id": "full", "file": "full.ogg"},
+             {"id": "Guitar_L", "file": "stems/Guitar_L.wav"},
+             {"id": "Bass_DI", "file": "stems/Bass_DI.wav"}]
+    out = routes._reorder_with_hidden(stems, ["Bass_DI", "Guitar_L"])
+    assert out is not None, "a surfaced-subset order must NOT be rejected"
+    assert [e["id"] for e in out] == ["full", "Bass_DI", "Guitar_L"], \
+        "full stays; managed stems take the requested order; nothing dropped"
+    # Foreign / duplicate ids still fail closed.
+    assert routes._reorder_with_hidden(stems, ["Bass_DI", "nope"]) is None, "foreign id refused"
+    assert routes._reorder_with_hidden(stems, ["Bass_DI", "Bass_DI"]) is None, "duplicate refused"
+    assert routes._reorder_with_hidden(stems, "notalist") is None, "non-list refused"
+
+
 def test_stems_manifest_list_preserves_unknown_fields():
     manifest = {"stems": [
         {"id": "guitar", "file": "stems/guitar.opus", "codec": "opus",
