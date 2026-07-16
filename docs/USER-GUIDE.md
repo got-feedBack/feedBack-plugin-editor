@@ -106,6 +106,14 @@ defaults** puts everything back.
 
 Select a note by clicking it; drag a box to select several. Then:
 
+**Chords:** clicking one note of a chord selects just that note (FeedBack /
+Logical / Cableton), or the whole strum (Legacy EOF) — the shortcut profile sets
+the default. **Alt-click always does the opposite**, so you can grab one note or
+the whole chord either way without switching profiles. Change the default in the
+shortcut panel (`?`) under **Chord click**. (Piano-roll parts always select one
+note — same-time notes there are independent voices, not a strum.)
+
+
 - **Fret** — press `F` to edit, or type `0`–`9` (`Shift+0` for 10, `Ctrl++` /
   `Ctrl+-` to nudge).
 - **String** — `↑` / `↓` move the selection between strings. `Shift+↑` / `Shift+↓`

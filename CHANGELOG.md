@@ -202,6 +202,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   FeedBack profile — the commands existed but were only bound in the Legacy
   (EOF) profile, so default-profile users had no keyboard way to edit note
   length. In tempo-map mode the bracket keys stay the beat-count controls.
+- **Clicking one note of a chord now selects one note (in the DAW profiles).**
+  Clicking a chord in a guitar/bass part used to grab the whole strum, which is
+  surprising in a piano-roll-style editor. Selection is now profile-driven, like
+  the right-click behaviour: **FeedBack / Logical / Cableton select the single
+  note** under the cursor; **Legacy (EOF) keeps the whole-strum unit** (EOF
+  treats the position as atomic). **Alt-click always does the opposite** — grab
+  one note or the whole chord either way — and sustain-resize follows the same
+  rule so a click and an edge-drag never disagree. A **Chord click** toggle in
+  the shortcut panel pins it regardless of profile. Piano-roll parts are
+  unchanged: same-time notes there are independent voices and always select one.
+
 - **Assisted tempo mapping trusts a bridged gap once the far side confirms.**
   When Suggest marches across a sustained or held bar (no attack to snap to),
   it keeps going on prediction but marks those bars very low confidence — and
