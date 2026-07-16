@@ -114,6 +114,24 @@ def test_hand_edit_flips_the_notes_fingerprint():
     assert _notes_fingerprint(base, []) == _notes_fingerprint(junk, [])
 
 
+def test_fingerprint_survives_stacked_unison_with_mixed_hands():
+    """A doubled unison (two notes at the same pitch/time/duration — real in
+    piano writing, e.g. both hands on one pitch) where one note carries a hand
+    and the other doesn't yields two tuples identical in (t,s,f,sus) but
+    differing only in the hand field. The sort inside _notes_fingerprint would
+    then compare that field across the pair; a None sentinel makes it a
+    None-vs-str compare and raises TypeError, crashing the save. Must not
+    raise, and the mixed pair must fingerprint differently from an all-lh
+    pair (the hand still counts)."""
+    mixed = [_editor_note(0.0, 60, "lh"), _editor_note(0.0, 60)]
+    both_lh = [_editor_note(0.0, 60, "lh"), _editor_note(0.0, 60, "lh")]
+    # Neither call raises, and the assigned-vs-unassigned split still matters.
+    assert _notes_fingerprint(mixed, []) != _notes_fingerprint(both_lh, [])
+    # Same stacking inside a chord's member list must also be order-safe.
+    chord = {"time": 0.0, "notes": [_editor_note(0.0, 60, "rh"), _editor_note(0.0, 60)]}
+    assert _notes_fingerprint([], [chord])  # no raise → truthy hex digest
+
+
 def test_hand_rides_chord_member_notes():
     chord = {
         "time": 0.0, "chord_id": 0, "high_density": False,
