@@ -96,6 +96,24 @@ t('unknown references drop and a corrupted parent cycle repairs to the root', ()
     assert.ok(rows.some(row => row.id === 'audio:master'), 'no branch is hidden from the rows');
 });
 
+t('persisted items cannot steal canonical source or transcription ids', () => {
+    const model = _trackSessionNormalizePure({
+        tracks: [
+            { id: 'audio:master', type: 'folder', name: 'Collision' },
+            { id: 'child', type: 'audio', sourceId: 'Guitar_L', parentId: 'audio:master' },
+            { id: 'transcription:Lead', type: 'audio', sourceId: 'master' },
+        ],
+    }, sources, arrangements, null);
+    const master = model.tracks.filter(track => track.type === 'audio' && track.sourceId === 'master');
+    const lead = model.tracks.filter(track => track.type === 'transcription' && track.targetId === 'Lead');
+    assert.strictEqual(master.length, 1, 'the canonical Master Mix row is present exactly once');
+    assert.strictEqual(lead.length, 1, 'the canonical transcription row is present exactly once');
+    const folder = model.tracks.find(track => track.type === 'folder' && track.name === 'Collision');
+    assert.ok(folder && folder.id !== 'audio:master', 'the conflicting folder receives a safe id');
+    assert.strictEqual(model.tracks.find(track => track.id === 'child').parentId, folder.id,
+        'children follow the renamed folder instead of being orphaned');
+});
+
 t('pairing projects from stemLinks and never resurrects a removed source', () => {
     const links = { Lead: 'Guitar_L', Bass: 'ghost' };
     const rows = _trackSessionRowsPure(empty, sources, arrangements, null, links).rows;

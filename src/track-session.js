@@ -98,14 +98,39 @@ export function _trackSessionNormalizePure(raw, sources, arrangements, drumTab) 
     const removedSources = new Set(removedSourceIds);
     const visibleSources = sourceList.filter(source => !removedSources.has(source.id));
     const visibleSourceIds = new Set(visibleSources.map(source => source.id));
+    const canonicalKinds = new Map([
+        ...visibleSources.map(source => [audioTrackId(source.id), ['audio', source.id]]),
+        ...targets.map(target => [transcriptionTrackId(target.id), ['transcription', target.id]]),
+    ]);
+    const inputTracks = (Array.isArray(input.tracks) ? input.tracks : []).slice(0, 300);
     const tracks = [];
     const seen = new Set();
+    const persistedIds = new Set();
+    const allocated = new Set([
+        ...canonicalKinds.keys(),
+        ...inputTracks.map(item => idOf(item?.id)).filter(Boolean),
+    ]);
+    const folderAliases = new Map();
     const sourceLeaves = new Set();
     const targetLeaves = new Set();
-    for (const item of (Array.isArray(input.tracks) ? input.tracks : []).slice(0, 300)) {
+    for (const item of inputTracks) {
         if (!item || typeof item !== 'object') continue;
-        const id = idOf(item.id);
-        if (!id || seen.has(id) || !['folder', 'audio', 'transcription'].includes(item.type)) continue;
+        let id = idOf(item.id);
+        if (!id || persistedIds.has(id) || !['folder', 'audio', 'transcription'].includes(item.type)) continue;
+        persistedIds.add(id);
+        const canonical = canonicalKinds.get(id);
+        const matchesCanonical = canonical && item.type === canonical[0]
+            && idOf(item[item.type === 'audio' ? 'sourceId' : 'targetId']) === canonical[1];
+        if (canonical && !matchesCanonical) {
+            // A persisted folder/unrelated leaf must not claim a canonical row
+            // id (for example `audio:master`) and thereby suppress the real
+            // source/target. Keep the conflicting item under a collision-free
+            // id; folder children are retargeted after the input pass.
+            const original = id;
+            let n = 1;
+            do { id = `conflict:${n++}`; } while (allocated.has(id) || seen.has(id));
+            if (item.type === 'folder') folderAliases.set(original, id);
+        }
         if (item.type === 'folder') {
             tracks.push({ id, type: 'folder', name: String(item.name || 'Folder').slice(0, 120), parentId: idOf(item.parentId), collapsed: !!item.collapsed });
         } else if (item.type === 'audio') {
@@ -120,6 +145,10 @@ export function _trackSessionNormalizePure(raw, sources, arrangements, drumTab) 
             tracks.push({ id, type: 'transcription', targetId, name: String(item.name || '').slice(0, 120), parentId: idOf(item.parentId) });
         }
         seen.add(id);
+        allocated.add(id);
+    }
+    for (const track of tracks) {
+        if (folderAliases.has(track.parentId)) track.parentId = folderAliases.get(track.parentId);
     }
     for (const source of visibleSources) if (!sourceLeaves.has(source.id)) {
         const id = audioTrackId(source.id);
