@@ -611,6 +611,13 @@ _NOTE_TECH_FIELDS = (
     "pluck", "slap", "right_hand", "pick_direction", "ignore",
     # Teaching marks (§6.2.2) — display only, never grading.
     "fret_finger", "strum_group", "scale_degree",
+    # Keys hand assignment: 'lh'/'rh', None = unassigned (the heuristic hand
+    # split keeps owning unassigned notes). Authored per-note — imported from
+    # a MusicXML grand staff, later editable. String-valued: NEVER add it to
+    # `_NOTE_TECH_BOOL_FIELDS`, and note it is distinct from `right_hand`
+    # (the bass plucking-finger int, wire key `rh`) — hence the spelled-out
+    # wire key `hand`.
+    "hand",
 )
 # `bend_values` (the §6.2.1 bend curve) is deliberately NOT in the tuple above:
 # it's a list, and the tuple feeds hashable content-signature tuples
@@ -698,6 +705,8 @@ def _note_tech_default(field):
         return None
     if field == "bend_intent":
         return 0
+    if field == "hand":
+        return None  # string-valued: 'lh'/'rh', None = unassigned
     return -1
 
 
@@ -1901,10 +1910,12 @@ def _align_xml_files_to_arrangements(tmp_dir, result):
     def _obj_note_sig(n):
         return (
             round(n.time, 3), n.string, n.fret, round(n.sustain or 0.0, 3),
-            # Default -1 so the signature stays stable against a core build that
-            # predates a field (e.g. the teaching marks before #534 lands) —
-            # parse_arrangement notes from older core simply lack the attribute.
-            tuple(getattr(n, f, -1) for f in _NOTE_TECH_FIELDS),
+            # Field-typed defaults so the signature stays stable against a core
+            # build that predates a field (e.g. the teaching marks before #534,
+            # or `hand`) — parse_arrangement notes from older core simply lack
+            # the attribute. `_note_tech_default` keeps the historical -1 for
+            # the int fields and gives `hand` the same None the dict side uses.
+            tuple(getattr(n, f, _note_tech_default(f)) for f in _NOTE_TECH_FIELDS),
         )
 
     def _obj_chord_sig(c):
@@ -2449,6 +2460,12 @@ def _arr_dict_to_wire(
         _sd = _safe_int(tech.get("scale_degree"), -1)
         if 0 <= _sd <= 11:
             out["sd"] = _sd
+        # Keys hand assignment — default-omitted, strictly validated to the
+        # 'lh'/'rh' enum so junk (or a bool, or 'LH') never rides the wire.
+        # Spelled-out key: `rh` is taken (right_hand, the plucking finger).
+        _hand = tech.get("hand")
+        if _hand in ("lh", "rh"):
+            out["hand"] = _hand
         return out
 
     def _note_in_chord(n):
@@ -2571,17 +2588,26 @@ def _notes_fingerprint(notes, chords) -> str:
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()
 
 
+# Notation payloads whose `source` marks them as AUTHORED (carrying exact
+# per-stave/voice hand assignments from the source file) rather than lifted
+# heuristically: GP sidecars and MusicXML grand-staff imports. Both ride the
+# same prefer-authored-over-lift save rail.
+_AUTHORED_NOTATION_SOURCES = frozenset({"gp", "musicxml"})
+
+
 def _read_gp_sidecar(nt_path):
-    """Return a previously-written GP-sourced (``source == "gp"``) notation
-    payload from disk, else ``None``. Used on reopen: an existing GP sidecar in
-    the pak's working dir is honored (subject to the fingerprint check) so a
-    save that didn't touch the notes doesn't clobber it with a fresh, less
-    accurate ``notation_lift`` pass."""
+    """Return a previously-written authored-source (``source`` in
+    ``_AUTHORED_NOTATION_SOURCES``) notation payload from disk, else ``None``.
+    Used on reopen: an existing authored sidecar in the pak's working dir is
+    honored (subject to the fingerprint check) so a save that didn't touch the
+    notes doesn't clobber it with a fresh, less accurate ``notation_lift``
+    pass."""
     try:
         data = json.loads(Path(nt_path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return data if isinstance(data, dict) and data.get("source") == "gp" else None
+    return data if isinstance(data, dict) \
+        and data.get("source") in _AUTHORED_NOTATION_SOURCES else None
 
 
 def _validate_notation(payload):
@@ -2787,6 +2813,27 @@ def _merge_gp_notation_after_edit(gp_payload, lifted_payload, wire):
     return out, preserved, len(gm)
 
 
+def _stamp_musicxml_notation(arrangement):
+    """Pop a raw MusicXML notation payload off ``arrangement`` (the
+    ``notation`` key the musicxml_import plugin's parse-arrangement response
+    carries) and return it stamped ``source:"musicxml"`` plus a fingerprint
+    of the arrangement's current notes — the MusicXML counterpart of
+    ``_attach_gp_notation``, computed at add-arrangement time (the one moment
+    payload and notes are known in sync). Returns ``None`` when there is no
+    usable payload; the arrangement is always left without a ``notation``
+    key so the raw payload can't ride the session as dead weight."""
+    if not isinstance(arrangement, dict):
+        return None
+    payload = arrangement.pop("notation", None)
+    if not isinstance(payload, dict) or not payload.get("measures"):
+        return None
+    stamped = dict(payload)
+    stamped["source"] = "musicxml"
+    stamped["source_notes_fp"] = _notes_fingerprint(
+        arrangement.get("notes"), arrangement.get("chords"))
+    return stamped
+
+
 def _attach_gp_notation(arr, xml_path):
     """Attach the GP-emitted notation sidecar for ``xml_path`` to ``arr`` as
     ``_gp_notation``, stamped ``source:"gp"`` plus a fingerprint of ``arr``'s
@@ -2854,11 +2901,12 @@ def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4),
             nt_path.unlink(missing_ok=True)
             _log.info("keys arrangement %r: cleared stale notation sidecar", aid)
 
-    # Prefer GP-sourced notation — it carries exact per-stave/voice hand
-    # assignments that notation_lift can only heuristically re-derive — but
+    # Prefer authored notation (GP sidecar or MusicXML grand staff) — it
+    # carries exact per-stave/voice hand assignments that notation_lift can
+    # only heuristically re-derive — but
     # only while it still matches the current notes. The candidate is either
-    # the payload forwarded from a fresh GP import (`gp_notation`) or, on a
-    # reopened pak, the existing `source:"gp"` sidecar on disk. It is honored
+    # the payload forwarded from a fresh GP/MusicXML import (`gp_notation`)
+    # or, on a reopened pak, the existing authored sidecar on disk. It is honored
     # only when its stored note-fingerprint equals the arrangement's current
     # notes: any edit since import/load flips the fingerprint and we fall
     # through to the lift so the user's edits win (never a frozen import-time
@@ -2873,13 +2921,16 @@ def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4),
     # edit in one measure no longer costs the hand-split/dynamics/pedal/
     # fingering of every other measure.
     gp_stale = None
-    if isinstance(gp_candidate, dict) and gp_candidate.get("source") == "gp":
+    if isinstance(gp_candidate, dict) \
+            and gp_candidate.get("source") in _AUTHORED_NOTATION_SOURCES:
         fp_now = _notes_fingerprint(wire.get("notes"), wire.get("chords"))
         if gp_candidate.get("source_notes_fp") != fp_now:
             gp_stale = gp_candidate
         if gp_candidate.get("source_notes_fp") == fp_now:
             payload = dict(gp_candidate)
-            payload["source"] = "gp"
+            # Re-stamp preserving the ORIGINAL provenance ("gp"/"musicxml")
+            # so the next save's source check keeps honoring the sidecar.
+            payload["source"] = gp_candidate.get("source")
             payload["source_notes_fp"] = fp_now
             ok, reason = _validate_notation(payload)
             if ok:
@@ -2951,7 +3002,9 @@ def _write_keys_notation_sidecar(source_dir, entry, wire, beats, *, ts=(4, 4),
                     "keys arrangement %r: GP merge preserved 0/%d measures "
                     "— using the full lift", aid, total)
             else:
-                merged_payload["source"] = "gp"
+                # Preserve the ORIGINAL provenance ("gp"/"musicxml") so the
+                # next save's authored-source check keeps honoring it.
+                merged_payload["source"] = gp_stale.get("source")
                 # `fp_now` was computed above in the same gp_stale branch —
                 # reuse it so the fingerprint is hashed once and can't drift.
                 merged_payload["source_notes_fp"] = fp_now
@@ -7893,12 +7946,27 @@ def setup(app, context):
         if not arrangement:
             return JSONResponse({"error": "arrangement data required"}, 400)
 
+        # A MusicXML import arrives with the authored notation payload riding
+        # the arrangement (`notation`, from the musicxml_import plugin's
+        # parse-arrangement endpoint). Stamp provenance + note-fingerprint
+        # HERE — the one moment the notes and the payload are known to be in
+        # sync (registration happens immediately after import, before any
+        # edit) — and hand the stamped payload back for the client to carry
+        # as `_gp_notation`. The save rail then prefers it over the heuristic
+        # lift exactly like a GP sidecar, for as long as the notes stay
+        # unedited (any edit flips the fingerprint; the measure-granular
+        # merge keeps the untouched bars' authored hand splits).
+        stamped_notation = _stamp_musicxml_notation(arrangement)
+
         # Sloppak sessions don't use XML on disk — the save endpoint writes
         # arrangement JSON files when the user commits. The frontend keeps
         # the new arrangement in S.arrangements and sends the full snapshot
         # at save time.
         if session.get("format") == "sloppak":
-            return {"success": True, "arrangement_count": -1, "format": "sloppak"}
+            resp = {"success": True, "arrangement_count": -1, "format": "sloppak"}
+            if stamped_notation is not None:
+                resp["notation"] = stamped_notation
+            return resp
 
         # archive path: persist the XML so save can use the existing flow.
         if xml_path and Path(xml_path).exists():
@@ -7909,7 +7977,10 @@ def setup(app, context):
                 session["xml_files"] = []
             session["xml_files"].append(dest)
 
-        return {"success": True, "arrangement_count": len(session.get("xml_files", []))}
+        resp = {"success": True, "arrangement_count": len(session.get("xml_files", []))}
+        if stamped_notation is not None:
+            resp["notation"] = stamped_notation
+        return resp
 
     # ── Build Song from create-mode session ──────────────────────────
 

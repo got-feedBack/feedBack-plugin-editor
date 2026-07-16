@@ -49,6 +49,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inline rename. The mixer channel strips now **reorder to match a drag in
   the Tracks column** (and rename with it).
 
+- **MusicXML keys imports keep their authored grand-staff hand splits** (the
+  keys LH/RH hand arc, slice A). The import no longer deletes the authored
+  notation payload: it is offset-shifted alongside the notes, stamped
+  `source:"musicxml"` + a note-fingerprint at add-arrangement time, carried on
+  the arrangement, and preferred over the heuristic `notation_lift` on save —
+  exactly the existing GP-sidecar rail, whose source check now accepts both
+  authored sources (provenance is preserved on re-stamp, never rewritten to
+  `"gp"`). Requires the musicxml_import plugin's new `parse-arrangement`
+  endpoint (its PR #8); without it the MusicXML path stays "plugin not
+  installed" as before.
+- **Per-note `hand` field for keys arrangements** (`techniques.hand`,
+  `'lh'`/`'rh'`, absent = unassigned): registered in `_NOTE_TECH_FIELDS`
+  (string-valued — never in the bool set; absent default `None`), emitted on
+  the save wire under the spelled-out key `hand` (`rh` is taken by
+  right_hand), strictly validated to the enum, folded into the arrangement
+  content signature, and it survives `reconstructChords` because it rides
+  `techniques`. MusicXML imports arrive with it pre-filled from staff
+  provenance (staff 1→`rh`, 2→`lh`; other staves stay unassigned). Known
+  tracked follow-ups: core's sloppak loader must learn the field for
+  reload round-trips (core PR), a hand EDIT doesn't yet invalidate a
+  preserved authored notation sidecar (`_notes_fingerprint` deliberately
+  ignores techniques), and `split_hands` doesn't yet respect per-note
+  overrides — both land with the hand-aware lift slice.
+
 ### Changed
 
 - **The mixer is now a proper DAW console.** The docked side panel is
