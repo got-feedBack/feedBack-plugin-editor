@@ -539,6 +539,13 @@ export function reconcileTempoGuideToStems() {
 let lastRender = '';
 let draggedId = '';
 let renamingTrackId = '';
+// True only for the synchronous span of a header-column fader `input`: the
+// live vol write routes through host.partMixChanged → refreshTrackSession,
+// which would rebuild el.innerHTML and destroy the very <input type=range>
+// under the pointer, aborting the native drag. Suppress the rebuild there —
+// the fader already reflects its own value; the mixer panel dodges the same
+// self-destruction by never re-rendering itself from its fader input.
+let _faderDragging = false;
 const panel = () => (typeof document === 'undefined' ? null : document.getElementById('editor-track-session'));
 
 function _rowsLive() {
@@ -607,7 +614,8 @@ function render() {
 }
 
 export function refreshTrackSession() {
-    const key = JSON.stringify([S.trackSession, S.selectedTrackId, S.stems, S.stemLinks, S.partMix, S.trackHeights, S.trackViewportHeight,
+    if (_faderDragging) return;
+    const key = JSON.stringify([S.trackSession, S.selectedTrackId, S.audioUrl, S.stems, S.stemLinks, S.partMix, S.trackHeights, S.trackViewportHeight,
         (S.arrangements || []).map(a => a && [a.id, a.name]), S.drumTab && S.drumTab.name]);
     if (key === lastRender) return;
     lastRender = key; render();
@@ -908,7 +916,9 @@ export function initTrackSession() {
     el.addEventListener('input', event => {
         const range = event.target && event.target.matches && event.target.matches('[data-track-action="mix-vol"]') ? event.target : null;
         if (!range) return;
-        mixerSetPart(range.getAttribute('data-mix-key') || '', { vol: Number(range.value) });
+        _faderDragging = true;
+        try { mixerSetPart(range.getAttribute('data-mix-key') || '', { vol: Number(range.value) }); }
+        finally { _faderDragging = false; }
     });
     el.addEventListener('change', event => {
         const restore = event.target && event.target.matches
