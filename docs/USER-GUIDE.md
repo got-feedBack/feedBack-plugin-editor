@@ -69,6 +69,20 @@ notes) — useful for lining a grid up fast.
 Press **`?`** at any time for the searchable shortcut panel, or **`Ctrl+K`** for
 the command palette.
 
+### Canvas appearance
+
+If the beat grid is hard to see on your screen — or you just want the canvas
+your way — open **View ▸ Canvas appearance…** and adjust:
+
+- **Grid lines** — strength of the beat/measure lines and lane separators.
+  Turn this up if beat lines are hard to see.
+- **Brightness** — overall canvas background lift.
+- **Color intensity** and **Hue** — restyle the canvas palette.
+
+Changes apply live, and only to the canvas structure — string colors, note
+colors, selection, and the playhead always keep their meaning. **Reset to
+defaults** puts everything back.
+
 ---
 
 ## 3. Play and navigate

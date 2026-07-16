@@ -63,16 +63,17 @@ import {
     _scaleDegreeSemisPure,
 } from './theory.js';
 import { S, editGen } from './state.js';
+import { CP } from './canvas-appearance.js';
 
 export function drawLanes(w) {
     if (isKeysMode()) return drawPianoLanes(w);
     const L = lanes();
     for (let l = 0; l < L; l++) {
         const y = laneToY(l);
-        ctx.fillStyle = l % 2 === 0 ? '#0c0c1c' : '#0f0f24';
+        ctx.fillStyle = l % 2 === 0 ? CP('laneEven') : CP('laneOdd');
         ctx.fillRect(LABEL_W, y, w - LABEL_W, LANE_H);
         // Separator
-        ctx.strokeStyle = '#1a1a35';
+        ctx.strokeStyle = CP('laneSep');
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(LABEL_W, y + LANE_H);
@@ -139,7 +140,7 @@ function drawPianoLanes(w) {
     for (let midi = pianoRange.lo; midi <= pianoRange.hi; midi++) {
         const y = midiToY(midi);
         const black = isBlackKey(midi);
-        ctx.fillStyle = black ? '#0a0a1a' : '#0e0e22';
+        ctx.fillStyle = black ? CP('pianoRowBlack') : CP('pianoRowWhite');
         ctx.fillRect(LABEL_W, y, w - LABEL_W, PIANO_LANE_H);
 
         // Out-of-key rows get a neutral desaturating wash (never red —
@@ -151,7 +152,7 @@ function drawPianoLanes(w) {
 
         // Octave boundary (C notes)
         if (midi % 12 === 0) {
-            ctx.strokeStyle = '#2a2a55';
+            ctx.strokeStyle = CP('octaveLine');
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(LABEL_W, y + PIANO_LANE_H);
@@ -171,8 +172,12 @@ export function drawGrid(w) {
         const x = timeToX(b.time);
         if (x < LABEL_W || x > w) continue;
         const meas = b.measure > 0;
-        ctx.strokeStyle = meas ? '#2a2a50' : '#16162c';
-        ctx.lineWidth = meas ? 1.5 : 0.5;
+        // Palette-routed (View ▸ Canvas appearance…): the old constants
+        // (#2a2a50 / #16162c @ 0.5px) left beat lines invisible on some
+        // panels — brighter defaults + a full-width beat stroke, and the
+        // grid-strength slider scales from there.
+        ctx.strokeStyle = meas ? CP('gridMeasure') : CP('gridBeat');
+        ctx.lineWidth = meas ? 1.5 : 1;
         ctx.beginPath();
         ctx.moveTo(x, laneTop);
         ctx.lineTo(x, laneBottom);
@@ -339,7 +344,7 @@ export function drawBarSel(w) {
 export function drawLabels(w) {
     // Timeline-header gutter (minimap + ruler) — the left column over the
     // whole-song and ruler bands, labelled so the two strips read distinctly.
-    ctx.fillStyle = '#0a0a1a';
+    ctx.fillStyle = CP('gutterBg');
     ctx.fillRect(0, 0, LABEL_W, TIMELINE_TOP);
     ctx.fillStyle = '#556';
     ctx.font = '8px monospace';
@@ -350,7 +355,7 @@ export function drawLabels(w) {
     ctx.fillText('⇆ bars', LABEL_W / 2, MINIMAP_H + (TIMELINE_TOP - MINIMAP_H) / 2);
 
     // Waveform label
-    ctx.fillStyle = '#0a0a1a';
+    ctx.fillStyle = CP('gutterBg');
     ctx.fillRect(0, TIMELINE_TOP, LABEL_W, WAVEFORM_H);
     ctx.fillStyle = '#555';
     ctx.font = '9px monospace';
@@ -369,7 +374,7 @@ export function drawLabels(w) {
     const labels = laneLabels();
     for (let l = 0; l < L; l++) {
         const y = laneToY(l);
-        ctx.fillStyle = '#0a0a1a';
+        ctx.fillStyle = CP('gutterBg');
         ctx.fillRect(0, y, LABEL_W, LANE_H);
         const s = laneToStr(l);
         ctx.fillStyle = colorForLane(l);
