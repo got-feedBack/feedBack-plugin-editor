@@ -46,6 +46,7 @@ import { setStatus } from './ui.js';
 let rafId = null;
 let audioLoadController = null;
 let audioLoadGeneration = 0;
+let activeSourceGeneration = 0;
 
 // Lazily create the shared AudioContext. Compose mode never decodes a
 // recording (loadAudio is the only other creation site), yet the transport
@@ -74,9 +75,13 @@ export async function loadAudio(url) {
         if (generation !== audioLoadGeneration) return false;
         S.audioBuffer = decoded;
         S.duration = S.audioBuffer.duration;
+        S.masterAudioDuration = S.audioBuffer.duration;
         // Keep the playable URL for the pitch-preserving audition path (the
         // MediaElement needs a src; the decoded buffer feeds waveform + onsets).
         S.audioUrl = url;
+        S.masterAudioUrl = url;
+        S.activeAudioSourceId = 'master';
+        S.activeAudioSourceOffset = 0;
         _resetAuditionForNewSong();   // a per-song pref never carries across loads
         // A new recording is loaded — re-arm the hearing-safety fade so it
         // applies to this recording too, not just the session's first one.
@@ -253,7 +258,7 @@ export function _ensureOnsets() {
     // burning ticks first.
     _cancelOnsetJob();
     _onsetCache = null; _onsetCacheKey = null; _onsetDetector = null;
-    const dur = S.duration || 0;
+    const dur = (S.audioBuffer && S.audioBuffer.duration) || S.duration || 0;
     if (!key || dur <= 0) return null;
     // Return the cheap RMS-envelope onsets IMMEDIATELY (zero delay for the strip /
     // snap), and upgrade to banded spectral-flux (P2-2) in the BACKGROUND — the
@@ -324,7 +329,7 @@ function _cancelOnsetJob() {
 // so it always tracks the live S.audioShift.
 export function _ensureOnsetsShifted() {
     const raw = _ensureOnsets();
-    const sh = Number(S.audioShift) || 0;
+    const sh = (Number(S.audioShift) || 0) + (Number(S.activeAudioSourceOffset) || 0);
     if (!raw || !sh) return raw;
     return raw.map(o => ({ ...o, t: o.t + sh }));   // carry s + per-band strengths
 }
@@ -498,7 +503,7 @@ export function _audioTimelineDurationPure(timelineDuration, audioShift, bufferD
 /* @pure:audio-shift:end */
 
 function _audioTimelineDuration() {
-    return _audioTimelineDurationPure(S.duration, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
+    return _audioTimelineDurationPure(S.duration, S.audioShift, S.masterAudioDuration || S.duration);
 }
 
 // ── Audition speed (design slice 5): pitch-preserving slow practice ──────────
@@ -558,8 +563,7 @@ function _ensureRefMedia() {
     if (!_refMediaNode) {
         try { _refMediaNode = S.audioCtx.createMediaElementSource(_refMediaEl); }
         catch (_) { _refMediaNode = null; return null; }
-        const refGain = _ensureRefGain();
-        _refMediaNode.connect(refGain || S.audioCtx.destination);
+        _refMediaNode.connect(_activeRefTarget() || S.audioCtx.destination);
     }
     return _refMediaEl;
 }
@@ -576,6 +580,12 @@ function _stopRefMedia() {
 function _startRefMediaAt(st, preRoll = 0) {
     const el = _ensureRefMedia();
     if (!el) return false;
+    // The active source may have changed since the media node was wired — re-point
+    // it at the current active source's per-source gain so its strip fader applies.
+    if (_refMediaNode) {
+        try { _refMediaNode.disconnect(); } catch (_) { /* not connected yet */ }
+        _refMediaNode.connect(_activeRefTarget() || S.audioCtx.destination);
+    }
     if (_refMediaPlayTimer) { clearTimeout(_refMediaPlayTimer); _refMediaPlayTimer = null; }
     const r = _auditionRate();
     el.preservesPitch = true;
@@ -596,7 +606,9 @@ function _startRefMediaAt(st, preRoll = 0) {
 // from where the ear lands in the stretched signal.
 function _auditionResyncMedia() {
     if (!_auditionActive() || !_refMediaEl || _refMediaEl.paused) return;
-    const st = _audioBufferStartPure(S.cursorTime, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
+    const st = _audioBufferStartPure(S.cursorTime,
+        (Number(S.audioShift) || 0) + (Number(S.activeAudioSourceOffset) || 0),
+        S.audioBuffer && S.audioBuffer.duration);
     if (!st.play) return;
     if (Math.abs(_refMediaEl.currentTime - st.offset) > 0.03) {
         try { _refMediaEl.currentTime = Math.max(0, st.offset); } catch (_) { /* seeking */ }
@@ -645,7 +657,9 @@ export function _startAudioSourceAtCursor(preRoll = 0) {
     // push the audio start into the future (delay) or, near the end, past the
     // buffer entirely (no source; the transport still runs so the cursor and
     // guide advance over the trailing silence).
-    const st = _audioBufferStartPure(S.cursorTime, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
+    const st = _audioBufferStartPure(S.cursorTime,
+        (Number(S.audioShift) || 0) + (Number(S.activeAudioSourceOffset) || 0),
+        S.audioBuffer && S.audioBuffer.duration);
     let slow = _auditionActive();
     if (slow && st.play) {
         // Pitch-preserving slow path: the reference rides the MediaElement, so
@@ -672,8 +686,8 @@ export function _startAudioSourceAtCursor(preRoll = 0) {
         // mixer fader is a plain gain (unity by default): the guide-clap limiter
         // must never color the recording, even when claps are off. Only the
         // guide/click voices sum through the limiter (see _ensureMasterBus).
-        const refGain = _ensureRefGain();
-        if (refGain) S.audioSource.connect(refGain);
+        const target = _activeRefTarget();
+        if (target) S.audioSource.connect(target);
         else S.audioSource.connect(S.audioCtx.destination);
         _mixApplyFirstPlayFade();
         const when = (preRoll > 0 || st.delay > 0) ? S.audioCtx.currentTime + preRoll + st.delay : 0;
@@ -1692,15 +1706,22 @@ const playingStemSources = new Map(); // sourceId → live AudioBufferSourceNode
 const stemGainNodes = new Map();      // sourceId → GainNode
 let stemDecodeGeneration = 0;
 
+const MASTER_SOURCE_ID = 'master';
 const stemKey = (sourceId) => 'audio:' + sourceId;
 
-// The live stems to play: S.stems minus the track session's non-destructive
-// removals. The master is NOT here — it keeps its own S.audioSource path.
-function _liveStemSources() {
-    const removed = new Set((S.trackSession && S.trackSession.removedSourceIds) || []);
+// Every live audio source — the master recording PLUS the stems — minus the
+// track session's non-destructive removals. The master's URL comes from
+// S.masterAudioUrl so it survives while a STEM is the active buffer (at
+// which point S.audioUrl points at the stem).
+export function _liveAudioSourcesPure(masterUrl, stems, removedSourceIds) {
+    const removed = new Set(Array.isArray(removedSourceIds) ? removedSourceIds : []);
     const seen = new Set();
     const out = [];
-    for (const raw of (Array.isArray(S.stems) ? S.stems : [])) {
+    if (masterUrl && !removed.has(MASTER_SOURCE_ID)) {
+        out.push({ id: MASTER_SOURCE_ID, url: masterUrl, offset: 0 });
+        seen.add(MASTER_SOURCE_ID);
+    }
+    for (const raw of (Array.isArray(stems) ? stems : [])) {
         const id = raw && typeof raw.id === 'string' ? raw.id : '';
         const url = raw && typeof raw.url === 'string' ? raw.url : '';
         if (!id || !url || removed.has(id) || seen.has(id)) continue;
@@ -1710,20 +1731,51 @@ function _liveStemSources() {
     return out;
 }
 
-// Decode every live stem into the cache (parallel, generation-guarded, one
-// failure never blocks the rest). Drops cache entries for stems that are
-// gone. Safe to call repeatedly — already-cached URLs are skipped.
+function _liveAudioSources() {
+    const masterUrl = S.masterAudioUrl
+        || (S.activeAudioSourceId === MASTER_SOURCE_ID ? S.audioUrl : '') || '';
+    return _liveAudioSourcesPure(masterUrl, S.stems,
+        S.trackSession && S.trackSession.removedSourceIds);
+}
+
+// The sources the multi-source scheduler plays: every live source EXCEPT the
+// active one, which plays via the S.audioSource reference path (its buffer is
+// what the waveform shows and onset tools analyze). Pure, for the tests.
+export function _scheduledSourceIdsPure(sources, activeId) {
+    return (Array.isArray(sources) ? sources : [])
+        .map(s => s && s.id).filter(id => id && id !== activeId);
+}
+
+export function _staleAudioSourceIdsPure(existingIds, liveIds) {
+    const live = liveIds instanceof Set ? liveIds : new Set(liveIds || []);
+    return [...(existingIds || [])].filter(id => !live.has(id));
+}
+
+// Decode every live source into the cache (parallel, generation-guarded, one
+// failure never blocks the rest). The master's buffer is usually already
+// decoded as S.audioBuffer — adopt it directly rather than re-fetching. Drops
+// cache entries for sources that are gone. Safe to call repeatedly.
 export async function syncStemAudio() {
-    const sources = _liveStemSources();
+    const sources = _liveAudioSources();
     const liveIds = new Set(sources.map(s => s.id));
     // Retire stems that left the roster BEFORE any await — a removed/renamed
-    // stem must stop sounding now, not seconds later when the new decodes land.
+    // stem must stop sounding now, and a stale SOLO it left in partMix would
+    // otherwise silence every live track (see _pruneStaleStems). Runs before the
+    // fetch/ctx guards so the solo cleanup happens even headless.
     _pruneStaleStems(liveIds);
     if (typeof fetch !== 'function') return;
     _ensureAudioCtx();
     if (!S.audioCtx) return;
     const generation = ++stemDecodeGeneration;
-    for (const id of [...stemAudioCache.keys()]) if (!liveIds.has(id)) stemAudioCache.delete(id);
+    for (const id of _staleAudioSourceIdsPure(stemAudioCache.keys(), liveIds)) stemAudioCache.delete(id);
+    // Adopt the already-decoded active buffer (usually the master) for free.
+    if (S.audioBuffer && S.activeAudioSourceId && liveIds.has(S.activeAudioSourceId)) {
+        const src = sources.find(s => s.id === S.activeAudioSourceId);
+        const cached = stemAudioCache.get(S.activeAudioSourceId);
+        if (src && S.audioUrl === src.url && (!cached || cached.url !== src.url)) {
+            stemAudioCache.set(S.activeAudioSourceId, { url: src.url, buffer: S.audioBuffer, peaks: null });
+        }
+    }
     await Promise.all(sources.map(async (source) => {
         const cached = stemAudioCache.get(source.id);
         if (cached && cached.url === source.url && cached.buffer) return;
@@ -1734,10 +1786,38 @@ export async function syncStemAudio() {
             const buffer = await S.audioCtx.decodeAudioData(raw);
             if (generation !== stemDecodeGeneration) return;   // superseded
             stemAudioCache.set(source.id, { url: source.url, buffer, peaks: null });
-        } catch (_) { /* one unavailable stem must not block the session */ }
+        } catch (_) { /* one unavailable source must not block the session */ }
     }));
+    if (generation !== stemDecodeGeneration) return;
+    let activeRepaired = false;
+    if (!liveIds.has(S.activeAudioSourceId)) {
+        // Prefer the master, then any other live source — a failed decode of
+        // one candidate must not strand the removed id as active, so keep
+        // trying until one activates.
+        const candidates = [
+            ...sources.filter(source => source.id === MASTER_SOURCE_ID),
+            ...sources.filter(source => source.id !== MASTER_SOURCE_ID),
+        ];
+        for (const source of candidates) {
+            if (await activateTrackAudioSource(source.id)) { activeRepaired = true; break; }
+        }
+        if (!activeRepaired) {
+            // Nothing decoded — clear the stale reference and reset to the
+            // no-source state so playback doesn't keep the removed buffer.
+            activeSourceGeneration++;
+            cancelAudioLoad();
+            S.audioBuffer = null;
+            S.waveformPeaks = null;
+            S.audioUrl = null;
+            S.activeAudioSourceId = MASTER_SOURCE_ID;
+            S.activeAudioSourceOffset = 0;
+            if (S.playing) _restartPlaybackAt(S.cursorTime);
+            host.draw();
+            activeRepaired = true;
+        }
+    }
     if (generation === stemDecodeGeneration
-        && _stemCatchupAllowedPure(S.playing, _auditionActive())) {
+        && !activeRepaired && _stemCatchupAllowedPure(S.playing, _auditionActive())) {
         const catchup = _stemCatchupPure(
             S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _auditionRate());
         _startStemSources(catchup.preRoll, catchup.cursorTime);
@@ -1793,12 +1873,64 @@ export function _pruneStaleStems(liveIds) {
     return removedSolo;
 }
 
+// Make `sourceId` the active reference: its decoded buffer becomes what the
+// main waveform shows and what onset tools (Suggest, snap) analyze. Playback
+// is NOT rerouted — the newly-active source plays via the reference path and
+// every other live source keeps playing through the scheduler, so what you
+// hear is unchanged; only what you SEE and analyze follows the click.
+export async function activateTrackAudioSource(sourceId) {
+    if (!sourceId) return false;
+    const generation = ++activeSourceGeneration;
+    const source = _liveAudioSources().find(item => item.id === sourceId);
+    if (!source || !source.url) { setStatus('That audio source is unavailable in this song.'); return false; }
+    if (sourceId === S.activeAudioSourceId && S.audioUrl === source.url
+        && (Number(S.activeAudioSourceOffset) || 0) === source.offset) return true;
+    let cached = stemAudioCache.get(sourceId);
+    if (!cached || cached.url !== source.url || !cached.buffer) {
+        if (typeof fetch !== 'function' || !S.audioCtx) return false;
+        try {
+            const resp = await fetch(source.url);
+            if (!resp.ok) throw new Error('fetch');
+            const buffer = await S.audioCtx.decodeAudioData(await resp.arrayBuffer());
+            if (generation !== activeSourceGeneration) return false;
+            cached = { url: source.url, buffer, peaks: null };
+            stemAudioCache.set(sourceId, cached);
+        } catch (_) {
+            if (generation === activeSourceGeneration) setStatus('That audio source could not be loaded.');
+            return false;
+        }
+    }
+    if (generation !== activeSourceGeneration) return false;
+    // A master load started before this selection must not land afterward and
+    // silently replace the chosen reference buffer.
+    cancelAudioLoad();
+    // The active source becomes the reference buffer. The timeline length is
+    // the master's — a stem shares it — so don't let a slightly-different stem
+    // duration move the chart's end.
+    S.audioBuffer = cached.buffer;
+    S.audioUrl = source.url;
+    S.activeAudioSourceId = sourceId;
+    S.activeAudioSourceOffset = Number(source.offset) || 0;
+    if (sourceId === MASTER_SOURCE_ID) {
+        S.duration = cached.buffer.duration;
+        S.masterAudioDuration = cached.buffer.duration;
+    }
+    host.editorApplyScrollBounds();
+    computeWaveform();          // waveform now shows this source
+    if (S.playing) _restartPlaybackAt(S.cursorTime);   // re-split active vs scheduled
+    host.draw();
+    return true;
+}
+
 // New song boundary: orphan in-flight decodes and drop every buffer.
 export function resetStemAudioCache() {
+    activeSourceGeneration++;
     stemDecodeGeneration++;
     stemAudioCache.clear();
     _stopStemSources();
     _stemGainsReset();   // detaches each stem's meter tap with its gain
+    S.activeAudioSourceId = MASTER_SOURCE_ID;
+    S.activeAudioSourceOffset = 0;
 }
 
 // A stem's cached min/max waveform peaks for its lane (lazy — built on first
@@ -1806,7 +1938,15 @@ export function resetStemAudioCache() {
 export function audioStemWaveform(sourceId) {
     const cached = stemAudioCache.get(sourceId);
     if (!cached || !cached.buffer) return null;
-    if (!cached.peaks) cached.peaks = _buildWaveformPeaks(cached.buffer, 512);
+    if (!cached.peaks) {
+        // _buildWaveformPeaks wants a channel Float32Array, NOT the AudioBuffer —
+        // passing the buffer made every data[s] read `undefined`, collapsing the
+        // peaks to ±Infinity so the lane drew off-canvas (invisible stems). Match
+        // computeWaveform's ~3 ms/bin resolution so a stem lane looks like the master.
+        const channel = cached.buffer.getChannelData(0);
+        const binSamples = Math.max(64, Math.round(cached.buffer.sampleRate * 0.003));
+        cached.peaks = _buildWaveformPeaks(channel, binSamples);
+    }
     return { peaks: cached.peaks, duration: cached.buffer.duration };
 }
 
@@ -1824,6 +1964,18 @@ function _ensureStemGain(sourceId) {
     return gain;
 }
 
+// The graph node the ACTIVE source's reference playback (the rate-1 BufferSource
+// AND the audition MediaElement alike) feeds into: its OWN per-source gain, so
+// the active source's channel strip — the master mix included — governs its
+// level/mute/solo, then on into _refGain (the SOURCE submix). Non-active sources
+// already route this way via _startStemSources. Falls back to _refGain, then the
+// destination, before any per-source gain can exist.
+function _activeRefTarget() {
+    return _ensureStemGain(S.activeAudioSourceId)
+        || _ensureRefGain()
+        || (S.audioCtx ? S.audioCtx.destination : null);
+}
+
 // Ramp every stem gain to its strip state (mute/solo/fader). ~20 ms house
 // ramp, or immediate when seating at (re)start.
 export function applyStemMix(immediate = false) {
@@ -1837,15 +1989,16 @@ export function applyStemMix(immediate = false) {
     }
 }
 
-// Schedule every cached stem at the current cursor, sample-aligned with the
-// master: each computes its own placement from S.audioShift + its own offset
-// and starts at the SAME preRoll-shifted anchor. Called from the master's
-// rate-1 start path (never the audition-slow path).
+// Schedule every live source EXCEPT the active one (which plays via the
+// S.audioSource reference path), sample-aligned: each computes its placement
+// from S.audioShift + its own offset and starts at the SAME preRoll-shifted
+// anchor. Called from the reference's rate-1 start path (never audition-slow).
 function _startStemSources(preRoll = 0, cursorTime = S.cursorTime) {
     _stopStemSources();
     if (!S.audioCtx) return 0;
     let started = 0;
-    for (const source of _liveStemSources()) {
+    for (const source of _liveAudioSources()) {
+        if (source.id === S.activeAudioSourceId) continue;   // plays via S.audioSource
         const cached = stemAudioCache.get(source.id);
         if (!cached || !cached.buffer) continue;   // not decoded yet — syncStemAudio catches up
         const placement = _audioBufferStartPure(

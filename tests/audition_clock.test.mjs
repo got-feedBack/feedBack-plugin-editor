@@ -150,11 +150,11 @@ function fakeEl() {
 t('_stopRefMedia cancels a deferred start — a stop/teardown can never resume audio', () => {
     const el = fakeEl();
     const T = fakeTimers();
-    const m = new Function('_el', '_ensureRefMedia', '_auditionRate', 'setTimeout', 'clearTimeout',
-        'let _refMediaEl = _el;\nlet _refMediaPlayTimer = null;\n'
+    const m = new Function('_el', '_ensureRefMedia', '_auditionRate', '_activeRefTarget', 'setTimeout', 'clearTimeout',
+        'let _refMediaEl = _el;\nlet _refMediaNode = null;\nlet _refMediaPlayTimer = null;\n'
         + extractFn('_stopRefMedia') + '\n' + extractFn('_startRefMediaAt')
         + '\nreturn { start: _startRefMediaAt, stop: _stopRefMedia };'
-    )(el, () => el, () => 0.5, T.setTimeout, T.clearTimeout);
+    )(el, () => el, () => 0.5, () => null, T.setTimeout, T.clearTimeout);
 
     // Count-in (preRoll 2s) defers the play() — ordinary usage, not an edge case.
     assert.strictEqual(m.start({ play: true, offset: 5, delay: 0 }, 2), true);
@@ -178,7 +178,7 @@ t('_stopRefMedia cancels a deferred start — a stop/teardown can never resume a
 t('_ensureRefMedia memoises the ASSIGNED src — a relative url must not reload the element', () => {
     const el = fakeEl();
     const S = { audioCtx: { createMediaElementSource: () => ({ connect() {} }) }, audioUrl: '/api/audio/x.wav' };
-    const m = new Function('S', '_el', 'Audio', '_ensureRefGain',
+    const m = new Function('S', '_el', 'Audio', '_activeRefTarget',
         'let _refMediaEl = null;\nlet _refMediaNode = null;\nlet _refMediaSrc = null;\n'
         + extractFn('_ensureRefMedia') + '\nreturn _ensureRefMedia;'
     )(S, el, function () { return el; }, () => null);
@@ -208,14 +208,14 @@ t('a failed slow path DEMOTES to 100% and plays the buffer — never silence und
     };
     const run = new Function('S', '_audioBufferStartPure', '_auditionActive', '_startRefMediaAt',
         '_mixApplyFirstPlayFade', '_stopRefMedia', '_auditionRefreshUi', 'setStatus',
-        '_ensureRefGain', '_anchorTransportAtCursor', '_stopStemSources', '_startStemSources',
+        '_ensureRefGain', '_activeRefTarget', '_anchorTransportAtCursor', '_stopStemSources', '_startStemSources',
         extractFn('_startAudioSourceAtCursor') + '\nreturn _startAudioSourceAtCursor;'
     )(S,
         () => ({ play: true, offset: 5, delay: 0 }),
         () => Number(S.auditionRate) < 1,
         () => false,                       // the slow path is unavailable
-        () => {}, () => {}, () => {}, (m) => status.push(m), () => null, () => {},
-        () => {}, () => 0);                // stem scheduler stubs (no stems here)
+        () => {}, () => {}, () => {}, (m) => status.push(m), () => null, () => ({ connect() {} }),
+        () => {}, () => {}, () => 0);       // stem scheduler stubs (no stems here)
 
     run(0);
     assert.strictEqual(S.auditionRate, 1, 'demoted to full speed so the clock matches the audio');

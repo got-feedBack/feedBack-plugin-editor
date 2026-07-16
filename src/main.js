@@ -48,6 +48,7 @@ import {
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
     editorToggleAuditionTrainer, editorPlayAllTracksEnabled, editorTogglePlayAllTracks,
     _partGainsApply, applyStemMix, audioStemWaveform, syncStemAudio, audioMixerMeterLevels,
+    activateTrackAudioSource,
 } from './audio.js';
 import { _mixerClapState, _mixerPanelRefresh, _mixerPartStripState, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import {
@@ -124,7 +125,7 @@ import { EDITOR_MENUS, initMenuBar } from './menu-bar.js';
 import { _tabViewHideIfShown, _tabViewPing, editorToggleTabView, teardownTabView } from './tab-view-live.js';
 import { initToolbars } from './toolbars.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
-import { _trackSessionTargetsPure, initTrackSession, installCreatedTrackSession, refreshTrackSession, scrollTrackSessionBy } from './track-session.js';
+import { _trackSessionTargetsPure, initTrackSession, installCreatedTrackSession, refreshTrackSession, scrollTrackSessionBy, trackSessionOrderedMixKeys } from './track-session.js';
 import { editorDismissSignpost } from './signposts.js';
 import { _editorSongFit } from './song-fit.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
@@ -555,6 +556,10 @@ setHostHooks({
         const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
         if (index >= 0 && index !== S.currentArr) window.editorSelectArrangement(String(index));
     },
+    // Focus an audio source: its buffer becomes the waveform + onset source
+    // (playback keeps all sources — see activateTrackAudioSource). Async;
+    // fire-and-forget from the click.
+    selectTrackSessionSource: (sourceId) => { activateTrackAudioSource(sourceId); },
     openTrackSessionTarget: (targetId) => {
         _finalizeActiveDrag();
         S.partsViewMode = false;
@@ -577,11 +582,12 @@ setHostHooks({
     },
     // Vertical wheel over the Tracks area scrolls the shared lane stack.
     scrollTrackArea: (deltaY) => scrollTrackSessionBy(deltaY),
+    mixerTrackOrder: () => trackSessionOrderedMixKeys(),
     // Lane waveforms: the master mix draws from the session's decoded peaks;
     // a stem draws from its own decoded buffer in the stem-audio cache.
-    trackWaveform: (sourceId) => (sourceId === 'master'
-        ? (S.waveformPeaks && S.duration > 0 ? { peaks: S.waveformPeaks, duration: S.duration } : null)
-        : audioStemWaveform(sourceId)),
+    trackWaveform: (sourceId) => audioStemWaveform(sourceId)
+        || (sourceId === S.activeAudioSourceId && S.waveformPeaks && S.audioBuffer
+            ? { peaks: S.waveformPeaks, duration: S.audioBuffer.duration } : null),
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML

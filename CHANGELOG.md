@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The master mix is a channel strip in the mixer.** Every audio source now has
+  a vertical strip in the mixer drawer — the master mix leads the audio band
+  (matching the DAW console), followed by the stems, then the MIDI parts and the
+  SOURCE/GUIDE/CLICK/MASTER buses. Its fader, mute, and solo are real: the active
+  source's reference playback now routes through its own per-source gain before
+  the SOURCE submix, so riding the master strip actually changes its level. The
+  Tracks pane still lists the master as a selectable source row (click it to
+  chart against the full mix), but its strip **controls** — fader, mute, solo —
+  live only in the mixer, not the pane.
+- **Click a track to chart against it.** Selecting an audio track (the master
+  mix or any stem) in the Tracks column now makes it the **active source**:
+  the main waveform shows that track and the onset tools (Suggest, snapping)
+  analyze it — so you can line the grid up against an isolated stem. Playback
+  is unaffected: every source keeps playing together; only what you *see* and
+  *analyze* follows the click.
+
+### Fixed
+- **Audio stem lanes now draw their waveforms.** The per-stem waveform builder
+  was handed the decoded `AudioBuffer` instead of its channel `Float32Array`, so
+  every sample read `undefined` and the peaks collapsed to ±Infinity — the lane
+  painted off-canvas and looked empty. It now reads `getChannelData(0)` at the
+  master's ~3 ms/bin resolution, so each stem lane shows its shape like the mix.
+- **Parity pass against the DAW track-session design.** The backend now sends
+  `audio_sources` with the master's pack-authored name (from the manifest
+  `full` mix) and per-stem display names, and the stem cache filename carries
+  a per-source index so two stem ids that sanitize alike can't overwrite each
+  other's audio. Deleting a transcription track from the Tracks context menu
+  now finishes its cleanup (its `editorRemoveArrangement` reports success
+  again); clicking an audio LANE on the canvas focuses that source like its
+  header row does; cycling the tempo guide respects the 🔒 lock and resets a
+  new guide to plain audio analysis; the header-strip fader regained its
+  +6 dB range; a removed audio track drops its stale mixer state.
+- **Tempo guide + Tracks column reliability.** The Master row and the tempo
+  guide could vanish (guide read "No guide") because audio sources were
+  derived from `S.audioUrl`, which active-source switching reassigns to a
+  focused stem and which isn't set yet at load — the master now rides the
+  stable `S.masterAudioUrl`. The master track defaults to the **song name**
+  (not the generic "Master Mix"), and the guide label follows a track's
+  inline rename. The mixer channel strips now **reorder to match a drag in
+  the Tracks column** (and rename with it).
+
 ### Changed
 
 - **The mixer is now a proper DAW console.** The docked side panel is

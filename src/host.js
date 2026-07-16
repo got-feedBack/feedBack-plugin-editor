@@ -73,6 +73,8 @@ export const host = {
     partsViewOnDblClick: () => {},
     /** Arm a transcription target (arrangement / drums) from the Tracks area. */
     selectTrackSessionTarget: () => {},
+    /** Focus an audio source as the active waveform/onset reference. */
+    selectTrackSessionSource: () => {},
     /** Leave the Tracks overview and open a transcription's native editor. */
     openTrackSessionTarget: () => {},
     /** Vertically scroll the shared track-header/canvas lane stack. */
@@ -203,6 +205,8 @@ export const host = {
     mixUiState: () => ({ pcts: { ref: 100, guide: 35, click: 25, master: 100 }, blip: true }),
     /** Live post-fader meter levels + peak dB per bus and stem track. */
     mixerMeterLevels: () => ({ ref: 0, guide: 0, click: 0, master: 0, tracks: {}, peaks: {}, trackPeaks: {} }),
+    /** Mixer strip keys in Tracks-column row order (mixer follows a reorder). */
+    mixerTrackOrder: () => [],
     /**
      * Per-part strip state BY KEY ('arr:<idx>' / 'drums') for band-mode
      * MIDI playback: {audible, vol 0..1} with the whole-map solo rule.

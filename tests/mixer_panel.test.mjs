@@ -67,7 +67,7 @@ globalThis.window = globalThis.window || globalThis;
 const {
     _mixerPartsPure, _mixerPartStatePure, _mixerAnySoloPure, _mixerPartAudiblePure,
     _mixerClapStatePure, _mixerOpenFromStoredPure, _mixerClapState,
-    _mixerGainForFaderPure, _mixerFaderLabelPure,
+    _mixerGainForFaderPure, _mixerFaderLabelPure, _mixerOrderedPartsPure,
     _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel,
 } = await import('../src/mixer-panel.js');
 const { S } = await import('../src/state.js');
@@ -116,6 +116,23 @@ t('fader: unity detent at 0 dB, +10 dB of headroom at the ceiling', () => {
     assert.strictEqual(_mixerFaderLabelPure(0), '−∞ dB');
 });
 
+t('strips reorder to match the Tracks-column row order (drag reorder follows)', () => {
+    const parts = [
+        { key: 'audio:Guitar_L', name: 'Gtr' },
+        { key: 'arr:0', name: 'Lead' },
+        { key: 'arr:1', name: 'Bass' },
+        { key: 'drums', name: 'Drums' },
+    ];
+    // Tracks column dragged into: Bass, Drums, Gtr, Lead.
+    const ordered = _mixerOrderedPartsPure(parts, ['arr:1', 'drums', 'audio:Guitar_L', 'arr:0']);
+    assert.deepStrictEqual(ordered.map(p => p.key), ['arr:1', 'drums', 'audio:Guitar_L', 'arr:0']);
+    // Keys absent from the order list keep their original relative order at the tail.
+    const partial = _mixerOrderedPartsPure(parts, ['arr:1']);
+    assert.deepStrictEqual(partial.map(p => p.key), ['arr:1', 'audio:Guitar_L', 'arr:0', 'drums']);
+    assert.deepStrictEqual(_mixerOrderedPartsPure(parts, []).map(p => p.key),
+        parts.map(p => p.key), 'no order → unchanged');
+});
+
 t('audibility: no solo → everything unmuted sounds; mute always wins', () => {
     assert.strictEqual(_mixerPartAudiblePure({}, 'arr:0'), true);
     assert.strictEqual(_mixerPartAudiblePure({ 'arr:0': { mute: true } }, 'arr:0'), false);
@@ -129,6 +146,17 @@ t('audibility: any solo isolates the soloed strips', () => {
     assert.strictEqual(_mixerPartAudiblePure(mix, 'arr:0'), true);
     assert.strictEqual(_mixerPartAudiblePure(mix, 'arr:1'), false);
     assert.strictEqual(_mixerPartAudiblePure(mix, 'drums'), false);
+});
+
+t('master is the OUTPUT bus: others solo/mute never silence it, its own mute does', () => {
+    // A stem soloed AND a different track muted — master must stay audible: it's
+    // the final destination downstream of the sum, not a peer channel.
+    const mix = { 'audio:gtr': { solo: true }, 'arr:0': { mute: true } };
+    assert.strictEqual(_mixerPartAudiblePure(mix, 'audio:master'), true);
+    // The non-soloed non-master track is still isolated out (rule unchanged).
+    assert.strictEqual(_mixerPartAudiblePure(mix, 'audio:bass'), false);
+    // Over-correction guard: master's OWN mute (the output fader) still mutes it.
+    assert.strictEqual(_mixerPartAudiblePure({ 'audio:master': { mute: true } }, 'audio:master'), false);
 });
 
 // ── The clap state the guide scheduler consumes ──────────────────────

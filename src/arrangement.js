@@ -158,12 +158,12 @@ export async function editorRenameArrangement() {
 export async function editorRemoveArrangement() {
     if (_recState !== 'idle') {
         setStatus('Cannot remove an arrangement while recording. Stop the take first.');
-        return;
+        return false;
     }
-    if (S.arrangements.length <= 1) return;
+    if (S.arrangements.length <= 1) return false;
     const removeIdx = S.currentArr;
     const arr = S.arrangements[removeIdx];
-    if (!confirm(`Remove "${arr.name}" arrangement?`)) return;
+    if (!confirm(`Remove "${arr.name}" arrangement?`)) return false;
 
     // Remove from backend first
     if (S.sessionId) {
@@ -179,11 +179,11 @@ export async function editorRemoveArrangement() {
             const result = await resp.json();
             if (result.error) {
                 setStatus('Remove failed: ' + result.error);
-                return;
+                return false;
             }
         } catch (e) {
             setStatus('Remove failed: ' + e.message);
-            return;
+            return false;
         }
     }
 

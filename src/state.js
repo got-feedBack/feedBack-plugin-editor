@@ -136,6 +136,18 @@ export const S = {
     // header/canvas scroll, and the header column's width/viewport.
     selectedTrackId: '',
     focusedSourceId: 'master',
+    // The source shown as the main waveform and analyzed for onsets (Suggest,
+    // snap). Playback is unaffected — every OTHER live source plays alongside.
+    // The master recording's URL is held separately so it survives while a
+    // stem is the active buffer.
+    activeAudioSourceId: 'master',
+    activeAudioSourceOffset: 0,
+    masterAudioUrl: null,
+    masterAudioDuration: 0,
+    // The master recording's authored display name (from the pack manifest's
+    // `full` mix entry, via the backend's audio_sources). Empty when the pack
+    // didn't name it — the Tracks column then falls back to the song name.
+    masterAudioName: '',
     trackHeights: {},
     trackScrollY: 0,
     trackHeaderWidth: 320,

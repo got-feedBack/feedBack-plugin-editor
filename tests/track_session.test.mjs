@@ -44,6 +44,7 @@ const {
     _partMixDropArrangementPure,
     installCreatedTrackSession,
     trackSessionSavePayload,
+    trackSessionOrderedMixKeys,
 } = await import('../src/track-session.js');
 const { S } = await import('../src/state.js');
 
@@ -211,17 +212,51 @@ t('a fully-default tree is default; ANY customization is not', () => {
 });
 
 t('the create/import seam adopts audio_sources wholesale — bare ids, unconditional stems reset', () => {
-    Object.assign(S, { arrangements: [{ name: 'Lead' }], drumTab: null, stems: [{ id: 'Stale', url: '/old.ogg' }], audioUrl: '/old.ogg' });
-    installCreatedTrackSession(null, [
-        { id: 'master', name: 'Master Mix', kind: 'master', url: '/new.ogg' },
-        { id: 'stem:Kick_In', name: 'Kick In', kind: 'stem', url: '/k.ogg' },
-    ]);
-    assert.deepStrictEqual(S.stems, [{ id: 'Kick_In', name: 'Kick In', url: '/k.ogg' }],
-        'bare manifest ids; the previous song\'s stems are gone');
-    assert.deepStrictEqual(S.trackSession.tracks.map(track => track.id),
-        ['audio:master', 'audio:Kick_In', 'transcription:Lead']);
-    installCreatedTrackSession(null, [{ id: 'master', name: 'M', kind: 'master', url: '/solo.ogg' }]);
-    assert.deepStrictEqual(S.stems, [], 'a stemless import resets stems too');
+    const saved = { trackSession: S.trackSession, arrangements: S.arrangements, drumTab: S.drumTab,
+        stems: S.stems, audioUrl: S.audioUrl, masterAudioUrl: S.masterAudioUrl, stemLinks: S.stemLinks,
+        activeAudioSourceId: S.activeAudioSourceId, activeAudioSourceOffset: S.activeAudioSourceOffset };
+    try {
+        Object.assign(S, { arrangements: [{ name: 'Lead' }], drumTab: null, stems: [{ id: 'Stale', url: '/old.ogg' }], audioUrl: '/old.ogg' });
+        installCreatedTrackSession(null, [
+            { id: 'master', name: 'Master Mix', kind: 'master', url: '/new.ogg' },
+            { id: 'stem:Kick_In', name: 'Kick In', kind: 'stem', url: '/k.ogg' },
+        ]);
+        assert.deepStrictEqual(S.stems, [{ id: 'Kick_In', name: 'Kick In', url: '/k.ogg' }],
+            'bare manifest ids; the previous song\'s stems are gone');
+        assert.deepStrictEqual(S.trackSession.tracks.map(track => track.id),
+            ['audio:master', 'audio:Kick_In', 'transcription:Lead']);
+        installCreatedTrackSession(null, [{ id: 'master', name: 'M', kind: 'master', url: '/solo.ogg' }]);
+        assert.deepStrictEqual(S.stems, [], 'a stemless import resets stems too');
+    } finally { Object.assign(S, saved); }
+});
+
+t('the create/import seam anchors the master at offset 0, dropping a focused stem placement', () => {
+    const saved = { trackSession: S.trackSession, arrangements: S.arrangements, drumTab: S.drumTab,
+        stems: S.stems, audioUrl: S.audioUrl, masterAudioUrl: S.masterAudioUrl, stemLinks: S.stemLinks,
+        activeAudioSourceId: S.activeAudioSourceId, activeAudioSourceOffset: S.activeAudioSourceOffset };
+    try {
+        Object.assign(S, { arrangements: [{ name: 'Lead' }], drumTab: null, stems: [], audioUrl: '/old.ogg',
+            activeAudioSourceId: 'Kick_In', activeAudioSourceOffset: 0.42 });
+        installCreatedTrackSession(null, [{ id: 'master', name: 'M', kind: 'master', url: '/new.ogg' }]);
+        assert.strictEqual(S.activeAudioSourceId, 'master');
+        assert.strictEqual(S.activeAudioSourceOffset, 0,
+            'a previous stem offset cannot carry into the fresh session and shift its analysis');
+    } finally { Object.assign(S, saved); }
+});
+
+t('collapsing a folder does not drop its stems from the mixer order', () => {
+    const saved = { trackSession: S.trackSession, arrangements: S.arrangements, drumTab: S.drumTab,
+        stems: S.stems, audioUrl: S.audioUrl, masterAudioUrl: S.masterAudioUrl, stemLinks: S.stemLinks };
+    try {
+        let model = _trackSessionCreateFolderPure(empty, sources, arrangements, null, 'Band');
+        model = _trackSessionMovePure(model, 'audio:Guitar_L', 'folder:1', 'inside', sources, arrangements, null);
+        Object.assign(S, { trackSession: model, arrangements, drumTab: null,
+            stems: [{ id: 'Guitar_L', url: '/s1.ogg' }], audioUrl: '/a.ogg', masterAudioUrl: '/a.ogg', stemLinks: {} });
+        const expandedKeys = trackSessionOrderedMixKeys();
+        model.tracks.find(track => track.id === 'folder:1').collapsed = true;
+        assert.deepStrictEqual(trackSessionOrderedMixKeys(), expandedKeys,
+            'collapsing a folder must preserve mixer ordering');
+    } finally { Object.assign(S, saved); }
 });
 
 t('savePayload is null for a default tree and the normalized tree otherwise', () => {

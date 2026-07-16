@@ -182,6 +182,16 @@ export async function loadCDLC(filename, options = {}) {
         }
         // Freshly loaded from disk — not dirty until the user edits it.
         S.drumTabDirty = false;
+        // The master recording's URL is the active source's anchor — held
+        // separately so it survives while a stem is focused as the reference.
+        // Set BEFORE installTrackSession: its render reads the master name via
+        // _liveSources, so a late assignment would flash the previous song's
+        // master/guide label on the first paint.
+        S.masterAudioUrl = data.audio_url || null;
+        S.masterAudioDuration = data.audio_url ? (Number(S.duration) || 0) : 0;
+        // The pack-authored master audio name (backend audio_sources), if any.
+        S.masterAudioName = (Array.isArray(data.audio_sources)
+            ? (data.audio_sources.find(s => s && s.id === 'master') || {}).name : '') || '';
         // Persistent track tree — adopted after arrangements/stems/drumTab so
         // normalization sees the full loaded song. data.audio_url rides in
         // explicitly: S.audioUrl still points at the PREVIOUS song here
@@ -190,7 +200,7 @@ export async function loadCDLC(filename, options = {}) {
         // New song ⇒ the previous song's guide analysis (a decoded stem +
         // its onsets) is stale; also orphans any in-flight guide decode.
         _guideAnalysisReset();
-        // Decode this song's stems for playback (drops the old song's first).
+        // Decode this song's sources for playback (drops the old song's first).
         // Fire-and-forget: the decode lands before play, or catches up on the
         // next transport (re)start if the user is very quick.
         resetStemAudioCache();
