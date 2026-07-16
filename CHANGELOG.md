@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Tracks are now first-class, persistent objects.** A song's tracks — the
+  master recording, studio stems, and every transcription part, optionally
+  grouped into folders — form one ordered tree the editor remembers across
+  save and reopen (the `editor_track_session` manifest extension key).
+  The tree layers over the canonical song data: it references arrangements
+  and stems by the same keys the stem pairings already use, so nothing is
+  stored twice — pairing stays in `editor_stem_links`, per-track mix stays
+  session state. Removing an audio track is non-destructive (the media
+  stays in the pack; the track can be restored), and the tree records
+  which audio source is the session's tempo reference. This slice is the
+  data model and persistence; the unified Tracks surface that renders the
+  tree ships separately.
+
 ### Changed
 
 - **Assisted tempo mapping trusts a bridged gap once the far side confirms.**

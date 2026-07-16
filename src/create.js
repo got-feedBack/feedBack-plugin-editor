@@ -34,6 +34,7 @@ import { disposeBackendSession, stopSessionProcesses } from './session-lifecycle
 import { _ensureOnsetsShifted } from './audio.js';
 import { _firstDownbeatTimePure, _importBar1NudgePure, _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
 import { seedSurfacePreset, surfacePersistFor } from './toolbars.js';
+import { trackSessionSavePayload } from './track-session.js';
 import { _editorMaybeStartTour } from './tour.js';
 import { _editorEscHtml, _installModalKeyboard, setStatus } from './ui.js';
 import { importMidiTracksIntoSession } from './import.js';
@@ -2544,6 +2545,9 @@ export async function editorBuild() {
                 // wire the save body ships), so a pairing made while
                 // arranging survives the first Build, not just re-saves.
                 stem_links: S.stemLinks || {},
+                // Persistent track tree — editor_track_session in the built
+                // pack's manifest; null (default tree) writes no key.
+                track_session: trackSessionSavePayload(),
                 metadata: {
                     title: S.title,
                     artist: S.artist,

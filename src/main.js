@@ -124,6 +124,7 @@ import { EDITOR_MENUS, initMenuBar } from './menu-bar.js';
 import { _tabViewHideIfShown, _tabViewPing, editorToggleTabView, teardownTabView } from './tab-view-live.js';
 import { initToolbars } from './toolbars.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
+import { installCreatedTrackSession } from './track-session.js';
 import { editorDismissSignpost } from './signposts.js';
 import { _editorSongFit } from './song-fit.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
@@ -526,6 +527,10 @@ setHostHooks({
     partMixChanged: () => _partGainsApply(false),
     playAllTracksEnabled: () => editorPlayAllTracksEnabled(),
     stripUiChanged: () => _mixerPanelRefresh(),
+    // Persistent track tree: create/import hands every create-time source to
+    // the installer so the tree exists from the first moment, not only after
+    // a save/reopen (the seam #286 reserved).
+    installCreatedTrackSession: (raw, sources) => installCreatedTrackSession(raw, sources),
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML
