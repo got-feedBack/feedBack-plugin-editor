@@ -15,6 +15,7 @@ const {
     _trackSessionLaneLayoutPure, _trackSessionDropPlacementPure, _trackRenameEditorMarkupPure,
     _trackSessionRetargetPure, _trackLinksRetargetPure, _trackFocusSourcePure,
     _trackTranscriptionRenameGuardPure,
+    _trackSessionRemovedSourcesPure,
 } = await import('../src/track-session.js');
 
 let pass = 0, fail = 0;
@@ -100,6 +101,12 @@ t('inline transcription rename enforces the arrangement identity guard', () => {
         'a display rename cannot silently change the instrument lane type');
     assert.deepStrictEqual(_trackTranscriptionRenameGuardPure('Lead', '  Solo Guitar  ', ['Rhythm']),
         { ok: true, reason: '', name: 'Solo Guitar' });
+});
+
+t('tombstoned audio sources remain discoverable for the restore control', () => {
+    const all = [{ id: 'master', name: 'Master Mix' }, { id: 'gtr', name: 'Guitar' }];
+    assert.deepStrictEqual(_trackSessionRemovedSourcesPure({ removedSourceIds: ['gtr'] }, all), [all[1]]);
+    assert.deepStrictEqual(_trackSessionRemovedSourcesPure({ removedSourceIds: [] }, all), []);
 });
 
 for (const [name, fn] of tests) {

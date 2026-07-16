@@ -261,6 +261,12 @@ export function _trackSessionRestorePure(session, sourceId, sources, arrangement
     return _trackSessionNormalizePure(next, sources, arrangements, drumTab);
 }
 
+export function _trackSessionRemovedSourcesPure(session, sources) {
+    const removed = new Set((session && Array.isArray(session.removedSourceIds))
+        ? session.removedSourceIds : []);
+    return (Array.isArray(sources) ? sources : []).filter(source => source && removed.has(source.id));
+}
+
 export function _trackSessionMovePure(session, movedId, targetId, placement, sources, arrangements, drumTab) {
     const model = _trackSessionNormalizePure(session, sources, arrangements, drumTab);
     const from = model.tracks.findIndex(t => t.id === movedId);
@@ -557,6 +563,7 @@ function render() {
     const el = panel();
     if (!el) return;
     const { model, rows, sources } = _rowsLive();
+    const removedSources = _trackSessionRemovedSourcesPure(model, _liveSources());
     const fittedHeights = _trackSessionFittedHeightsPure(rows, S.trackHeights, S.trackViewportHeight);
     // Pairing options are STEMS only — pairing lives in stemLinks (a stem
     // id per chart key); "inherit" (no link) means the part transcribes
@@ -581,7 +588,10 @@ function render() {
         ? _trackRenameEditorMarkupPure(row.id, row.name)
         : markup;
     const guideMode = model.tempoGuideMode === 'metronome' ? ' · Click' : '';
-    el.innerHTML = `<div class="editor-track-session-head"><strong>Tracks</strong><button data-track-action="folder" title="Create optional folder">+ Folder</button><span class="editor-track-guide-label">Guide</span><button class="editor-track-guide-source" data-track-action="guide-cycle" title="Cycle tempo guide">${_editorEscHtml(guide.name + guideMode)}</button><button data-track-action="guide-lock" aria-pressed="${model.tempoGuideLocked}" title="Lock tempo guide — assisted mapping (G) analyzes the locked guide">${model.tempoGuideLocked ? '🔒' : '🔓'}</button><button data-track-action="zoom-out" title="Reduce all track heights">−</button><button data-track-action="zoom-in" title="Increase all track heights">+</button></div><div class="editor-track-session-list">${rows.map(row => {
+    const restore = removedSources.length
+        ? `<select data-track-action="restore-source" aria-label="Restore removed audio track"><option value="">Restore track…</option>${removedSources.map(source => `<option value="${_editorEscHtml(source.id)}">${_editorEscHtml(source.name)}</option>`).join('')}</select>`
+        : '';
+    el.innerHTML = `<div class="editor-track-session-head"><strong>Tracks</strong><button data-track-action="folder" title="Create optional folder">+ Folder</button>${restore}<span class="editor-track-guide-label">Guide</span><button class="editor-track-guide-source" data-track-action="guide-cycle" title="Cycle tempo guide">${_editorEscHtml(guide.name + guideMode)}</button><button data-track-action="guide-lock" aria-pressed="${model.tempoGuideLocked}" title="Lock tempo guide — assisted mapping (G) analyzes the locked guide">${model.tempoGuideLocked ? '🔒' : '🔓'}</button><button data-track-action="zoom-out" title="Reduce all track heights">−</button><button data-track-action="zoom-in" title="Increase all track heights">+</button></div><div class="editor-track-session-list">${rows.map(row => {
         const trackId = _editorEscHtml(row.id); const name = _editorEscHtml(row.name); const indent = Math.min(5, row.depth) * 14;
         const height = fittedHeights[row.id];
         const style = `--track-indent:${indent}px;--track-row-height:${height}px`;
@@ -709,6 +719,7 @@ async function deleteTrack(trackId) {
         commit(_trackSessionDeletePure(S.trackSession, row.id, _liveSources(), S.arrangements, S.drumTab),
             `Removed audio track “${row.name}” — the media stays inside the project.`);
         host.partMixChanged();
+        host.audioSourcesChanged();
     } else if (row.targetId === DRUM_TARGET_ID) {
         if (!confirm(`Delete drum transcription “${row.name}”?`)) return false;
         S.drumTab = null;
@@ -900,6 +911,18 @@ export function initTrackSession() {
         mixerSetPart(range.getAttribute('data-mix-key') || '', { vol: Number(range.value) });
     });
     el.addEventListener('change', event => {
+        const restore = event.target && event.target.matches
+            && event.target.matches('[data-track-action="restore-source"]') ? event.target : null;
+        if (restore) {
+            const sourceId = restore.value || '';
+            if (!sourceId) return;
+            const source = _liveSources().find(item => item.id === sourceId);
+            commit(_trackSessionRestorePure(S.trackSession, sourceId,
+                _liveSources(), S.arrangements, S.drumTab),
+            `Restored audio track “${source ? source.name : sourceId}”.`);
+            host.audioSourcesChanged();
+            return;
+        }
         const select = event.target && event.target.matches && event.target.matches('[data-track-action="pair"]') ? event.target : null;
         if (!select) return;
         const targetId = select.getAttribute('data-target-id') || '';

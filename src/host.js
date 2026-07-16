@@ -213,6 +213,8 @@ export const host = {
      * an import cycle. Inert defaults for bare-host unit tests.
      */
     partMixChanged: () => {},
+    /** The visible audio-source roster changed (remove/restore/import/rename). */
+    audioSourcesChanged: () => {},
     stripUiChanged: () => {},
     /** The persisted band-mode pref, read by the panel's header toggle. */
     playAllTracksEnabled: () => false,
