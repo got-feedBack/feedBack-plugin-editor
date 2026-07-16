@@ -124,6 +124,7 @@ import { _fretboardStripRefresh, editorToggleFretboardStrip, initFretboardStrip 
 import { EDITOR_MENUS, initMenuBar } from './menu-bar.js';
 import { _tabViewHideIfShown, _tabViewPing, editorToggleTabView, teardownTabView } from './tab-view-live.js';
 import { initToolbars } from './toolbars.js';
+import { _applyToolCursor, editorToolPaletteClick } from './tools.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
 import { _trackSessionTargetsPure, initTrackSession, installCreatedTrackSession, refreshTrackSession, scrollTrackSessionBy, trackSessionOrderedMixKeys } from './track-session.js';
 import { editorDismissSignpost } from './signposts.js';
@@ -2091,6 +2092,22 @@ function init() {
 
     // Prevent middle-click paste
     canvas.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
+
+    // Tool palette rows (screen-injected DOM — dies and re-wires with the
+    // screen like the canvas listeners above). The command runner rides in
+    // as an argument: tools.js can't import input.js back without a cycle.
+    // `editorRunShortcutCommand` is the same by-id dispatcher the command
+    // palette uses (see initCommandPalette below).
+    const toolPalette = document.getElementById('editor-tool-palette');
+    if (toolPalette) {
+        toolPalette.addEventListener('click',
+            (e) => editorToolPaletteClick(e, editorRunShortcutCommand));
+    }
+    // Restore the persisted left tool's cursor now that the canvas exists —
+    // editorLeftTool() reloads the saved tool, but only setEditorLeftTool()
+    // paints the cursor, so a reload with e.g. Eraser active would otherwise
+    // show the default pointer over a destructive tool.
+    _applyToolCursor();
 
     resizeCanvas();
     _globalListeners.add(window, 'resize', resizeCanvas);

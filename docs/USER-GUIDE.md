@@ -128,6 +128,31 @@ note — same-time notes there are independent voices, not a strum.)
   notes** with `Ctrl+A` (`Cmd+A` on macOS); **select all matching** string/fret
   with `Ctrl+L`; **resnap** to the grid with `Shift+R`. Select All remains a
   normal text command while editing a name or typing in a field.
+- **Split** a sustained note: **Edit ▸ Split notes at playhead** cuts every
+  selected (or spanning) note at the playhead; the **Scissors tool** (below)
+  does the same with a click.
+
+### Click tools
+
+Press **`T`** to open the **tool palette** at your cursor (like a DAW's tool
+menu), then press a key — or click — to choose what left-click does:
+
+- **Pointer** (`V`) — the default: select, move, resize.
+- **Pencil** (`B`) — *draw mode*: click empty canvas to add a note instantly
+  (snapped, no dialog — type a digit right after to set its fret), click a
+  note to remove it.
+- **Eraser** (`E`) — click a note to delete it.
+- **Marquee** (`M`) — drag always box-selects, even starting on a note.
+- **Mute** (`U`) — click a note to toggle its mute.
+- **Scissors** (`C`) — click inside a sustained note to split it there.
+
+**Shift/Ctrl-click always selects**, whatever tool is active. Pressing `T`
+twice enters **Tempo Map** (in the Logical profile, `T,T` returns to the
+Pointer instead — Logic's convention — and `G` enters Tempo Map). In the
+Cableton profile, plain `B` toggles the Pencil like Live's Draw Mode. The
+Legacy (EOF) profile keeps its keys exactly as-is — find the palette in
+**View ▸** there. The right-click setting in the shortcut panel (`?`) can
+run any of these tools on the right button instead of the context menu.
 
 ### Techniques
 

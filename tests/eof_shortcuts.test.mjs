@@ -231,5 +231,25 @@ t('lets saved right-click behavior override profile defaults', () => {
     assert.strictEqual(api._editorEffectiveRightClickBehaviorPure('feedback', 'eofEdit'), 'eofEdit');
     assert.strictEqual(api._editorEffectiveRightClickBehaviorPure('feedback', 'bogus'), 'context');
 });
+
+// Regression: the settings <select> / hint / status must DISPLAY a saved
+// `tool:<id>` right-click assignment verbatim, not collapse it to the profile
+// default. Before the fix the sync used _editorEffectiveRightClickBehaviorPure,
+// which drops tool: values → the dropdown snapped back to "Context menus" the
+// instant you picked a tool and the tool hint was dead code.
+t('control display value keeps a saved tool: assignment (not the binary resolver)', () => {
+    // The binary resolver DOES collapse it — that is correct for its job and
+    // is exactly why it must NOT be the one driving the control.
+    assert.strictEqual(api._editorEffectiveRightClickBehaviorPure('feedback', 'tool:eraser'), 'context');
+    // The display resolver keeps every persistable value intact.
+    for (const v of ['tool:pencil', 'tool:eraser', 'tool:marquee', 'tool:mute', 'tool:scissors', 'context', 'eofEdit']) {
+        assert.strictEqual(api._editorRightClickControlValuePure('feedback', v), v, v);
+    }
+    // Null / junk still fall back to the profile default.
+    assert.strictEqual(api._editorRightClickControlValuePure('feedback', null), 'context');
+    assert.strictEqual(api._editorRightClickControlValuePure('eof', null), 'eofEdit');
+    assert.strictEqual(api._editorRightClickControlValuePure('feedback', 'tool:zoom'), 'context');
+    assert.strictEqual(api._editorRightClickControlValuePure('feedback', 'bogus'), 'context');
+});
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

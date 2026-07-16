@@ -32,7 +32,14 @@ export const EDITOR_PROFILE_NAMES = Object.freeze({
     cableton: 'Cableton (Ableton-style)',
     eof: 'Legacy (EOF)',
 });
-const EDITOR_RIGHT_CLICK_BEHAVIORS = new Set(['context', 'eofEdit']);
+// Extended by the click-tools system (CLICK-TOOLS-DESIGN.md): the right
+// button can also run any non-pointer tool's click action, giving left and
+// right click feature parity. tools.js owns the 'tool:<id>' validation; this
+// set gates what the panel <select> may persist.
+const EDITOR_RIGHT_CLICK_BEHAVIORS = new Set([
+    'context', 'eofEdit',
+    'tool:pencil', 'tool:eraser', 'tool:marquee', 'tool:mute', 'tool:scissors',
+]);
 // Chord-click selection: does clicking one note of a same-time chord select
 // just that note ('single', DAW-style) or the whole strum ('chord', EOF-style)?
 // Like the right-click behaviour it defaults from the profile and can be pinned.
@@ -136,6 +143,11 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'copySelection', label: 'Copy selection', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+C', eof: 'Ctrl+C' } },
     { id: 'cutSelection', label: 'Cut selection', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+X', eof: 'Shift+Del' } },
     { id: 'pasteAtPlayhead', label: 'Paste at playhead', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+V', eof: 'Ctrl+V' } },
+    { id: 'splitAtPlayhead', label: 'Split notes at playhead', group: 'Selection', status: 'ready', keys: {} },
+    // The Logic-style left-click tool palette (CLICK-TOOLS-DESIGN.md). Plain T
+    // opens it in every profile except Legacy (EOF), whose key map stays 1:1
+    // EOF — there it lives in the View menu / this command palette.
+    { id: 'toolPalette', label: 'Tool palette (left-click tool)', group: 'View', status: 'ready', keys: { feedback: 'T', logical: 'T', cableton: 'T' } },
     { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+R', logical: 'Q', cableton: 'Ctrl+U', eof: 'Shift+R' } },
     { id: 'addSection', label: 'Add section at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+M', logical: "Alt+'", eof: 'Shift+S' } },
     { id: 'addPhrase', label: 'Add phrase at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+P', eof: 'Shift+P' } },
@@ -393,6 +405,19 @@ export function _editorChordGrabsStrumPure(effectiveBehavior, altKey, isKeysData
     return (effectiveBehavior === 'chord') !== !!altKey;
 }
 
+// The value the settings <select> / hint / status must DISPLAY. Unlike
+// _editorEffectiveRightClickBehaviorPure (the binary add/remove-vs-context
+// decision, which deliberately collapses a `tool:` assignment to the profile
+// default), this keeps a saved `tool:<id>` intact so the panel reflects the
+// right-click-parity choice that's actually in effect. Any recognized
+// persistable value (context / eofEdit / tool:<id>) shows verbatim; anything
+// else falls back to the profile default.
+export function _editorRightClickControlValuePure(profile, savedBehavior) {
+    return EDITOR_RIGHT_CLICK_BEHAVIORS.has(savedBehavior)
+        ? savedBehavior
+        : _editorDefaultRightClickBehaviorPure(profile);
+}
+
 export function _editorFeedbackCommandForKeyPure(e, mode) {
     const sig = _editorKeySigPure(e);
     const key = (e.key || '').toLowerCase();
@@ -505,14 +530,16 @@ export function _editorIsTypingTarget(e) {
 }
 
 function _editorSyncRightClickBehaviorControls() {
-    const val = _editorEffectiveRightClickBehaviorPure(editorShortcutProfile, editorRightClickBehavior);
+    const val = _editorRightClickControlValuePure(editorShortcutProfile, editorRightClickBehavior);
     const el = document.getElementById('editor-right-click-behavior');
     if (el) el.value = val;
     const hint = document.getElementById('editor-right-click-hint');
     if (hint) {
         hint.textContent = val === 'eofEdit'
             ? 'Right-click note lanes add/remove notes; lanes and markers keep context menus.'
-            : 'Right-click opens context menus.';
+            : val.startsWith('tool:')
+                ? `Right-click runs the ${val.slice(5)} tool on note lanes; lanes and markers keep context menus.`
+                : 'Right-click opens context menus.';
     }
 }
 
@@ -552,9 +579,12 @@ export function editorSetRightClickBehavior(behavior) {
         else localStorage.removeItem(EDITOR_RIGHT_CLICK_BEHAVIOR_KEY);
     } catch (_) {}
     _editorSyncRightClickBehaviorControls();
-    setStatus(_editorEffectiveRightClickBehaviorPure(editorShortcutProfile, editorRightClickBehavior) === 'eofEdit'
+    const _eff = _editorRightClickControlValuePure(editorShortcutProfile, editorRightClickBehavior);
+    setStatus(_eff === 'eofEdit'
         ? 'Right-click behavior: add/remove notes'
-        : 'Right-click behavior: context menus');
+        : _eff.startsWith('tool:')
+            ? `Right-click behavior: ${_eff.slice(5)} tool`
+            : 'Right-click behavior: context menus');
 }
 export function editorSetChordSelectBehavior(behavior) {
     editorChordSelectBehavior = EDITOR_CHORD_SELECT_BEHAVIORS.has(behavior) ? behavior : null;

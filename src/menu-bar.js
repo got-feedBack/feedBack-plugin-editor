@@ -84,6 +84,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'copySelection' },
         { cmd: 'cutSelection' },
         { cmd: 'pasteAtPlayhead' },
+        { cmd: 'splitAtPlayhead' },
         { cmd: 'duplicateSelection' },
         { cmd: 'selectLike' },
         { cmd: 'resnapSelection' },
@@ -150,6 +151,8 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleDrumDensity' },
     ] },
     { title: 'View', items: [
+        { cmd: 'toolPalette' },
+        { sep: true },
         { cmd: 'toggleWaveform' },
         { cmd: 'toggleOnsetStrip' },
         { cmd: 'togglePartsView' },

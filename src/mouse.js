@@ -7,13 +7,13 @@
 import { _anchorLaneTopY, _handshapeLaneTopY, onAnchorLaneMouseDown, onAnchorLaneMouseMove, onAnchorLaneMouseUp, onHandshapeLaneMouseDown, onHandshapeLaneMouseMove, onHandshapeLaneMouseUp, onToneLaneMouseDown, onToneLaneMouseMove, onToneLaneMouseUp } from './annotation-lanes.js';
 import { _auditionPitch, _editBlipAt, _mixDragChangedPitchPure, startPlayback, stopPlayback } from './audio.js';
 import { DPR, canvas } from './canvas.js';
-import { MoveNoteCmd, ResizeSustainGroupCmd, _rollAddByPitch, _rollDragPitchMove } from './commands.js';
+import { AddNoteCmd, DeleteNotesCmd, MoveNoteCmd, ResizeSustainGroupCmd, SplitNotesCmd, ToggleTechniqueCmd, _rollAddByPitch, _rollDragPitchMove, _splitViablePure } from './commands.js';
 import { hideContextMenu } from './context-menu.js';
 import { _beatBarTopY } from './draw.js';
 import { _drumEditorOnDragEnd, _drumEditorOnDragMove, _drumEditorOnMouseDown, _drumEditorOnSelectEnd, _drumEditorOnVelocityDragEnd, _drumEditorOnVelocityDragMove } from './drum.js';
 import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, MINIMAP_H, TIMELINE_TOP, TONE_LANE_H, WAVEFORM_H, strToY, timeToX, xToTime, yToStr } from './geometry.js';
 import { hitNote, hitNoteEdge } from './hit-test.js';
-import { PIANO_LANE_H, _inKeyboardGutterPure, _rollMidiForNote, _rollPitchCtx, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, midiToY, noteToMidi, pianoLaneCount, yToMidi } from './keys.js';
+import { PIANO_LANE_H, _inKeyboardGutterPure, _rollLockNotice, _rollMidiForNote, _rollPitchCtx, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, midiToY, noteToMidi, pianoLaneCount, yToMidi } from './keys.js';
 import { LC, laneToStr, lanes, strToLane } from './lanes.js';
 import { _downbeatTimes, _editorClampScrollX, _groupTimeDeltaPure, _loopLiveMode, _loopRegionForDragPure, _setBarSel, magneticSnapTime, snapTime } from './loop.js';
 import { _recState } from './midi-record.js';
@@ -22,6 +22,7 @@ import { _rulerZonePure, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp } fr
 import { _editorChordGrabsStrumPure, _editorEffectiveChordSelectBehaviorPure, editorChordSelectBehavior, editorShortcutProfile } from './shortcuts.js';
 import { S } from './state.js';
 import { _tempoBeatOnDragMove, _tempoMapOnDragEnd, _tempoMapOnDragMove, _tempoMapOnMouseDown, _tempoMarqueeOnEnd, _tempoPoleGrabTolerancePure, _tempoSyncAtX } from './tempo.js';
+import { editorCloseToolPalette, editorLeftTool, editorToolPaletteOpen, editorTrackToolMouse } from './tools.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -142,6 +143,15 @@ export function onMouseDown(e) {
     // silently overwritten by _recNotes when the take is finalized on Stop.
     if (_recState === 'recording') return;
 
+    // Click tools (CLICK-TOOLS-DESIGN.md): a non-pointer left tool owns the
+    // plain click inside the note lanes. Shift/Ctrl always revert to pointer
+    // semantics — selection stays one modifier away in every tool (the
+    // Live/EOF convention). Any canvas press first dismisses an open palette.
+    if (editorToolPaletteOpen()) editorCloseToolPalette();
+    const _tool = editorLeftTool();
+    if (_tool !== 'pointer' && !e.shiftKey && !e.ctrlKey && !e.metaKey
+        && _editorToolClick(_tool, e, x, y)) return;
+
     // Chord-click grouping: does grabbing one note of a same-time chord act on
     // the whole strum or just that note? The profile sets the default (Legacy/
     // EOF = whole strum, DAW profiles = single note), the shortcut-panel toggle
@@ -236,8 +246,121 @@ export function onMouseDown(e) {
     }
 }
 
+// ── Click-tool actions ───────────────────────────────────────────────
+// One executor for both buttons: the left branch above routes the active
+// tool here, and the right-click 'tool:<id>' assignment (input.js
+// onContextMenu) routes through the same function — so a tool can never
+// mean different things on different buttons. Returns true when the click
+// was consumed (in-bounds and the tool acted or deliberately swallowed it).
+export function _editorToolClick(tool, e, x, y) {
+    if (S.drumEditMode || S.tempoMapMode || S.partsViewMode) return false;
+    if (_recState === 'recording') return false;
+    if (x < LABEL_W) return false;
+    const keysMode = isKeysMode();
+    const laneTop = TIMELINE_TOP + WAVEFORM_H;
+    const laneBottom = keysMode
+        ? laneTop + pianoLaneCount() * PIANO_LANE_H
+        : laneTop + lanes() * LANE_H;
+    if (y < laneTop || y > laneBottom) return false;
+    // The keyboard gutter stays audition-only in every tool (see onDblClick).
+    if (keysMode && _inKeyboardGutterPure(x, y, LABEL_W, laneTop, laneBottom)) return false;
+
+    if (tool === 'marquee') {
+        // Rubber-band ALWAYS — even starting on a note (the whole point:
+        // dense charts where a pointer-drag would move the note instead).
+        if (!e.shiftKey) S.sel.clear();
+        S.drag = { type: 'select', startX: x, startY: y, curX: x, curY: y };
+        host.draw();
+        return true;
+    }
+
+    const idx = hitNote(x, y);
+
+    if (tool === 'pencil') {
+        // Live Draw Mode semantics (also EOF's right-click edit): click a
+        // note = delete it, click empty = add a snap-quantized note, no
+        // dialog. The read-only fretted roll allows the ADD (through the
+        // suggest-position resolver, like double-click) but not the delete.
+        if (idx >= 0) {
+            if (_rollReadOnly()) { _rollLockNotice(); return true; }
+            S.history.exec(new DeleteNotesCmd([idx]));
+            _editBlipAt();
+            host.draw();
+            host.updateStatus();
+            setStatus('Note removed');
+            return true;
+        }
+        const t = snapTime(Math.max(0, xToTime(x)));
+        if (_rollReadOnly()) {
+            _rollAddByPitch(yToMidi(y), t, e.clientX, e.clientY);
+            return true;
+        }
+        const note = keysMode
+            ? { time: t, string: midiToString(yToMidi(y)), fret: midiToFret(yToMidi(y)), sustain: 0, techniques: {} }
+            : { time: t, string: yToStr(y), fret: 0, sustain: 0, techniques: {} };
+        const cmd = new AddNoteCmd(note);
+        S.history.exec(cmd);
+        S.sel.clear();
+        if (cmd.idx >= 0) S.sel.add(cmd.idx);
+        _editBlipAt();
+        host.draw();
+        host.updateStatus();
+        setStatus(keysMode ? 'Note added' : 'Note added — type a digit to set its fret');
+        return true;
+    }
+
+    if (idx < 0) return false;   // eraser/mute/scissors on empty → pointer takes it
+
+    if (tool === 'eraser') {
+        if (_rollReadOnly()) { _rollLockNotice(); return true; }
+        S.history.exec(new DeleteNotesCmd([idx]));
+        _editBlipAt();
+        host.draw();
+        host.updateStatus();
+        setStatus('Note removed');
+        return true;
+    }
+
+    if (tool === 'mute') {
+        // A technique toggle is not pitchPreserving, so the history gate refuses
+        // it on the read-only fretted roll (like the keyboard mute toggle and
+        // the eraser above). Say so and stop — otherwise the setStatus below
+        // clobbers the lock notice with a false "Note muted".
+        if (_rollReadOnly()) { _rollLockNotice(); return true; }
+        const nn = notes();
+        const cur = !!(nn[idx] && nn[idx].techniques && nn[idx].techniques.mute);
+        S.history.exec(new ToggleTechniqueCmd([idx], 'mute', !cur));
+        host.draw();
+        host.updateStatus();
+        setStatus(cur ? 'Mute cleared' : 'Note muted');
+        return true;
+    }
+
+    if (tool === 'scissors') {
+        const t = snapTime(xToTime(x));
+        // Bail before history.exec when the snapped cut would leave a sliver —
+        // otherwise a miss records a no-op undo step and dirties the session.
+        const n = notes()[idx];
+        if (!n || !_splitViablePure(Number(n.time) || 0, Number(n.sustain) || 0, t)) {
+            setStatus('Nothing to split there — click inside a sustained note');
+            return true;
+        }
+        S.history.exec(new SplitNotesCmd([idx], t));
+        _editBlipAt();
+        host.draw();
+        host.updateStatus();
+        setStatus('Note split');
+        return true;
+    }
+
+    return false;
+}
+
 export function onMouseMove(e) {
     const { x, y } = getMousePos(e);
+    // Track the pointer for the tool palette (it opens at the cursor,
+    // Logic-style). Two field writes — no per-frame work beyond that.
+    editorTrackToolMouse(e.clientX, e.clientY);
     // Activate the lane cache for the handler's lifetime so per-note
     // hit-test helpers (`hitNoteEdge` / `hitNote` → `strToY` →
     // `strToLane` → `lanes()`) stay O(1) per note instead of O(N).

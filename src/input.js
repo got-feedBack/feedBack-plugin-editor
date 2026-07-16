@@ -12,7 +12,7 @@ import { _trackSessionSourcesPure } from './track-session.js';
 import { _zonesDismiss } from './tempo-zones.js';
 import { editorToggleMixerPanel } from './mixer-panel.js';
 import { canvas } from './canvas.js';
-import { AddNoteCmd, ChangeFretCmd, ChangeFretGroupCmd, DeleteNotesCmd, MoveNoteCmd, ResizeSustainGroupCmd, SetPitchedSlideTargetsCmd, SetTeachingMarkCmd, ToggleTechniqueCmd, _execCyclePosition, _execMoveString, _execMoveStringSameFret, _rollAddByPitch, _withStableSelection } from './commands.js';
+import { AddNoteCmd, ChangeFretCmd, ChangeFretGroupCmd, DeleteNotesCmd, MoveNoteCmd, ResizeSustainGroupCmd, SetPitchedSlideTargetsCmd, SetTeachingMarkCmd, SplitNotesCmd, ToggleTechniqueCmd, _execCyclePosition, _execMoveString, _execMoveStringSameFret, _rollAddByPitch, _splitViablePure, _withStableSelection } from './commands.js';
 import { hideContextMenu, promptBend, promptFret, promptSlide, promptSlideUnpitch, showContextMenu } from './context-menu.js';
 import { _drumEditorDeleteSelection, _drumEditorNudgeVelocity, _drumEditorSetVelocity, _drumEditorToggleArticulation, _editorToggleDrumDensity } from './drum.js';
 import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, TIMELINE_TOP, TONE_LANE_H, WAVEFORM_H, xToTime, yToStr } from './geometry.js';
@@ -26,7 +26,8 @@ import {
 import { _editorSongFit } from './song-fit.js';
 import { _recState } from './midi-record.js';
 import { editorSoloMyStem, editorToggleStemTracks } from './stem-tracks.js';
-import { getMousePos } from './mouse.js';
+import { _editorToolClick, getMousePos } from './mouse.js';
+import { _editorEffectiveRightAssignPure, _editorPaletteKeyActionPure, _editorPaletteOpenKeyPure, editorCloseToolPalette, editorLeftTool, editorOpenToolPalette, editorToolPaletteOpen, setEditorLeftTool } from './tools.js';
 import { _resizeSustainsForDeltaPure, notes } from './notes.js';
 import { EDITOR_PROFILE_OVERRIDES, _editorCommandById, _editorEffectiveRightClickBehaviorPure, _editorEofCommandForKeyPure, _editorFeedbackCommandForKeyPure, _editorIsTypingTarget, _editorRenderShortcutPanel, _editorTableCommandForKeyPure, editorRightClickBehavior, editorShortcutProfile } from './shortcuts.js';
 import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure } from './snap.js';
@@ -563,6 +564,45 @@ export function _editorCopySelection(cutting = false) {
 // string-count clamp); keys ↔ fretted is refused (string/fret mean different
 // things there), and pasting NEW pitches into the read-only fretted roll is
 // refused like every other pitch write.
+// Split every selected note spanning the playhead at the playhead — or, with
+// no selection, every current-arrangement note spanning it (the DAW "split at
+// playhead" verb Christian asked for; the Scissors tool is its click form).
+export function _editorSplitAtPlayhead() {
+    if (S.drumEditMode || S.tempoMapMode) return false;
+    if (_recState === 'recording') return true;
+    if (!S.arrangements.length) return false;
+    const t = Math.max(0, S.cursorTime || 0);
+    const nn = notes();
+    // A note is a split target only when the cut leaves two viable halves —
+    // the same rule exec() enforces, applied up front so a slivers-only attempt
+    // never records a no-op undo step or dirties the session.
+    const spans = (i) => {
+        const n = nn[i];
+        if (!n) return false;
+        return _splitViablePure(Number(n.time) || 0, Number(n.sustain) || 0, t);
+    };
+    let targets = [...S.sel].filter(spans);
+    // The all-notes fallback is the "no selection" verb. With a non-empty
+    // selection that just doesn't span the playhead, split nothing — never
+    // reach past the selection into unrelated notes.
+    if (!S.sel.size) {
+        targets = nn.map((_, i) => i).filter(spans);
+    }
+    if (!targets.length) {
+        setStatus('Nothing to split — no sustained note spans the playhead.');
+        return true;
+    }
+    const cmd = new SplitNotesCmd(targets, t);
+    S.history.exec(cmd);
+    if (cmd.splitCount) {
+        _editBlipAt();
+        setStatus(`Split ${cmd.splitCount} note${cmd.splitCount === 1 ? '' : 's'} at the playhead`);
+    }
+    host.draw();
+    host.updateStatus();
+    return true;
+}
+
 export function _editorPasteAtPlayhead() {
     if (S.drumEditMode || S.tempoMapMode) return false;
     if (_clipboardWriteBlocked()) return true;
@@ -1226,6 +1266,8 @@ export function _editorRunEofCommand(cmd) {
     case 'copySelection': return _editorCopySelection(false);
     case 'cutSelection': return _editorCopySelection(true);
     case 'pasteAtPlayhead': return _editorPasteAtPlayhead();
+    case 'splitAtPlayhead': return _editorSplitAtPlayhead();
+    case 'toolPalette': return (editorOpenToolPalette(editorShortcutProfile), true);
     case 'resnapSelection': return _editorResnapSelection();
     case 'addSection': return _editorAddSectionAtCursor();
     case 'addPhrase': return _editorAddPhraseAtCursor();
@@ -1366,6 +1408,22 @@ export function onContextMenu(e) {
         if (y >= hsTop && y < hsTop + HS_LANE_H) {
             if (onHandshapeLaneContextMenu(e, x, y)) return;
         }
+    }
+
+    // Right-click tool assignment (feature parity with the left tools): a
+    // 'tool:<id>' assignment runs the SAME executor the left button uses, so
+    // a tool can never mean different things on different buttons. 'context'
+    // and 'eofEdit' keep their existing paths below.
+    {
+        const _rightAssign = _editorEffectiveRightAssignPure(
+            editorShortcutProfile, editorRightClickBehavior);
+        // Modified right-clicks keep pointer/context behavior (parity with the
+        // left tool path in mouse.js): a bare click runs the assigned tool, but
+        // Shift/Ctrl/Meta must not — macOS Ctrl-click especially must never
+        // erase or mutate a note instead of opening the context path.
+        if (!e.shiftKey && !e.ctrlKey && !e.metaKey
+            && _rightAssign.startsWith('tool:')
+            && _editorToolClick(_rightAssign.slice(5), e, x, y)) return;
     }
 
     if (_editorRightClickNoteEdit(e, x, y)) return;
@@ -1518,6 +1576,51 @@ export function onKeyDown(e) {
         e.preventDefault();
         hideContextMenu();
         return;
+    }
+    // ── Click tools (CLICK-TOOLS-DESIGN.md) ──────────────────────────
+    // While the tool palette is open it owns the keyboard: a tool key picks
+    // and closes, second-T runs the per-profile call (FeedBack/Cableton →
+    // Tempo Map, the old plain-T habit; Logical → Pointer, Logic-exact),
+    // Escape closes, everything else is swallowed.
+    if (editorToolPaletteOpen()) {
+        e.preventDefault();
+        const act = _editorPaletteKeyActionPure(editorShortcutProfile, e.key);
+        if (act) {
+            editorCloseToolPalette();
+            if (act.tool) setEditorLeftTool(act.tool);
+            else if (act.mode === 'tempoMap') _editorRunEofCommand('toggleTempoMap');
+        }
+        return;
+    }
+    // Plain-key tool entries, note mode only (tempo-map mode keeps its own
+    // plain-T = leave-mode meaning; drum edit / parts view own their canvas).
+    if (!_editorIsTypingTarget(e) && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey
+        && !S.tempoMapMode && !S.drumEditMode && !S.partsViewMode
+        && _recState !== 'recording') {
+        const _k = (e.key || '').toLowerCase();
+        // T opens the palette (every profile EXCEPT Legacy-EOF, whose key
+        // map stays 1:1 EOF — plain T there remains Tap; the palette is in
+        // the View menu / command palette instead).
+        if (_k === _editorPaletteOpenKeyPure(editorShortcutProfile)) {
+            e.preventDefault();
+            editorOpenToolPalette(editorShortcutProfile);
+            return;
+        }
+        // Cableton: plain B toggles the Pencil — Live's Draw Mode key.
+        // (That profile's bend edit stays reachable via the inspector/menu.)
+        if (_k === 'b' && editorShortcutProfile === 'cableton') {
+            e.preventDefault();
+            setEditorLeftTool(editorLeftTool() === 'pencil' ? 'pointer' : 'pencil');
+            return;
+        }
+        // Logical: plain G = Tempo Map — Logic's G shows the global tracks,
+        // where the tempo track lives. (That profile's snap toggle stays
+        // reachable via the Grid toolbar/menu.)
+        if (_k === 'g' && editorShortcutProfile === 'logical') {
+            e.preventDefault();
+            _editorRunEofCommand('toggleTempoMap');
+            return;
+        }
     }
 
     // Select All belongs to the active DAW surface, not Chromium's page-text

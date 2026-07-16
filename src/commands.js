@@ -164,6 +164,91 @@ export class DeleteNotesCmd {
     }
 }
 
+/* @pure:split-notes:start */
+// Technique distribution for a note split at time t (Scissors tool / Split at
+// playhead): onset-anchored verbs — the bend family, whose curve/magnitude is
+// onset-relative — stay with the FIRST half only; end-of-note verbs — the
+// slide targets and link_next, which describe what happens as the note ENDS —
+// move to the SECOND half only. Everything else (palm mute, accent, the keys
+// `hand`, …) describes the whole held note and copies to both.
+export function _splitTechniquesPure(tech) {
+    const src = tech || {};
+    const first = { ...src };
+    const second = { ...src };
+    delete second.bend;
+    delete second.bend_intent;
+    delete second.bend_values;
+    delete first.slide_to;
+    delete first.slide_unpitch_to;
+    delete first.link_next;
+    return { first, second };
+}
+
+// Minimum length either half must keep, in seconds — a split that would
+// leave a degenerate sliver is skipped for that note.
+export const _SPLIT_MIN_SEGMENT = 0.02;
+
+// A cut at `t` splits a note (onset `start`, length `sus`) only when BOTH
+// halves clear _SPLIT_MIN_SEGMENT. The single source of truth for the rule:
+// exec() applies it per note, and the callers (Split-at-playhead, Scissors)
+// pre-filter with it so a viable-less attempt never reaches the undo stack.
+export function _splitViablePure(start, sus, t) {
+    return t - start >= _SPLIT_MIN_SEGMENT && (start + sus) - t >= _SPLIT_MIN_SEGMENT;
+}
+/* @pure:split-notes:end */
+
+export class SplitNotesCmd {
+    constructor(indices, t) {
+        this.t = Number(t) || 0;
+        this.indices = new Set(indices);
+        this.before = null;    // ref-snapshot of the array, taken on exec
+        this.splitCount = 0;
+        // A split never changes what a note sounds like at its onset — only how
+        // its duration is carved up — so it passes the read-only-roll lock like
+        // the sustain resizes do.
+        this.pitchPreserving = true;
+    }
+    exec() {
+        const nn = notes();
+        // Ref-snapshot for rollback: splitting replaces target notes with two
+        // fresh halves and can perturb same-time ordering via the re-sort, so
+        // index bookkeeping is fragile — restoring the exact original content
+        // (same refs, same order) is bulletproof and cheap (refs only).
+        this.before = nn.slice();
+        this.splitCount = 0;
+        const out = [];
+        nn.forEach((n, i) => {
+            const start = Number(n.time) || 0;
+            const sus = Number(n.sustain) || 0;
+            // Only a targeted note genuinely spanning t splits, with both
+            // halves at least _SPLIT_MIN_SEGMENT long.
+            if (!this.indices.has(i) || !_splitViablePure(start, sus, this.t)) {
+                out.push(n);
+                return;
+            }
+            const { first: ft, second: st } = _splitTechniquesPure(n.techniques);
+            out.push({ ...n, sustain: this.t - start, techniques: ft });
+            out.push({
+                ...n, time: this.t, sustain: (start + sus) - this.t,
+                techniques: st,
+            });
+            this.splitCount++;
+        });
+        // Keep the sorted-by-time invariant (a note can START between a split
+        // target's onset and t). Array.prototype.sort is stable, so same-time
+        // groups (chord members) keep their relative order.
+        out.sort((a, b) => a.time - b.time);
+        nn.length = 0;
+        nn.push(...out);
+        if (this.splitCount) S.sel.clear();
+    }
+    rollback() {
+        const nn = notes();
+        nn.length = 0;
+        nn.push(...this.before);
+    }
+}
+
 export class ResizeSustainCmd {
     constructor(index, newSustain) {
         this.index = index;
