@@ -31,6 +31,7 @@
 // (see the docked mixer panel / parts view for today's surfaces).
 // ════════════════════════════════════════════════════════════════════
 import { host } from './host.js';
+import { _renameGuardPure } from './arrangement.js';
 import { _partViewKeyPure } from './keys.js';
 import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart } from './mixer-panel.js';
 import { S, markSessionDirty } from './state.js';
@@ -383,6 +384,10 @@ export function _trackFocusSourcePure(row) {
     return row.pairedSourceId || MASTER_ID;
 }
 
+export function _trackTranscriptionRenameGuardPure(oldName, requested, otherNames) {
+    return _renameGuardPure(oldName, requested, otherNames);
+}
+
 // True when the tree carries nothing the canonical song doesn't already
 // express: default order (sources then targets), no folders, no custom
 // names, no tombstones, default guide. A default tree persists as NO
@@ -622,7 +627,21 @@ function commit(next, status) {
 // in the manifest; renaming that is the stem manager's backend op).
 function applyTrackRename(trackId, requested) {
     if (!requested || !requested.trim()) return false;
-    const clean = requested.trim().slice(0, 120);
+    const current = _rowsLive().rows.find(row => row.id === trackId);
+    let clean = requested.trim().slice(0, 120);
+    if (current?.type === 'transcription' && current.targetId !== DRUM_TARGET_ID) {
+        const target = _trackSessionTargetsPure(S.arrangements, S.drumTab)
+            .find(item => item.id === current.targetId);
+        const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
+        if (index >= 0 && S.arrangements[index]) {
+            const otherNames = S.arrangements
+                .filter((_, i) => i !== index).map(arr => arr && arr.name);
+            const guard = _trackTranscriptionRenameGuardPure(
+                S.arrangements[index].name, requested, otherNames);
+            if (!guard.ok) { if (guard.reason) setStatus(guard.reason); return false; }
+            clean = guard.name;
+        }
+    }
     let next = _trackSessionRenamePure(S.trackSession, trackId, clean, _liveSources(), S.arrangements, S.drumTab);
     let renamed = next.tracks.find(track => track.id === trackId);
     if (!renamed) return false;

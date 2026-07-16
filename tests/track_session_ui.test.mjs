@@ -14,6 +14,7 @@ const {
     _trackSessionLaneHeightPure, _trackSessionDensityPure, _trackSessionFittedHeightsPure,
     _trackSessionLaneLayoutPure, _trackSessionDropPlacementPure, _trackRenameEditorMarkupPure,
     _trackSessionRetargetPure, _trackLinksRetargetPure, _trackFocusSourcePure,
+    _trackTranscriptionRenameGuardPure,
 } = await import('../src/track-session.js');
 
 let pass = 0, fail = 0;
@@ -90,6 +91,15 @@ t('renaming a name-keyed transcription preserves its tree position and pairing',
 t('an unpaired transcription focuses the Master Mix, never an unrelated tempo guide', () => {
     assert.strictEqual(_trackFocusSourcePure({ type: 'transcription', pairedSourceId: '' }), 'master');
     assert.strictEqual(_trackFocusSourcePure({ type: 'transcription', pairedSourceId: 'Guitar_L' }), 'Guitar_L');
+});
+
+t('inline transcription rename enforces the arrangement identity guard', () => {
+    assert.strictEqual(_trackTranscriptionRenameGuardPure('Lead', 'Rhythm', ['Rhythm']).ok, false,
+        'duplicate names cannot collapse two target keys');
+    assert.strictEqual(_trackTranscriptionRenameGuardPure('Lead', 'Bass', []).ok, false,
+        'a display rename cannot silently change the instrument lane type');
+    assert.deepStrictEqual(_trackTranscriptionRenameGuardPure('Lead', '  Solo Guitar  ', ['Rhythm']),
+        { ok: true, reason: '', name: 'Solo Guitar' });
 });
 
 for (const [name, fn] of tests) {

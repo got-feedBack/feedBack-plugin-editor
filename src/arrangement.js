@@ -106,6 +106,7 @@ function _renameGuardPure(oldName, rawNewName, otherNames) {
     return { ok: true, reason: '', name };
 }
 /* @pure:rename-arr:end */
+export { _renameGuardPure };
 
 // Undoable rename. Holds the arrangement INDEX (undo can fire after a
 // switch; EditHistory's per-arrangement tagging routes back) plus both
