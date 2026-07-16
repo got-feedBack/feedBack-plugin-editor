@@ -20,7 +20,7 @@ import { _recState } from './midi-record.js';
 import { _resizeSustainsForDeltaPure, _resizeTargetIndicesPure, notes } from './notes.js';
 import { _rulerZonePure, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp } from './ruler.js';
 import { S } from './state.js';
-import { _tempoBeatOnDragMove, _tempoMapOnDragEnd, _tempoMapOnDragMove, _tempoMapOnMouseDown, _tempoMarqueeOnEnd, _tempoSyncAtX } from './tempo.js';
+import { _tempoBeatOnDragMove, _tempoMapOnDragEnd, _tempoMapOnDragMove, _tempoMapOnMouseDown, _tempoMarqueeOnEnd, _tempoPoleGrabTolerancePure, _tempoSyncAtX } from './tempo.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
 
@@ -286,9 +286,13 @@ function _onMouseMoveBody(e, x, y, L) {
             if (canvas) canvas.style.cursor = '';
             return;
         }
-        // Tempo-map mode: highlight the sync-point pole under the cursor.
+        // Tempo-map mode: highlight the sync-point pole under the cursor —
+        // with the same band-aware grab width the click uses, so hover never
+        // promises a grab the mousedown would route to the marquee instead.
         if (S.tempoMapMode) {
-            const hit = _tempoSyncAtX(x, y);
+            const gridTop = TIMELINE_TOP + WAVEFORM_H;
+            const selecting = e.ctrlKey || e.metaKey || e.shiftKey;
+            const hit = _tempoSyncAtX(x, y, _tempoPoleGrabTolerancePure(y, gridTop, selecting));
             if (hit !== S.tempoHover) { S.tempoHover = hit; host.draw(); }
             if (canvas) canvas.style.cursor = hit >= 0 ? 'ew-resize' : '';
             return;

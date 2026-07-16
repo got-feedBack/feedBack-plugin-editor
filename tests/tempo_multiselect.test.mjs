@@ -11,8 +11,10 @@ import assert from 'node:assert';
 import { S } from '../src/state.js';
 import { EditHistory } from '../src/history.js';
 import {
-    TempoGridCmd, _tempoDeletableBarlineIndicesPure, _tempoDeleteBarlinesPure, _tempoDeleteSelection,
-    _tempoMarqueeDownbeatsPure, _tempoSelectedDownbeatRunsPure, _tempoSelectDownbeatRange,
+    TempoGridCmd, _editorToggleSyncLock, _tempoDeletableBarlineIndicesPure, _tempoDeleteBarlinesPure,
+    _tempoDeleteSelection, _tempoDirectEditBandPure, _tempoLockControlStatePure, _tempoLockPlanPure,
+    _tempoMarqueeDownbeatsPure, _tempoMarqueeSelectionPure, _tempoPoleGrabTolerancePure,
+    _tempoSelectedDownbeatRunsPure, _tempoSelectDownbeatRange, _tempoToggleDownbeatSelectionPure,
 } from '../src/tempo.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 
@@ -123,6 +125,88 @@ t('_tempoDeletableBarlineIndicesPure counts only interior barlines', () => {
     const b = grid();
     assert.deepStrictEqual(_tempoDeletableBarlineIndicesPure(b, new Set([0, 4, 8, 12])), [4, 8]);
     assert.deepStrictEqual(_tempoDeletableBarlineIndicesPure(b, new Set([0, 12])), []);
+});
+
+// ── marker handle band vs marquee lane (pure) ───────────────────────
+t('the lane body stays available for marquee selection below the marker handles', () => {
+    assert.strictEqual(_tempoDirectEditBandPure(100, 100), true, 'top of the band');
+    assert.strictEqual(_tempoDirectEditBandPure(114, 100), true, 'bottom of the band');
+    assert.strictEqual(_tempoDirectEditBandPure(115, 100), false, 'below the band = lane body');
+    assert.strictEqual(_tempoDirectEditBandPure(200, 100), false);
+});
+
+t('the full-height marker line keeps a precise drag target without consuming the marquee lane', () => {
+    assert.strictEqual(_tempoPoleGrabTolerancePure(110, 100), 8, 'handle band = forgiving');
+    assert.strictEqual(_tempoPoleGrabTolerancePure(150, 100), 2.5, 'lane body = thin-line precision');
+    assert.strictEqual(_tempoPoleGrabTolerancePure(150, 100, true), 8, 'a selection modifier restores forgiveness anywhere');
+});
+
+// ── selection pures ──────────────────────────────────────────────────
+t('_tempoMarqueeSelectionPure replaces or extends selection and focuses the drag end', () => {
+    const b = grid();
+    const replaced = _tempoMarqueeSelectionPure(b, new Set([0]), 3.5, 8.5, false);
+    assert.deepStrictEqual([...replaced.indices].sort((x, y) => x - y), [4, 8]);
+    assert.strictEqual(replaced.focus, 8, 'forward drag focuses the last hit');
+    const extended = _tempoMarqueeSelectionPure(b, new Set([0]), 8.5, 3.5, true);
+    assert.deepStrictEqual([...extended.indices].sort((x, y) => x - y), [0, 4, 8]);
+    assert.strictEqual(extended.focus, 4, 'reverse drag focuses the first hit');
+});
+
+t('Ctrl/Cmd-style selection toggles individual downbeats without mutating the original set', () => {
+    const source = new Set([4]);
+    const added = _tempoToggleDownbeatSelectionPure(source, 8);
+    assert.deepStrictEqual([...added].sort((x, y) => x - y), [4, 8]);
+    assert.deepStrictEqual([...source], [4], 'the input set is untouched');
+    const removed = _tempoToggleDownbeatSelectionPure(added, 4);
+    assert.deepStrictEqual([...removed], [8]);
+});
+
+// ── the lock plan ────────────────────────────────────────────────────
+t('_tempoLockPlanPure applies one state to the whole selected group', () => {
+    const b = grid();
+    b[4].locked = true;
+    const mixed = _tempoLockPlanPure(b, -1, new Set([4, 8]));
+    assert.deepStrictEqual(mixed, { indices: [4, 8], locked: true }, 'mixed group → lock all');
+    b[8].locked = true;
+    const all = _tempoLockPlanPure(b, -1, new Set([4, 8]));
+    assert.deepStrictEqual(all, { indices: [4, 8], locked: false }, 'all locked → unlock all');
+    assert.deepStrictEqual(_tempoLockPlanPure(b, 12, new Set()), { indices: [12], locked: true }, 'no multi → single focus');
+    assert.strictEqual(_tempoLockPlanPure(b, -1, new Set()), null);
+});
+
+t('_tempoLockPlanPure has no bulk-selection cap', () => {
+    const b = [];
+    for (let m = 0; m < 512; m++) b.push({ time: m, measure: m + 1 });
+    const plan = _tempoLockPlanPure(b, -1, new Set(b.map((_, i) => i)));
+    assert.strictEqual(plan.indices.length, 512);
+    assert.strictEqual(plan.locked, true);
+});
+
+t('_tempoLockControlStatePure exposes an explicit plural bulk action', () => {
+    const b = grid();
+    assert.deepStrictEqual(_tempoLockControlStatePure(b, -1, new Set()),
+        { disabled: true, count: 0, locked: false, label: 'Lock barline' });
+    const three = new Set([0, 4, 8]);
+    assert.strictEqual(_tempoLockControlStatePure(b, -1, three).label, 'Lock 3 barlines');
+    for (const i of three) b[i].locked = true;
+    assert.strictEqual(_tempoLockControlStatePure(b, -1, three).label, 'Unlock 3 barlines');
+});
+
+// ── the undoable, session-neutral bulk toggle ────────────────────────
+t('_editorToggleSyncLock toggles a marquee selection as one undoable, session-neutral edit', () => {
+    seed();
+    S.tempoMapMode = true;
+    S.sessionDirty = false;
+    S.tempoSelMulti = new Set([4, 8]);
+    _editorToggleSyncLock();
+    assert.deepStrictEqual(S.beats.map(b => !!b.locked),
+        S.beats.map((b, i) => i === 4 || i === 8), 'both barlines locked');
+    assert.strictEqual(S.history.undo.length, 1, 'ONE command on the stack');
+    assert.strictEqual(S.sessionDirty, false, 'a lock toggle never creates a false Save prompt');
+    S.history.doUndo();
+    assert.ok(S.beats.every(b => !b.locked), 'one undo releases the whole group');
+    S.history.doRedo();
+    assert.ok(S.beats[4].locked && S.beats[8].locked, 'redo re-locks the group');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

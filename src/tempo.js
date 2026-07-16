@@ -60,6 +60,8 @@ import { _signpostFirstLock, _signpostNote } from './signposts.js';
 
 const TEMPO_HUD_H = 26;        // bottom strip height in tempo-map mode
 const TEMPO_POLE_HALF = 6;     // barline pole grab half-width (px)
+const TEMPO_HANDLE_H = 14;     // direct pole/sub-beat edits live only in this top band
+const TEMPO_LINE_GRAB_HALF = 2.5; // thin full-height line remains draggable
 const SUGGEST_HANDLE_TOP = 16; // ghost handle band offset (below pole handles)
 const SUGGEST_HANDLE_H = 11;   // ghost handle band height
 
@@ -570,6 +572,20 @@ export function _tempoSyncInspectorStatePure(measures, selectedIndex) {
             : `${numerator}/${denominator} - final measure BPM needs a closing downbeat.`,
     };
 }
+// The inspector lock button's face: disabled/label/title derive from the
+// same plan the verb executes, so the button always names exactly what a
+// click will do ("Lock 12 barlines" / "Unlock barline").
+export function _tempoLockControlStatePure(beats, focus, selected) {
+    const plan = _tempoLockPlanPure(beats, focus, selected);
+    if (!plan) return { disabled: true, count: 0, locked: false, label: 'Lock barline' };
+    const verb = plan.locked ? 'Lock' : 'Unlock';
+    return {
+        disabled: false,
+        count: plan.indices.length,
+        locked: plan.locked,
+        label: plan.indices.length > 1 ? `${verb} ${plan.indices.length} barlines` : `${verb} barline`,
+    };
+}
 /* @pure:tempo-sync-inspector:end */
 
 function _ensureTempoSyncInspector() {
@@ -588,10 +604,13 @@ function _ensureTempoSyncInspector() {
         + '<button type="button" id="editor-tempo-sync-bar1" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Shift the grid, notes and sections so bar 1 lands at the playhead (the audio does not move)">Bar 1 here</button>'
         + '<button type="button" id="editor-tempo-sync-delete" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Delete selected barline">Delete</button>'
         + '<button type="button" id="editor-tempo-sync-modulate" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Metric modulation: new tempo = current × ratio, from this measure to the next tempo change (M)">Modulate…</button>'
-        + '<button type="button" id="editor-tempo-sync-accept-all" class="hidden px-2 py-0.5 rounded bg-accent text-white hover:bg-accent-light" title="Accept every suggested barline — the whole fit, including any low-confidence continuations — as one undoable edit">Accept Whole Fit</button>';
+        + '<button type="button" id="editor-tempo-sync-accept-all" class="hidden px-2 py-0.5 rounded bg-accent text-white hover:bg-accent-light" title="Accept every suggested barline — the whole fit, including any low-confidence continuations — as one undoable edit">Accept Whole Fit</button>'
+        + '<button type="button" id="editor-tempo-sync-lock" class="px-2 py-0.5 rounded bg-dark-600 text-gray-300 hover:bg-dark-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Lock selected barlines through automatic tempo re-fits (S)">Lock barline</button>';
     const songFitBtn = el.querySelector('#editor-tempo-sync-songfit');
     const acceptAllBtn = el.querySelector('#editor-tempo-sync-accept-all');
     if (acceptAllBtn) acceptAllBtn.onclick = () => editorAcceptWholeTempoFit();
+    const lockBtn = el.querySelector('#editor-tempo-sync-lock');
+    if (lockBtn) lockBtn.onclick = () => _editorToggleSyncLock();
     const insertBtn = el.querySelector('#editor-tempo-sync-insert');
     const bar1Btn = el.querySelector('#editor-tempo-sync-bar1');
     const deleteBtn = el.querySelector('#editor-tempo-sync-delete');
@@ -678,6 +697,23 @@ export function _refreshTempoSyncInspector() {
     if (deleteBtn && visible) {
         deleteBtn.disabled = !state.canDelete;
         deleteBtn.title = state.deleteTitle;
+    }
+    // Lock button: its face derives from the same plan the verb executes,
+    // and a live multi-selection takes over the label/hint line.
+    const lockBtn = document.getElementById('editor-tempo-sync-lock');
+    const lockState = _tempoLockControlStatePure(S.beats, visible ? S.tempoSel : -1,
+        visible ? S.tempoSelMulti : null);
+    if (lockBtn) {
+        lockBtn.disabled = !visible || lockState.disabled;
+        lockBtn.textContent = lockState.label;
+        lockBtn.title = lockState.count > 1
+            ? `${lockState.label} through automatic tempo re-fits (S)` : LOCK_TOOLTIP;
+    }
+    if (visible && lockState.count > 1) {
+        const label = document.getElementById('editor-tempo-sync-label');
+        const hint = document.getElementById('editor-tempo-sync-hint');
+        if (label) label.textContent = `${lockState.count} barlines selected`;
+        if (hint) hint.textContent = 'Shift-click extends · Ctrl/Cmd-click toggles';
     }
     // Accept Whole Fit: visible only while suggestions are showing. The label
     // is honest about reach — "Whole Fit" when the proposals extend to the
@@ -1190,11 +1226,13 @@ export function _refreshTempoMapButton() {
 // Return the S.beats index of the sync-point pole (a downbeat) nearest
 // to canvas x within the pole grab zone, or -1. y must be inside the
 // grid region.
-export function _tempoSyncAtX(x, y) {
+export function _tempoSyncAtX(x, y, tolerance = TEMPO_POLE_HALF + 2) {
     if (!canvas) return -1;
     const gridBottom = canvas.height / DPR - TEMPO_HUD_H;
     if (y < (TIMELINE_TOP + WAVEFORM_H) || y > gridBottom) return -1;
-    let best = -1, bestDist = TEMPO_POLE_HALF + 2;
+    const grab = Number.isFinite(Number(tolerance)) && Number(tolerance) > 0
+        ? Number(tolerance) : TEMPO_POLE_HALF + 2;
+    let best = -1, bestDist = grab;
     const beats = S.beats || [];
     for (let i = 0; i < beats.length; i++) {
         if (beats[i].measure <= 0) continue;
@@ -1202,6 +1240,21 @@ export function _tempoSyncAtX(x, y) {
         if (d < bestDist) { bestDist = d; best = i; }
     }
     return best;
+}
+
+// The marker HANDLE band vs the lane BODY: direct edits (pole grab at the
+// forgiving tolerance, sub-beat rubato) live only in the top band, so the
+// tall lane body below stays available for marquee selection — while the
+// thin full-height barline itself keeps a precise (2.5px) drag target.
+// Holding a selection modifier restores the forgiving tolerance anywhere
+// (a selecting click never starts a drag).
+export function _tempoDirectEditBandPure(y, gridTop) {
+    return Number(y) >= Number(gridTop) && Number(y) <= Number(gridTop) + TEMPO_HANDLE_H;
+}
+
+export function _tempoPoleGrabTolerancePure(y, gridTop, selecting = false) {
+    return selecting || _tempoDirectEditBandPure(y, gridTop)
+        ? TEMPO_POLE_HALF + 2 : TEMPO_LINE_GRAB_HALF;
 }
 
 // Sub-beat hit-test — the per-beat rubato drag's target. Same vertical
@@ -1464,9 +1517,26 @@ export function _tempoMapOnMouseDown(e, x, y) {
         }
     }
 
-    // Click a sync-point pole to select it and start a drag.
-    const hit = _tempoSyncAtX(x, y);
+    // Click a sync-point pole to select it and start a drag. Direct edits get
+    // the forgiving grab width only in the top HANDLE band (or while holding
+    // a selection modifier); over the lane body the thin barline keeps a
+    // precise target so the tall lane stays available for marquee selection.
+    const gridTop = TIMELINE_TOP + WAVEFORM_H;
+    const directEdit = _tempoDirectEditBandPure(y, gridTop);
+    const selecting = e.ctrlKey || e.metaKey || e.shiftKey;
+    const hit = _tempoSyncAtX(x, y, _tempoPoleGrabTolerancePure(y, gridTop, selecting));
     if (hit >= 0) {
+        // Ctrl/Cmd-click toggles one pole in/out of the selection — no drag.
+        if (e.ctrlKey || e.metaKey) {
+            S.tempoSelMulti = _tempoToggleDownbeatSelectionPure(S.tempoSelMulti, hit);
+            S.tempoSel = S.tempoSelMulti.has(hit)
+                ? hit
+                : ([...S.tempoSelMulti].pop() ?? -1);
+            _tapTempo = null;
+            host.draw();
+            setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
+            return;
+        }
         // Shift+click extends a contiguous range of downbeats from the current
         // focus to the clicked pole into the multi-selection (PR 5a). No drag.
         if (e.shiftKey && S.tempoSel >= 0 && S.beats[S.tempoSel] && S.beats[S.tempoSel].measure > 0) {
@@ -1528,7 +1598,9 @@ export function _tempoMapOnMouseDown(e, x, y) {
     // No pole under the cursor — try an individual (sub-)beat tick for a
     // rubato drag: re-time one beat inside its measure without touching
     // the downbeats. Essential for hand-syncing accel/rit within a bar.
-    const beatHit = _tempoSubBeatAtX(x, y);
+    // Handle-band only: over the lane body a near-miss must start the
+    // marquee, not silently re-time a sub-beat.
+    const beatHit = directEdit ? _tempoSubBeatAtX(x, y) : -1;
     if (beatHit >= 0) {
         _tapTempo = null;
         if (S.tempoSelMulti) S.tempoSelMulti.clear();
@@ -1560,6 +1632,13 @@ export function _tempoMapOnContextMenu(e) {
         + `data-action="${action}"${title ? ` title="${title}"` : ''}>${label}</button>`;
     let html = '';
     if (onPole >= 0) {
+        // Right-click OUTSIDE the multi-selection collapses to the clicked
+        // barline (the menu's verbs then act on it alone); inside the group
+        // the selection is kept so the lock item can act on the whole group.
+        if (!S.tempoSelMulti || !S.tempoSelMulti.has(onPole)) {
+            S.tempoSelMulti = new Set();
+        }
+        S.tempoSel = onPole;
         const cur = _tempoMeasureBeatCount(onPole);
         html += `<div class="px-3 py-1 text-xs text-gray-500">Measure: ${cur} beats</div>`;
         const m = _tempoMeasures().find(mm => mm.i === onPole) || null;
@@ -1598,10 +1677,12 @@ export function _tempoMapOnContextMenu(e) {
                 (_mFeel && _mFeel.ratio === 1 ? '✓ ' : '') + 'Straight time from here', '',
                 'Back to the written pulse');
         }
-        html += mkBtn('togglelock',
-            (S.beats[onPole] && S.beats[onPole].locked) ? 'Unlock barline' : 'Lock barline',
-            '', LOCK_TOOLTIP);
         const nSelected = S.tempoSelMulti ? S.tempoSelMulti.size : 0;
+        const lockPlan = _tempoLockPlanPure(S.beats, onPole, S.tempoSelMulti);
+        const lockVerb = lockPlan && lockPlan.locked ? 'Lock' : 'Unlock';
+        html += mkBtn('togglelock', nSelected > 1
+            ? `${lockVerb} ${nSelected} selected barlines`
+            : `${lockVerb} barline`, '', LOCK_TOOLTIP);
         if (nSelected > 1) {
             html += '<div class="border-t border-gray-700 my-1"></div>';
             html += mkBtn('ramp-range', 'Ramp the range (accel/rit)…', '',
@@ -1658,7 +1739,7 @@ export function _tempoMapOnContextMenu(e) {
             else if (a === 'flatten-range') _tempoFlattenRange();
             else if (a === 'delete-multi') _tempoDeleteSelection();
             else if (a === 'delete') _tempoDeleteSyncPoint(onPole);
-            else if (a === 'togglelock') { S.tempoSel = onPole; _editorToggleSyncLock(); }
+            else if (a === 'togglelock') _editorToggleSyncLock();
             else if (a === 'insert') _tempoInsertSyncPoint(xToTime(x));
             else if (a === 'bpmedit') _tempoPromptMeasureBpm(onPole);
             else if (a === 'tsedit') _tempoPromptTimeSignature(onPole);
@@ -1934,6 +2015,27 @@ export function _tempoMarqueeDownbeatsPure(beats, tLo, tHi) {
     return out;
 }
 
+// Ctrl/Cmd-click: toggle one downbeat in/out of the multi-selection. Returns
+// a NEW Set — callers reassign, never mutate a set another surface may hold.
+export function _tempoToggleDownbeatSelectionPure(indices, index) {
+    const next = new Set(indices || []);
+    if (next.has(index)) next.delete(index);
+    else next.add(index);
+    return next;
+}
+
+// Finalized marquee sweep → the next selection. Plain replaces, additive
+// (Shift) unions; the FOCUS follows the drag direction (forward drag focuses
+// the last hit, reverse the first) so the keyboard verbs act where the
+// gesture ended.
+export function _tempoMarqueeSelectionPure(beats, existing, tStart, tEnd, additive) {
+    const indices = additive ? new Set(existing || []) : new Set();
+    const hits = _tempoMarqueeDownbeatsPure(beats, tStart, tEnd);
+    for (const i of hits) indices.add(i);
+    const focus = hits.length ? (tEnd >= tStart ? hits[hits.length - 1] : hits[0]) : -1;
+    return { indices, focus };
+}
+
 // Selected downbeats grouped into contiguous downbeat runs, ignoring sub-beats
 // and invalid indices. Used by the canvas wash so disjoint selections don't
 // paint one large min/max slab across unselected bars.
@@ -1969,10 +2071,11 @@ export function _tempoMarqueeOnEnd() {
         host.draw();
         return;
     }
-    if (!dg.shift) S.tempoSelMulti.clear();
-    for (const i of _tempoMarqueeDownbeatsPure(S.beats, xToTime(dg.startX), xToTime(dg.curX))) {
-        S.tempoSelMulti.add(i);
-    }
+    const result = _tempoMarqueeSelectionPure(S.beats, S.tempoSelMulti,
+        xToTime(dg.startX), xToTime(dg.curX), dg.shift);
+    S.tempoSelMulti = result.indices;
+    if (result.focus >= 0) S.tempoSel = result.focus;
+    else if (!dg.shift) S.tempoSel = -1;
     host.draw();
     setStatus(`${S.tempoSelMulti.size} barline${S.tempoSelMulti.size === 1 ? '' : 's'} selected.`);
 }
@@ -3060,6 +3163,17 @@ export function _applyBeatLocksPure(beats, lockedTimes, tol) {
     }
     return beats;
 }
+// The lock verb's plan: WHICH barlines, and the one uniform target state.
+// The multi-selection wins when non-empty (else the single focus); target =
+// lock-all unless every selected barline is already locked (then unlock
+// all). No cap — "lock every bar of the verified verse" is the use case.
+export function _tempoLockPlanPure(beats, focus, selected) {
+    const valid = i => Number.isInteger(i) && beats && beats[i] && beats[i].measure > 0;
+    const multi = [...new Set(selected || [])].filter(valid).sort((a, b) => a - b);
+    const indices = multi.length ? multi : (valid(focus) ? [focus] : []);
+    if (!indices.length) return null;
+    return { indices, locked: !indices.every(i => !!beats[i].locked) };
+}
 /* @pure:beat-lock:end */
 
 // Persist the current locked sync points for this song (editor-pref).
@@ -3070,6 +3184,38 @@ function _saveBeatLocks() {
         if (times.length) localStorage.setItem(key, JSON.stringify(times));
         else localStorage.removeItem(key);
     } catch (_) { /* localStorage unavailable */ }
+}
+
+// Lock/unlock as a first-class undoable command. Locks stay an EDITOR PREF
+// (every exec/rollback re-persists via _saveBeatLocks and never dirties the
+// session — sessionNeutral), but bulk toggles deserve real exec/rollback:
+// "unlock 40 barlines" must be one Ctrl+Z, not an archaeology dig. Entries
+// re-resolve by time (±0.02s) so undo survives a grid rebuild, and an
+// `undefined` before-state restores the ABSENT property, not `false`.
+export class TempoLockCmd {
+    constructor(beats, indices, locked) {
+        this.entries = (indices || []).filter(i => beats && beats[i] && beats[i].measure > 0)
+            .map(i => ({ index: i, time: beats[i].time, before: beats[i].locked, after: !!locked }));
+        this.label = locked ? 'lock barlines' : 'unlock barlines';
+        this.songScope = true;
+        this.sessionNeutral = true;
+    }
+    _apply(field) {
+        for (const entry of this.entries) {
+            let beat = S.beats[entry.index];
+            if (!beat || Math.abs(beat.time - entry.time) > 0.02) {
+                beat = S.beats.find(item => item && Math.abs(item.time - entry.time) <= 0.02);
+            }
+            if (!beat || beat.measure <= 0) continue;
+            const value = entry[field];
+            if (value === undefined) delete beat.locked;
+            else beat.locked = !!value;
+        }
+        _saveBeatLocks();
+        host.draw();
+    }
+    exec() { this._apply('after'); }
+    rollback() { this._apply('before'); }
 }
 // Re-attach persisted locks onto S.beats after a load (times match the pack).
 export function _restoreBeatLocks() {
@@ -3093,25 +3239,27 @@ export function _lockStatusTextPure(locked) {
         : 'Barline unlocked.';
 }
 
-// Toggle the lock on the selected barline: a locked anchor's time is held by
-// later global tempo re-fits (see _respaceWithLocksPure). Editor-pref, persisted.
+// Toggle the lock on the selected barline(s): a locked anchor's time is held
+// by later global tempo re-fits (see _respaceWithLocksPure). Editor-pref,
+// persisted — but toggled through TempoLockCmd so "unlock 40 barlines" is
+// one Ctrl+Z. The multi-selection wins over the single focus; one uniform
+// target state for the whole group (see _tempoLockPlanPure).
 export function _editorToggleSyncLock() {
-    if (!S.tempoMapMode || S.tempoSel < 0) {
-        setStatus('Select a Tempo Map barline to lock.');
+    const plan = S.tempoMapMode
+        ? _tempoLockPlanPure(S.beats, S.tempoSel, S.tempoSelMulti) : null;
+    if (!plan) {
+        setStatus('Select one or more Tempo Map barlines to lock.');
         return true;
     }
-    const b = S.beats[S.tempoSel];
-    if (!b) return true;
-    b.locked = !b.locked;
-    _saveBeatLocks();
-    host.draw();
-    // A lock toggle is not a history command, so record the moment as a
-    // checkpoint on the current top-of-undo — Ctrl+Alt+Z can rewind to it.
-    if (S.history) S.history.checkpoint(b.locked ? 'Lock barline' : 'Unlock barline');
+    const cmd = new TempoLockCmd(S.beats, plan.indices, plan.locked);
+    if (S.history) S.history.exec(cmd);
+    else cmd.exec();
     // First-win cue #1 (charrette §3.4): the first time a barline is locked to
     // the recording — a correctness milestone, not an action count.
-    if (b.locked) _signpostFirstLock();
-    setStatus(_lockStatusTextPure(b.locked));
+    if (plan.locked) _signpostFirstLock();
+    setStatus(plan.indices.length === 1
+        ? _lockStatusTextPure(plan.locked)
+        : `${plan.locked ? 'Locked' : 'Unlocked'} ${plan.indices.length} selected barlines.`);
     return true;
 }
 

@@ -44,7 +44,12 @@ if (typeof globalThis.document === 'undefined') {
     globalThis.document = {
         getElementById(id) {
             if (id === 'editor-status') return statusEl;
-            return (_els[id] ||= { id, disabled: false, value: '' });
+            // classList no-ops: chrome like the signpost cues toggles classes
+            // on whatever element it finds — the fake must absorb that quietly.
+            return (_els[id] ||= {
+                id, disabled: false, value: '', textContent: '',
+                classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+            });
         },
     };
 }
