@@ -1,20 +1,23 @@
-/* Slopsmith Arrangement Editor — keyboard shortcuts & right-click behaviour.
+/* Slopsmith Arrangement Editor — keyboard shortcuts & pointer behaviour.
  *
  * The four shortcut profiles (FeedBack native / Logical / Cableton / EOF
- * legacy), the key→command mapping for each, the right-click behaviour that
- * rides on the profile, their localStorage persistence, and the
- * shortcut-panel renderer.
+ * legacy), the key→command mapping for each, the two pointer behaviours that
+ * ride on the profile (right-click = context-menu vs EOF add/remove; chord
+ * click = select the single note vs the whole strum), their localStorage
+ * persistence, and the shortcut-panel renderer.
  *
- * `editorShortcutProfile` and `editorRightClickBehavior` are `export let`: they
- * are reassigned, but every writer lives here (the two `editorSet*` setters and
- * the loader), so importers read them as live, read-only bindings —
- * no container, and main.js's read sites are untouched.
+ * `editorShortcutProfile`, `editorRightClickBehavior`, and
+ * `editorChordSelectBehavior` are `export let`: they are reassigned, but every
+ * writer lives here (the `editorSet*` setters and the loader), so importers
+ * read them as live, read-only bindings — no container, and main.js's read
+ * sites are untouched.
  */
 
 import { setStatus } from './ui.js';
 
 const EDITOR_SHORTCUT_PROFILE_KEY = 'editor.shortcutProfile';
 const EDITOR_RIGHT_CLICK_BEHAVIOR_KEY = 'editor.rightClickBehavior';
+const EDITOR_CHORD_SELECT_KEY = 'editor.chordSelect';
 // Four profiles. 'feedback' and 'eof' keep their battle-tested hand resolvers;
 // 'logical' (Logic-style) and 'cableton' (Ableton-style) are DELTAS over the
 // FeedBack resolver (EDITOR_PROFILE_OVERRIDES below): an override wins, and a
@@ -30,8 +33,13 @@ export const EDITOR_PROFILE_NAMES = Object.freeze({
     eof: 'Legacy (EOF)',
 });
 const EDITOR_RIGHT_CLICK_BEHAVIORS = new Set(['context', 'eofEdit']);
+// Chord-click selection: does clicking one note of a same-time chord select
+// just that note ('single', DAW-style) or the whole strum ('chord', EOF-style)?
+// Like the right-click behaviour it defaults from the profile and can be pinned.
+const EDITOR_CHORD_SELECT_BEHAVIORS = new Set(['single', 'chord']);
 export let editorShortcutProfile = 'feedback';
 export let editorRightClickBehavior = null;
+export let editorChordSelectBehavior = null;
 
 export function _editorKeySigPure(e) {
     const mods = [];
@@ -361,6 +369,30 @@ export function _editorEffectiveRightClickBehaviorPure(profile, savedBehavior) {
         : _editorDefaultRightClickBehaviorPure(profile);
 }
 
+// Legacy (EOF) treats the whole strum as the atomic unit — clicking a gem
+// grabs the position; the DAW-flavoured profiles (FeedBack / Logical /
+// Cableton) select the single note under the cursor like any piano roll.
+export function _editorDefaultChordSelectBehaviorPure(profile) {
+    return profile === 'eof' ? 'chord' : 'single';
+}
+
+export function _editorEffectiveChordSelectBehaviorPure(profile, savedBehavior) {
+    return (savedBehavior === 'single' || savedBehavior === 'chord')
+        ? savedBehavior
+        : _editorDefaultChordSelectBehaviorPure(profile);
+}
+
+// The one grouping decision, shared by the sustain-resize grab and the
+// select/move grab in mouse.js so the two can never diverge: given the
+// EFFECTIVE chord-select behaviour, whether Alt is held, and whether this is
+// keys DATA, does grabbing one note act on the whole strum? Keys data never
+// groups (same-time notes are independent voices); Alt inverts the behaviour's
+// default in either direction.
+export function _editorChordGrabsStrumPure(effectiveBehavior, altKey, isKeysData) {
+    if (isKeysData) return false;
+    return (effectiveBehavior === 'chord') !== !!altKey;
+}
+
 export function _editorFeedbackCommandForKeyPure(e, mode) {
     const sig = _editorKeySigPure(e);
     const key = (e.key || '').toLowerCase();
@@ -484,16 +516,31 @@ function _editorSyncRightClickBehaviorControls() {
     }
 }
 
+function _editorSyncChordSelectControls() {
+    const val = _editorEffectiveChordSelectBehaviorPure(editorShortcutProfile, editorChordSelectBehavior);
+    const el = document.getElementById('editor-chord-select-behavior');
+    if (el) el.value = val;
+    const hint = document.getElementById('editor-chord-select-hint');
+    if (hint) {
+        hint.textContent = val === 'chord'
+            ? 'Clicking a chord note selects the whole strum; Alt-click isolates one note.'
+            : 'Clicking a chord note selects that note; Alt-click grabs the whole strum.';
+    }
+}
+
 export function _editorLoadShortcutProfile() {
     try {
         const saved = localStorage.getItem(EDITOR_SHORTCUT_PROFILE_KEY);
         if (EDITOR_SHORTCUT_PROFILES.has(saved)) editorShortcutProfile = saved;
         const savedRightClick = localStorage.getItem(EDITOR_RIGHT_CLICK_BEHAVIOR_KEY);
         if (EDITOR_RIGHT_CLICK_BEHAVIORS.has(savedRightClick)) editorRightClickBehavior = savedRightClick;
+        const savedChordSelect = localStorage.getItem(EDITOR_CHORD_SELECT_KEY);
+        if (EDITOR_CHORD_SELECT_BEHAVIORS.has(savedChordSelect)) editorChordSelectBehavior = savedChordSelect;
     } catch (_) {}
     const el = document.getElementById('editor-shortcut-profile');
     if (el) el.value = editorShortcutProfile;
     _editorSyncRightClickBehaviorControls();
+    _editorSyncChordSelectControls();
 }
 
 // Exported as plain functions; main.js owns the `window.editorSet*` surface
@@ -509,6 +556,17 @@ export function editorSetRightClickBehavior(behavior) {
         ? 'Right-click behavior: add/remove notes'
         : 'Right-click behavior: context menus');
 }
+export function editorSetChordSelectBehavior(behavior) {
+    editorChordSelectBehavior = EDITOR_CHORD_SELECT_BEHAVIORS.has(behavior) ? behavior : null;
+    try {
+        if (editorChordSelectBehavior) localStorage.setItem(EDITOR_CHORD_SELECT_KEY, editorChordSelectBehavior);
+        else localStorage.removeItem(EDITOR_CHORD_SELECT_KEY);
+    } catch (_) {}
+    _editorSyncChordSelectControls();
+    setStatus(_editorEffectiveChordSelectBehaviorPure(editorShortcutProfile, editorChordSelectBehavior) === 'chord'
+        ? 'Chord click: select the whole strum'
+        : 'Chord click: select one note');
+}
 export function editorSetShortcutProfile(profile) {
     editorShortcutProfile = EDITOR_SHORTCUT_PROFILES.has(profile) ? profile : 'feedback';
     try { localStorage.setItem(EDITOR_SHORTCUT_PROFILE_KEY, editorShortcutProfile); } catch (_) {}
@@ -517,6 +575,7 @@ export function editorSetShortcutProfile(profile) {
     const panelEl = document.getElementById('editor-shortcut-panel-profile');
     if (panelEl) panelEl.value = editorShortcutProfile;
     _editorSyncRightClickBehaviorControls();
+    _editorSyncChordSelectControls();
     _editorRenderShortcutPanel();
     setStatus(`Shortcut profile: ${EDITOR_PROFILE_NAMES[editorShortcutProfile] || 'FeedBack'}`);
 }
@@ -532,6 +591,7 @@ export function _editorRenderShortcutPanel() {
     const profileEl = document.getElementById('editor-shortcut-panel-profile');
     if (profileEl) profileEl.value = editorShortcutProfile;
     _editorSyncRightClickBehaviorControls();
+    _editorSyncChordSelectControls();
     const subtitle = document.getElementById('editor-shortcut-panel-subtitle');
     if (subtitle) {
         subtitle.textContent = editorShortcutProfile === 'eof'

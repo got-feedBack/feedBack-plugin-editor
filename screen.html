@@ -359,6 +359,12 @@
                         <option value="context">Context menus</option>
                         <option value="eofEdit">Add/remove notes</option>
                     </select>
+                    <span class="text-gray-500 ml-2">Chord click</span>
+                    <select id="editor-chord-select-behavior" onchange="editorSetChordSelectBehavior(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Clicking one note of a same-time chord — Alt-click always does the opposite">
+                        <option value="single">Single note</option>
+                        <option value="chord">Whole chord</option>
+                    </select>
+                    <span id="editor-chord-select-hint" class="w-full text-[11px] text-gray-500"></span>
                     <span id="editor-right-click-hint" class="ml-auto text-[11px] text-gray-500">Disabled rows are planned commands.</span>
                 </div>
                 <div class="px-3 py-1.5 border-b border-gray-800 text-[11px] text-gray-500">Shortcut keys are handled only while the editor has focus; browser/system conflicts stay outside editor focus.</div>

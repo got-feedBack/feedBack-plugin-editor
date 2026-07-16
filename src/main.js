@@ -154,6 +154,7 @@ import {
 } from './drum.js';
 import {
     _editorLoadShortcutProfile,
+    editorSetChordSelectBehavior,
     editorSetRightClickBehavior,
     editorSetShortcutProfile
     } from './shortcuts.js';
@@ -1434,6 +1435,7 @@ function resizeCanvas() {
 // keeps the `window.*` surface the inline handlers in screen.html call (§V).
 window.editorSetShortcutProfile = editorSetShortcutProfile;
 window.editorSetRightClickBehavior = editorSetRightClickBehavior;
+window.editorSetChordSelectBehavior = editorSetChordSelectBehavior;
 window.editorShowLoadModal = showLoadModal;
 window.editorHideLoadModal = () => document.getElementById('editor-load-modal').classList.add('hidden');
 window.editorFilterSongs = filterSongs;

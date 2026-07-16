@@ -19,6 +19,7 @@ import { _downbeatTimes, _editorClampScrollX, _groupTimeDeltaPure, _loopLiveMode
 import { _recState } from './midi-record.js';
 import { _resizeSustainsForDeltaPure, _resizeTargetIndicesPure, notes } from './notes.js';
 import { _rulerZonePure, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp } from './ruler.js';
+import { _editorChordGrabsStrumPure, _editorEffectiveChordSelectBehaviorPure, editorChordSelectBehavior, editorShortcutProfile } from './shortcuts.js';
 import { S } from './state.js';
 import { _tempoBeatOnDragMove, _tempoMapOnDragEnd, _tempoMapOnDragMove, _tempoMapOnMouseDown, _tempoMarqueeOnEnd, _tempoPoleGrabTolerancePure, _tempoSyncAtX } from './tempo.js';
 import { setStatus } from './ui.js';
@@ -141,6 +142,16 @@ export function onMouseDown(e) {
     // silently overwritten by _recNotes when the take is finalized on Stop.
     if (_recState === 'recording') return;
 
+    // Chord-click grouping: does grabbing one note of a same-time chord act on
+    // the whole strum or just that note? The profile sets the default (Legacy/
+    // EOF = whole strum, DAW profiles = single note), the shortcut-panel toggle
+    // can pin it, and Alt always inverts it live. Keys DATA never groups —
+    // same-time notes there are independent voices, not a strum. Both the
+    // sustain-resize grab and the select/move grab below read this one flag so
+    // they can never disagree about what a click means.
+    const _chordSel = _editorEffectiveChordSelectBehaviorPure(editorShortcutProfile, editorChordSelectBehavior);
+    const groupChord = _editorChordGrabsStrumPure(_chordSel, e.altKey, isKeysArr());
+
     // Check for sustain edge grab first. Edge-drag sustain resize is a DURATION
     // edit — it changes only how long a note rings, never its pitch — so it
     // applies directly even in the read-only fretted roll (V4): the resize
@@ -150,7 +161,7 @@ export function onMouseDown(e) {
     const edgeIdx = hitNoteEdge(x, y);
     if (edgeIdx >= 0) {
         const nn = notes();
-        const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, !isKeysArr() && !e.altKey);
+        const resizeIndices = _resizeTargetIndicesPure(nn, edgeIdx, groupChord);
         const allResizeSelected = resizeIndices.every(i => S.sel.has(i));
         if (!allResizeSelected) {
             S.sel.clear();
@@ -170,15 +181,15 @@ export function onMouseDown(e) {
     const idx = hitNote(x, y);
 
     if (idx >= 0) {
-        // Click on note — also select all chord siblings (same time).
-        // In keys DATA same-timestamp notes are independent voices (not
-        // a strummed chord), so skip the sibling expansion. Keyed on the
-        // data kind, not the surface: a fretted part in the roll still
-        // groups its chords.
+        // Click on note — expand to the same-time chord siblings only when the
+        // active behaviour wants the whole strum (see `groupChord` above: profile
+        // default, panel override, Alt inversion, and the keys-DATA exemption all
+        // fold into that one flag). In single-note mode the selection stays the
+        // one clicked note, like any DAW piano roll.
         const nn = notes();
         const clickedTime = nn[idx].time;
         const chordSiblings = [idx];
-        if (!isKeysArr()) {
+        if (groupChord) {
             for (let i = 0; i < nn.length; i++) {
                 if (i !== idx && Math.abs(nn[i].time - clickedTime) < 0.001) chordSiblings.push(i);
             }
