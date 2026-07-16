@@ -68,6 +68,34 @@ export async function editorKeysFileSelected(input) {
     return _editorKeysHandleFile(file);
 }
 
+/* @pure:shift-notation:start */
+// Shift every absolute time in a notation payload (measures[].t and each
+// voice beat's t — `dur` is notational, not seconds) by a constant offset,
+// in place. The JS mirror of routes.py's _warp_notation_sidecar walk, for
+// the client-side MusicXML audio-offset alignment. Tolerant of malformed
+// payloads (skips anything not shaped right) and a no-op for falsy input.
+export function _shiftNotationTimes(payload, offset) {
+    if (!payload || typeof payload !== 'object' || !Array.isArray(payload.measures) || !offset) return;
+    for (const measure of payload.measures) {
+        if (!measure || typeof measure !== 'object') continue;
+        if (typeof measure.t === 'number') measure.t = Math.round((measure.t + offset) * 1000) / 1000;
+        const staves = measure.staves;
+        if (!staves || typeof staves !== 'object') continue;
+        for (const staff of Object.values(staves)) {
+            if (!staff || typeof staff !== 'object') continue;
+            for (const voice of (Array.isArray(staff.voices) ? staff.voices : [])) {
+                if (!voice || typeof voice !== 'object') continue;
+                for (const beat of (Array.isArray(voice.beats) ? voice.beats : [])) {
+                    if (beat && typeof beat === 'object' && typeof beat.t === 'number') {
+                        beat.t = Math.round((beat.t + offset) * 1000) / 1000;
+                    }
+                }
+            }
+        }
+    }
+}
+/* @pure:shift-notation:end */
+
 // The File-object form: the MIDI-only create path feeds the STAGED file
 // here directly, so the user never re-picks what they just staged.
 export async function _editorKeysHandleFile(file) {
@@ -129,12 +157,17 @@ export async function _editorKeysHandleFile(file) {
                         if (cn.time != null) cn.time = (Number(cn.time) || 0) + offset;
                     }
                 }
+                // The authored notation stash must shift with the notes it
+                // describes (measure and beat times are absolute seconds) —
+                // add-arrangement fingerprints the payload against the
+                // shifted notes, so an unshifted payload would be born stale.
+                _shiftNotationTimes(arr.notation, offset);
             }
-            // v1 saves keys notation via the editor's heuristic (PR #52), so drop
-            // the authored notation stash here — keeping un-shifted notation
-            // alongside offset-shifted notes would be inconsistent. (Preserving
-            // authored notation through edits is a tracked follow-up.)
-            delete arr.notation;
+            // The authored notation (grand-staff hand splits the heuristic
+            // lift can't re-derive) stays on the arrangement:
+            // _editorAppendKeysArrangement sends it to add-arrangement,
+            // which stamps provenance + note-fingerprint and returns it for
+            // the save rail to prefer over the lift (see routes.py).
             await _editorAppendKeysArrangement(arr, statusEl, {
                 isStale: () => reqSeq !== _addKeysReqSeq,
             });
@@ -480,6 +513,17 @@ async function _editorAppendKeysArrangement(arrangement, statusEl, opts = {}) {
         // The import may have been canceled/superseded while registration was in
         // flight (modal closed or another file picked) — don't mutate state then.
         if (typeof opts.isStale === 'function' && opts.isStale()) return false;
+
+        // Authored notation round-trip (MusicXML): the raw payload rode the
+        // arrangement into add-arrangement, which stamped provenance + a
+        // note-fingerprint and returned it. Carry the STAMPED copy as
+        // `_gp_notation` (the field the save body ships and the save rail
+        // prefers over the heuristic lift) and drop the raw one — an
+        // unstamped `notation` field would just be dead weight on the wire.
+        delete arrangement.notation;
+        if (addData.notation && typeof addData.notation === 'object') {
+            arrangement._gp_notation = addData.notation;
+        }
 
         S.arrangements.push(arrangement);
         markSessionDirty();
