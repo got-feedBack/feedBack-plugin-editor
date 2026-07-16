@@ -162,9 +162,17 @@ Three ways to set the tempo, from coarse to fine:
 3. **Tempo Map mode** (`T`) — the precise tool. The bottom strip shows every
    **barline**; drag one onto its downbeat in the waveform and the surrounding
    bars re-space to fit. In this mode:
-   - **`G` — Suggest fit**: from the selected barline, the editor proposes the
-     next downbeats from the audio's onsets. Click a ghost handle to accept
-     through it.
+   - **`G` — Suggest fit**: from the selected barline, the editor proposes
+     downbeats from the audio's onsets — all the way to the end of the song.
+     Where the audio stops corroborating, the remaining barlines continue as
+     visibly low-confidence estimates (never committed on their own). Click a
+     ghost handle to accept through it, or press **Accept Whole Fit** in the
+     tempo toolbar to take the entire proposal as one undoable edit.
+   - **Metronome guide**: if your session includes a click/reference stem,
+     open **Audio tracks** (the stem manager) and click the **♩** on that row
+     to lock it as the tempo guide. `G` then analyzes the click instead of
+     the mix — each click is one beat, so tempo changes in the click are
+     followed directly. Click ♩ again to unlock.
    - **`Shift+B` — Tap tempo**: tap along and the selected barline takes your
      tempo.
    - **`B` — Set BPM** for the selected barline; **`M` — metric modulation**

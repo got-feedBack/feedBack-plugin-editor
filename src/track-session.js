@@ -23,14 +23,15 @@
 // Removing an audio track is NON-DESTRUCTIVE: the source id goes into
 // `removedSourceIds` and the media stays in the pack. The tempo-guide
 // fields (which source is the timing reference, and whether it is locked)
-// persist here too; their behavior ships separately.
+// persist here too; assisted mapping (G) reads them — a LOCKED guide is
+// what tempo analysis listens to (see editorToggleTempoGuide below).
 //
 // This module is the model slice: pure tree ops + install/save wiring.
 // The unified Tracks surface that renders the tree arrives in a follow-up
 // (see the docked mixer panel / parts view for today's surfaces).
 // ════════════════════════════════════════════════════════════════════
 import { _partViewKeyPure } from './keys.js';
-import { S } from './state.js';
+import { S, markSessionDirty } from './state.js';
 
 const MASTER_ID = 'master';
 const DRUM_TARGET_ID = 'drums';
@@ -57,6 +58,7 @@ export function _trackSessionSourcesPure(audioUrl, stems) {
             name: String((raw && raw.name) || id).slice(0, 120),
             kind: 'stem',
             url: typeof (raw && raw.url) === 'string' ? raw.url : '',
+            offset: Number.isFinite(Number(raw && raw.offset)) ? Number(raw.offset) : 0,
         });
     }
     return out;
@@ -319,7 +321,16 @@ function _liveSources() { return _trackSessionSourcesPure(S.audioUrl, S.stems); 
 // points at the previous song until loadAudio runs.
 export function installTrackSession(raw, audioUrl) {
     const sources = _trackSessionSourcesPure(audioUrl !== undefined ? audioUrl : S.audioUrl, S.stems);
-    S.trackSession = _trackSessionNormalizePure(raw, sources, S.arrangements, S.drumTab);
+    // A persisted LOCKED guide whose stem id is gone must UNLOCK at load — not
+    // silently repoint onto the first surviving source (usually the master):
+    // normalize preserves the lock while replacing the missing id, and
+    // reconcileTempoGuideToStems() can't catch it afterwards because the id now
+    // resolves. Same intent as the stem-op reconcile, applied at the load seam.
+    const persistedGuide = raw && typeof raw.tempoGuideSourceId === 'string' ? raw.tempoGuideSourceId : '';
+    const input = raw && raw.tempoGuideLocked && !sources.some(s => s.id === persistedGuide)
+        ? { ...raw, tempoGuideLocked: false, tempoGuideMode: 'audio' }
+        : raw;
+    S.trackSession = _trackSessionNormalizePure(input, sources, S.arrangements, S.drumTab);
 }
 
 // Create/import-boundary install (the #286 seam): the backend ships the
@@ -347,4 +358,62 @@ export function trackSessionSavePayload() {
     const sources = _liveSources();
     if (_trackSessionIsDefaultPure(S.trackSession, sources, S.arrangements, S.drumTab)) return null;
     return _trackSessionNormalizePure(S.trackSession, sources, S.arrangements, S.drumTab);
+}
+
+// ── Tempo guide: the timing-reference role ───────────────────────────
+// One audio source can be declared the session's tempo reference. LOCKING
+// is the commitment: a locked guide is what assisted mapping (G) analyzes,
+// even though playback keeps following the session recording. Mode
+// 'metronome' additionally declares the source to BE a click track (each
+// transient = one beat pulse — the stronger analysis contract).
+export function editorTempoGuideState() {
+    const tree = S.trackSession || {};
+    return {
+        sourceId: typeof tree.tempoGuideSourceId === 'string' ? tree.tempoGuideSourceId : '',
+        locked: !!tree.tempoGuideLocked,
+        mode: tree.tempoGuideMode === 'metronome' ? 'metronome' : 'audio',
+    };
+}
+
+// Toggle `sourceId` as the locked guide (default mode: metronome). Toggling
+// the active guide off returns to the default — first source, unlocked,
+// plain audio analysis. Session state, persisted with the tree — so it
+// dirties the session, but it is not a chart edit (no history command).
+export function editorToggleTempoGuide(sourceId, mode = 'metronome') {
+    const sources = _liveSources();
+    const model = _trackSessionNormalizePure(S.trackSession, sources, S.arrangements, S.drumTab);
+    const wanted = mode === 'metronome' ? 'metronome' : 'audio';
+    const active = model.tempoGuideLocked && model.tempoGuideSourceId === sourceId
+        && model.tempoGuideMode === wanted;
+    S.trackSession = _trackSessionNormalizePure({
+        ...model,
+        tempoGuideSourceId: active ? (sources[0] ? sources[0].id : '') : sourceId,
+        tempoGuideLocked: !active,
+        tempoGuideMode: active ? 'audio' : wanted,
+    }, sources, S.arrangements, S.drumTab);
+    markSessionDirty();
+    return !active;
+}
+
+// Keep the locked-guide reference honest when the stem list changes underneath
+// it. Rename and delete in the tracks manager rewrite S.stems (via _adopt) but
+// leave the guide role untouched, so its sourceId can dangle. A dangling LOCKED
+// guide is not harmless: G can't find the source live, and the save-time
+// normalize silently repoints the still-locked role onto the first surviving
+// source (usually the master recording), so a reopened song would analyze the
+// wrong track as a click. Unlock back to the default instead. Reorder keeps
+// ids, so this is a no-op there. Returns true when it actually cleared a guide.
+export function reconcileTempoGuideToStems() {
+    const tree = S.trackSession;
+    if (!tree || !tree.tempoGuideLocked) return false;
+    const sources = _liveSources();
+    if (sources.some(s => s.id === tree.tempoGuideSourceId)) return false;
+    S.trackSession = _trackSessionNormalizePure({
+        ...tree,
+        tempoGuideSourceId: sources[0] ? sources[0].id : '',
+        tempoGuideLocked: false,
+        tempoGuideMode: 'audio',
+    }, sources, S.arrangements, S.drumTab);
+    markSessionDirty();
+    return true;
 }

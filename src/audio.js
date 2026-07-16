@@ -329,6 +329,90 @@ export function _ensureOnsetsShifted() {
     return raw.map(o => ({ ...o, t: o.t + sh }));   // carry s + per-band strengths
 }
 
+// ── Metronome-guide analysis (analysis-only; never touches playback) ──
+// The tempo guide can be a STEM, and the transport still owns exactly one
+// decoded buffer (the session recording). Guide analysis therefore decodes
+// the guide source into a LOCAL buffer and runs the same pure spectral-flux
+// pipeline against it — S.audioBuffer / S.waveformPeaks / playback are never
+// touched, so locking a click stem as the guide can't reroute what the user
+// hears or sees. One-slot cache keyed by (sourceId, url); a generation token
+// guards the async fetch+decode+STFT against song switches and re-requests.
+let _guideOnsetCache = null;   // { sourceId, url, onsets }  (buffer-time)
+let _guideGeneration = 0;
+let _guideInflight = null;     // { sourceId, url, promise } — coalesce concurrent same-guide requests
+
+// New song boundary: drop the cache and orphan any in-flight guide job so a
+// previous song's decode can never land on the current one.
+export function _guideAnalysisReset() {
+    _guideOnsetCache = null;
+    _guideInflight = null;
+    _guideGeneration++;
+}
+
+// Coalesce concurrent requests for the SAME (sourceId, url): a second G press
+// before the first decode lands must reuse the in-flight promise, not start a
+// rival generation that supersedes — and null out — the first. Different guides
+// (or a song switch, which resets _guideInflight) still supersede via the token.
+export function ensureGuideOnsets(sourceId, url) {
+    if (!sourceId || !url) return Promise.resolve(null);
+    if (_guideOnsetCache && _guideOnsetCache.sourceId === sourceId
+            && _guideOnsetCache.url === url) {
+        return Promise.resolve(_guideOnsetCache.onsets);
+    }
+    if (_guideInflight && _guideInflight.sourceId === sourceId && _guideInflight.url === url) {
+        return _guideInflight.promise;
+    }
+    const promise = _computeGuideOnsets(sourceId, url);
+    _guideInflight = { sourceId, url, promise };
+    const clear = () => { if (_guideInflight && _guideInflight.promise === promise) _guideInflight = null; };
+    promise.then(clear, clear);
+    return promise;
+}
+
+async function _computeGuideOnsets(sourceId, url) {
+    const generation = ++_guideGeneration;
+    let decoded;
+    try {
+        _ensureAudioCtx();
+        const resp = await fetch(url);
+        if (!resp.ok) return null;
+        const raw = await resp.arrayBuffer();
+        decoded = await S.audioCtx.decodeAudioData(raw);
+    } catch (_) { return null; }
+    if (generation !== _guideGeneration) return null;   // superseded mid-decode
+    // Same chunked STFT the session buffer gets (setTimeout ticks, never
+    // freeze a frame) — awaitable here because the G handler shows progress
+    // and revalidates its own preconditions after the await.
+    let plan;
+    try { plan = _spectralFluxOnsetsPlan(decoded.getChannelData(0), decoded.sampleRate); }
+    catch (_) { return null; }
+    const FRAMES_PER_TICK = 1500;
+    const onsets = await new Promise((resolve) => {
+        const step = () => {
+            if (generation !== _guideGeneration) { resolve(null); return; }
+            let done = false;
+            try { done = _spectralFluxStep(plan, FRAMES_PER_TICK); }
+            catch (_) { resolve(null); return; }
+            if (!done) { setTimeout(step, 0); return; }
+            try { resolve(_pickOnsetsPure(plan.res, {})); } catch (_) { resolve(null); }
+        };
+        setTimeout(step, 0);
+    });
+    if (!onsets || !onsets.length || generation !== _guideGeneration) return null;
+    _guideOnsetCache = { sourceId, url, onsets };
+    return onsets;
+}
+
+// Guide onsets in CHART time — the guide rides the same session timeline as
+// the recording, so the same placement shift applies on read (mirror of
+// _ensureOnsetsShifted).
+export async function ensureGuideOnsetsShifted(sourceId, url, sourceOffset = 0) {
+    const raw = await ensureGuideOnsets(sourceId, url);
+    const sh = (Number(S.audioShift) || 0) + (Number(sourceOffset) || 0);
+    if (!raw || !sh) return raw;
+    return raw.map(o => ({ ...o, t: o.t + sh }));
+}
+
 export function _refreshOnsetBtn() {
     const btn = document.getElementById('editor-onset-btn');
     if (!btn) return;

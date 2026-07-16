@@ -66,17 +66,45 @@ and tempo drift does not imply a new meter.
 The normal workflow is seed, suggest, correct:
 
 1. Mark two or more reliable downbeats.
-2. Suggest the next short range, a selection, or the song tail.
+2. Suggest from the chosen anchor through the whole authored song. Keep the
+   onset-supported prefix at its measured confidence; after a confidence break,
+   continue as visibly low-confidence editable estimates instead of stopping.
 3. Show proposed barlines with confidence; do not commit them silently.
 4. Accept a range or correct the first wrong proposal.
-5. Recalculate only the unconfirmed future from that correction.
-6. Stop at low confidence, silence, phase breaks, or likely tempo/meter changes
-   and request another anchor.
+5. Recalculate only the unconfirmed future from that correction. The active
+   barline is sufficient as the analysis anchor; locking is optional and means
+   only that a later fit must preserve that barline's authored time.
+6. At low confidence, silence, phase breaks, or likely tempo/meter changes,
+   stop trusting onset snaps but continue the proposal from the most recent
+   fitted interval. Never commit that inferred tail without explicit acceptance.
 
 Manual anchors are authoritative. Onset detection may offer a visible soft
 snap but must never silently move a mark. Long gaps must not silently infer a
 measure count. Odd-meter and complex songs are mapped by bounded phrases with
 explicit meter/grouping markers.
+
+An audio source explicitly declared as a **metronome guide** is the deliberate
+exception to bounded performance-onset marching. Its consolidated transients
+are treated as authored beat pulses, so the mapper may propose the whole chart,
+including click-track tempo changes. Missing detections are extrapolated from
+the recent pulse interval and must carry lower confidence. The result remains a
+proposal: **Accept Whole Fit** commits it as one undoable command, and individual
+accept-through remains available. Merely naming a file “click” never enables
+this policy; the user must opt in on the audio track. A barline multi-selection
+does not bound this mode: it chooses the starting anchor and the proposal runs
+through the final authored barline. Because the canonical grid's final measure
+is open, accepting that last proposal carries the most recent fitted interval
+through its remaining interior beats rather than leaving the last bar at the
+old tempo.
+Locked barlines preserve their own authored source time but do not alter the
+metronome pulse cursor. A lock is not evidence of a missing or extra beat; the
+authored beat count continues across it so one stale lock cannot phase-shift
+every later proposal.
+The guide identity, not the currently focused audio reference, owns analysis:
+every **G** action under a locked guide must analyze — and await — that guide
+source's audio before reading onsets, revalidating its preconditions after the
+wait. Playback and the visible waveform keep following the session recording;
+declaring a guide redirects tempo truth only.
 
 ## Pitch-Preserving Slow Playback
 
