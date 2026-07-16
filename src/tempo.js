@@ -3140,7 +3140,11 @@ export function _respaceWithLocksPure(oldBeats, newBeats) {
 // save/reload — the pack rebuilds the grid to the same times); on load we
 // re-attach `locked` to the beats whose time matches (±tol).
 export function _beatLockStorageKeyPure(filename) {
-    return 'editorBeatLocks:' + (filename || '');
+    // An unsaved project has no filename yet — return null rather than the
+    // bare `editorBeatLocks:` key. That shared blank key was a cross-song
+    // leak: locks set in one new project would reappear in the NEXT new
+    // project (both keyed by ''). Null means "nowhere to persist".
+    return filename ? 'editorBeatLocks:' + filename : null;
 }
 export function _beatLockParsePure(raw) {
     let arr = null;
@@ -3181,6 +3185,9 @@ function _saveBeatLocks() {
     const times = S.beats.filter(b => b && b.locked).map(b => Math.round(b.time * 1000) / 1000);
     const key = _beatLockStorageKeyPure(S.filename);
     try {
+        // No filename → nowhere to persist. Also scrub any legacy blank-key
+        // residue so it can't leak into the next unsaved project.
+        if (!key) { localStorage.removeItem('editorBeatLocks:'); return; }
         if (times.length) localStorage.setItem(key, JSON.stringify(times));
         else localStorage.removeItem(key);
     } catch (_) { /* localStorage unavailable */ }
@@ -3220,6 +3227,14 @@ export class TempoLockCmd {
 // Re-attach persisted locks onto S.beats after a load (times match the pack).
 export function _restoreBeatLocks() {
     const key = _beatLockStorageKeyPure(S.filename);
+    // An unsaved project restores NO locks — never the blank-key residue a
+    // previous new project may have left. Clear the grid's locks explicitly
+    // so a second new song can't inherit the first's.
+    if (!key) {
+        try { localStorage.removeItem('editorBeatLocks:'); } catch (_) {}
+        _applyBeatLocksPure(S.beats, [], 0.02);
+        return;
+    }
     let raw = null;
     try { raw = localStorage.getItem(key); } catch (_) {}
     _applyBeatLocksPure(S.beats, _beatLockParsePure(raw), 0.02);

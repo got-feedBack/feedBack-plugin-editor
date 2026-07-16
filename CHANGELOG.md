@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An unsaved project no longer inherits another new project's barline
+  locks.** Beat-locks for a song with no filename yet were all stored under
+  one shared key, so locks set while charting one new import reappeared on
+  the next — now an unsaved project persists no locks and starts clean.
+
 ### Added
 
 - **Studio stems now play.** Multitrack stems sound *alongside* the master
