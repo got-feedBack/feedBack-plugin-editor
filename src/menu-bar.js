@@ -167,6 +167,7 @@ export const EDITOR_MENUS = Object.freeze([
         { scoreStaff: 'both', label: 'Notation + tablature' },
         { sep: true },
         { label: 'Theme: Dark → Medium → Light', fn: 'editorCycleTheme', v3Only: true },
+        { label: 'Canvas appearance…', fn: 'editorShowCanvasAppearance' },
         { sep: true },
         { hdr: 'Panels' },
         { cmd: 'toggleMixer' },

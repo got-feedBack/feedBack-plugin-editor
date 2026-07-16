@@ -21,6 +21,7 @@
 // Browser surface: `ctx` (the shared 2D context) and `localStorage` (the
 // density pref, which is editor state and never pack data).
 // ════════════════════════════════════════════════════════════════════
+import { CP } from './canvas-appearance.js';
 import { ctx } from './canvas.js';
 import { drawSelectionRect } from './draw.js';
 import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
@@ -304,10 +305,10 @@ export function _drumEditorDraw(w, h) {
         const lane = laneTable[i];
         const meta = DRUM_PIECE_META[lane.canonical];
         const y = _drumLaneIdxToY(i);
-        ctx.fillStyle = i % 2 === 0 ? '#0c0c1c' : '#0f0f24';
+        ctx.fillStyle = i % 2 === 0 ? CP('laneEven') : CP('laneOdd');
         ctx.fillRect(LABEL_W, y, w - LABEL_W, DRUM_LANE_H);
         // Lane separator
-        ctx.strokeStyle = '#1a1a35';
+        ctx.strokeStyle = CP('laneSep');
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(LABEL_W, y + DRUM_LANE_H);
@@ -329,8 +330,12 @@ export function _drumEditorDraw(w, h) {
         // Guard: skip lines that fall into the left label margin so beat
         // lines from the padding region don't overdraw lane labels.
         if (x < LABEL_W || x > w) continue;
-        ctx.strokeStyle = b.measure > 0 ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)';
-        ctx.lineWidth = b.measure > 0 ? 1 : 0.5;
+        // Palette-routed (View ▸ Canvas appearance…) like drawGrid — the drum
+        // editor's beat/measure lines are the SAME grid the feature exists to
+        // make visible, so the grid-strength slider must reach them too.
+        const meas = b.measure > 0;
+        ctx.strokeStyle = meas ? CP('gridMeasure') : CP('gridBeat');
+        ctx.lineWidth = meas ? 1.5 : 1;
         ctx.beginPath();
         ctx.moveTo(x, (TIMELINE_TOP + WAVEFORM_H));
         ctx.lineTo(x, (TIMELINE_TOP + WAVEFORM_H) + _drumPieceCount() * DRUM_LANE_H);

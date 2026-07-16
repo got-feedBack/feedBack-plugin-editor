@@ -73,6 +73,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ignores techniques), and `split_hands` doesn't yet respect per-note
   overrides — both land with the hand-aware lift slice.
 
+- **View ▸ Canvas appearance… — customizable grid & canvas** (community ask:
+  beat grid lines were invisible on some screens; the request was Live-style
+  customization, not just a brighter constant). Four live sliders — **Grid
+  lines** (strength of beat/measure lines and lane separators, 25–400%),
+  **Brightness**, **Color intensity**, and **Hue** — applied to the canvas's
+  STRUCTURAL palette only: string colors, drum piece colors, note,
+  selection, and playhead colors never restyle. Settings are a global editor
+  preference (`editorCanvasAppearance`); adjusted colors are cached per
+  settings generation so draw cost is a map lookup. New `src/canvas-appearance.js`
+  palette module; lanes/grid/gutters (draw.js), drum lanes, and the parts
+  overview now read from it.
+- **Brighter default grid** — beat lines were `#16162c` at 0.5 px (the
+  invisible-grid report); the defaults are now `#20203e` at 1 px for beats and
+  `#32325c` for measures, with the slider scaling from there.
+
 ### Changed
 
 - **The mixer is now a proper DAW console.** The docked side panel is

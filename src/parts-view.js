@@ -4,6 +4,7 @@
 // (drawNow, the canvas hooks); everything they refresh routes through host.
 
 import { startPlayback, stopPlayback } from './audio.js';
+import { CP } from './canvas-appearance.js';
 import { ctx } from './canvas.js';
 import { hideContextMenu } from './context-menu.js';
 import { DRUM_PIECE_META, _refreshDrumEditButton } from './drum.js';
@@ -192,15 +193,15 @@ export function _partsViewDraw(w, h) {
         const arrIdx = row.type === 'transcription' ? _arrIndexForTarget(row.targetId) : -1;
         const armed = arrIdx >= 0 && arrIdx === S.currentArr;
         const selected = row.id === S.selectedTrackId;
-        ctx.fillStyle = selected ? '#12324a' : row.type === 'folder' ? '#172033' : armed ? '#141432' : (p % 2 === 0 ? '#0c0c1c' : '#0f0f24');
+        ctx.fillStyle = selected ? '#12324a' : row.type === 'folder' ? '#172033' : armed ? CP('partsLaneArmed') : (p % 2 === 0 ? CP('laneEven') : CP('laneOdd'));
         ctx.fillRect(0, y0, w, laneH);
-        ctx.strokeStyle = '#1a1a35';
+        ctx.strokeStyle = CP('laneSep');
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(0, y0 + laneH + 0.5);
         ctx.lineTo(w, y0 + laneH + 0.5);
         ctx.stroke();
-        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.strokeStyle = CP('partsDownbeat');
         for (const t of downbeats) {
             const x = timeToX(t);
             if (x < PARTS_GUTTER || x > w) continue;
