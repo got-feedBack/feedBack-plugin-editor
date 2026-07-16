@@ -92,7 +92,9 @@ function _adopt(data) {
     // (persisted=true, the replace-audio rule) — already durable, no mark.
     if (!data.persisted) markSessionDirty();
     _render();
-    if (host.stemUiChanged) host.stemUiChanged();
+    // A stem was imported / renamed / reordered / removed — re-decode so the
+    // engine's buffer cache matches the new stem set (URLs may be new).
+    host.audioSourcesChanged();
 }
 
 function _render() {
@@ -254,10 +256,12 @@ export function stemMixerAvailable() {
     return typeof host.stemMixChanged === 'function';
 }
 
-// The transcription move: solo the CURRENT track's paired source stem via
-// the stem mixer's S.stemMix rule. EXCLUSIVE isolate: enabling clears every
-// other stem's solo (Guitar after Bass must not stack into Guitar+Bass);
-// toggling off restores the no-solo state — all solos cleared.
+// The transcription move: solo the CURRENT track's paired source stem. The
+// stem plays through the SAME S.partMix mixer as everything else (keyed
+// 'audio:<id>'), so this is an EXCLUSIVE isolate over the audio band —
+// enabling clears every OTHER stem's solo (Guitar after Bass must not stack
+// into Guitar+Bass); toggling off clears the paired stem's solo too. The
+// master recording stays audible (the reference is never gated by solo).
 export function editorSoloMyStem() {
     if (!stemMixerAvailable()) {
         setStatus('Solo my source track needs the stem mixer — not available in this build yet.');
@@ -270,16 +274,19 @@ export function editorSoloMyStem() {
         setStatus(`"${arr.name}" has no paired source track — pair one in File › Audio tracks…`);
         return true;
     }
-    if (!S.stemMix || typeof S.stemMix !== 'object') S.stemMix = {};
-    const cur = S.stemMix[sid] || {};
+    if (!S.partMix || typeof S.partMix !== 'object') S.partMix = {};
+    const key = 'audio:' + sid;
+    const cur = S.partMix[key] || {};
     const on = !cur.solo;
-    for (const [k, v] of Object.entries(S.stemMix)) {
-        if (k !== sid && v && v.solo) S.stemMix[k] = { ...v, solo: false };
+    // Clear every other stem's solo so the isolate is exclusive (leave the
+    // synth parts' own solos alone — this verb owns the audio band only).
+    for (const [k, v] of Object.entries(S.partMix)) {
+        if (k !== key && k.startsWith('audio:') && v && v.solo) S.partMix[k] = { ...v, solo: false };
     }
-    S.stemMix[sid] = { vol: Number.isFinite(cur.vol) ? cur.vol : 100, mute: false, solo: on };
+    S.partMix[key] = { vol: Number.isFinite(cur.vol) ? cur.vol : 100, mute: false, solo: on };
     host.stemMixChanged();
     setStatus(on
-        ? `Soloing ${sid} — the source track "${arr.name}" transcribes against.`
+        ? `Soloing ${sid} — the source track "${arr.name}" transcribes against; the recording stays audible.`
         : `${sid} solo off.`);
     return true;
 }

@@ -682,6 +682,11 @@ export function _startAudioSourceAtCursor(preRoll = 0) {
         _stopRefMedia();
         S.audioSource = null;
     }
+    // Studio stems ride alongside the master on the sample-accurate path —
+    // same anchor, so they stay aligned. Not on the audition-slow path (the
+    // BufferSource is silenced there); a slow-then-fast toggle restarts them.
+    if (slow) _stopStemSources();
+    else _startStemSources(preRoll);
     _anchorTransportAtCursor(preRoll);
 }
 
@@ -761,6 +766,7 @@ export function _restartPlaybackAt(t) {
         try { S.audioSource.stop(); } catch (_) {}
         S.audioSource = null;
     }
+    _stopStemSources();   // re-scheduled by _startAudioSourceAtCursor below
     S.cursorTime = Math.max(0, Math.min(_audioTimelineDuration() || Infinity, t));
     // Compose mode re-anchors the clock without a BufferSource — the guide/
     // click scheduler is the only sound (charrette §1.7).
@@ -831,6 +837,7 @@ export function stopPlayback() {
         try { S.audioSource.stop(); } catch (_) {}
         S.audioSource = null;
     }
+    _stopStemSources();
     _stopRefMedia();
     S.playing = false;
     updatePlayIcon();
@@ -1556,6 +1563,216 @@ function _partGainsReset() {
     _partGains = null;
 }
 
+// ════════════════════════════════════════════════════════════════════
+// Stem playback engine.
+//
+// Studio stems (S.stems) play ALONGSIDE the master recording, sample-
+// aligned: each is decoded once into stemAudioCache, then scheduled at the
+// SAME transport anchor as the master so they can't drift. The master keeps
+// its own path (S.audioSource → _refGain, the audition MediaElement, A/B) —
+// stems are purely ADDITIVE, so a stem-engine fault can never take the
+// recording down with it.
+//
+// Mix routing reuses the band-mode mixer: a stem's gain reads
+// host.partStripState('audio:<id>') — the SAME S.partMix store and whole-map
+// solo rule the synth parts use — and connects to _refGain (the transparent
+// path, never the guide limiter). Volume ceiling is unity, matching the
+// current per-part contract; meters and +6 dB headroom are a later polish.
+//
+// Known limitation: at audition speed < 1 the master reroutes to a
+// pitch-preserving MediaElement and the sample-accurate BufferSource path is
+// silenced — so stems do not sound while slowed (they resume at 100%).
+// ════════════════════════════════════════════════════════════════════
+const stemAudioCache = new Map();     // sourceId → { url, buffer, peaks }
+const playingStemSources = new Map(); // sourceId → live AudioBufferSourceNode
+const stemGainNodes = new Map();      // sourceId → GainNode
+let stemDecodeGeneration = 0;
+
+const stemKey = (sourceId) => 'audio:' + sourceId;
+
+// The live stems to play: S.stems minus the track session's non-destructive
+// removals. The master is NOT here — it keeps its own S.audioSource path.
+function _liveStemSources() {
+    const removed = new Set((S.trackSession && S.trackSession.removedSourceIds) || []);
+    const seen = new Set();
+    const out = [];
+    for (const raw of (Array.isArray(S.stems) ? S.stems : [])) {
+        const id = raw && typeof raw.id === 'string' ? raw.id : '';
+        const url = raw && typeof raw.url === 'string' ? raw.url : '';
+        if (!id || !url || removed.has(id) || seen.has(id)) continue;
+        seen.add(id);
+        out.push({ id, url, offset: Number(raw.offset) || 0 });
+    }
+    return out;
+}
+
+// Decode every live stem into the cache (parallel, generation-guarded, one
+// failure never blocks the rest). Drops cache entries for stems that are
+// gone. Safe to call repeatedly — already-cached URLs are skipped.
+export async function syncStemAudio() {
+    const sources = _liveStemSources();
+    const liveIds = new Set(sources.map(s => s.id));
+    // Retire stems that left the roster BEFORE any await — a removed/renamed
+    // stem must stop sounding now, not seconds later when the new decodes land.
+    _pruneStaleStems(liveIds);
+    if (typeof fetch !== 'function') return;
+    _ensureAudioCtx();
+    if (!S.audioCtx) return;
+    const generation = ++stemDecodeGeneration;
+    for (const id of [...stemAudioCache.keys()]) if (!liveIds.has(id)) stemAudioCache.delete(id);
+    await Promise.all(sources.map(async (source) => {
+        const cached = stemAudioCache.get(source.id);
+        if (cached && cached.url === source.url && cached.buffer) return;
+        try {
+            const resp = await fetch(source.url);
+            if (!resp.ok) return;
+            const raw = await resp.arrayBuffer();
+            const buffer = await S.audioCtx.decodeAudioData(raw);
+            if (generation !== stemDecodeGeneration) return;   // superseded
+            stemAudioCache.set(source.id, { url: source.url, buffer, peaks: null });
+        } catch (_) { /* one unavailable stem must not block the session */ }
+    }));
+    if (generation === stemDecodeGeneration
+        && _stemCatchupAllowedPure(S.playing, _auditionActive())) {
+        const catchup = _stemCatchupPure(
+            S.playStartTime, S.playStartWall, S.audioCtx.currentTime, _auditionRate());
+        _startStemSources(catchup.preRoll, catchup.cursorTime);
+    }
+}
+
+export function _stemCatchupAllowedPure(playing, auditionActive) {
+    return !!playing && !auditionActive;
+}
+
+export function _stemCatchupPure(playStartTime, playStartWall, currentTime, rate = 1) {
+    const remaining = Math.max(0, (Number(playStartWall) || 0) - (Number(currentTime) || 0));
+    return {
+        preRoll: remaining,
+        cursorTime: remaining > 0
+            ? Math.max(0, Number(playStartTime) || 0)
+            : _transportChartTimePure(playStartTime, playStartWall, currentTime, rate),
+    };
+}
+
+// Retire every stem no longer in `liveIds` (a set of live source ids): stop its
+// playing node, drop its gain node, and — the one that bites — delete its
+// 'audio:<id>' entry from S.partMix. That entry is counted by the whole-map
+// solo rule, so a stale SOLO left behind by a removed stem would silence every
+// live track. Mirrors the drum-delete path (delete S.partMix.drums).
+export function _pruneStaleStems(liveIds) {
+    for (const id of [...playingStemSources.keys()]) {
+        if (liveIds.has(id)) continue;
+        try { playingStemSources.get(id).stop(); } catch (_) { /* already stopped */ }
+        playingStemSources.delete(id);
+    }
+    for (const id of [...stemGainNodes.keys()]) {
+        if (liveIds.has(id)) continue;
+        try { stemGainNodes.get(id).disconnect(); } catch (_) { /* context gone */ }
+        stemGainNodes.delete(id);
+    }
+    let removedSolo = false;
+    if (S.partMix && typeof S.partMix === 'object') {
+        for (const key of Object.keys(S.partMix)) {
+            if (key.startsWith('audio:') && !liveIds.has(key.slice('audio:'.length))) {
+                removedSolo = removedSolo || !!(S.partMix[key] && S.partMix[key].solo);
+                delete S.partMix[key];
+            }
+        }
+    }
+    // If the removed stem was the soloed one, deleting its key fixes the solo
+    // RULE — but every live gain node (surviving stems AND synth parts) still
+    // sits at its solo'd-away zero until re-ramped. A delayed fetch/catch-up
+    // won't touch the part gains, so reapply the whole mix now (the same pair
+    // partMixChanged uses — both bands read partStripState). Returns whether a
+    // solo was pruned so callers/tests can observe the re-apply decision.
+    if (removedSolo) { _partGainsApply(false); applyStemMix(false); }
+    return removedSolo;
+}
+
+// New song boundary: orphan in-flight decodes and drop every buffer.
+export function resetStemAudioCache() {
+    stemDecodeGeneration++;
+    stemAudioCache.clear();
+    _stopStemSources();
+    _stemGainsReset();
+}
+
+// A stem's cached min/max waveform peaks for its lane (lazy — built on first
+// request from the decoded buffer). Feeds host.trackWaveform.
+export function audioStemWaveform(sourceId) {
+    const cached = stemAudioCache.get(sourceId);
+    if (!cached || !cached.buffer) return null;
+    if (!cached.peaks) cached.peaks = _buildWaveformPeaks(cached.buffer, 512);
+    return { peaks: cached.peaks, duration: cached.buffer.duration };
+}
+
+function _ensureStemGain(sourceId) {
+    if (stemGainNodes.has(sourceId)) return stemGainNodes.get(sourceId);
+    if (!S.audioCtx) return null;
+    const gain = S.audioCtx.createGain();
+    const st = host.partStripState(stemKey(sourceId));
+    // Seed at the strip's current state BEFORE connecting, so a muted stem
+    // never leaks its first sample (mirrors _ensurePartGain).
+    gain.gain.value = st && st.audible !== false ? Math.max(0, Number(st.vol) || 0) : 0;
+    gain.connect(_ensureRefGain() || S.audioCtx.destination);
+    stemGainNodes.set(sourceId, gain);
+    return gain;
+}
+
+// Ramp every stem gain to its strip state (mute/solo/fader). ~20 ms house
+// ramp, or immediate when seating at (re)start.
+export function applyStemMix(immediate = false) {
+    if (!S.audioCtx) return;
+    const now = S.audioCtx.currentTime;
+    for (const [sourceId, gain] of stemGainNodes) {
+        const st = host.partStripState(stemKey(sourceId));
+        const target = st && st.audible !== false ? Math.max(0, Number(st.vol) || 0) : 0;
+        if (immediate) { gain.gain.cancelScheduledValues(now); gain.gain.setValueAtTime(target, now); }
+        else gain.gain.setTargetAtTime(target, now, 0.02);
+    }
+}
+
+// Schedule every cached stem at the current cursor, sample-aligned with the
+// master: each computes its own placement from S.audioShift + its own offset
+// and starts at the SAME preRoll-shifted anchor. Called from the master's
+// rate-1 start path (never the audition-slow path).
+function _startStemSources(preRoll = 0, cursorTime = S.cursorTime) {
+    _stopStemSources();
+    if (!S.audioCtx) return 0;
+    let started = 0;
+    for (const source of _liveStemSources()) {
+        const cached = stemAudioCache.get(source.id);
+        if (!cached || !cached.buffer) continue;   // not decoded yet — syncStemAudio catches up
+        const placement = _audioBufferStartPure(
+            cursorTime, (Number(S.audioShift) || 0) + source.offset, cached.buffer.duration);
+        if (!placement.play) continue;
+        const node = S.audioCtx.createBufferSource();
+        node.buffer = cached.buffer;
+        node.connect(_ensureStemGain(source.id) || _ensureRefGain() || S.audioCtx.destination);
+        const when = (preRoll > 0 || placement.delay > 0)
+            ? S.audioCtx.currentTime + preRoll + placement.delay : 0;
+        node.start(when, placement.offset);
+        playingStemSources.set(source.id, node);
+        started++;
+    }
+    applyStemMix(true);
+    return started;
+}
+
+function _stopStemSources() {
+    for (const node of playingStemSources.values()) {
+        try { node.stop(); } catch (_) { /* already stopped */ }
+    }
+    playingStemSources.clear();
+}
+
+function _stemGainsReset() {
+    for (const gain of stemGainNodes.values()) {
+        try { gain.disconnect(); } catch (_) { /* context gone */ }
+    }
+    stemGainNodes.clear();
+}
+
 // Per-part pitched events (chart truth: the same converter the roll uses,
 // per arrangement) — drum parts return [] here; their hits clap instead.
 function _bandPartPitchedEvents(idx) {
@@ -2155,6 +2372,8 @@ export function teardownAudio() {
     cancelAudioLoad();
     _cancelOnsetJob();
     _partGainsReset();
+    _stemGainsReset();
+    _stopStemSources();
     try { if (S.audioSource) { S.audioSource.stop(); S.audioSource = null; } } catch (_) { /* already stopped */ }
     _stopRefMedia();
     try { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } } catch (_) { /* no frame queued */ }

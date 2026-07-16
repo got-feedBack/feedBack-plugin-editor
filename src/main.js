@@ -47,7 +47,7 @@ import {
     editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
     editorToggleAuditionTrainer, editorPlayAllTracksEnabled, editorTogglePlayAllTracks,
-    _partGainsApply,
+    _partGainsApply, applyStemMix, audioStemWaveform, syncStemAudio,
 } from './audio.js';
 import { _mixerClapState, _mixerPanelRefresh, _mixerPartStripState, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import {
@@ -524,9 +524,23 @@ setHostHooks({
     mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
     // Band mode (multi-track MIDI playback): the strips are the mixer.
     partStripState: (key) => _mixerPartStripState(key),
-    partMixChanged: () => { _partGainsApply(false); refreshTrackSession(); },
+    // A strip changed: ramp the synth part gains AND the stem gains (both
+    // read partStripState), and refresh the Tracks header.
+    partMixChanged: () => { _partGainsApply(false); applyStemMix(false); refreshTrackSession(); },
+    // A source was removed/restored/imported/renamed: rebuild the decoded
+    // roster and repaint every surface that derives rows/strips from it.
+    audioSourcesChanged: () => {
+        void syncStemAudio().finally(() => draw());   // repaint once late waveforms decode
+        _mixerPanelRefresh();
+        refreshTrackSession();
+        draw();
+    },
     playAllTracksEnabled: () => editorPlayAllTracksEnabled(),
     stripUiChanged: () => _mixerPanelRefresh(),
+    // The stem-mixer capability signal: its PRESENCE flips stemMixerAvailable()
+    // true (lighting up Solo-my-source and the audio-row strips). Re-ramps the
+    // stem gains off S.partMix and repaints the surfaces.
+    stemMixChanged: () => { applyStemMix(false); _mixerPanelRefresh(); refreshTrackSession(); },
     // Persistent track tree: create/import hands every create-time source to
     // the installer so the tree exists from the first moment, not only after
     // a save/reopen (the seam #286 reserved).
@@ -563,9 +577,10 @@ setHostHooks({
     // Vertical wheel over the Tracks area scrolls the shared lane stack.
     scrollTrackArea: (deltaY) => scrollTrackSessionBy(deltaY),
     // Lane waveforms: the master mix draws from the session's decoded peaks;
-    // stems light up when the engine slice caches theirs.
-    trackWaveform: (sourceId) => (sourceId === 'master' && S.waveformPeaks && S.duration > 0
-        ? { peaks: S.waveformPeaks, duration: S.duration } : null),
+    // a stem draws from its own decoded buffer in the stem-audio cache.
+    trackWaveform: (sourceId) => (sourceId === 'master'
+        ? (S.waveformPeaks && S.duration > 0 ? { peaks: S.waveformPeaks, duration: S.duration } : null)
+        : audioStemWaveform(sourceId)),
 });
 
 // Re-attach the song-import modal handlers (import.js owns the logic; the HTML

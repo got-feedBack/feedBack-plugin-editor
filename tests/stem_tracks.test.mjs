@@ -121,7 +121,7 @@ function seedSession(links = {}) {
         sessionId: 'sess1', sessionDirty: false,
         arrangements: [{ id: 'a1', name: 'Lead' }], currentArr: 0,
         stems: [{ id: 'Guitar_L' }, { id: 'Bass_DI' }],
-        stemLinks: { ...links }, stemMix: {},
+        stemLinks: { ...links }, stemMix: {}, partMix: {},
     });
     statusEl.textContent = '';
     fetchLog.length = 0;
@@ -152,12 +152,15 @@ t('a chart track pairs with ONE stem; re-pairing replaces; empty unlinks', () =>
 });
 
 // ── Item 17: capability gate — the verb must not claim to change audio ──
-t('soloMyStem is honest when no stem mixer consumes S.stemMix', () => {
+// Solo-my-source now routes through the SAME S.partMix mixer the engine
+// consumes (keyed 'audio:<id>'), so the stem plays isolated through the real
+// gain nodes. The capability gate (host.stemMixChanged present) is unchanged.
+t('soloMyStem is honest when no stem mixer consumes the mix state', () => {
     delete host.stemMixChanged;      // the branch's reality: no consumer wired
     seedSession({ a1: 'Guitar_L' });
     assert.strictEqual(stemMixerAvailable(), false);
     editorSoloMyStem();
-    assert.deepStrictEqual(S.stemMix, {}, 'no consumer → no state flip nothing reads');
+    assert.deepStrictEqual(S.partMix, {}, 'no consumer → no state flip nothing reads');
     assert.match(statusEl.textContent, /mixer/i, 'status names the missing capability');
     assert.doesNotMatch(statusEl.textContent, /^Soloing/, 'must not claim the audio changed');
     // …and springs to life the moment a real consumer is wired.
@@ -165,7 +168,7 @@ t('soloMyStem is honest when no stem mixer consumes S.stemMix', () => {
     setHostHooks({ stemMixChanged: () => { mixCalls++; } });
     assert.strictEqual(stemMixerAvailable(), true);
     editorSoloMyStem();
-    assert.strictEqual(S.stemMix.Guitar_L.solo, true, 'wired hook → the solo lands');
+    assert.strictEqual(S.partMix['audio:Guitar_L'].solo, true, 'wired hook → the solo lands');
     assert.strictEqual(mixCalls, 1, 'the consumer hears the change');
 });
 
@@ -173,15 +176,15 @@ t('soloMyStem solos the paired stem, leaves unsoloed stems alone, toggles off', 
     setHostHooks({ stemMixChanged: () => {} });   // a real (fake) consumer
     seedSession({ a1: 'Guitar_L' });
     editorSoloMyStem();
-    assert.strictEqual(S.stemMix.Guitar_L.solo, true);
-    assert.strictEqual(S.stemMix.Guitar_L.mute, false, 'solo clears any mute');
-    assert.strictEqual(S.stemMix.Bass_DI, undefined, 'an unsoloed stem needs no entry');
+    assert.strictEqual(S.partMix['audio:Guitar_L'].solo, true);
+    assert.strictEqual(S.partMix['audio:Guitar_L'].mute, false, 'solo clears any mute');
+    assert.strictEqual(S.partMix['audio:Bass_DI'], undefined, 'an unsoloed stem needs no entry');
     editorSoloMyStem();
-    assert.strictEqual(S.stemMix.Guitar_L.solo, false, 'second press releases');
+    assert.strictEqual(S.partMix['audio:Guitar_L'].solo, false, 'second press releases');
     // No pairing = a status nudge, never a throw or a wrong solo.
     S.stemLinks = {};
     editorSoloMyStem();
-    assert.strictEqual(S.stemMix.Bass_DI, undefined);
+    assert.strictEqual(S.partMix['audio:Bass_DI'], undefined);
 });
 
 // ── Item 18: exclusive isolate — Guitar after Bass must not stack ──────
@@ -189,18 +192,20 @@ t('soloMyStem clears other stem solos on enable; toggle-off = no solos at all', 
     setHostHooks({ stemMixChanged: () => {} });
     seedSession({ a1: 'Guitar_L' });
     S.stems = [{ id: 'Guitar_L' }, { id: 'Bass_DI' }, { id: 'Kick' }];
-    S.stemMix = {
-        Bass_DI: { vol: 100, mute: false, solo: true },   // e.g. Bass was soloed first
-        Kick: { vol: 80, mute: false, solo: false },
+    S.partMix = {
+        'audio:Bass_DI': { vol: 100, mute: false, solo: true },   // e.g. Bass was soloed first
+        'audio:Kick': { vol: 80, mute: false, solo: false },
+        'arr:0': { vol: 100, mute: false, solo: true },           // a synth-part solo is NOT ours to touch
     };
     editorSoloMyStem();
-    assert.strictEqual(S.stemMix.Guitar_L.solo, true, 'my source is soloed');
-    assert.strictEqual(S.stemMix.Bass_DI.solo, false, 'the previous solo is cleared — isolate, not stack');
-    assert.strictEqual(S.stemMix.Kick.solo, false);
-    assert.strictEqual(S.stemMix.Kick.vol, 80, 'non-solo mix fields survive');
+    assert.strictEqual(S.partMix['audio:Guitar_L'].solo, true, 'my source is soloed');
+    assert.strictEqual(S.partMix['audio:Bass_DI'].solo, false, 'the previous STEM solo is cleared — isolate, not stack');
+    assert.strictEqual(S.partMix['audio:Kick'].solo, false);
+    assert.strictEqual(S.partMix['audio:Kick'].vol, 80, 'non-solo mix fields survive');
+    assert.strictEqual(S.partMix['arr:0'].solo, true, 'a synth-part solo is left alone — this verb owns the audio band only');
     editorSoloMyStem();
-    assert.ok(Object.values(S.stemMix).every((m) => !m.solo),
-        'toggle-off restores the no-solo state (all solos cleared)');
+    assert.ok(Object.entries(S.partMix).filter(([k]) => k.startsWith('audio:')).every(([, m]) => !m.solo),
+        'toggle-off restores the no-solo state across the audio band');
 });
 
 // ── Item 17 surface: the menu greys the verb until the capability exists ──

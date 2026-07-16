@@ -601,10 +601,14 @@ function render() {
         .concat(stems.map(source => `<option value="${_editorEscHtml(source.id)}"${source.id === selected ? ' selected' : ''}>${_editorEscHtml(source.name)}</option>`)).join('');
     const guide = sources.find(source => source.id === model.tempoGuideSourceId) || sources[0] || { name: 'No guide' };
     // Per-part M/S/fader — the SAME canonical partMix the mixer panel owns
-    // (band-mode gains ramp off it live). Audio rows carry no strips yet:
-    // stem playback is the engine slice; strips arrive with it.
+    // (band-mode gains ramp off it live). Transcription parts AND stem audio
+    // rows get strips — both route through the same S.partMix mixer. The
+    // MASTER mix has no strip: it's the reference (always audible, never
+    // gated by solo), so a mute/solo there would be a lie.
     const mixControls = row => {
-        if (!row.mixKey || row.type !== 'transcription') return '';
+        const stripped = row.type === 'transcription'
+            || (row.type === 'audio' && row.sourceKind !== 'master');
+        if (!row.mixKey || !stripped) return '';
         const key = _editorEscHtml(row.mixKey);
         const st = _mixerPartStatePure(S.partMix, row.mixKey);
         return `<button class="editor-track-ms" data-track-action="mix-mute" data-mix-key="${key}" aria-pressed="${st.mute}" title="Mute track">M</button>`
@@ -625,7 +629,7 @@ function render() {
         const style = `--track-indent:${indent}px;--track-row-height:${height}px`;
         const selected = row.id === S.selectedTrackId ? ' editor-track-selected' : '';
         if (row.type === 'folder') return `<div class="editor-track-row editor-track-folder${selected}" draggable="true" data-track-id="${trackId}" style="${style}"><button data-track-action="collapse" data-track-id="${trackId}">${row.collapsed ? '›' : '⌄'}</button>${trackName(row, `<span class="editor-track-name">${name}</span>`)}${resizeGrip(row)}</div>`;
-        if (row.type === 'audio') return `<div class="editor-track-row${selected}${row.sourceId === model.tempoGuideSourceId ? ' editor-track-guide' : ''}" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.sourceKind === 'master' ? 'MIX' : 'AUD'}</span>${trackName(row, `<span class="editor-track-name">${name}</span>`)}<button data-track-action="guide-set" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use for tempo">${row.sourceId === model.tempoGuideSourceId ? '★' : '☆'}</button>${resizeGrip(row)}</div>`;
+        if (row.type === 'audio') return `<div class="editor-track-row${selected}${row.sourceId === model.tempoGuideSourceId ? ' editor-track-guide' : ''}" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.sourceKind === 'master' ? 'MIX' : 'AUD'}</span>${trackName(row, `<span class="editor-track-name">${name}</span>`)}${mixControls(row)}<button data-track-action="guide-set" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use for tempo">${row.sourceId === model.tempoGuideSourceId ? '★' : '☆'}</button>${resizeGrip(row)}</div>`;
         return `<div class="editor-track-row editor-track-transcription${selected}" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.targetId === DRUM_TARGET_ID ? 'DRM' : 'MIDI'}</span>${trackName(row, `<button class="editor-track-name" data-track-action="select" data-target-id="${_editorEscHtml(row.targetId)}" title="Double-click to open editor">${name}</button>`)}${mixControls(row)}<select data-track-action="pair" data-track-id="${trackId}" data-target-id="${_editorEscHtml(row.targetId)}" aria-label="Audio reference for ${name}">${sourceOptions(row.pairedSourceId)}</select>${resizeGrip(row)}</div>`;
     }).join('')}</div>`;
     const list = el.querySelector('.editor-track-session-list');

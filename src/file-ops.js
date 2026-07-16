@@ -4,7 +4,7 @@
 // triggers stay in main.js and are reached through host.
 
 import { _anchorsAreDirty, _stripToneInternals, _tonesAreDirty, _updateTonesButtonVisibility } from './annotation-lanes.js';
-import { _abDisarm, _guideAnalysisReset, _resetAuditionForNewSong, loadAudio } from './audio.js';
+import { _abDisarm, _guideAnalysisReset, _resetAuditionForNewSong, loadAudio, resetStemAudioCache, syncStemAudio } from './audio.js';
 import { _handshapesAreDirty, _normalizeHandshape, flattenChords, reconstructChords } from './chords.js';
 import { _normalizeTuningToLanes } from './commands.js';
 import { EditHistory } from './history.js';
@@ -190,6 +190,11 @@ export async function loadCDLC(filename, options = {}) {
         // New song ⇒ the previous song's guide analysis (a decoded stem +
         // its onsets) is stale; also orphans any in-flight guide decode.
         _guideAnalysisReset();
+        // Decode this song's stems for playback (drops the old song's first).
+        // Fire-and-forget: the decode lands before play, or catches up on the
+        // next transport (re)start if the user is very quick.
+        resetStemAudioCache();
+        void syncStemAudio().finally(() => host.draw());   // repaint stem lanes once decoded
         // Exit drum-edit mode on song change so we don't carry a stale
         // selection into a sloppak whose hits[] is different.
         S.drumEditMode = false;

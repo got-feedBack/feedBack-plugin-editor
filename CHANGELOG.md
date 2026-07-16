@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Studio stems now play.** Multitrack stems sound *alongside* the master
+  recording, sample-aligned through seeks, loops, and audio-shift, each
+  with its own mute / solo / volume on its Tracks-column row (and in the
+  mixer panel). It's one mixer: a stem and a synth part obey the same solo
+  rule — soloing one silences the others, while the master recording always
+  stays audible. **Solo my source track** now works: it isolates the stem
+  the current part was charted against. Each stem's lane draws its own
+  waveform. (Known limits: while audition speed is slowed below 100%, stems
+  stay silent — they resume at full speed; and the transport ends with the
+  master recording, so a stem that runs longer than the master — or is pushed
+  past the master's end by a positive offset — is cut off there.)
+
 - **The Tracks area — a DAW-style track column.** The persistent track tree
   is now a surface you can see and arrange: a resizable header column beside
   the timeline lists every track (the master mix, studio stems, and each
