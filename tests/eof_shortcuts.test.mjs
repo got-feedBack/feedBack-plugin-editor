@@ -40,6 +40,22 @@ t('maps EOF sustain and snap keys', () => {
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('.')), 'snapUp');
 });
 
+t('FeedBack profile now binds the bracket keys to sustain (the gap this closes)', () => {
+    // shorten/lengthenSustain were registry-registered but had NO FeedBack key
+    // (feedback:''), so default-profile users had no keyboard sustain edit at
+    // all. They now match the EOF bracket keys in note mode.
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('['), 'note'), 'shortenSustain');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev(']'), 'note'), 'lengthenSustain');
+    // …and the registry row displays the bound key, so palette / help surface it.
+    const rows = Object.fromEntries(api._editorShortcutRowsPure('feedback').map(r => [r.id, r.key]));
+    assert.strictEqual(rows.shortenSustain, '[');
+    assert.strictEqual(rows.lengthenSustain, ']');
+    // In tempo-map mode the brackets stay the beat-count controls (unchanged) —
+    // that block resolves first, so the note-mode binding can't shadow it.
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev('['), 'tempoMap'), 'tempoBeatMinus');
+    assert.strictEqual(api._editorFeedbackCommandForKeyPure(ev(']'), 'tempoMap'), 'tempoBeatPlus');
+});
+
 t('maps EOF technique shortcuts to command IDs', () => {
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('h')), 'toggleHammerOn');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('p')), 'togglePullOff');

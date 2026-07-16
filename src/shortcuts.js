@@ -84,8 +84,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'nextAnchor', label: 'Jump to next anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Right', eof: 'Alt+Page Down' } },
     { id: 'gotoBookmarkDigit', label: 'Jump to bookmark 1-9', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+1-9', eof: 'Alt+1-9' } },
     { id: 'setBookmarkDigit', label: 'Set / clear bookmark 1-9 at cursor', group: 'Timeline', status: 'ready', keys: { feedback: 'Shift+Alt+1-9', eof: 'Shift+Alt+1-9' } },
-    { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: '[' } },
-    { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: ']' } },
+    { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '[', eof: '[' } },
+    { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: ']', eof: ']' } },
     { id: 'toggleSnap', label: 'Toggle snap on/off', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'G', cableton: 'Ctrl+4', eof: '' } },
     { id: 'snapDown', label: 'Decrease snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: ',', logical: 'Ctrl+,', cableton: 'Ctrl+2', eof: ',' } },
     { id: 'snapUp', label: 'Increase snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: '.', logical: 'Ctrl+.', cableton: 'Ctrl+1', eof: '.' } },
@@ -412,6 +412,11 @@ export function _editorFeedbackCommandForKeyPure(e, mode) {
     if (plain && key === 'g') return 'toggleSnap';
     if (plain && key === ',') return 'snapDown';
     if (plain && key === '.') return 'snapUp';
+    // Sustain shorten/lengthen — the bracket keys, matching the EOF profile
+    // and the Logic/EOF convention. Free in FeedBack note mode ([ / ] are only
+    // claimed inside the tempoMap block above, which returns first).
+    if (plain && key === '[') return 'shortenSustain';
+    if (plain && key === ']') return 'lengthenSustain';
     if (plain && key === 'f') return 'editFret';
     if (plain && /^[0-9]$/.test(key)) return 'setFretDigit:' + key;
     if (shift && key === ')') return 'setFretTen';
