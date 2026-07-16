@@ -92,6 +92,20 @@ export function _trackSessionTargetsPure(arrangements, drumTab) {
     return out;
 }
 
+// Drop one arrangement's mix strip and renumber the higher `arr:<n>` keys
+// down a slot — the partMix analogue of splicing S.arrangements[index] out.
+// Drum + lower-index strips keep their mute/solo/volume untouched.
+export function _partMixDropArrangementPure(partMix, index) {
+    const out = {};
+    for (const [key, value] of Object.entries(partMix && typeof partMix === 'object' ? partMix : {})) {
+        if (!key.startsWith('arr:')) { out[key] = value; continue; }
+        const n = Number(key.slice(4));
+        if (!Number.isInteger(n) || n === index) continue;
+        out[n > index ? 'arr:' + (n - 1) : key] = value;
+    }
+    return out;
+}
+
 // Normalize any persisted/half-trusted tree against the loaded song: drop
 // rows whose source/target no longer exists, append rows for anything new,
 // repair parent cycles, and default the tempo guide. Idempotent — this is
@@ -99,11 +113,15 @@ export function _trackSessionTargetsPure(arrangements, drumTab) {
 export function _trackSessionNormalizePure(raw, sources, arrangements, drumTab) {
     const sourceList = Array.isArray(sources) ? sources : [];
     const targets = _trackSessionTargetsPure(arrangements, drumTab);
-    const knownSources = new Set(sourceList.map(s => s.id));
     const knownTargets = new Set(targets.map(t => t.id));
     const input = raw && typeof raw === 'object' ? raw : {};
+    // Keep every persisted tombstone, even for sources not currently loaded:
+    // a session installed before its audio arrives (S.audioUrl set late) would
+    // otherwise lose a `master` tombstone here and resurrect the Master Mix row
+    // once the audio loads. Unknown ids are inert (no matching source), so
+    // retaining them only defers reconciliation until the source shows up.
     const removedSourceIds = [...new Set((Array.isArray(input.removedSourceIds) ? input.removedSourceIds : [])
-        .map(idOf).filter(sourceId => knownSources.has(sourceId)))];
+        .map(idOf).filter(Boolean))].slice(0, 300);
     const removedSources = new Set(removedSourceIds);
     const visibleSources = sourceList.filter(source => !removedSources.has(source.id));
     const visibleSourceIds = new Set(visibleSources.map(source => source.id));
@@ -539,6 +557,9 @@ export function reconcileTempoGuideToStems() {
 let lastRender = '';
 let draggedId = '';
 let renamingTrackId = '';
+// Monotonic stamp for pairing snapshot writes — only the latest request's
+// response is allowed to mutate S.stemLinks / S.stems (see _syncPairing).
+let _pairingSeq = 0;
 // True only for the synchronous span of a header-column fader `input`: the
 // live vol write routes through host.partMixChanged → refreshTrackSession,
 // which would rebuild el.innerHTML and destroy the very <input type=range>
@@ -749,7 +770,9 @@ async function deleteTrack(trackId) {
         const removed = await window.editorRemoveArrangement();
         if (!removed) return false;
         S.stemLinks = _trackLinksRetargetPure(S.stemLinks, row.targetId);
-        S.partMix = {};
+        // Preserve every surviving strip's mute/solo/volume — the arrangement
+        // splice renumbers the higher indices, so shift the keys, don't wipe.
+        S.partMix = _partMixDropArrangementPure(S.partMix, index);
         S.trackSession = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
         lastRender = '';
         refreshTrackSession();
@@ -764,13 +787,17 @@ async function deleteTrack(trackId) {
 // session via /stem-op op 'links' — the same atomic-snapshot contract the
 // stem manager uses. Inlined here (not imported) because stem-tracks already
 // imports this module: seams, not cycles.
-async function _syncPairing(targetId, sourceId, verb) {
+export async function _syncPairing(targetId, sourceId, verb) {
     let links = { ...(S.stemLinks || {}) };
     delete links[targetId];
     if (sourceId) links[targetId] = sourceId;
     S.stemLinks = links;
     lastRender = ''; refreshTrackSession();
     if (!S.sessionId || typeof fetch !== 'function') { markSessionDirty(); return; }
+    // Full-snapshot writes: a slower earlier response resolving after a newer
+    // one would clobber the user's latest S.stemLinks selection. Stamp each
+    // request and ignore any response that a later pairing has superseded.
+    const seq = ++_pairingSeq;
     try {
         const resp = await fetch('/api/plugins/editor/stem-op', {
             method: 'POST',
@@ -779,6 +806,7 @@ async function _syncPairing(targetId, sourceId, verb) {
         });
         const data = await resp.json();
         if (data.error) throw new Error(data.error);
+        if (seq !== _pairingSeq) return;
         S.stems = Array.isArray(data.stems) ? data.stems : S.stems;
         S.stemLinks = (data.stem_links && typeof data.stem_links === 'object') ? data.stem_links : S.stemLinks;
         if (!data.persisted) markSessionDirty();
@@ -786,6 +814,7 @@ async function _syncPairing(targetId, sourceId, verb) {
         if (host.stemUiChanged) host.stemUiChanged();
         setStatus(verb);
     } catch (e) {
+        if (seq !== _pairingSeq) return;
         markSessionDirty();
         setStatus(`Pairing sync failed: ${e.message} — the pairing is kept and ships with the next Save.`);
     }
@@ -808,6 +837,10 @@ export function initTrackSession() {
     let storedWidth = 0;
     try { storedWidth = Number(localStorage.getItem('editorTrackHeaderWidth')) || 0; } catch (_) { /* blocked */ }
     applyTrackHeaderWidth(storedWidth || S.trackHeaderWidth);
+    // main.js sizes the canvas BEFORE this runs; a restored non-default width
+    // changes the flex layout after that, so resize once here or hit geometry
+    // stays stale until an unrelated resize.
+    host.resizeCanvas();
     const splitter = document.getElementById('editor-track-session-splitter');
     if (splitter && !splitter.__trackSplitterWired) {
         splitter.__trackSplitterWired = true;

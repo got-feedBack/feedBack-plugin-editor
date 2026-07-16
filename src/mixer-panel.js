@@ -187,6 +187,10 @@ export function mixerTogglePart(key, which) {
 }
 export function mixerSetPart(key, patch) {
     _setPart(key, patch);
+    // Keep the mixer panel's companion fader in sync when the change came in
+    // from the Tracks header column (track-session.js) — same as the M/S verb.
+    _lastKey = '';
+    _mixerPanelRefresh();
 }
 
 // One delegated listener pair on the (static) panel element — guarded so a

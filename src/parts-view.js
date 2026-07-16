@@ -279,7 +279,10 @@ export function _partsViewOnDblClick(e) {
 export function _editorTogglePartsView() {
     const partCount = (S.arrangements ? S.arrangements.length : 0)
         + ((S.drumTab && Array.isArray(S.drumTab.hits) && S.drumTab.hits.length) ? 1 : 0);
-    if (!partCount) { setStatus('Load a song first'); return true; }
+    // Gate on the unified rows, not partCount: an audio-only session (audio
+    // loaded before any arrangement/drum content) still has audio lanes to
+    // show. partCount stays only for the status copy below.
+    if (!_unifiedRows().length) { setStatus('Load a song first'); return true; }
     // Commit any in-flight drag before the mode switch (mirrors the drum
     // and tempo toggles).
     host.finalizeActiveDrag();

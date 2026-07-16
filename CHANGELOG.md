@@ -62,8 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session state. Removing an audio track is non-destructive (the media
   stays in the pack; the track can be restored), and the tree records
   which audio source is the session's tempo reference. This slice is the
-  data model and persistence; the unified Tracks surface that renders the
-  tree ships separately.
+  data-model and persistence foundation for the unified Tracks surface
+  described above.
 
 ### Changed
 

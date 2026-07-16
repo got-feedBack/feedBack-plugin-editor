@@ -41,6 +41,7 @@ const {
     _trackSessionCreateFolderPure,
     _trackSessionRenamePure,
     _trackSessionIsDefaultPure,
+    _partMixDropArrangementPure,
     installCreatedTrackSession,
     trackSessionSavePayload,
 } = await import('../src/track-session.js');
@@ -137,6 +138,31 @@ t('deleting an audio row tombstones the source; normalize does not resurrect it;
     const restored = _trackSessionRestorePure(reopened, 'Guitar_L', sources, arrangements, null);
     assert.deepStrictEqual(restored.removedSourceIds, []);
     assert.ok(restored.tracks.some(track => track.sourceId === 'Guitar_L'), 'restore re-appends the row');
+});
+
+t('a master tombstone survives an install before its audio loads, and is honored once it arrives', () => {
+    // Session persisted with the Master Mix removed, installed while audio is
+    // not yet available (no master in sources) — the tombstone must persist.
+    const persisted = { ...empty, removedSourceIds: ['master'] };
+    const beforeAudio = _trackSessionNormalizePure(persisted, [], arrangements, null);
+    assert.deepStrictEqual(beforeAudio.removedSourceIds, ['master'],
+        'the tombstone is kept even though master is not a known source yet');
+    // Audio arrives late: re-normalizing against the now-present master must
+    // NOT resurrect the Master Mix row.
+    const afterAudio = _trackSessionNormalizePure(beforeAudio, sources, arrangements, null);
+    assert.deepStrictEqual(afterAudio.removedSourceIds, ['master']);
+    assert.ok(!afterAudio.tracks.some(track => track.sourceId === 'master'),
+        'late audio load does not resurrect the tombstoned Master Mix');
+});
+
+t('deleting one transcription shifts the higher arr mix strips instead of wiping them', () => {
+    const before = { 'arr:0': { vol: 10 }, 'arr:1': { mute: true }, 'arr:2': { solo: true }, drums: { vol: 40 } };
+    // Remove arrangement index 1: arr:0 and drums stay, arr:1 drops, arr:2 → arr:1.
+    assert.deepStrictEqual(_partMixDropArrangementPure(before, 1), {
+        'arr:0': { vol: 10 }, 'arr:1': { solo: true }, drums: { vol: 40 },
+    });
+    assert.deepStrictEqual(_partMixDropArrangementPure({}, 0), {}, 'empty map stays empty');
+    assert.deepStrictEqual(_partMixDropArrangementPure(null, 0), {}, 'a corrupt map degrades to empty');
 });
 
 t('folders: create, move-inside with descendant guard, delete promotes children', () => {
