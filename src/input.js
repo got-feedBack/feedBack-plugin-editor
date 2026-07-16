@@ -919,6 +919,16 @@ export function _tempoGuideAnalysisPure(trackSession) {
     return { sourceId, metronome: trackSession.tempoGuideMode === 'metronome' };
 }
 
+export function _tempoGuideRequestStillCurrentPure(request, trackSession, source) {
+    const current = _tempoGuideAnalysisPure(trackSession);
+    return !!(request && current && source
+        && current.sourceId === request.sourceId
+        && current.metronome === request.metronome
+        && source.id === request.sourceId
+        && source.url === request.url
+        && (Number(source.offset) || 0) === request.offset);
+}
+
 // Anchor + engine opts for a G fit. The FOCUSED marker always wins — locked
 // or not — so a stale multi-selection can never send analysis back toward
 // the beginning; the selection is only an anchor fallback when nothing has
@@ -955,12 +965,15 @@ async function _editorTempoSuggestFit() {
             return true;
         }
         setStatus(`Analyzing the tempo guide “${source.name}”…`);
-        onsets = await ensureGuideOnsetsShifted(source.id, source.url);
+        const request = { ...guide, url: source.url, offset: Number(source.offset) || 0 };
+        onsets = await ensureGuideOnsetsShifted(source.id, source.url, request.offset);
         // Revalidate after the await: still in Tempo Map, guide unchanged —
         // the user may have exited the mode or re-pointed the guide while
         // the stem decoded.
-        const still = _tempoGuideAnalysisPure(S.trackSession);
-        if (!S.tempoMapMode || !still || still.sourceId !== guide.sourceId) return true;
+        const currentSource = _trackSessionSourcesPure(S.audioUrl, S.stems)
+            .find(item => item.id === request.sourceId);
+        if (!S.tempoMapMode
+            || !_tempoGuideRequestStillCurrentPure(request, S.trackSession, currentSource)) return true;
         if (!onsets || !onsets.length) {
             setStatus('The tempo guide’s audio could not be analyzed — check the stem, or unlock the guide.');
             return true;

@@ -58,6 +58,7 @@ export function _trackSessionSourcesPure(audioUrl, stems) {
             name: String((raw && raw.name) || id).slice(0, 120),
             kind: 'stem',
             url: typeof (raw && raw.url) === 'string' ? raw.url : '',
+            offset: Number.isFinite(Number(raw && raw.offset)) ? Number(raw.offset) : 0,
         });
     }
     return out;

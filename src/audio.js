@@ -389,9 +389,9 @@ export async function ensureGuideOnsets(sourceId, url) {
 // Guide onsets in CHART time — the guide rides the same session timeline as
 // the recording, so the same placement shift applies on read (mirror of
 // _ensureOnsetsShifted).
-export async function ensureGuideOnsetsShifted(sourceId, url) {
+export async function ensureGuideOnsetsShifted(sourceId, url, sourceOffset = 0) {
     const raw = await ensureGuideOnsets(sourceId, url);
-    const sh = Number(S.audioShift) || 0;
+    const sh = (Number(S.audioShift) || 0) + (Number(sourceOffset) || 0);
     if (!raw || !sh) return raw;
     return raw.map(o => ({ ...o, t: o.t + sh }));
 }

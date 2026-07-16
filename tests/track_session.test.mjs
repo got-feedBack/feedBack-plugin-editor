@@ -61,6 +61,8 @@ const empty = { version: 2, tracks: [], removedSourceIds: [], tempoGuideSourceId
 t('sources derive from (audioUrl, stems) with bare stem ids, master first', () => {
     const derived = _trackSessionSourcesPure('/a.ogg', [{ id: 'Guitar_L', url: '/s1.ogg' }, { id: 'Guitar_L', url: '/dup.ogg' }, { id: '', url: '/bad.ogg' }]);
     assert.deepStrictEqual(derived.map(s => [s.id, s.kind]), [['master', 'master'], ['Guitar_L', 'stem']]);
+    assert.strictEqual(derived[1].offset, 0, 'stems without placement metadata default to the session origin');
+    assert.strictEqual(_trackSessionSourcesPure('/a.ogg', [{ id: 'Click', url: '/click.ogg', offset: 0.25 }])[1].offset, 0.25);
     assert.deepStrictEqual(_trackSessionSourcesPure('', []), [], 'no audio, no stems → no sources');
 });
 

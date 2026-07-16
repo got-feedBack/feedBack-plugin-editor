@@ -32,7 +32,7 @@ const {
     _suggestFitPure, _suggestMetronomeFitPure,
     _suggestApplyPure, _suggestCompute, _suggestActive,
 } = await import('../src/tempo-suggest.js');
-const { _tempoSuggestScopePure, _tempoGuideAnalysisPure } = await import('../src/input.js');
+const { _tempoSuggestScopePure, _tempoGuideAnalysisPure, _tempoGuideRequestStillCurrentPure } = await import('../src/input.js');
 const { editorAcceptWholeTempoFit } = await import('../src/tempo.js');
 const { editorTempoGuideState, editorToggleTempoGuide, trackSessionSavePayload } =
     await import('../src/track-session.js');
@@ -188,6 +188,19 @@ t('analysis follows the guide only when LOCKED; mode metronome sets the engine f
     assert.deepStrictEqual(
         _tempoGuideAnalysisPure({ tempoGuideSourceId: 'master', tempoGuideLocked: true, tempoGuideMode: 'audio' }),
         { sourceId: 'master', metronome: false });
+});
+
+t('an asynchronous guide analysis is discarded when its role or source changes', () => {
+    const request = { sourceId: 'Click', metronome: true, url: '/click.ogg', offset: 0.25 };
+    const source = { id: 'Click', url: '/click.ogg', offset: 0.25 };
+    const session = { tempoGuideSourceId: 'Click', tempoGuideLocked: true, tempoGuideMode: 'metronome' };
+    assert.strictEqual(_tempoGuideRequestStillCurrentPure(request, session, source), true);
+    assert.strictEqual(_tempoGuideRequestStillCurrentPure(request,
+        { ...session, tempoGuideMode: 'audio' }, source), false, 'mode changes invalidate the engine options');
+    assert.strictEqual(_tempoGuideRequestStillCurrentPure(request, session,
+        { ...source, url: '/replacement.ogg' }), false, 'source replacement invalidates decoded results');
+    assert.strictEqual(_tempoGuideRequestStillCurrentPure(request, session,
+        { ...source, offset: 0 }), false, 'timeline placement changes invalidate shifted onsets');
 });
 
 // ── The guide role round-trips through the track session ─────────────
