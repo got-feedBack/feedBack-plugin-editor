@@ -482,12 +482,14 @@ def _coerce_track_session(value, invalid=_FIELD_ABSENT):
                         "parentId": parent_id})
         seen.add(tid)
     removed_sources = []
+    seen_removed_sources = set()
     raw_removed_sources = value.get("removedSourceIds", [])
     if not isinstance(raw_removed_sources, list):
         raw_removed_sources = []
-    for raw_id in raw_removed_sources:
+    for raw_id in raw_removed_sources[:300]:
         source_id = _track_session_id(raw_id)
-        if source_id and source_id not in removed_sources:
+        if source_id and source_id not in seen_removed_sources:
+            seen_removed_sources.add(source_id)
             removed_sources.append(source_id)
     guide = _track_session_id(value.get("tempoGuideSourceId"))
     guide_mode = "metronome" if value.get("tempoGuideMode") == "metronome" else "audio"

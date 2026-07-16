@@ -77,6 +77,16 @@ def test_removed_sources_and_guide_mode_are_bounded_and_type_safe():
     assert clean["tempoGuideMode"] == "audio"
 
 
+def test_removed_sources_are_ordered_deduplicated_and_input_bounded():
+    payload = _sample()
+    payload["removedSourceIds"] = ["Bass_DI", "Bass_DI"] + [f"stem:{i}" for i in range(400)]
+    clean = _coerce_track_session(payload)
+    assert clean["removedSourceIds"][:3] == ["Bass_DI", "stem:0", "stem:1"]
+    assert clean["removedSourceIds"][-1] == "stem:297"
+    assert len(clean["removedSourceIds"]) == 299
+    assert "stem:298" not in clean["removedSourceIds"]
+
+
 def test_only_known_track_shapes_and_bounded_ids_persist():
     payload = _sample()
     payload["tracks"].extend([
