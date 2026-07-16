@@ -374,39 +374,55 @@
              data); the recording fader is a transparent gain outside the
              limiter, and part solo never gates the recording (D5). Part
              strips render via src/mixer-panel.js. -->
-        <div id="editor-mixer-panel" class="hidden w-64 shrink-0 bg-dark-800 border-l border-gray-800 overflow-y-auto text-xs text-gray-200">
-            <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
-                <span class="text-xs font-semibold">Mixer</span>
-                <!-- Band mode (multi-track MIDI playback): every track voices
-                     its instrument, mixed by the Tracks strips below. -->
-                <button id="editor-mixer-play-all" onclick="editorTogglePlayAllTracks()" aria-pressed="false"
-                        class="editor-mix-ms" title="Play ALL tracks as their instruments (mix them with the strips below); off = only the current track's guide voice">All tracks</button>
-                <button onclick="editorToggleMixer(false)" class="text-gray-500 hover:text-white text-sm leading-none" title="Close the mixer panel">&times;</button>
+        <!-- Bottom-drawer DAW mixer: a horizontal row of vertical channel
+             strips (per-track meter + rotated fader + M/S) followed by the
+             SOURCE / GUIDE / CLICK utility buses and a dedicated MASTER
+             output strip. Track M/S/faders share S.partMix with the Tracks
+             column; bus levels + the +6 dB fader ceiling are editor prefs.
+             The recording joins post-limiter so it's metered and master-
+             trimmed but never colored. Strips render via src/mixer-panel.js. -->
+        <div id="editor-mixer-panel" class="hidden editor-mixer-drawer text-xs text-gray-200">
+            <div class="editor-mixer-titlebar">
+                <span>Mixer</span>
+                <div class="flex items-center gap-3">
+                    <!-- Band mode: every track voices its instrument, mixed by the strips. -->
+                    <button id="editor-mixer-play-all" type="button" onclick="editorTogglePlayAllTracks()" aria-pressed="false"
+                            class="editor-mixer-playall" title="Play ALL tracks as their instruments (mixed by the strips); off = only the current track's guide voice">All tracks</button>
+                    <button id="editor-mixer-close" type="button" title="Close mixer" aria-label="Close mixer">&times;</button>
+                </div>
             </div>
-            <div class="px-3 pt-2 text-[10px] uppercase tracking-wide text-gray-500">Tracks</div>
-            <div id="editor-mixer-parts" class="p-3 pt-1.5 space-y-2.5 border-b border-gray-700/70"></div>
-            <div class="px-3 pt-2 text-[10px] uppercase tracking-wide text-gray-500">Buses</div>
-            <div class="p-3 pt-1.5 space-y-2.5">
-                <label class="flex items-center gap-2" title="Recording volume — a transparent gain, never limited; solo never silences it">
-                    <span class="w-16 shrink-0 text-gray-400">Recording</span>
-                    <input id="editor-mix-ref" type="range" min="0" max="100" value="100" aria-label="Recording volume percent" oninput="editorSetMixLevel('ref', this.value)" class="flex-1 accent-accent">
-                    <span id="editor-mix-ref-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">100%</span>
+            <div class="editor-mixer-console">
+                <div id="editor-mixer-parts" class="editor-mixer-strips"></div>
+                <div class="editor-mixer-utility-strips" aria-label="Utility buses">
+                    <label class="editor-mixer-strip editor-mixer-bus-strip" title="Active recording or stem source">
+                        <span class="editor-mixer-strip-type">BUS</span><span class="editor-mixer-bus-name">SOURCE</span>
+                        <div class="editor-mixer-channel"><div class="editor-mixer-meter-group"><div class="editor-mixer-meter" data-meter-key="bus:ref" aria-hidden="true"><span></span></div>
+                        <div class="editor-mixer-db-scale" aria-hidden="true"><i>0</i><i>−6</i><i>−12</i><i>−24</i><i>−48</i><i>−∞</i></div><output class="editor-mixer-db-readout" data-meter-readout="bus:ref">−∞</output></div>
+                        <input id="editor-mix-ref" class="editor-mixer-fader" type="range" min="0" max="110" step="0.1" value="100" aria-label="Source fader level" aria-valuetext="+0.0 dB" oninput="editorSetMixLevel('ref', this.value)"></div>
+                        <span id="editor-mix-ref-val" class="editor-mixer-value">+0.0 dB</span>
+                    </label>
+                    <label class="editor-mixer-strip editor-mixer-bus-strip" title="Transcription guide voice">
+                        <span class="editor-mixer-strip-type">BUS</span><span class="editor-mixer-bus-name">GUIDE</span>
+                        <div class="editor-mixer-channel"><div class="editor-mixer-meter-group"><div class="editor-mixer-meter" data-meter-key="bus:guide" aria-hidden="true"><span></span></div>
+                        <div class="editor-mixer-db-scale" aria-hidden="true"><i>0</i><i>−6</i><i>−12</i><i>−24</i><i>−48</i><i>−∞</i></div><output class="editor-mixer-db-readout" data-meter-readout="bus:guide">−∞</output></div>
+                        <input id="editor-mix-guide" class="editor-mixer-fader" type="range" min="0" max="110" step="0.1" value="35" aria-label="Guide fader level" aria-valuetext="−9.1 dB" oninput="editorSetMixLevel('guide', this.value)"></div>
+                        <span id="editor-mix-guide-val" class="editor-mixer-value">−9.1 dB</span>
+                    </label>
+                    <label class="editor-mixer-strip editor-mixer-bus-strip" title="Metronome click">
+                        <span class="editor-mixer-strip-type">BUS</span><span class="editor-mixer-bus-name">CLICK</span>
+                        <div class="editor-mixer-channel"><div class="editor-mixer-meter-group"><div class="editor-mixer-meter" data-meter-key="bus:click" aria-hidden="true"><span></span></div>
+                        <div class="editor-mixer-db-scale" aria-hidden="true"><i>0</i><i>−6</i><i>−12</i><i>−24</i><i>−48</i><i>−∞</i></div><output class="editor-mixer-db-readout" data-meter-readout="bus:click">−∞</output></div>
+                        <input id="editor-mix-click" class="editor-mixer-fader" type="range" min="0" max="110" step="0.1" value="25" aria-label="Click fader level" aria-valuetext="−12.0 dB" oninput="editorSetMixLevel('click', this.value)"></div>
+                        <span id="editor-mix-click-val" class="editor-mixer-value">−12.0 dB</span>
+                    </label>
+                </div>
+                <label class="editor-mixer-strip editor-mixer-master-strip" title="Final output level">
+                    <span class="editor-mixer-strip-type">OUTPUT</span><span class="editor-mixer-bus-name">MASTER</span>
+                    <div class="editor-mixer-channel"><div class="editor-mixer-meter-group"><div class="editor-mixer-meter editor-mixer-master-meter" data-meter-key="bus:master" aria-hidden="true"><span></span></div>
+                    <div class="editor-mixer-db-scale" aria-hidden="true"><i>0</i><i>−6</i><i>−12</i><i>−24</i><i>−48</i><i>−∞</i></div><output class="editor-mixer-db-readout" data-meter-readout="bus:master">−∞</output></div>
+                    <input id="editor-mix-master" class="editor-mixer-fader" type="range" min="0" max="110" step="0.1" value="100" aria-label="Master output fader level" aria-valuetext="+0.0 dB" oninput="editorSetMixLevel('master', this.value)"></div>
+                    <span id="editor-mix-master-val" class="editor-mixer-value">+0.0 dB</span>
                 </label>
-                <label class="flex items-center gap-2" title="Guide clap volume (behind the limiter)">
-                    <span class="w-16 shrink-0 text-gray-400">Guide</span>
-                    <input id="editor-mix-guide" type="range" min="0" max="100" value="35" aria-label="Guide clap volume percent" oninput="editorSetMixLevel('guide', this.value)" class="flex-1 accent-accent">
-                    <span id="editor-mix-guide-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">35%</span>
-                </label>
-                <label class="flex items-center gap-2" title="Metronome click volume (behind the limiter)">
-                    <span class="w-16 shrink-0 text-gray-400">Click</span>
-                    <input id="editor-mix-click" type="range" min="0" max="100" value="25" aria-label="Metronome click volume percent" oninput="editorSetMixLevel('click', this.value)" class="flex-1 accent-accent">
-                    <span id="editor-mix-click-val" aria-live="polite" class="w-9 text-right font-mono text-gray-300">25%</span>
-                </label>
-                <label class="flex items-center gap-2 pt-1 border-t border-gray-700/70" title="Play a soft tick when a note is added or changes pitch">
-                    <input id="editor-mix-blip" type="checkbox" checked onchange="editorSetEditBlip(this.checked)" class="accent-accent">
-                    <span class="text-gray-400">Edit blip on add / pitch change</span>
-                </label>
-                <p class="text-[10px] text-gray-500">Mute / solo shape the guide voices — the recording always stays audible. Level changes ramp smoothly; guide and click stay behind a limiter. The first play each session fades the recording in.</p>
             </div>
         </div>
         <!-- Inspector panel — populated by `_renderInspector` whenever the

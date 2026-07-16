@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The mixer is now a proper DAW console.** The docked side panel is
+  replaced by a bottom **drawer of vertical channel strips** — one per
+  audio stem and transcription part — each with a **live level meter**
+  (peak/clip readout on a dB scale) beside a vertical fader, over the
+  **SOURCE / GUIDE / CLICK** utility buses and a dedicated **MASTER**
+  output strip. **Every fader — channel strips, the utility buses, and the
+  master — carries +10 dB of headroom** (0–100 is linear to unity, 100–110
+  adds up to +10 dB on the same curve everywhere), so a quiet stem or bus
+  can be pushed up and no fader has an inert zone; every fader reads its
+  level in dB. The strip matching the selected track
+  lights up. The recording joins the master bus post-limiter, so it's
+  metered and master-trimmed but never colored. (The vestigial edit-blip
+  toggle is gone.)
+
 ### Fixed
 
 - **An unsaved project no longer inherits another new project's barline

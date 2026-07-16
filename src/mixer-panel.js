@@ -57,16 +57,46 @@ export function _mixerPartsPure(arrangements, drumTab, stems, removedSourceIds) 
     }
     return parts;
 }
+// Fader positions run 0..110: 0..100 is linear to unity, 101..110 adds
+// +1..+10 dB of intentional headroom (a quiet stem can be pushed up).
+const MIXER_FADER_MAX = 110;
 // A part's strip state, defaulted and clamped: an absent entry is an audible
-// part at full volume, and a corrupted volume can never boost past 100.
+// part at unity, and a corrupted volume can never boost past the +10 dB ceiling.
 export function _mixerPartStatePure(partMix, key) {
     const m = (partMix && typeof partMix === 'object') ? partMix[key] : null;
     const v = m ? Number(m.vol) : NaN;
     return {
-        vol: Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 100,
+        vol: Number.isFinite(v) ? Math.max(0, Math.min(MIXER_FADER_MAX, v)) : 100,
         mute: !!(m && m.mute),
         solo: !!(m && m.solo),
     };
+}
+// Fader position → linear gain: unity at 100, up to +10 dB (≈3.162) at 110.
+export function _mixerGainForFaderPure(position) {
+    const p = Math.max(0, Math.min(MIXER_FADER_MAX, Number(position) || 0));
+    if (p <= 100) return p / 100;
+    return 10 ** ((p - 100) / 20);
+}
+// A fader position's dB label ('−∞ dB' at 0, '+10.0 dB' at 110).
+export function _mixerFaderLabelPure(position) {
+    const gain = _mixerGainForFaderPure(position);
+    if (!(gain > 0)) return '−∞ dB';
+    const db = 20 * Math.log10(gain);
+    return (db >= 0 ? '+' : '−') + Math.abs(db).toFixed(1) + ' dB';
+}
+// A dB VALUE's compact label for the peak readout (input is already dB).
+export function _mixerDbLabelPure(db) {
+    const value = Number(db);
+    if (!Number.isFinite(value) || value <= -60) return '−∞';
+    return (value > -10 ? value.toFixed(1) : Math.round(value).toString()) + ' dB';
+}
+// Meter ballistics: instant attack (peaks show at once), gravity decay
+// (~full-scale over 700 ms) so a transient doesn't strobe.
+export function _mixerMeterNextPure(previous, input, elapsedMs) {
+    const prev = Math.max(0, Math.min(1, Number(previous) || 0));
+    const next = Math.max(0, Math.min(1, Number(input) || 0));
+    if (next >= prev) return next;
+    return Math.max(next, prev - Math.max(0, Number(elapsedMs) || 0) / 700);
 }
 export function _mixerAnySoloPure(partMix) {
     if (!partMix || typeof partMix !== 'object') return false;
@@ -87,7 +117,7 @@ export function _mixerClapStatePure(partMix, drumEditMode, currentArr) {
     const key = drumEditMode ? 'drums' : 'arr:' + (Number(currentArr) || 0);
     return {
         audible: _mixerPartAudiblePure(partMix, key),
-        vol: _mixerPartStatePure(partMix, key).vol / 100,
+        vol: _mixerGainForFaderPure(_mixerPartStatePure(partMix, key).vol),
     };
 }
 // Panel open-state pref round-trip ('1'/'0'; anything else = closed).
@@ -107,7 +137,7 @@ export function _mixerClapState() {
 export function _mixerPartStripState(key) {
     return {
         audible: _mixerPartAudiblePure(S.partMix, key),
-        vol: _mixerPartStatePure(S.partMix, key).vol / 100,
+        vol: _mixerGainForFaderPure(_mixerPartStatePure(S.partMix, key).vol),
     };
 }
 
@@ -115,33 +145,147 @@ function _panel() { return document.getElementById('editor-mixer-panel'); }
 
 // ── Strip rendering (memoized — never rides the draw loop) ───────────
 let _lastKey = '';
+let _mixerCloseTimer = 0;
 
 function _msBtn(key, act, pressed, label, title) {
     return `<button data-mix-part="${key}" data-mix-act="${act}" aria-pressed="${pressed}"`
         + ` class="editor-mix-ms" title="${title}">${label}</button>`;
 }
 
+// The meter column beside a strip's fader: a vertical bar (filled by JS each
+// frame), a dB scale, and the peak/clip readout.
+function _meterMarkup(key, extraClass = '') {
+    return `<div class="editor-mixer-meter-group">`
+        + `<div class="editor-mixer-meter ${extraClass}" data-meter-key="${key}" aria-hidden="true"><span></span></div>`
+        + `<div class="editor-mixer-db-scale" aria-hidden="true"><i>0</i><i>−6</i><i>−12</i><i>−24</i><i>−48</i><i>−∞</i></div>`
+        + `<output class="editor-mixer-db-readout" data-meter-readout="${key}">−∞</output></div>`;
+}
+
+// The S.partMix key of the currently-selected Tracks-column row, so the
+// matching strip lights up (selection is one shared idea across surfaces).
+function _selectedStripKeyPure() {
+    const selected = (S.trackSession && S.trackSession.tracks || [])
+        .find(track => track.id === S.selectedTrackId);
+    if (!selected) return '';
+    if (selected.type === 'audio') return 'audio:' + selected.sourceId;
+    if (selected.type === 'transcription') {
+        if (selected.targetId === 'drums') return 'drums';
+        const idx = (S.arrangements || [])
+            .findIndex((arr, i) => String((arr && arr.id) || ('arr:' + i)) === selected.targetId);
+        return idx >= 0 ? 'arr:' + idx : '';
+    }
+    return '';
+}
+
+// A vertical channel strip per part: type badge, M/S, the meter+fader
+// channel, a dB value, and the name — faithful to the #285 console.
 function _renderParts(container) {
     const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.stems, S.trackSession && S.trackSession.removedSourceIds);
     if (!parts.length) {
-        container.innerHTML = '<p class="text-[10px] text-gray-500">No tracks yet — strips appear as tracks are added.</p>';
+        container.innerHTML = '<p class="text-[10px] text-gray-500 self-center">No tracks yet — strips appear as tracks are added.</p>';
         return;
     }
+    const selectedKey = _selectedStripKeyPure();
     container.innerHTML = parts.map(p => {
         const st = _mixerPartStatePure(S.partMix, p.key);
         const name = _editorEscHtml(p.name);
-        return `<div class="space-y-1" data-mix-row="${p.key}">`
-            + `<div class="flex items-center gap-1.5">`
-            + `<span class="flex-1 truncate text-gray-300" title="${name}">${name}</span>`
-            + _msBtn(p.key, 'mute', st.mute, 'M', 'Mute this part’s guide voice')
-            + _msBtn(p.key, 'solo', st.solo, 'S', 'Solo this part’s guide voice — the recording stays audible')
+        return `<div class="editor-mixer-strip ${p.kind === 'audio' ? 'editor-mixer-audio-strip' : 'editor-mixer-transcription-strip'}${p.key === selectedKey ? ' editor-mixer-selected' : ''}" data-mix-row="${p.key}">`
+            + `<span class="editor-mixer-strip-type">${p.kind === 'audio' ? 'AUDIO' : 'MIDI'}</span>`
+            + `<div class="editor-mixer-ms-row">`
+            + _msBtn(p.key, 'mute', st.mute, 'M', 'Mute track')
+            + _msBtn(p.key, 'solo', st.solo, 'S', 'Solo track — the recording stays audible')
             + `</div>`
-            + `<div class="flex items-center gap-2">`
-            + `<input type="range" min="0" max="100" value="${st.vol}" data-mix-part="${p.key}" data-mix-act="vol"`
-            + ` aria-label="${name} guide volume percent" class="flex-1 accent-accent">`
-            + `<span data-mix-val="${p.key}" class="w-9 text-right font-mono text-gray-400">${st.vol}%</span>`
-            + `</div></div>`;
+            + `<div class="editor-mixer-channel">`
+            + _meterMarkup(p.key)
+            + `<input type="range" min="0" max="110" step="0.1" value="${st.vol}" data-mix-part="${p.key}" data-mix-act="vol"`
+            + ` aria-label="${name} fader level" aria-valuetext="${_mixerFaderLabelPure(st.vol)}" class="editor-mixer-fader"></div>`
+            + `<span data-mix-val="${p.key}" class="editor-mixer-value">${_mixerFaderLabelPure(st.vol)}</span>`
+            + `<span class="editor-mixer-strip-name" title="${name}">${name}</span>`
+            + `</div>`;
     }).join('');
+}
+
+// ── Live meters (rAF-driven; only while the drawer is open) ──────────
+let _meterFrame = 0;
+let _meterLastAt = 0;
+const _meterShown = Object.create(null);
+const _meterPeakDb = Object.create(null);
+const _meterPeakAt = Object.create(null);
+
+// Peak-readout routing MUST mirror _mixerMeterInputPure's fallbacks, or a
+// strip whose meter moves off a bus (the active audio strip → ref, the active
+// transcription strip → guide) shows a permanent −∞ peak beside a live meter.
+export function _mixerMeterPeakPure(key, levels, activeAudioId, activePart) {
+    if (key.startsWith('bus:')) return levels.peaks && levels.peaks[key.slice(4)];
+    if (levels.trackPeaks && Number.isFinite(levels.trackPeaks[key])) return levels.trackPeaks[key];
+    if (key === 'audio:' + (activeAudioId || 'master')) return levels.peaks && levels.peaks.ref;
+    if (key === activePart) return levels.peaks && levels.peaks.guide;
+    return -Infinity;
+}
+
+function _meterPeakForKey(key, levels) {
+    const activePart = S.drumEditMode ? 'drums' : 'arr:' + (Number(S.currentArr) || 0);
+    return _mixerMeterPeakPure(key, levels, S.activeAudioSourceId, activePart);
+}
+
+export function _mixerMeterInputPure(key, levels, activeAudioId, activePart, playAll) {
+    if (key.startsWith('bus:')) return levels[key.slice(4)] || 0;
+    if (key.startsWith('audio:') && levels.tracks && Number.isFinite(levels.tracks[key])) return levels.tracks[key];
+    if (key === 'audio:' + (activeAudioId || 'master')) return levels.ref;
+    if (playAll && levels.tracks && Number.isFinite(levels.tracks[key])) return levels.tracks[key];
+    // A transcription strip has no audio of its own — show the guide bus while
+    // that part is the active editing surface (its claps sound), else idle.
+    return key === activePart ? levels.guide : 0;
+}
+
+function _meterInputForKey(key, levels) {
+    const activePart = S.drumEditMode ? 'drums' : 'arr:' + (Number(S.currentArr) || 0);
+    return _mixerMeterInputPure(key, levels, S.activeAudioSourceId, activePart,
+        host.playAllTracksEnabled());
+}
+
+function _meterTick(at) {
+    _meterFrame = 0;
+    const panel = _panel();
+    if (!panel || panel.classList.contains('hidden')) return;
+    const elapsed = _meterLastAt ? Math.min(100, at - _meterLastAt) : 16;
+    _meterLastAt = at;
+    const levels = host.mixerMeterLevels();
+    const meters = panel.querySelectorAll ? panel.querySelectorAll('[data-meter-key]') : [];
+    for (const meter of meters) {
+        const key = meter.getAttribute('data-meter-key');
+        const shown = _mixerMeterNextPure(_meterShown[key], _meterInputForKey(key, levels), elapsed);
+        _meterShown[key] = shown;
+        const fill = meter.querySelector('span');
+        if (fill && fill.style) fill.style.height = (shown * 100).toFixed(1) + '%';
+        const peak = _meterPeakForKey(key, levels);
+        if (Number.isFinite(peak) && (!Number.isFinite(_meterPeakDb[key]) || peak >= _meterPeakDb[key]
+                || at - (_meterPeakAt[key] || 0) >= 1500)) {
+            _meterPeakDb[key] = peak;
+            _meterPeakAt[key] = at;
+        } else if (at - (_meterPeakAt[key] || 0) >= 3000) {
+            _meterPeakDb[key] = -Infinity;
+        }
+        const readout = panel.querySelector(`[data-meter-readout="${key}"]`);
+        if (readout) {
+            readout.textContent = _mixerDbLabelPure(_meterPeakDb[key]);
+            readout.classList.toggle('is-clipping', Number(_meterPeakDb[key]) > 0);
+        }
+    }
+    if (typeof requestAnimationFrame === 'function') _meterFrame = requestAnimationFrame(_meterTick);
+}
+
+function _startMeters() {
+    if (!_meterFrame && typeof requestAnimationFrame === 'function') {
+        _meterLastAt = 0;
+        _meterFrame = requestAnimationFrame(_meterTick);
+    }
+}
+
+function _stopMeters() {
+    if (_meterFrame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(_meterFrame);
+    _meterFrame = 0;
+    _meterLastAt = 0;
 }
 
 // Seed the bus faders + blip checkbox from their prefs (owned by audio.js,
@@ -155,14 +299,13 @@ function _renderPlayAll() {
 
 function _renderBuses() {
     const ui = host.mixUiState();
-    for (const [bus, id] of [['ref', 'editor-mix-ref'], ['guide', 'editor-mix-guide'], ['click', 'editor-mix-click']]) {
+    for (const [bus, id] of [['ref', 'editor-mix-ref'], ['guide', 'editor-mix-guide'], ['click', 'editor-mix-click'], ['master', 'editor-mix-master']]) {
         const slider = document.getElementById(id);
         const label = document.getElementById(id + '-val');
-        if (slider) slider.value = String(ui.pcts[bus]);
-        if (label) label.textContent = ui.pcts[bus] + '%';
+        const text = _mixerFaderLabelPure(ui.pcts[bus]);
+        if (slider) { slider.value = String(ui.pcts[bus]); slider.setAttribute?.('aria-valuetext', text); }
+        if (label) label.textContent = text;
     }
-    const blip = document.getElementById('editor-mix-blip');
-    if (blip) blip.checked = !!ui.blip;
 }
 
 // Toolbar "Mix" button + transport "Mix" button track the panel like every
@@ -230,8 +373,19 @@ function _wire(panel) {
         if (!el || el.getAttribute('data-mix-act') !== 'vol') return;
         const key = el.getAttribute('data-mix-part');
         _setPart(key, { vol: Number(el.value) });
+        const label = _mixerFaderLabelPure(_mixerPartStatePure(S.partMix, key).vol);
+        if (el.setAttribute) el.setAttribute('aria-valuetext', label);
         const val = panel.querySelector(`[data-mix-val="${key}"]`);
-        if (val) val.textContent = _mixerPartStatePure(S.partMix, key).vol + '%';
+        if (val) val.textContent = label;
+    });
+    // The drawer's close button + its fall-animation completion.
+    const close = document.getElementById('editor-mixer-close');
+    if (close && !close.__mixerCloseWired) {
+        close.__mixerCloseWired = true;
+        close.addEventListener('click', () => editorToggleMixerPanel(false));
+    }
+    panel.addEventListener('animationend', (e) => {
+        if (e.target === panel && e.animationName === 'editor-mixer-fall') _finishMixerClose(panel);
     });
 }
 
@@ -240,11 +394,13 @@ function _wire(panel) {
 // or the part list itself changed. No-op while the panel is hidden.
 export function _mixerPanelRefresh() {
     const panel = _panel();
-    if (!panel || panel.classList.contains('hidden')) { _lastKey = ''; return; }
+    if (!panel || panel.classList.contains('hidden') || panel.classList.contains('editor-mixer-closing')) {
+        _lastKey = ''; return;
+    }
     const container = document.getElementById('editor-mixer-parts');
     if (!container) return;
     const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.stems, S.trackSession && S.trackSession.removedSourceIds);
-    const key = editGen + '|' + JSON.stringify(S.partMix) + '|'
+    const key = editGen + '|' + S.selectedTrackId + '|' + JSON.stringify(S.partMix) + '|'
         + (host.playAllTracksEnabled() ? '1' : '0') + '|'
         + parts.map(p => p.key + ':' + p.name).join(',');
     if (key === _lastKey) return;
@@ -253,33 +409,62 @@ export function _mixerPanelRefresh() {
     _renderParts(container);
 }
 
+// Finish a close after the fall animation (or immediately when there's no
+// animation): actually hide the drawer and reclaim the canvas space.
+function _finishMixerClose(panel, force = false) {
+    if (!force && !panel.classList.contains('editor-mixer-closing')) return;
+    if (_mixerCloseTimer) { clearTimeout(_mixerCloseTimer); _mixerCloseTimer = 0; }
+    panel.classList.remove('editor-mixer-closing');
+    panel.classList.add('hidden');
+    host.scheduleCanvasResize?.();
+}
+
+function _mixerReducedMotion() {
+    try { return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches; }
+    catch (_) { return false; }
+}
+
 // The one toggle every entry point routes through: View ▸ Panels ▸ Mixer,
-// the toolbar Mix button, the transport Mix button, and Shift+C.
-export function editorToggleMixerPanel(force) {
+// the toolbar Mix button, the transport Mix button, and Shift+C. The drawer
+// rises on open and falls on close (respecting reduced-motion).
+export function editorToggleMixerPanel(force, instant = false) {
     const panel = _panel();
     if (!panel) return false;
-    const show = force === undefined ? panel.classList.contains('hidden') : !!force;
-    panel.classList.toggle('hidden', !show);
+    const closed = panel.classList.contains('hidden') || panel.classList.contains('editor-mixer-closing');
+    const show = force === undefined ? closed : !!force;
     try { localStorage.setItem('editorMixerPanel', show ? '1' : '0'); } catch (_) { /* storage blocked */ }
     if (show) {
+        if (_mixerCloseTimer) { clearTimeout(_mixerCloseTimer); _mixerCloseTimer = 0; }
+        panel.classList.remove('editor-mixer-closing');
+        panel.classList.remove('hidden');
         _wire(panel);
         _renderBuses();
         _lastKey = '';
         _mixerPanelRefresh();
+        _startMeters();
+    } else {
+        _stopMeters();
+        if (instant || panel.classList.contains('hidden') || _mixerReducedMotion()) {
+            _finishMixerClose(panel, true);
+        } else if (!panel.classList.contains('editor-mixer-closing')) {
+            panel.classList.add('editor-mixer-closing');
+            // animationend is authoritative; this covers a teardown or a
+            // visibility change that swallows the event.
+            _mixerCloseTimer = setTimeout(() => _finishMixerClose(panel), 240);
+        }
     }
     _refreshMixerButtons(show);
-    host.scheduleCanvasResize?.();
+    if (show) host.scheduleCanvasResize?.();
     return true;
 }
 
 // Wired by main.js's init(), not at import — no side effects at load, so the
-// unit tests can import this module without a DOM.
+// unit tests can import this module without a DOM. A project always opens
+// with maximum track-area space: the Mix button is a per-screen view toggle,
+// not a persisted launch preference.
 export function initMixerPanel() {
     const panel = _panel();
     if (!panel) return;
     _wire(panel);
-    let raw = null;
-    try { raw = localStorage.getItem('editorMixerPanel'); } catch (_) { /* storage blocked */ }
-    if (_mixerOpenFromStoredPure(raw)) editorToggleMixerPanel(true);
-    else _refreshMixerButtons(false);
+    editorToggleMixerPanel(false, true);
 }

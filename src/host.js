@@ -200,7 +200,9 @@ export const host = {
      * Owned by src/audio.js (the `editorMix*` prefs); the panel reads them
      * through here so it stays audio-import-free.
      */
-    mixUiState: () => ({ pcts: { ref: 100, guide: 35, click: 25 }, blip: true }),
+    mixUiState: () => ({ pcts: { ref: 100, guide: 35, click: 25, master: 100 }, blip: true }),
+    /** Live post-fader meter levels + peak dB per bus and stem track. */
+    mixerMeterLevels: () => ({ ref: 0, guide: 0, click: 0, master: 0, tracks: {}, peaks: {}, trackPeaks: {} }),
     /**
      * Per-part strip state BY KEY ('arr:<idx>' / 'drums') for band-mode
      * MIDI playback: {audible, vol 0..1} with the whole-map solo rule.

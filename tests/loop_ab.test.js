@@ -171,7 +171,7 @@ function buildAB(opts) {
     const env = new Function(
         'S', 'localStorage', 'document', 'window', '_guideVoices', 'host',
         '_selectedLoopRegion', '_setLoopRegionEnabled', '_updateLoopRegionControls',
-        '_guideTimerSync', 'setStatus', '_editorSeekToTime', 'draw',
+        '_guideTimerSync', 'setStatus', '_editorSeekToTime', 'draw', '_attachMeterTap',
         '"use strict";' + mixBlock + '\n' + busBlock + '\n' + abPure + '\n' + abRuntime + loopArm
         + '\nreturn { _ensureRefGain, _mixSetBusGain, _mixLoadPct, _abApplyRefGain,'
         + ' _abActive, _editorToggleLoopAB, _setLoopRegionEnabled, refGainNode: () => _refGain,'
@@ -186,6 +186,7 @@ function buildAB(opts) {
         () => {},   // setStatus
         () => {},   // _editorSeekToTime
         () => {},   // draw
+        () => {},   // _attachMeterTap (meter taps are a no-op in the sliced env)
     );
     return { env, S, spies, region };
 }

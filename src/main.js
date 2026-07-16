@@ -47,7 +47,7 @@ import {
     editorSetEditBlip, editorSetMixLevel, editorSetAudioShift, editorNudgeAudioShift, initAudio, loadAudio,
     startPlayback, stopPlayback, teardownAudio, editorSetCountIn, editorSetAuditionRate,
     editorToggleAuditionTrainer, editorPlayAllTracksEnabled, editorTogglePlayAllTracks,
-    _partGainsApply, applyStemMix, audioStemWaveform, syncStemAudio,
+    _partGainsApply, applyStemMix, audioStemWaveform, syncStemAudio, audioMixerMeterLevels,
 } from './audio.js';
 import { _mixerClapState, _mixerPanelRefresh, _mixerPartStripState, editorToggleMixerPanel, initMixerPanel } from './mixer-panel.js';
 import {
@@ -522,6 +522,7 @@ setHostHooks({
     tempoResolvedMeasureIdx: (...a) => _tempoResolvedMeasureIdx(...a),
     partClapState: _mixerClapState,
     mixUiState: () => ({ pcts: _mixLoadPct(), blip: editorEditBlipEnabled() }),
+    mixerMeterLevels: () => audioMixerMeterLevels(),
     // Band mode (multi-track MIDI playback): the strips are the mixer.
     partStripState: (key) => _mixerPartStripState(key),
     // A strip changed: ramp the synth part gains AND the stem gains (both
