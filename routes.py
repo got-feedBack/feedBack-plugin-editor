@@ -2465,11 +2465,21 @@ def _notes_fingerprint(notes, chords) -> str:
     import hashlib
 
     def _tup(n):
+        # `hand` joins the identity tuple: a hand EDIT must invalidate a
+        # preserved authored notation payload (the sidecar's whole point is
+        # the hand split — freezing it over an edited hand would silently
+        # show the old hands forever). Editor shape carries it in
+        # `techniques`; wire shape at top level. Strict enum → None, so
+        # junk can't split the two shapes' fingerprints. NOTE: adding the
+        # element re-fingerprints every previously stamped payload once —
+        # the measure-granular merge preserves their unedited bars.
+        _hand = (n.get("techniques") or {}).get("hand", n.get("hand"))
         return (
             round(float(n.get("t", n.get("time", 0)) or 0), 3),
             int(n.get("s", n.get("string", 0)) or 0),
             int(n.get("f", n.get("fret", 0)) or 0),
             round(float(n.get("sus", n.get("sustain", 0)) or 0), 3),
+            _hand if _hand in ("lh", "rh") else None,
         )
 
     note_tuples = sorted(_tup(n) for n in (notes or []))

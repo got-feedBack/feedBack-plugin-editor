@@ -115,6 +115,14 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'shortenSustain' },
         { cmd: 'lengthenSustain' },
         { sep: true },
+        // Keys hand assignment (per-note; a hand edit refreshes the saved
+        // notation's hand split). Guarded at runtime — no-ops with a status
+        // hint on non-keys tracks.
+        { hdr: 'Hand (keys)' },
+        { label: 'Left hand', fn: 'editorSetHandLeft' },
+        { label: 'Right hand', fn: 'editorSetHandRight' },
+        { label: 'Clear hand', fn: 'editorSetHandClear' },
+        { sep: true },
         { hdr: 'Techniques' },
         { cmd: 'bend' },
         { cmd: 'slideEditor' },
@@ -145,6 +153,7 @@ export const EDITOR_MENUS = Object.freeze([
         { sep: true },
         { label: 'Strings / tuning…', fn: 'editorShowStringsModal' },
         { label: 'Tones…', fn: 'editorShowTonesModal' },
+        { label: 'Assign hands by split… (keys)', fn: 'editorAssignHandsBySplit' },
         { sep: true },
         { cmd: 'cycleViewMode' },
         { cmd: 'toggleDrumDensity' },
@@ -154,6 +163,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleOnsetStrip' },
         { cmd: 'togglePartsView' },
         { cmd: 'toggleKeyHighlight' },
+        { label: 'Hand shading (keys)', fn: 'editorToggleHandShading' },
         { cmd: 'toggleFollow' },
         { cmd: 'toggleTabView' },
         { cmd: 'showTabPreview' },

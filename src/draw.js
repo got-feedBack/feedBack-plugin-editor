@@ -63,6 +63,7 @@ import {
     _scaleDegreeSemisPure,
 } from './theory.js';
 import { S, editGen } from './state.js';
+import { HAND_LH_COLOR, HAND_RH_COLOR, _editorHandShadingEnabled } from './hand.js';
 
 export function drawLanes(w) {
     if (isKeysMode()) return drawPianoLanes(w);
@@ -833,8 +834,16 @@ function _drawPianoNote(n, selected, hl, midi, fretted, linted) {
     // say WHERE the pitch is played — which is exactly what the Shift+↑/↓
     // position cycle changes, making a cycle step visible as a color flip
     // at a fixed Y (VA.5).
+    // Keys notes with an authored hand wear the HAND color when hand
+    // shading is on (same argument: Y already says the pitch, so color's
+    // job is WHO PLAYS IT — LH warm, RH cool). Unassigned notes keep the
+    // octave palette, so unassigned reads as "no call made", never a lie.
+    const _hand = !fretted && _editorHandShadingEnabled()
+        ? (n.techniques && n.techniques.hand) : null;
     const color = fretted
         ? colorForLane(strToLane(n.string))
+        : _hand === 'lh' ? HAND_LH_COLOR
+        : _hand === 'rh' ? HAND_RH_COLOR
         : PIANO_OCTAVE_COLORS[Math.min(octave, PIANO_OCTAVE_COLORS.length - 1)];
     // Suggested (machine-picked, unconfirmed) position — render provisional
     // (dimmer + dashed). Only fretted-in-roll adds are ever marked.

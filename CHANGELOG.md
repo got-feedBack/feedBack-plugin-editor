@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Keys hand authoring** (the hand arc, Step B). The per-note `hand` field is
+  now editable and visible:
+  - **Note ▸ Hand (keys)**: Left / Right / Clear on the selection — one undo
+    step.
+  - **Track ▸ Assign hands by split… (keys)**: a STAMPING generator (never a
+    live layer): pick a split note (default C4; note names or MIDI numbers),
+    and every targeted note gets `lh` below it / `rh` at-or-above in ONE
+    undoable command (new `SetTechScalarPerNoteCmd`). Selection scopes the
+    stamp; per-note edits win from then on.
+  - **Hand shading on the piano roll** (View ▸, default on): LH notes draw
+    warm, RH cool; unassigned notes keep their octave color so "no call made"
+    never reads as an assignment.
+  - **A hand edit now refreshes the saved notation's hand split**: `hand`
+    joins the notation fingerprint (the one technique that does), so a
+    preserved authored sidecar can't freeze old hands over an edited chart —
+    the relift honors per-note hands (core `split_hands`, PR #992). One-time
+    effect: previously stamped payloads re-fingerprint on their next save and
+    take the measure-granular merge (unedited bars keep their authored
+    hands).
+
 - **MusicXML keys imports keep their authored grand-staff hand splits** (the
   keys LH/RH hand arc, slice A). The import no longer deletes the authored
   notation payload: it is offset-shifted alongside the notes, stamped
