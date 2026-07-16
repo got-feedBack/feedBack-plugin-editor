@@ -33,8 +33,19 @@ import { _editorEscHtml, setStatus } from './ui.js';
 // One strip per part: every arrangement, plus the drum tab as its own strip
 // (drums are a song-level sidecar, not an arrangement) — the same list shape
 // as the Parts view, keyed the way S.currentArr addresses parts (by index).
-export function _mixerPartsPure(arrangements, drumTab) {
+export function _mixerPartsPure(arrangements, drumTab, stems, removedSourceIds) {
     const parts = [];
+    // Studio stems first (they're the audio band), then the transcription
+    // parts. Stem strips key by 'audio:<id>' — the same S.partMix store and
+    // whole-map solo rule the synth parts use, so one mixer drives both.
+    const removed = new Set(Array.isArray(removedSourceIds) ? removedSourceIds : []);
+    const seen = new Set();
+    for (const stem of (Array.isArray(stems) ? stems : [])) {
+        const id = stem && typeof stem.id === 'string' ? stem.id : '';
+        if (!id || removed.has(id) || seen.has(id)) continue;
+        seen.add(id);
+        parts.push({ key: 'audio:' + id, name: stem.name || id, kind: 'audio' });
+    }
     (arrangements || []).forEach((arr, i) => {
         parts.push({
             key: 'arr:' + i,
@@ -111,7 +122,7 @@ function _msBtn(key, act, pressed, label, title) {
 }
 
 function _renderParts(container) {
-    const parts = _mixerPartsPure(S.arrangements, S.drumTab);
+    const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.stems, S.trackSession && S.trackSession.removedSourceIds);
     if (!parts.length) {
         container.innerHTML = '<p class="text-[10px] text-gray-500">No tracks yet — strips appear as tracks are added.</p>';
         return;
@@ -232,7 +243,7 @@ export function _mixerPanelRefresh() {
     if (!panel || panel.classList.contains('hidden')) { _lastKey = ''; return; }
     const container = document.getElementById('editor-mixer-parts');
     if (!container) return;
-    const parts = _mixerPartsPure(S.arrangements, S.drumTab);
+    const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.stems, S.trackSession && S.trackSession.removedSourceIds);
     const key = editGen + '|' + JSON.stringify(S.partMix) + '|'
         + (host.playAllTracksEnabled() ? '1' : '0') + '|'
         + parts.map(p => p.key + ':' + p.name).join(',');

@@ -31,7 +31,7 @@ import { _seedExtendedStringsFromTuning } from './lanes.js';
 import { S, markSessionDirty } from './state.js';
 import { _marksSanitizePure } from './tempo-marks.js';
 import { disposeBackendSession, stopSessionProcesses } from './session-lifecycle.js';
-import { _ensureOnsetsShifted, _guideAnalysisReset } from './audio.js';
+import { _ensureOnsetsShifted, _guideAnalysisReset, resetStemAudioCache, syncStemAudio } from './audio.js';
 import { _firstDownbeatTimePure, _importBar1NudgePure, _liftAllBeats, _restoreBeatLocks, _syncAppliedMessagePure } from './tempo.js';
 import { seedSurfacePreset, surfacePersistFor } from './toolbars.js';
 import { trackSessionSavePayload } from './track-session.js';
@@ -2326,6 +2326,8 @@ export async function editorApplyCreateResult(data) {
     // source immediately so stems do not appear only after a save/reopen.
     host.installCreatedTrackSession(data.track_session, data.audio_sources || []);
     _guideAnalysisReset();   // fresh import — no stale guide onsets may survive
+    resetStemAudioCache();   // …nor stale stem buffers
+    void syncStemAudio().finally(() => host.draw());   // decode stems, then repaint their lanes
     const _importHasDrums = !!(S.drumTab && (S.drumTab.hits || []).length);
     const _importHasKeys = (S.arrangements || []).some(
         a => KEYS_PATTERN.test(a.name || ''));
