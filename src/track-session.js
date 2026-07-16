@@ -52,9 +52,9 @@ const transcriptionTrackId = (targetId) => 'transcription:' + targetId;
 // plus every stem, in manifest order. Stem ids are the BARE manifest ids —
 // the same identity `manifest["stems"]`, the mixer strips, and stemLinks
 // values share.
-export function _trackSessionSourcesPure(audioUrl, stems) {
+export function _trackSessionSourcesPure(audioUrl, stems, masterName) {
     const out = [];
-    if (audioUrl) out.push({ id: MASTER_ID, name: 'Master Mix', kind: 'master', url: String(audioUrl) });
+    if (audioUrl) out.push({ id: MASTER_ID, name: String(masterName || 'Master Mix').slice(0, 120), kind: 'master', url: String(audioUrl) });
     const seen = new Set([MASTER_ID]);
     for (const raw of (Array.isArray(stems) ? stems : [])) {
         const id = idOf(raw && raw.id);
@@ -211,7 +211,7 @@ export function _trackSessionNormalizePure(raw, sources, arrangements, drumTab) 
 // their branch). Pairing is PROJECTED from stemLinks — never stored on the
 // row's tree entry — and a link that points at a removed or unknown source
 // projects as unpaired rather than resurrecting it.
-export function _trackSessionRowsPure(session, sources, arrangements, drumTab, stemLinks) {
+export function _trackSessionRowsPure(session, sources, arrangements, drumTab, stemLinks, includeCollapsed = false) {
     const model = _trackSessionNormalizePure(session, sources, arrangements, drumTab);
     const removedSources = new Set(model.removedSourceIds);
     const sourceMap = new Map((Array.isArray(sources) ? sources : []).filter(source => !removedSources.has(source.id)).map(s => [s.id, s]));
@@ -233,10 +233,11 @@ export function _trackSessionRowsPure(session, sources, arrangements, drumTab, s
                 depth,
                 name: track.name || (source || target || {}).name || 'Track',
                 sourceKind: source ? source.kind : '',
+                sourceOffset: source ? (Number(source.offset) || 0) : 0,
                 mixKey: source ? audioTrackId(source.id) : (target && target.mixKey) || '',
                 pairedSourceId: linked && sourceMap.has(linked) ? linked : '',
             });
-            if (track.type !== 'folder' || !track.collapsed) visit(track.id, depth + 1);
+            if (includeCollapsed || track.type !== 'folder' || !track.collapsed) visit(track.id, depth + 1);
         }
     };
     visit('', 0);
@@ -431,14 +432,27 @@ export function _trackSessionIsDefaultPure(session, sources, arrangements, drumT
 }
 /* @pure:track-session:end */
 
-function _liveSources() { return _trackSessionSourcesPure(S.audioUrl, S.stems); }
+// The master source rides S.masterAudioUrl — the ORIGINAL recording — not
+// S.audioUrl, which active-source switching reassigns to whichever stem is
+// focused. Deriving the master from S.audioUrl would rebuild it with a
+// stem's URL (and drop it entirely at load, before loadAudio has run),
+// which is what made the Master row and the tempo guide vanish.
+// The master's display name: the pack-authored audio name (from the backend
+// audio_sources / manifest) wins; otherwise the SONG name; "Master Mix" only
+// as a last resort. An inline rename still overrides it on the row.
+export function _liveSources() {
+    return _trackSessionSourcesPure(S.masterAudioUrl || S.audioUrl, S.stems,
+        S.masterAudioName || S.title || 'Master Mix');
+}
 
 // Load-boundary install (loadCDLC): adopt the persisted tree against the
 // freshly-loaded song. Never dirties the session — loading is not an edit.
 // `audioUrl` rides in explicitly at load time because S.audioUrl still
-// points at the previous song until loadAudio runs.
+// points at the previous song until loadAudio runs — and it pins
+// S.masterAudioUrl so every later derivation sees a stable master.
 export function installTrackSession(raw, audioUrl) {
-    const sources = _trackSessionSourcesPure(audioUrl !== undefined ? audioUrl : S.audioUrl, S.stems);
+    if (audioUrl !== undefined) S.masterAudioUrl = audioUrl || null;
+    const sources = _trackSessionSourcesPure(S.masterAudioUrl || S.audioUrl, S.stems);
     // A persisted LOCKED guide whose stem id is gone must UNLOCK at load — not
     // silently repoint onto the first surviving source (usually the master):
     // normalize preserves the lock while replacing the missing id, and
@@ -474,6 +488,14 @@ export function installCreatedTrackSession(raw, audioSources) {
         .filter(source => source && source.kind === 'stem' && typeof source.id === 'string' && source.id.startsWith('stem:'))
         .map(source => ({ id: source.id.slice('stem:'.length), name: source.name, url: source.url }));
     const master = list.find(source => source && source.kind === 'master' && source.url);
+    // The active-source anchor: the master's URL, held separately so it
+    // survives while a stem is focused as the reference.
+    S.masterAudioUrl = master ? master.url : (S.audioUrl || null);
+    S.masterAudioName = (master && master.name) || '';
+    S.activeAudioSourceId = 'master';
+    // The master anchors at offset 0 — clear any focused stem's placement so
+    // it can't shift this session's waveform and onset analysis.
+    S.activeAudioSourceOffset = 0;
     installTrackSession(raw, master ? master.url : '');
 }
 
@@ -573,6 +595,18 @@ function _rowsLive() {
     return _trackSessionRowsPure(S.trackSession, _liveSources(), S.arrangements, S.drumTab, S.stemLinks);
 }
 
+// The mixer's strip keys in Tracks-column ROW order — so dragging a track in
+// the left pane re-orders its mixer strip too. The master mix leads (it's the
+// top audio row) so its mixer strip sorts first, matching the DAW console;
+// folders have no strip and are skipped. Traverses the FULL tree (collapsed
+// folders included) so collapsing a folder can't drop its stems' keys and
+// silently reshuffle the mixer. Read via host.mixerTrackOrder.
+export function trackSessionOrderedMixKeys() {
+    return _trackSessionRowsPure(S.trackSession, _liveSources(), S.arrangements, S.drumTab, S.stemLinks, true).rows
+        .filter(row => row.mixKey)
+        .map(row => row.mixKey);
+}
+
 export function applyTrackHeaderWidth(width, persist = false) {
     const value = Math.max(176, Math.min(576, Math.round(Number(width) || 320)));
     S.trackHeaderWidth = value;
@@ -599,12 +633,20 @@ function render() {
     const stems = sources.filter(source => source.kind === 'stem');
     const sourceOptions = selected => ['<option value="">— master mix —</option>']
         .concat(stems.map(source => `<option value="${_editorEscHtml(source.id)}"${source.id === selected ? ' selected' : ''}>${_editorEscHtml(source.name)}</option>`)).join('');
-    const guide = sources.find(source => source.id === model.tempoGuideSourceId) || sources[0] || { name: 'No guide' };
+    // The guide label follows the track's DISPLAY name (an inline rename
+    // wins over the source's default) — so a renamed recording never reverts
+    // to the generic "Master Mix" on the guide button.
+    const guideRow = rows.find(r => r.type === 'audio' && r.sourceId === model.tempoGuideSourceId)
+        || rows.find(r => r.type === 'audio');
+    const guideName = guideRow ? guideRow.name
+        : ((sources.find(s => s.id === model.tempoGuideSourceId) || sources[0] || {}).name || 'No guide');
     // Per-part M/S/fader — the SAME canonical partMix the mixer panel owns
     // (band-mode gains ramp off it live). Transcription parts AND stem audio
-    // rows get strips — both route through the same S.partMix mixer. The
-    // MASTER mix has no strip: it's the reference (always audible, never
-    // gated by solo), so a mute/solo there would be a lie.
+    // rows get strips inline here. The MASTER mix is DELIBERATELY excluded from
+    // the left Tracks pane: it lives as a channel strip in the mixer drawer (its
+    // fader/mute/solo are real there — reference playback routes through a
+    // per-source gain, audio.js), and Christian wants the left pane kept to the
+    // tracks themselves, not the master-out or bus mixes.
     const mixControls = row => {
         const stripped = row.type === 'transcription'
             || (row.type === 'audio' && row.sourceKind !== 'master');
@@ -613,7 +655,7 @@ function render() {
         const st = _mixerPartStatePure(S.partMix, row.mixKey);
         return `<button class="editor-track-ms" data-track-action="mix-mute" data-mix-key="${key}" aria-pressed="${st.mute}" title="Mute track">M</button>`
             + `<button class="editor-track-ms" data-track-action="mix-solo" data-mix-key="${key}" aria-pressed="${st.solo}" title="Solo track">S</button>`
-            + `<input class="editor-track-fader" type="range" min="0" max="100" step="1" value="${st.vol}" data-track-action="mix-vol" data-mix-key="${key}" aria-label="${_editorEscHtml(row.name)} fader level">`;
+            + `<input class="editor-track-fader" type="range" min="0" max="106" step="0.1" value="${st.vol}" data-track-action="mix-vol" data-mix-key="${key}" aria-label="${_editorEscHtml(row.name)} fader level">`;
     };
     const resizeGrip = row => `<span class="editor-track-resize" data-track-action="resize" data-track-id="${_editorEscHtml(row.id)}" title="Drag to resize track"></span>`;
     const trackName = (row, markup) => renamingTrackId === row.id
@@ -623,7 +665,7 @@ function render() {
     const restore = removedSources.length
         ? `<select data-track-action="restore-source" aria-label="Restore removed audio track"><option value="">Restore track…</option>${removedSources.map(source => `<option value="${_editorEscHtml(source.id)}">${_editorEscHtml(source.name)}</option>`).join('')}</select>`
         : '';
-    el.innerHTML = `<div class="editor-track-session-head"><strong>Tracks</strong><button data-track-action="folder" title="Create optional folder">+ Folder</button>${restore}<span class="editor-track-guide-label">Guide</span><button class="editor-track-guide-source" data-track-action="guide-cycle" title="Cycle tempo guide">${_editorEscHtml(guide.name + guideMode)}</button><button data-track-action="guide-lock" aria-pressed="${model.tempoGuideLocked}" title="Lock tempo guide — assisted mapping (G) analyzes the locked guide">${model.tempoGuideLocked ? '🔒' : '🔓'}</button><button data-track-action="zoom-out" title="Reduce all track heights">−</button><button data-track-action="zoom-in" title="Increase all track heights">+</button></div><div class="editor-track-session-list">${rows.map(row => {
+    el.innerHTML = `<div class="editor-track-session-head"><strong>Tracks</strong><button data-track-action="folder" title="Create optional folder">+ Folder</button>${restore}<span class="editor-track-guide-label">Guide</span><button class="editor-track-guide-source" data-track-action="guide-cycle" title="Cycle tempo guide">${_editorEscHtml(guideName + guideMode)}</button><button data-track-action="guide-lock" aria-pressed="${model.tempoGuideLocked}" title="Lock tempo guide — assisted mapping (G) analyzes the locked guide">${model.tempoGuideLocked ? '🔒' : '🔓'}</button><button data-track-action="zoom-out" title="Reduce all track heights">−</button><button data-track-action="zoom-in" title="Increase all track heights">+</button></div><div class="editor-track-session-list">${rows.map(row => {
         const trackId = _editorEscHtml(row.id); const name = _editorEscHtml(row.name); const indent = Math.min(5, row.depth) * 14;
         const height = fittedHeights[row.id];
         const style = `--track-indent:${indent}px;--track-row-height:${height}px`;
@@ -660,6 +702,9 @@ function refreshTrackSelectionClass() {
 function commit(next, status) {
     S.trackSession = _trackSessionNormalizePure(next, _liveSources(), S.arrangements, S.drumTab);
     markSessionDirty(); lastRender = ''; refreshTrackSession();
+    // Track order / names feed the mixer strips too — keep it in step so a
+    // drag-reorder (or rename) in the Tracks column moves/renames its strip.
+    _mixerPanelRefresh();
     if (status) setStatus(status);
     host.draw();
 }
@@ -725,7 +770,12 @@ function selectTrack(trackId, openEditor = false) {
     S.selectedTrackId = row.id;
     if (row.type === 'audio') {
         S.focusedSourceId = row.sourceId;
-        setStatus(`Audio track selected: ${row.name}`);
+        // Focus this source as the active reference: the main waveform and
+        // onset tools follow it (playback still plays every source).
+        host.selectTrackSessionSource(row.sourceId);
+        setStatus(row.sourceKind === 'master'
+            ? `Source: ${row.name} (the master mix)`
+            : `Source: ${row.name} — waveform and Suggest now read this track`);
     } else if (row.type === 'transcription') {
         S.focusedSourceId = _trackFocusSourcePure(row);
         host.selectTrackSessionTarget(row.targetId);
@@ -749,6 +799,7 @@ async function deleteTrack(trackId) {
     } else if (row.type === 'audio') {
         if (!confirm(`Remove audio track “${row.name}” from this session? The media stays in the pack and can come back.`)) return false;
         // Non-destructive: a tombstone in removedSourceIds, never a file op.
+        if (S.partMix) delete S.partMix['audio:' + row.sourceId];   // drop its stale strip state
         commit(_trackSessionDeletePure(S.trackSession, row.id, _liveSources(), S.arrangements, S.drumTab),
             `Removed audio track “${row.name}” — the media stays inside the project.`);
         host.partMixChanged();
@@ -869,8 +920,11 @@ export function initTrackSession() {
     }
     el.addEventListener('click', event => {
         const clickedRow = event.target && event.target.closest ? event.target.closest('.editor-track-row[data-track-id]') : null;
-        if (clickedRow && !event.target.closest('[data-track-rename-input]')) selectTrack(clickedRow.getAttribute('data-track-id') || '');
         const control = event.target && event.target.closest ? event.target.closest('[data-track-action]') : null;
+        // Activate a source only on a DIRECT row/name click — never when the
+        // click lands on a strip control (M/S, fader, guide) or the rename
+        // input, which would also switch the main waveform as a side effect.
+        if (clickedRow && !control && !event.target.closest('[data-track-rename-input]')) selectTrack(clickedRow.getAttribute('data-track-id') || '');
         if (!control) return;
         const action = control.getAttribute('data-track-action');
         if (action === 'resize') return;
@@ -930,14 +984,30 @@ export function initTrackSession() {
                 : 'Tempo guide unlocked — assisted mapping analyzes the session recording.');
         } else if (action === 'guide-cycle' || action === 'guide-set') {
             const next = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
+            const wantId = action === 'guide-set'
+                ? (control.getAttribute('data-source-id') || MASTER_ID) : null;
+            // A LOCKED guide is protected — changing it needs an explicit
+            // unlock (the 🔒 button), so a stray cycle can't drop a verified
+            // reference silently.
+            if (next.tempoGuideLocked && wantId !== next.tempoGuideSourceId) {
+                setStatus('Tempo guide is locked — unlock it (🔒) before choosing another.');
+                return;
+            }
             const sources = _liveSources().filter(source => !next.removedSourceIds.includes(source.id));
             if (!sources.length) return;
+            const prevGuideId = next.tempoGuideSourceId;
             if (action === 'guide-set') {
-                next.tempoGuideSourceId = control.getAttribute('data-source-id') || MASTER_ID;
+                next.tempoGuideSourceId = wantId;
             } else {
                 const at = sources.findIndex(source => source.id === next.tempoGuideSourceId);
                 next.tempoGuideSourceId = sources[(at + 1) % sources.length].id;
             }
+            // Choosing a DIFFERENT guide source resets it to plain audio
+            // analysis — the metronome (click-track) mode is opted into per
+            // source via the row menu, never inherited from the previous guide.
+            // Reselecting the SAME source (e.g. a locked guide's own guide-set)
+            // keeps its mode so the metronome isn't silently cleared.
+            if (next.tempoGuideSourceId !== prevGuideId) next.tempoGuideMode = 'audio';
             const chosen = sources.find(source => source.id === next.tempoGuideSourceId);
             commit(next, `Tempo guide: ${chosen ? chosen.name : next.tempoGuideSourceId}.`);
         }

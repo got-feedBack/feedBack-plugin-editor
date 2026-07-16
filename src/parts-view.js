@@ -16,8 +16,8 @@ import { getMousePos } from './mouse.js';
 import { S } from './state.js';
 import { _refreshTempoMapButton } from './tempo.js';
 import {
-    _trackSessionFittedHeightsPure, _trackSessionLaneLayoutPure, _trackSessionRowsPure,
-    _trackSessionSourcesPure, _trackSessionTargetsPure, refreshTrackSessionSelection,
+    _liveSources, _trackSessionFittedHeightsPure, _trackSessionLaneLayoutPure, _trackSessionRowsPure,
+    _trackSessionTargetsPure, refreshTrackSessionSelection,
 } from './track-session.js';
 import { setStatus } from './ui.js';
 import { host } from './host.js';
@@ -84,7 +84,7 @@ const PARTS_GUTTER = LABEL_W;
 // same pure, same inputs, so geometry can never diverge between surfaces.
 function _unifiedRows() {
     return _trackSessionRowsPure(S.trackSession,
-        _trackSessionSourcesPure(S.audioUrl, S.stems), S.arrangements, S.drumTab, S.stemLinks).rows;
+        _liveSources(), S.arrangements, S.drumTab, S.stemLinks).rows;
 }
 // Map a transcription targetId back to its arrangement index ('drums' → -1).
 function _arrIndexForTarget(targetId) {
@@ -101,7 +101,7 @@ function _drawTrackAudioWaveform(row, y0, laneH, w) {
     const data = host.trackWaveform(row.sourceId);
     if (!data || !data.peaks || !data.peaks.bins || !(data.duration > 0)) return;
     const pk = data.peaks;
-    const shift = Number(S.audioShift) || 0;
+    const shift = (Number(S.audioShift) || 0) + (Number(row.sourceOffset) || 0);
     const xLo = Math.max(PARTS_GUTTER, Math.floor(timeToX(shift)));
     const xHi = Math.min(w, Math.ceil(timeToX(data.duration + shift)));
     const mid = y0 + laneH / 2;
@@ -253,7 +253,13 @@ export function _partsViewOnMouseDown(e, x, y) {
     refreshTrackSessionSelection();
     if (row.type === 'audio') {
         S.focusedSourceId = row.sourceId;
+        // Set the generic status BEFORE activation: activateTrackAudioSource
+        // sets a specific error synchronously when the source is unavailable,
+        // and that message must survive rather than be overwritten here.
         setStatus(`Audio track: ${row.name}`);
+        // Match the header row: focus this source as the active reference so
+        // the waveform + onset tools follow the clicked lane too.
+        host.selectTrackSessionSource(row.sourceId);
     } else if (row.targetId === 'drums') {
         setStatus('Drum transcription selected — double-click to open the drum editor');
     } else {

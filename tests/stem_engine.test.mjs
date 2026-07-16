@@ -12,7 +12,11 @@
 import assert from 'node:assert';
 
 const { _mixerPartsPure, _mixerPartStripState, _mixerPartAudiblePure } = await import('../src/mixer-panel.js');
-const { _audioBufferStartPure, _stemCatchupPure, _stemCatchupAllowedPure, _pruneStaleStems } = await import('../src/audio.js');
+const {
+    _audioBufferStartPure, _stemCatchupPure, _stemCatchupAllowedPure, _pruneStaleStems,
+    _scheduledSourceIdsPure, syncStemAudio, audioStemWaveform, activateTrackAudioSource,
+    resetStemAudioCache, _liveAudioSourcesPure, _staleAudioSourceIdsPure,
+} = await import('../src/audio.js');
 const { S } = await import('../src/state.js');
 
 let pass = 0, fail = 0;
@@ -29,6 +33,21 @@ t('the mixer lists stem strips (audio band first), honoring removals', () => {
         'stems first (removed dropped), then parts, then drums');
     assert.strictEqual(parts[0].name, 'Gtr L');
     assert.strictEqual(parts[0].kind, 'audio');
+});
+
+t('the master mix leads the audio band as its own strip when a recording exists', () => {
+    const parts = _mixerPartsPure([{ name: 'Lead' }], null,
+        [{ id: 'gtr', name: 'Gtr' }], [], { name: 'Song Master' });
+    assert.deepStrictEqual(parts.map(p => p.key), ['audio:master', 'audio:gtr', 'arr:0'],
+        'master strip first, then stems, then parts');
+    assert.strictEqual(parts[0].name, 'Song Master');
+    assert.strictEqual(parts[0].kind, 'audio');
+    // Compose mode (no recording) passes no master descriptor — no phantom strip.
+    const none = _mixerPartsPure([{ name: 'Lead' }], null, [{ id: 'gtr' }], []);
+    assert.ok(!none.some(p => p.key === 'audio:master'), 'no master strip without a recording');
+    // A removed master is honored (tombstoned like any source).
+    const removed = _mixerPartsPure([], null, [], ['master'], { name: 'X' });
+    assert.ok(!removed.some(p => p.key === 'audio:master'), 'a removed master shows no strip');
 });
 
 t('a stem strip reads state from S.partMix under its audio: key', () => {
@@ -112,6 +131,195 @@ t('pruning a soloed removed stem signals a live-gain re-apply', () => {
     S.partMix = { 'audio:Bass_DI': {}, 'audio:Guitar_L': {} };
     assert.strictEqual(_pruneStaleStems(new Set(['Guitar_L'])), false,
         'removing an unsoloed stem needs no re-ramp');
+});
+
+t('the scheduler plays every live source EXCEPT the active one', () => {
+    const sources = [{ id: 'master' }, { id: 'Guitar_L' }, { id: 'Bass_DI' }];
+    // Master active (default): the scheduler plays only the stems.
+    assert.deepStrictEqual(_scheduledSourceIdsPure(sources, 'master'), ['Guitar_L', 'Bass_DI']);
+    // Focus a stem: it moves to the reference path, the master joins the
+    // scheduler — everything still plays, only the active one is excluded here.
+    assert.deepStrictEqual(_scheduledSourceIdsPure(sources, 'Guitar_L'), ['master', 'Bass_DI']);
+    assert.deepStrictEqual(_scheduledSourceIdsPure([], 'master'), []);
+    assert.deepStrictEqual(_scheduledSourceIdsPure(sources, 'nope'), ['master', 'Guitar_L', 'Bass_DI'],
+        'an unknown active id excludes nothing');
+});
+
+t('the live roster honors master and stem tombstones', () => {
+    const stems = [{ id: 'gtr', url: '/gtr.ogg' }, { id: 'bass', url: '/bass.ogg' }];
+    assert.deepStrictEqual(_liveAudioSourcesPure('/master.ogg', stems, ['master', 'bass'])
+        .map(source => source.id), ['gtr']);
+    assert.deepStrictEqual(_staleAudioSourceIdsPure(['master', 'gtr', 'bass'], new Set(['gtr'])),
+        ['master', 'bass'], 'removed source caches/gains are identified for teardown');
+});
+
+t('removing the active source repairs the reference to a live fallback', async () => {
+    const saved = {
+        audioCtx: S.audioCtx, stems: S.stems, playing: S.playing, audioBuffer: S.audioBuffer,
+        audioUrl: S.audioUrl, masterAudioUrl: S.masterAudioUrl, trackSession: S.trackSession,
+        activeAudioSourceId: S.activeAudioSourceId, activeAudioSourceOffset: S.activeAudioSourceOffset,
+        duration: S.duration, masterAudioDuration: S.masterAudioDuration,
+    };
+    const savedFetch = globalThis.fetch;
+    const samples = new Float32Array(128);
+    const oldStem = { sampleRate: 44100, duration: 1, getChannelData: () => samples };
+    const master = { sampleRate: 44100, duration: 1, getChannelData: () => samples };
+    try {
+        resetStemAudioCache();
+        Object.assign(S, { playing: false, audioBuffer: oldStem, audioUrl: '/stem.ogg',
+            masterAudioUrl: '/master.ogg', activeAudioSourceId: 'stem', activeAudioSourceOffset: 0,
+            stems: [{ id: 'stem', url: '/stem.ogg' }],
+            trackSession: { removedSourceIds: ['stem'] },
+            audioCtx: { decodeAudioData: async () => master, currentTime: 0 } });
+        globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) });
+        await syncStemAudio();
+        assert.strictEqual(S.activeAudioSourceId, 'master');
+        assert.strictEqual(S.audioBuffer, master, 'the removed source buffer no longer owns playback/waveform');
+    } finally {
+        resetStemAudioCache();
+        Object.assign(S, saved);
+        if (savedFetch === undefined) delete globalThis.fetch; else globalThis.fetch = savedFetch;
+    }
+});
+
+t('a failed fallback decode clears the removed source instead of leaving it active', async () => {
+    const saved = {
+        audioCtx: S.audioCtx, stems: S.stems, playing: S.playing, audioBuffer: S.audioBuffer,
+        audioUrl: S.audioUrl, masterAudioUrl: S.masterAudioUrl, trackSession: S.trackSession,
+        activeAudioSourceId: S.activeAudioSourceId, activeAudioSourceOffset: S.activeAudioSourceOffset,
+        waveformPeaks: S.waveformPeaks,
+    };
+    const savedFetch = globalThis.fetch;
+    const samples = new Float32Array(128);
+    const oldStem = { sampleRate: 44100, duration: 1, getChannelData: () => samples };
+    try {
+        resetStemAudioCache();
+        Object.assign(S, { playing: false, audioBuffer: oldStem, audioUrl: '/stem.ogg',
+            masterAudioUrl: '/master.ogg', activeAudioSourceId: 'stem', activeAudioSourceOffset: 0,
+            stems: [{ id: 'stem', url: '/stem.ogg' }],
+            trackSession: { removedSourceIds: ['stem'] },
+            audioCtx: { decodeAudioData: async () => oldStem, currentTime: 0 } });
+        // Every source fails to load: the master fallback cannot decode either.
+        globalThis.fetch = async () => ({ ok: false });
+        await syncStemAudio();
+        assert.strictEqual(S.audioBuffer, null, 'the removed source buffer no longer owns playback/waveform');
+        assert.strictEqual(S.audioUrl, null, 'and its url is cleared');
+        assert.strictEqual(S.activeAudioSourceId, 'master', 'the active id resets to the no-source master anchor');
+    } finally {
+        resetStemAudioCache();
+        Object.assign(S, saved);
+        if (savedFetch === undefined) delete globalThis.fetch; else globalThis.fetch = savedFetch;
+    }
+});
+
+t('a decoded stem yields FINITE, non-flat lane peaks (channel data, not the AudioBuffer)', async () => {
+    // Regression: audioStemWaveform once passed the AudioBuffer straight to the
+    // peak builder, which indexes it like a Float32Array — every sample read
+    // `undefined`, collapsing min/max to ±Infinity so the lane drew off-canvas
+    // (invisible stems). It must read getChannelData(0) first.
+    const sine = new Float32Array(44100);
+    for (let i = 0; i < sine.length; i++) sine[i] = Math.sin(i * 0.1) * 0.8;
+    const fakeBuf = { sampleRate: 44100, duration: 1, length: sine.length, getChannelData: () => sine };
+    const savedCtx = S.audioCtx, savedStems = S.stems, savedPlaying = S.playing, savedFetch = globalThis.fetch, savedBuffer = S.audioBuffer;
+    const savedMasterUrl = S.masterAudioUrl, savedAudioUrl = S.audioUrl;
+    const savedActiveId = S.activeAudioSourceId, savedActiveOffset = S.activeAudioSourceOffset;
+    try {
+        S.audioBuffer = null;
+        S.playing = false;
+        S.masterAudioUrl = '';
+        S.stems = [{ id: 'gtr', url: 'blob:gtr' }];
+        S.audioCtx = { decodeAudioData: async () => fakeBuf, currentTime: 0 };
+        globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) });
+        await syncStemAudio();
+        const wf = audioStemWaveform('gtr');
+        assert.ok(wf && wf.peaks && wf.peaks.bins > 0, 'peaks build for a decoded stem');
+        let maxHi = -Infinity;
+        for (const v of wf.peaks.max) if (v > maxHi) maxHi = v;
+        assert.ok(Number.isFinite(maxHi), 'peak extremes are finite (channel data was read, not the buffer)');
+        assert.ok(maxHi > 0.1, 'a loud sine produces a visibly non-flat lane, not a zero/Infinity line');
+    } finally {
+        resetStemAudioCache();
+        S.audioCtx = savedCtx; S.stems = savedStems; S.playing = savedPlaying;
+        S.audioBuffer = savedBuffer;
+        S.masterAudioUrl = savedMasterUrl; S.audioUrl = savedAudioUrl;
+        S.activeAudioSourceId = savedActiveId; S.activeAudioSourceOffset = savedActiveOffset;
+        if (savedFetch === undefined) delete globalThis.fetch; else globalThis.fetch = savedFetch;
+    }
+});
+
+t('a slower source selection cannot overwrite a newer active source', async () => {
+    const saved = {
+        audioCtx: S.audioCtx, stems: S.stems, playing: S.playing, audioBuffer: S.audioBuffer,
+        audioUrl: S.audioUrl, masterAudioUrl: S.masterAudioUrl,
+        activeAudioSourceId: S.activeAudioSourceId, activeAudioSourceOffset: S.activeAudioSourceOffset,
+    };
+    const savedFetch = globalThis.fetch;
+    const samples = new Float32Array(128);
+    const buffer = (name) => ({ name, sampleRate: 44100, duration: 1,
+        getChannelData: () => samples });
+    let resolveA; let resolveB;
+    try {
+        resetStemAudioCache();
+        S.playing = false;
+        S.audioBuffer = buffer('master');
+        S.audioUrl = '/master.ogg';
+        S.masterAudioUrl = '/master.ogg';
+        S.activeAudioSourceId = 'master';
+        S.stems = [{ id: 'a', url: '/a.ogg' }, { id: 'b', url: '/b.ogg', offset: 0.2 }];
+        S.audioCtx = { decodeAudioData: async raw => raw, currentTime: 0 };
+        globalThis.fetch = (url) => new Promise(resolve => {
+            const finish = (decoded) => resolve({ ok: true, arrayBuffer: async () => decoded });
+            if (url === '/a.ogg') resolveA = finish;
+            else resolveB = finish;
+        });
+        const first = activateTrackAudioSource('a');
+        const second = activateTrackAudioSource('b');
+        const b = buffer('b');
+        resolveB(b);
+        assert.strictEqual(await second, true);
+        const a = buffer('a');
+        resolveA(a);
+        assert.strictEqual(await first, false, 'the superseded request reports that it did not activate');
+        assert.strictEqual(S.activeAudioSourceId, 'b');
+        assert.strictEqual(S.audioBuffer, b, 'late A decode cannot replace B');
+        assert.strictEqual(S.activeAudioSourceOffset, 0.2, 'the active reference carries its own placement');
+    } finally {
+        resetStemAudioCache();
+        Object.assign(S, saved);
+        if (savedFetch === undefined) delete globalThis.fetch; else globalThis.fetch = savedFetch;
+    }
+});
+
+t('reselecting the current source cancels an in-flight switch', async () => {
+    const saved = {
+        audioCtx: S.audioCtx, stems: S.stems, playing: S.playing, audioBuffer: S.audioBuffer,
+        audioUrl: S.audioUrl, masterAudioUrl: S.masterAudioUrl,
+        activeAudioSourceId: S.activeAudioSourceId, activeAudioSourceOffset: S.activeAudioSourceOffset,
+    };
+    const savedFetch = globalThis.fetch;
+    const samples = new Float32Array(128);
+    const master = { sampleRate: 44100, duration: 1, getChannelData: () => samples };
+    let resolveStem;
+    try {
+        resetStemAudioCache();
+        Object.assign(S, { playing: false, audioBuffer: master, audioUrl: '/master.ogg',
+            masterAudioUrl: '/master.ogg', activeAudioSourceId: 'master', activeAudioSourceOffset: 0,
+            stems: [{ id: 'stem', url: '/stem.ogg' }],
+            audioCtx: { decodeAudioData: async raw => raw, currentTime: 0 } });
+        globalThis.fetch = () => new Promise(resolve => { resolveStem = resolve; });
+        const pending = activateTrackAudioSource('stem');
+        assert.strictEqual(await activateTrackAudioSource('master'), true,
+            'reselecting the current source is an intentional newest request');
+        resolveStem({ ok: true, arrayBuffer: async () => ({ sampleRate: 44100, duration: 1,
+            getChannelData: () => samples }) });
+        assert.strictEqual(await pending, false);
+        assert.strictEqual(S.activeAudioSourceId, 'master');
+        assert.strictEqual(S.audioBuffer, master);
+    } finally {
+        resetStemAudioCache();
+        Object.assign(S, saved);
+        if (savedFetch === undefined) delete globalThis.fetch; else globalThis.fetch = savedFetch;
+    }
 });
 
 for (const [name, fn] of tests) {

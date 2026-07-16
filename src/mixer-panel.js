@@ -33,13 +33,21 @@ import { _editorEscHtml, setStatus } from './ui.js';
 // One strip per part: every arrangement, plus the drum tab as its own strip
 // (drums are a song-level sidecar, not an arrangement) — the same list shape
 // as the Parts view, keyed the way S.currentArr addresses parts (by index).
-export function _mixerPartsPure(arrangements, drumTab, stems, removedSourceIds) {
+export function _mixerPartsPure(arrangements, drumTab, stems, removedSourceIds, master) {
     const parts = [];
-    // Studio stems first (they're the audio band), then the transcription
-    // parts. Stem strips key by 'audio:<id>' — the same S.partMix store and
-    // whole-map solo rule the synth parts use, so one mixer drives both.
+    // The master mix leads the audio band as its own channel strip (keyed
+    // 'audio:master', same store/solo rule as the stems) so every audio source
+    // — master included — has a strip, matching the DAW track-session mixer.
+    // `master` is null in compose mode (no recording) so no phantom strip shows.
     const removed = new Set(Array.isArray(removedSourceIds) ? removedSourceIds : []);
     const seen = new Set();
+    if (master && !removed.has('master')) {
+        parts.push({ key: 'audio:master', name: master.name || 'Master Mix', kind: 'audio' });
+        seen.add('master');
+    }
+    // Then the studio stems (the rest of the audio band), then transcription
+    // parts. Stem strips key by 'audio:<id>' — the same S.partMix store and
+    // whole-map solo rule the synth parts use, so one mixer drives both.
     for (const stem of (Array.isArray(stems) ? stems : [])) {
         const id = stem && typeof stem.id === 'string' ? stem.id : '';
         if (!id || removed.has(id) || seen.has(id)) continue;
@@ -90,6 +98,18 @@ export function _mixerDbLabelPure(db) {
     if (!Number.isFinite(value) || value <= -60) return '−∞';
     return (value > -10 ? value.toFixed(1) : Math.round(value).toString()) + ' dB';
 }
+// Reorder the strips to match the Tracks-column row order (orderedKeys),
+// so a drag-reorder in the left pane moves the mixer strip too. Keys not in
+// the order list keep their original relative position at the tail — a
+// stable sort by (index in orderedKeys, original index).
+export function _mixerOrderedPartsPure(parts, orderedKeys) {
+    const rank = new Map((Array.isArray(orderedKeys) ? orderedKeys : []).map((k, i) => [k, i]));
+    const TAIL = Number.MAX_SAFE_INTEGER;
+    return (Array.isArray(parts) ? parts : [])
+        .map((p, i) => [p, rank.has(p.key) ? rank.get(p.key) : TAIL, i])
+        .sort((a, b) => (a[1] - b[1]) || (a[2] - b[2]))
+        .map(entry => entry[0]);
+}
 // Meter ballistics: instant attack (peaks show at once), gravity decay
 // (~full-scale over 700 ms) so a transient doesn't strobe.
 export function _mixerMeterNextPure(previous, input, elapsedMs) {
@@ -108,6 +128,12 @@ export function _mixerAnySoloPure(partMix) {
 export function _mixerPartAudiblePure(partMix, key) {
     const st = _mixerPartStatePure(partMix, key);
     if (st.mute) return false;
+    // The master mix is the OUTPUT bus — the final destination downstream of the
+    // sum, not a peer channel. Another track's mute/solo removes only that
+    // track's contribution and must never silence the output; only master's OWN
+    // mute (the output fader, handled above) does. So master is immune to the
+    // whole-map solo rule.
+    if (key === 'audio:master') return true;
     return _mixerAnySoloPure(partMix) ? st.solo : true;
 }
 // What the guide-clap scheduler needs for the ACTIVE editing surface: claps
@@ -177,10 +203,19 @@ function _selectedStripKeyPure() {
     return '';
 }
 
+// The master-mix strip descriptor, or null in compose mode (no recording).
+// Named from the pack's authored master name, else the song title.
+function _mixerMaster() {
+    return (S.masterAudioUrl || S.audioUrl)
+        ? { name: S.masterAudioName || S.title || 'Master Mix' } : null;
+}
+
 // A vertical channel strip per part: type badge, M/S, the meter+fader
 // channel, a dB value, and the name — faithful to the #285 console.
 function _renderParts(container) {
-    const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.stems, S.trackSession && S.trackSession.removedSourceIds);
+    const parts = _mixerOrderedPartsPure(
+        _mixerPartsPure(S.arrangements, S.drumTab, S.stems, S.trackSession && S.trackSession.removedSourceIds, _mixerMaster()),
+        host.mixerTrackOrder());
     if (!parts.length) {
         container.innerHTML = '<p class="text-[10px] text-gray-500 self-center">No tracks yet — strips appear as tracks are added.</p>';
         return;
@@ -399,9 +434,10 @@ export function _mixerPanelRefresh() {
     }
     const container = document.getElementById('editor-mixer-parts');
     if (!container) return;
-    const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.stems, S.trackSession && S.trackSession.removedSourceIds);
+    const parts = _mixerPartsPure(S.arrangements, S.drumTab, S.stems, S.trackSession && S.trackSession.removedSourceIds, _mixerMaster());
     const key = editGen + '|' + S.selectedTrackId + '|' + JSON.stringify(S.partMix) + '|'
         + (host.playAllTracksEnabled() ? '1' : '0') + '|'
+        + host.mixerTrackOrder().join(',') + '|'
         + parts.map(p => p.key + ':' + p.name).join(',');
     if (key === _lastKey) return;
     _lastKey = key;

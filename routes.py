@@ -509,6 +509,18 @@ def _parse_track_session(data: dict):
     return _coerce_track_session(data.get("track_session"), invalid=_FIELD_ABSENT)
 
 
+def _editor_stem_cache_basename(audio_id, index, sid):
+    """Cached-stem filename stem that stays unique per source.
+
+    Distinct stem ids can sanitize to the same string (``drums/kit`` and
+    ``drums:kit`` both become ``drums_kit``), so the sanitized id alone would
+    let one copied stem overwrite another and every URL would then play the
+    last-copied file. The per-source ``index`` keeps the paths distinct.
+    """
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", str(sid))
+    return f"editor_stem_{audio_id}_{index}_{safe}"
+
+
 def _apply_track_session(manifest: dict, session) -> None:
     """Write/remove the `editor_track_session` manifest extension key."""
     if session is _FIELD_ABSENT:
@@ -4123,7 +4135,7 @@ def setup(app, context):
             # mixer can load and balance them live. Only for genuine
             # multi-stem sloppaks — a single-`full` sloppak has nothing to mix.
             _stem_urls = []
-            for _s in loaded.stems:
+            for _index, _s in enumerate(loaded.stems):
                 _sid = (_s.get("id") or "").strip()
                 if not _sid or _sid == "full":
                     continue
@@ -4131,15 +4143,28 @@ def setup(app, context):
                 if _sp is None or not _sp.exists():
                     continue
                 _sext = _sp.suffix or ".ogg"
-                _safe_sid = re.sub(r"[^a-zA-Z0-9_-]", "_", _sid)
-                _sdest = STORAGE_DIR / f"editor_stem_{audio_id}_{_safe_sid}{_sext}"
+                # Per-source index keeps the cached filename unique even when two
+                # distinct ids sanitize to the same string ('drums/kit' vs
+                # 'drums:kit') — otherwise one stem overwrites another and every
+                # URL plays the last-copied file.
+                _base = _editor_stem_cache_basename(audio_id, _index, _sid)
+                _sdest = STORAGE_DIR / f"{_base}{_sext}"
                 try:
                     shutil.copy2(_sp, _sdest)
                 except OSError:
                     continue
+                try:
+                    _source_offset = float(_s.get("offset", 0) or 0)
+                except (TypeError, ValueError):
+                    _source_offset = 0.0
+                if not math.isfinite(_source_offset):
+                    _source_offset = 0.0
                 _stem_urls.append({
                     "id": _sid,
-                    "url": f"{STORAGE_URL}/editor_stem_{audio_id}_{_safe_sid}{_sext}",
+                    "name": (str(_s.get("name")).strip()[:160]
+                             if isinstance(_s.get("name"), str) and _s.get("name").strip() else _sid),
+                    "url": f"{STORAGE_URL}/{_base}{_sext}",
+                    "offset": _source_offset,
                 })
 
             result = _song_to_dict(song, audio_url)
@@ -4163,6 +4188,24 @@ def setup(app, context):
                 loaded.manifest.get("editor_track_session"), invalid=None)
             if _tree:
                 result["track_session"] = _tree
+            # Editor audio sources (master + stems) with display names. The
+            # master's name comes from the manifest's `full` mix entry when the
+            # pack authored one; absent that, the frontend falls back to the
+            # song name. The Tracks column, the tempo-guide label, and the mixer
+            # strips all read these names. (Ported from the DAW track-session
+            # backend; ids stay the bare manifest ids this editor already uses.)
+            _master_manifest = next((s for s in loaded.stems
+                                     if isinstance(s, dict) and str(s.get("id") or "") == "full"), {})
+            _master_name = _master_manifest.get("name")
+            _master_name = (_master_name.strip()[:160]
+                            if isinstance(_master_name, str) and _master_name.strip() else "")
+            _audio_sources = [{"id": "master", "name": _master_name,
+                               "kind": "master", "url": audio_url or ""}]
+            for _su in _stem_urls:
+                _audio_sources.append({"id": _su["id"], "name": _su.get("name") or _su["id"],
+                                       "kind": "stem", "url": _su.get("url") or "",
+                                       "offset": _su.get("offset", 0)})
+            result["audio_sources"] = _audio_sources
             # `lib/sloppak.load_song()` doesn't restore song.offset (the
             # sloppak format doesn't carry an explicit offset field today),
             # so song.offset is 0 here. If the manifest happens to surface

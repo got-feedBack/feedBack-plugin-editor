@@ -25,7 +25,7 @@ export function drawWaveform(w) {
         return;
     }
     const pk = S.waveformPeaks;
-    const dur = S.duration || 0;
+    const dur = (S.audioBuffer && S.audioBuffer.duration) || S.duration || 0;
     if (!pk || !pk.bins || dur <= 0) { drawOnsets(); return; }
 
     const N = pk.bins;
@@ -33,7 +33,7 @@ export function drawWaveform(w) {
     const amp = WAVEFORM_H / 2 - 4;
     // Audio placement shift: buffer-time B renders at timeToX(B + sh), so the
     // waveform slides with the recording while the grid/notes stay put.
-    const sh = Number(S.audioShift) || 0;
+    const sh = (Number(S.audioShift) || 0) + (Number(S.activeAudioSourceOffset) || 0);
     // Visible pixel span of the (shifted) audio, clamped to the waveform lane.
     const xLo = Math.max(LABEL_W, Math.floor(timeToX(sh)));
     const xHi = Math.min(w, Math.ceil(timeToX(dur + sh)));
@@ -93,10 +93,10 @@ function _drawOnsetStrip(w) {
     if (!_onsetStripEnabled()) return;
     const onsets = _ensureOnsets();
     if (!onsets || !onsets.length) return;
-    const dur = S.duration || 0;
+    const dur = (S.audioBuffer && S.audioBuffer.duration) || S.duration || 0;
     if (dur <= 0) return;
     // Onsets are buffer-time; they render shifted with the audio (timeToX(t+sh)).
-    const sh = Number(S.audioShift) || 0;
+    const sh = (Number(S.audioShift) || 0) + (Number(S.activeAudioSourceOffset) || 0);
     const xLo = Math.max(LABEL_W, Math.floor(timeToX(sh)));
     const xHi = Math.min(w, Math.ceil(timeToX(dur + sh)));
     // onsets are time-sorted and timeToX is monotonic, so the on-screen pixel
