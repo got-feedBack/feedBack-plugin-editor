@@ -13,6 +13,7 @@ import assert from 'node:assert';
 const {
     _trackSessionLaneHeightPure, _trackSessionDensityPure, _trackSessionFittedHeightsPure,
     _trackSessionLaneLayoutPure, _trackSessionDropPlacementPure, _trackRenameEditorMarkupPure,
+    _trackSessionRetargetPure, _trackLinksRetargetPure, _trackFocusSourcePure,
 } = await import('../src/track-session.js');
 
 let pass = 0, fail = 0;
@@ -69,6 +70,26 @@ t('rename markup builds a prefilled, drag-safe inline editor and escapes the nam
     assert.match(html, /draggable="false"/);
     assert.match(html, /Drums &amp; Percussion/, 'HTML-escaped');
     assert.doesNotMatch(html, /rename-save|rename-cancel/, 'keyboard-commit — no buttons');
+});
+
+t('renaming a name-keyed transcription preserves its tree position and pairing', () => {
+    const session = { tracks: [
+        { id: 'folder:1', type: 'folder', name: 'Charts' },
+        { id: 'transcription:Lead', type: 'transcription', targetId: 'Lead', parentId: 'folder:1' },
+    ] };
+    const next = _trackSessionRetargetPure(session, 'Lead', 'Lead Guitar');
+    assert.deepStrictEqual(next.tracks[1], {
+        id: 'transcription:Lead Guitar', type: 'transcription', targetId: 'Lead Guitar', parentId: 'folder:1',
+    });
+    assert.deepStrictEqual(_trackLinksRetargetPure({ Lead: 'Guitar_L', Bass: 'Bass' }, 'Lead', 'Lead Guitar'),
+        { 'Lead Guitar': 'Guitar_L', Bass: 'Bass' });
+    assert.deepStrictEqual(_trackLinksRetargetPure({ Lead: 'Guitar_L' }, 'Lead'), {},
+        'deleting the transcription removes its stale pairing');
+});
+
+t('an unpaired transcription focuses the Master Mix, never an unrelated tempo guide', () => {
+    assert.strictEqual(_trackFocusSourcePure({ type: 'transcription', pairedSourceId: '' }), 'master');
+    assert.strictEqual(_trackFocusSourcePure({ type: 'transcription', pairedSourceId: 'Guitar_L' }), 'Guitar_L');
 });
 
 for (const [name, fn] of tests) {

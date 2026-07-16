@@ -353,6 +353,36 @@ export function _trackRenameEditorMarkupPure(trackId, currentName) {
     return `<input class="editor-track-inline-rename" data-track-rename-input data-track-id="${id}" value="${name}" draggable="false" aria-label="New track or folder name">`;
 }
 
+export function _trackSessionRetargetPure(session, oldTargetId, newTargetId) {
+    const oldId = idOf(oldTargetId);
+    const newId = idOf(newTargetId);
+    if (!oldId || !newId || oldId === newId) return session;
+    const oldTrackId = transcriptionTrackId(oldId);
+    const newTrackId = transcriptionTrackId(newId);
+    const next = { ...(session || {}), tracks: (session?.tracks || []).map(track => ({ ...track })) };
+    for (const track of next.tracks) {
+        if (track.type === 'transcription' && track.targetId === oldId) {
+            track.targetId = newId;
+            if (track.id === oldTrackId) track.id = newTrackId;
+        }
+        if (track.parentId === oldTrackId) track.parentId = newTrackId;
+    }
+    return next;
+}
+
+export function _trackLinksRetargetPure(stemLinks, oldTargetId, newTargetId = '') {
+    const links = { ...((stemLinks && typeof stemLinks === 'object') ? stemLinks : {}) };
+    const sourceId = links[oldTargetId];
+    delete links[oldTargetId];
+    if (newTargetId && sourceId) links[newTargetId] = sourceId;
+    return links;
+}
+
+export function _trackFocusSourcePure(row) {
+    if (!row || row.type !== 'transcription') return row?.sourceId || '';
+    return row.pairedSourceId || MASTER_ID;
+}
+
 // True when the tree carries nothing the canonical song doesn't already
 // express: default order (sources then targets), no folders, no custom
 // names, no tombstones, default guide. A default tree persists as NO
@@ -593,15 +623,30 @@ function commit(next, status) {
 function applyTrackRename(trackId, requested) {
     if (!requested || !requested.trim()) return false;
     const clean = requested.trim().slice(0, 120);
-    const next = _trackSessionRenamePure(S.trackSession, trackId, clean, _liveSources(), S.arrangements, S.drumTab);
-    const renamed = next.tracks.find(track => track.id === trackId);
+    let next = _trackSessionRenamePure(S.trackSession, trackId, clean, _liveSources(), S.arrangements, S.drumTab);
+    let renamed = next.tracks.find(track => track.id === trackId);
     if (!renamed) return false;
     if (renamed.type === 'transcription') {
         if (renamed.targetId === DRUM_TARGET_ID && S.drumTab) S.drumTab.name = clean;
         const targets = _trackSessionTargetsPure(S.arrangements, S.drumTab);
         const target = targets.find(item => item.id === renamed.targetId);
         const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
-        if (index >= 0 && S.arrangements[index]) S.arrangements[index].name = clean;
+        if (index >= 0 && S.arrangements[index]) {
+            const oldTargetId = renamed.targetId;
+            S.arrangements[index].name = clean;
+            const newTargetId = idOf(_partViewKeyPure(S.arrangements[index])) || oldTargetId;
+            if (newTargetId !== oldTargetId) {
+                next = _trackSessionRetargetPure(next, oldTargetId, newTargetId);
+                S.stemLinks = _trackLinksRetargetPure(S.stemLinks, oldTargetId, newTargetId);
+                const newTrackId = transcriptionTrackId(newTargetId);
+                if (S.selectedTrackId === trackId) S.selectedTrackId = newTrackId;
+                if (S.trackHeights && Object.hasOwn(S.trackHeights, trackId)) {
+                    S.trackHeights[newTrackId] = S.trackHeights[trackId];
+                    delete S.trackHeights[trackId];
+                }
+                renamed = next.tracks.find(track => track.id === newTrackId) || renamed;
+            }
+        }
         // The canonical name IS the display name — drop the tree override so
         // the row keeps following the arrangement.
         renamed.name = '';
@@ -620,7 +665,7 @@ function selectTrack(trackId, openEditor = false) {
         S.focusedSourceId = row.sourceId;
         setStatus(`Audio track selected: ${row.name}`);
     } else if (row.type === 'transcription') {
-        S.focusedSourceId = row.pairedSourceId || S.trackSession.tempoGuideSourceId;
+        S.focusedSourceId = _trackFocusSourcePure(row);
         host.selectTrackSessionTarget(row.targetId);
         if (openEditor) host.openTrackSessionTarget(row.targetId);
         setStatus(openEditor ? `Opened ${row.name} in the editor.` : `Transcription track selected: ${row.name}`);
@@ -650,6 +695,7 @@ async function deleteTrack(trackId) {
         S.drumTab = null;
         S.drumTabDirty = true;
         delete S.partMix.drums;
+        S.stemLinks = _trackLinksRetargetPure(S.stemLinks, DRUM_TARGET_ID);
         if (S.history) S.history.reset();
         commit(S.trackSession, `Deleted drum transcription “${row.name}”.`);
     } else {
@@ -664,6 +710,7 @@ async function deleteTrack(trackId) {
         S.currentArr = index;
         const removed = await window.editorRemoveArrangement();
         if (!removed) return false;
+        S.stemLinks = _trackLinksRetargetPure(S.stemLinks, row.targetId);
         S.partMix = {};
         S.trackSession = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
         lastRender = '';
