@@ -29,12 +29,13 @@ import assert from 'node:assert';
 import { seedState, trackHooks } from './_history_env.mjs';
 
 const {
-    _suggestFitPure, _suggestMetronomeFitPure,
+    _suggestFitPure, _suggestMetronomeFitPure, _suggestCompleteTailPure,
     _suggestApplyPure, _suggestCompute, _suggestActive,
 } = await import('../src/tempo-suggest.js');
 const { _tempoSuggestScopePure, _tempoGuideAnalysisPure, _tempoGuideRequestStillCurrentPure } = await import('../src/input.js');
 const { editorAcceptWholeTempoFit } = await import('../src/tempo.js');
-const { editorTempoGuideState, editorToggleTempoGuide, trackSessionSavePayload, reconcileTempoGuideToStems } =
+const { ensureGuideOnsets, _guideAnalysisReset } = await import('../src/audio.js');
+const { editorTempoGuideState, editorToggleTempoGuide, trackSessionSavePayload, reconcileTempoGuideToStems, installTrackSession } =
     await import('../src/track-session.js');
 const { EditHistory } = await import('../src/history.js');
 const { S } = await import('../src/state.js');
@@ -283,6 +284,96 @@ t('Accept Whole Fit commits every proposal (tail included) as ONE undo step', ()
     S.history.doRedo();
     assert.notDeepStrictEqual(S.beats, before, 'redo re-applies the whole fit');
     assert.strictEqual(editorAcceptWholeTempoFit(), false, 'nothing left to accept');
+});
+
+// ── Chronology guards: a conflicting lock stops generation ───────────
+// (CodeRabbit PR#290) An authoritative lock whose authored time is not AFTER
+// the last emitted proposal time is a chronology conflict. Neither engine may
+// emit an equal/decreasing time or demote the lock into an unlocked inferred
+// proposal — it must terminate instead.
+
+t('metronome walk stops at a lock whose authored time is not after the ran-ahead pulse', () => {
+    const g = grid(4, 120);                 // downs 0,4,8,12 at t 0,2,4,6
+    g[8].locked = true;                     // bar 3's downbeat, authored at t=4.0
+    // Pulses run AHEAD: bar 2 (pulse index 4) lands at t=4.5, past the lock's 4.0.
+    const pulses = [{ t: 0, s: 0.8 }, { t: 1, s: 0.8 }, { t: 2, s: 0.8 },
+        { t: 3, s: 0.8 }, { t: 4.5, s: 0.8 }, { t: 5, s: 0.8 }, { t: 6, s: 0.8 }, { t: 7, s: 0.8 }];
+    const { proposals } = _suggestMetronomeFitPure(g, pulses, 0, {});
+    assert.ok(!proposals.some(p => p.i === 8),
+        'the conflicting lock (t=4.0 <= prev 4.5) is NOT emitted');
+    for (let i = 1; i < proposals.length; i++) {
+        assert.ok(proposals[i].time > proposals[i - 1].time, 'proposal times stay strictly increasing');
+    }
+});
+
+t('the completion tail stops at a lock behind the last emitted time instead of demoting it', () => {
+    const g = grid(6, 120);                 // downs 0,4,8,12,16,20 at t 0,2,4,6,8,10
+    g[8].locked = true;                     // bar 3 locked, authored at t=4.0
+    // A prior proposal already ran to t=5.0 — the lock at 4.0 is behind it.
+    const result = { proposals: [{ i: 4, time: 5.0, conf: 0.9, locked: false }], stopReason: 'lost', stopDetail: 'silence' };
+    const { proposals } = _suggestCompleteTailPure(g, 0, result, {});
+    const emittedLock = proposals.find(p => p.i === 8);
+    assert.ok(!emittedLock,
+        'the conflicting lock is never emitted as an unlocked inferred proposal at a fabricated time');
+    for (let i = 1; i < proposals.length; i++) {
+        assert.ok(proposals[i].time > proposals[i - 1].time, 'tail times stay strictly increasing');
+    }
+});
+
+// ── Load boundary: a stale locked guide unlocks (never repoints onto master) ──
+t('loading a session whose locked guide stem is gone unlocks the guide', () => {
+    seedState({
+        arrangements: [{ name: 'Lead' }],
+        drumTab: null,
+        stems: [],                          // the persisted 'Click' stem no longer exists
+        audioUrl: '/master.ogg',
+    });
+    installTrackSession({
+        version: 2, tracks: [], removedSourceIds: [],
+        tempoGuideSourceId: 'Click', tempoGuideLocked: true, tempoGuideMode: 'metronome',
+    }, '/master.ogg');
+    assert.deepStrictEqual(editorTempoGuideState(), { sourceId: 'master', locked: false, mode: 'audio' },
+        'a stale locked guide unlocks at load instead of silently locking onto master');
+    // A live guide id survives the load untouched.
+    seedState({ arrangements: [{ name: 'Lead' }], drumTab: null, stems: [{ id: 'Click', url: '/click.ogg' }], audioUrl: '/master.ogg' });
+    installTrackSession({
+        version: 2, tracks: [], removedSourceIds: [],
+        tempoGuideSourceId: 'Click', tempoGuideLocked: true, tempoGuideMode: 'metronome',
+    }, '/master.ogg');
+    assert.deepStrictEqual(editorTempoGuideState(), { sourceId: 'Click', locked: true, mode: 'metronome' },
+        'a guide whose stem still exists loads unchanged');
+});
+
+// ── Concurrent guide analyses coalesce (the older request never self-supersedes) ──
+function fakeGuideBuffer(sampleRate = 8000, dur = 2) {
+    const n = Math.floor(sampleRate * dur);
+    const data = new Float32Array(n);
+    for (let c = 0; c < 8; c++) {
+        const start = Math.round((0.1 + c * 0.22) * sampleRate);
+        for (let i = 0; i < 200 && start + i < n; i++) {
+            data[start + i] = Math.sin((2 * Math.PI * 900 * i) / sampleRate) * (1 - i / 200);
+        }
+    }
+    return { sampleRate, duration: dur, numberOfChannels: 1, length: n, getChannelData: () => data };
+}
+
+t('concurrent analyses for the same guide are coalesced (the first never returns null)', async () => {
+    seedState();
+    _guideAnalysisReset();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) });
+    S.audioCtx = { decodeAudioData: async () => fakeGuideBuffer() };
+    try {
+        const [a, b] = await Promise.all([
+            ensureGuideOnsets('Click', '/click.ogg'),
+            ensureGuideOnsets('Click', '/click.ogg'),
+        ]);
+        assert.ok(a && a.length, 'the first concurrent request resolves to onsets, not a superseded null');
+        assert.strictEqual(a, b, 'both callers share the one coalesced analysis result');
+    } finally {
+        globalThis.fetch = realFetch;
+        S.audioCtx = null;
+    }
 });
 
 for (const [name, fn] of tests) {

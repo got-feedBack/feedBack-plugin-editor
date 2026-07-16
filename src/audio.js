@@ -339,20 +339,37 @@ export function _ensureOnsetsShifted() {
 // guards the async fetch+decode+STFT against song switches and re-requests.
 let _guideOnsetCache = null;   // { sourceId, url, onsets }  (buffer-time)
 let _guideGeneration = 0;
+let _guideInflight = null;     // { sourceId, url, promise } — coalesce concurrent same-guide requests
 
 // New song boundary: drop the cache and orphan any in-flight guide job so a
 // previous song's decode can never land on the current one.
 export function _guideAnalysisReset() {
     _guideOnsetCache = null;
+    _guideInflight = null;
     _guideGeneration++;
 }
 
-export async function ensureGuideOnsets(sourceId, url) {
-    if (!sourceId || !url) return null;
+// Coalesce concurrent requests for the SAME (sourceId, url): a second G press
+// before the first decode lands must reuse the in-flight promise, not start a
+// rival generation that supersedes — and null out — the first. Different guides
+// (or a song switch, which resets _guideInflight) still supersede via the token.
+export function ensureGuideOnsets(sourceId, url) {
+    if (!sourceId || !url) return Promise.resolve(null);
     if (_guideOnsetCache && _guideOnsetCache.sourceId === sourceId
             && _guideOnsetCache.url === url) {
-        return _guideOnsetCache.onsets;
+        return Promise.resolve(_guideOnsetCache.onsets);
     }
+    if (_guideInflight && _guideInflight.sourceId === sourceId && _guideInflight.url === url) {
+        return _guideInflight.promise;
+    }
+    const promise = _computeGuideOnsets(sourceId, url);
+    _guideInflight = { sourceId, url, promise };
+    const clear = () => { if (_guideInflight && _guideInflight.promise === promise) _guideInflight = null; };
+    promise.then(clear, clear);
+    return promise;
+}
+
+async function _computeGuideOnsets(sourceId, url) {
     const generation = ++_guideGeneration;
     let decoded;
     try {

@@ -321,7 +321,16 @@ function _liveSources() { return _trackSessionSourcesPure(S.audioUrl, S.stems); 
 // points at the previous song until loadAudio runs.
 export function installTrackSession(raw, audioUrl) {
     const sources = _trackSessionSourcesPure(audioUrl !== undefined ? audioUrl : S.audioUrl, S.stems);
-    S.trackSession = _trackSessionNormalizePure(raw, sources, S.arrangements, S.drumTab);
+    // A persisted LOCKED guide whose stem id is gone must UNLOCK at load — not
+    // silently repoint onto the first surviving source (usually the master):
+    // normalize preserves the lock while replacing the missing id, and
+    // reconcileTempoGuideToStems() can't catch it afterwards because the id now
+    // resolves. Same intent as the stem-op reconcile, applied at the load seam.
+    const persistedGuide = raw && typeof raw.tempoGuideSourceId === 'string' ? raw.tempoGuideSourceId : '';
+    const input = raw && raw.tempoGuideLocked && !sources.some(s => s.id === persistedGuide)
+        ? { ...raw, tempoGuideLocked: false, tempoGuideMode: 'audio' }
+        : raw;
+    S.trackSession = _trackSessionNormalizePure(input, sources, S.arrangements, S.drumTab);
 }
 
 // Create/import-boundary install (the #286 seam): the backend ships the

@@ -163,6 +163,10 @@ export function _suggestCompleteTailPure(beats, fromIdx, result, opts) {
         for (let k = pos; k < downs.length && downs[k] <= toIdx; k++) {
             if (beats[downs[k]].locked) { lockPos = k; break; }
         }
+        // An authoritative lock whose authored time is not AFTER the last emitted
+        // time is a chronology conflict — stop the tail rather than demote the
+        // lock into an unlocked inferred proposal at a fabricated (later) time.
+        if (lockPos >= 0 && !(beats[downs[lockPos]].time > lastTime)) break;
         if (lockPos >= 0 && beats[downs[lockPos]].time > lastTime) {
             const lockIdx = downs[lockPos];
             const gridSpan = beats[lockIdx].time - beats[lastIdx].time;
@@ -243,6 +247,10 @@ export function _suggestMetronomeFitPure(beats, onsets, fromIdx, opts) {
             // not authorize an implicit missing/extra beat. Keep advancing by
             // the chart's authored beat count so one stale lock cannot shift
             // every later suggestion onto the wrong click phase.
+            // A lock whose authored time is not AFTER the last emitted time
+            // (a pulse walk that ran ahead of it) is a chronology conflict —
+            // stop the walk rather than emit an equal/decreasing locked time.
+            if (!(beats[down].time > prevTime)) break;
             const availableTarget = Math.min(targetPulse, pulses.length - 1);
             for (let i = pulseIndex + 1; i <= availableTarget; i++) {
                 const gap = pulses[i].t - pulses[i - 1].t;
