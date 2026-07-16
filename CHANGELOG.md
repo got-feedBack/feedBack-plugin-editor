@@ -88,6 +88,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   invisible-grid report); the defaults are now `#20203e` at 1 px for beats and
   `#32325c` for measures, with the slider scaling from there.
 
+- **Click tools — the Logic-style pointer-tool system.** Press **T** to open a
+  tool palette at the cursor (like Logic's Tool menu); the next key picks the
+  left-click tool: **Pointer** (V, today's behavior), **Pencil** (B — Live
+  Draw Mode semantics: click empty canvas adds a snap-quantized note with no
+  dialog, click a note deletes it; also exactly EOF's right-click edit),
+  **Eraser** (E), **Marquee** (M — rubber-band even starting on a note),
+  **Mute** (U), **Scissors** (C — split a sustained note at the click).
+  Shift/Ctrl-click always reverts to pointer semantics, so selection stays one
+  modifier away in every tool. Palette keys are live only while it's open —
+  no global-bind collisions.
+  - **Per-profile T semantics**: FeedBack/Cableton — **T,T = Tempo Map** (the
+    old plain-T habit survives as a double-tap; in tempo-map mode a single T
+    still leaves). Logical — **T,T = Pointer** (Logic-exact), and **plain G
+    enters Tempo Map** (Logic's G = global tracks; that profile's snap toggle
+    stays in the Grid toolbar/menu). Legacy (EOF) — **zero key changes**
+    (plain T stays Tap); the palette lives in View ▸ and the command palette.
+  - **Cableton: plain B toggles the Pencil** — Live's Draw Mode key (that
+    profile's bend edit stays in the inspector/menu).
+  - **Right-click feature parity**: the shortcut-panel right-click setting
+    extends from context-menus / EOF-edit to any tool (`Pencil` / `Eraser` /
+    `Marquee` / `Mute` / `Scissors`) — the same executor as the left button,
+    so a tool can never mean different things on different buttons.
+- **Split notes at playhead** (Edit ▸, command palette): splits every selected
+  note spanning the playhead — or all spanning notes with no selection — via
+  the new undoable `SplitNotesCmd`. Technique distribution is music-aware:
+  the bend family stays with the first half (onset-relative), slide targets
+  and link-next move to the second (end-of-note verbs), whole-note marks
+  (palm mute, accents, the keys hand) copy to both. The Scissors tool is the
+  click form of the same command.
+
 ### Changed
 
 - **The mixer is now a proper DAW console.** The docked side panel is

@@ -358,6 +358,11 @@
                     <select id="editor-right-click-behavior" onchange="editorSetRightClickBehavior(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none">
                         <option value="context">Context menus</option>
                         <option value="eofEdit">Add/remove notes</option>
+                        <option value="tool:pencil">Pencil tool (draw)</option>
+                        <option value="tool:eraser">Eraser tool</option>
+                        <option value="tool:marquee">Marquee tool</option>
+                        <option value="tool:mute">Mute tool</option>
+                        <option value="tool:scissors">Scissors tool (split)</option>
                     </select>
                     <span class="text-gray-500 ml-2">Chord click</span>
                     <select id="editor-chord-select-behavior" onchange="editorSetChordSelectBehavior(this.value)" class="bg-dark-700 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300 outline-none" title="Clicking one note of a same-time chord — Alt-click always does the opposite">
@@ -804,6 +809,13 @@
             </div>
         </div>
     </div>
+</div>
+
+<!-- Tool palette (Logic-style: T opens it at the cursor; a key or a click
+     picks the left-click tool — see CLICK-TOOLS-DESIGN.md) -->
+<div id="editor-tool-palette" class="hidden fixed z-50 bg-dark-700 border border-gray-700 rounded-lg shadow-xl p-1.5 w-48" style="left:0;top:0">
+    <div class="text-[10px] font-medium text-gray-500 px-3 py-1">TOOL — press a key or click</div>
+    <div class="editor-tool-palette-rows"></div>
 </div>
 
 <!-- Sync tempo dialog -->
