@@ -105,5 +105,20 @@ t('guide prose colors are theme tokens, not dark-only hardcoded inks', () => {
     assert.match(code, /color:\s*var\(--ed-text,/);
 });
 
+t('responsive track headers preserve identity controls and progressively hide detail', () => {
+    assert.match(block('#plugin-editor #editor-track-session-splitter'), /cursor:\s*ew-resize/);
+    // At narrower widths the pairing select and fader drop, but the name and
+    // kind badge always survive — the row never loses its identity.
+    assert.match(block('#plugin-editor #editor-track-session[data-track-density="normal"] .editor-track-row select'), /display:\s*none/);
+    assert.match(block('#plugin-editor #editor-track-session[data-track-density="compact"] .editor-track-fader'), /display:\s*none/);
+    assert.match(block('#plugin-editor #editor-track-session[data-track-density="wide"] .editor-track-name'), /min-width:\s*7rem/);
+});
+
+t('track rename text selection is excluded from desktop-window dragging', () => {
+    const rename = block('#plugin-editor .editor-track-inline-rename');
+    assert.match(rename, /user-select:\s*text/);
+    assert.match(rename, /-webkit-app-region:\s*no-drag/);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -532,3 +532,68 @@ html.fb-immersive #plugin-editor .editor-root {
 #plugin-editor .editor-create-track-row input { accent-color: #22d3ee; }
 #plugin-editor .editor-create-track-row button { color: #64748b; font-size: 1rem; }
 #plugin-editor .editor-create-track-row button:hover { color: #f8fafc; }
+
+/* ── Tracks header column (the persistent track tree, src/track-session.js) ── */
+#plugin-editor #editor-track-session { width: 20rem; min-width: 11rem; max-width: 36rem; position: relative; }
+#plugin-editor #editor-track-session-splitter { width: 5px; margin-left: -3px; z-index: 8; flex: none; cursor: ew-resize; background: transparent; }
+#plugin-editor #editor-track-session-splitter:hover,
+#plugin-editor #editor-track-session-splitter.is-dragging { background: rgba(34,211,238,.7); }
+#plugin-editor .editor-track-session-head {
+    height: 40px; display: flex; align-items: center; gap: .28rem; padding: 0 .4rem;
+    border-bottom: 1px solid #374151; color: #9ca3af; font-size: 9px;
+    text-transform: uppercase; letter-spacing: .06em;
+}
+#plugin-editor .editor-track-session-head strong { color: #d1d5db; margin-right: auto; }
+#plugin-editor .editor-track-session-head button {
+    border: 1px solid #374151; border-radius: 4px; background: #1f2937; color: #d1d5db;
+    padding: .12rem .28rem; font-size: 9px; text-transform: none; letter-spacing: 0; white-space: nowrap;
+}
+#plugin-editor .editor-track-guide-label { color: #fbbf24; }
+#plugin-editor .editor-track-guide-source { width: 4.5rem; overflow: hidden; text-overflow: ellipsis; }
+#plugin-editor .editor-track-session-list { position: absolute; left: 0; right: 0; top: 40px; bottom: 0; overflow-y: auto; overflow-x: hidden; }
+#plugin-editor .editor-track-row {
+    height: var(--track-row-height); min-height: var(--track-row-height); display: flex; align-items: center; gap: .35rem;
+    padding: .22rem .35rem .22rem calc(.45rem + var(--track-indent));
+    border-bottom: 1px solid rgba(55,65,81,.7); color: #d1d5db; position: relative;
+}
+#plugin-editor .editor-track-row:hover { background: rgba(55,65,81,.55); }
+#plugin-editor .editor-track-row.editor-track-selected { background-color: rgba(14,165,233,.2); outline: 1px solid rgba(56,189,248,.7); outline-offset: -1px; }
+#plugin-editor .editor-track-folder.editor-track-selected { background-color: rgba(14,165,233,.2); }
+#plugin-editor .editor-track-folder { color: #f3f4f6; font-weight: 600; background: rgba(17,24,39,.58); }
+#plugin-editor .editor-track-transcription { background: linear-gradient(90deg, rgba(34,197,94,.13), rgba(21,128,61,.035)); }
+#plugin-editor .editor-track-transcription .editor-track-kind { color: #86efac; }
+#plugin-editor .editor-track-folder button { color: #9ca3af; width: 1rem; }
+#plugin-editor .editor-track-kind { width: 1.75rem; color: #67e8f9; font: 9px/1 monospace; }
+#plugin-editor .editor-track-name { min-width: 4rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+#plugin-editor .editor-track-guide { box-shadow: inset 3px 0 #fbbf24; }
+#plugin-editor .editor-track-row select { width: 5.2rem; background: #111827; border: 1px solid #374151; border-radius: 3px; color: #cbd5e1; font-size: 10px; padding: .12rem; }
+#plugin-editor #editor-track-session[data-track-density="normal"] .editor-track-row select,
+#plugin-editor #editor-track-session[data-track-density="compact"] .editor-track-row select { display: none; }
+#plugin-editor #editor-track-session[data-track-density="compact"] .editor-track-fader,
+#plugin-editor #editor-track-session[data-track-density="compact"] [data-track-action="guide-set"] { display: none; }
+#plugin-editor #editor-track-session[data-track-density="compact"] .editor-track-kind { width: 1.45rem; }
+#plugin-editor #editor-track-session[data-track-density="compact"] .editor-track-session-head .editor-track-guide-label,
+#plugin-editor #editor-track-session[data-track-density="compact"] .editor-track-session-head .editor-track-guide-source,
+#plugin-editor #editor-track-session[data-track-density="compact"] .editor-track-session-head [data-track-action="zoom-out"] { display: none; }
+#plugin-editor #editor-track-session[data-track-density="normal"] .editor-track-session-head .editor-track-guide-label,
+#plugin-editor #editor-track-session[data-track-density="normal"] .editor-track-session-head [data-track-action="zoom-out"] { display: none; }
+#plugin-editor #editor-track-session[data-track-density="normal"] .editor-track-guide-source { width: 3.5rem; }
+#plugin-editor #editor-track-session[data-track-density="wide"] .editor-track-name { min-width: 7rem; }
+#plugin-editor .editor-track-resize { position: absolute; left: 0; right: 0; bottom: -2px; height: 5px; z-index: 2; cursor: ns-resize; }
+#plugin-editor .editor-track-resize:hover { background: rgba(34,211,238,.65); }
+#plugin-editor .editor-track-drop-before { box-shadow: inset 0 2px #22d3ee; }
+#plugin-editor .editor-track-drop-after { box-shadow: inset 0 -2px #22d3ee; }
+#plugin-editor .editor-track-drop-inside { background: rgba(34,211,238,.16); outline: 1px solid rgba(34,211,238,.7); outline-offset: -2px; }
+#plugin-editor .editor-track-ms {
+    width: 1.45rem; height: 1.25rem; border: 1px solid #4b5563; border-radius: 3px;
+    background: #1f2937; color: #9ca3af; font: 700 9px/1 monospace;
+}
+#plugin-editor [data-track-action="mix-mute"][aria-pressed="true"] { background: #b45309; color: #fff; border-color: #f59e0b; }
+#plugin-editor [data-track-action="mix-solo"][aria-pressed="true"] { background: #ca8a04; color: #111827; border-color: #fde047; }
+#plugin-editor .editor-track-fader { width: 3.2rem; accent-color: #22d3ee; }
+#plugin-editor .editor-track-context-menu { position: fixed; z-index: 90; min-width: 8rem; padding: .25rem; border: 1px solid #4b5563; border-radius: 4px; background: #111827; box-shadow: 0 10px 25px rgba(0,0,0,.45); }
+#plugin-editor .editor-track-context-menu button { width: 100%; padding: .35rem .55rem; text-align: left; color: #e5e7eb; border-radius: 3px; }
+#plugin-editor .editor-track-context-menu button:hover { background: #374151; }
+#plugin-editor .editor-track-context-menu .editor-track-delete { color: #fca5a5; }
+#plugin-editor .editor-track-context-menu .editor-track-delete:hover { background: rgba(153,27,27,.65); color: #fff; }
+#plugin-editor .editor-track-inline-rename { flex: 1; min-width: 3rem; padding: .25rem .35rem; border: 1px solid #22d3ee; border-radius: 3px; background: #030712; color: #f3f4f6; outline: none; box-shadow: 0 0 0 1px rgba(34,211,238,.2); cursor: text; user-select: text; -webkit-user-select: text; -webkit-app-region: no-drag; }

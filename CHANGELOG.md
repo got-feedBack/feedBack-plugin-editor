@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Tracks area — a DAW-style track column.** The persistent track tree
+  is now a surface you can see and arrange: a resizable header column beside
+  the timeline lists every track (the master mix, studio stems, and each
+  transcription part), with the canvas drawing a matching lane for each row —
+  the two always line up. Reorder tracks and group them into folders by
+  drag, rename inline, resize a lane's height, and pair a transcription with
+  its studio stem right from its row. Mute/solo/volume on a transcription
+  ride the same mixer state as the mixer panel. Double-click a track to open
+  it in its native editor; a stem's row-menu can lock it as the metronome
+  guide. Removing an audio track is non-destructive — the media stays in the
+  pack. The area is the workspace's landing surface for any loaded song.
+
 - **Bulk barline locks + friendlier Tempo Map selection.** Lock or unlock a
   whole selection in one go: the tempo toolbar's new lock button (and the
   `S` key, and the right-click menu) names exactly what it will do — "Lock
@@ -50,8 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session state. Removing an audio track is non-destructive (the media
   stays in the pack; the track can be restored), and the tree records
   which audio source is the session's tempo reference. This slice is the
-  data model and persistence; the unified Tracks surface that renders the
-  tree ships separately.
+  data-model and persistence foundation for the unified Tracks surface
+  described above.
 
 ### Changed
 

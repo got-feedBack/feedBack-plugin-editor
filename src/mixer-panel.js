@@ -176,6 +176,23 @@ function _setPart(key, patch) {
     host.partMixChanged();
 }
 
+// Companion surfaces (the Tracks header column) mutate the SAME canonical
+// partMix through these thin verbs — this panel stays the owner, so the
+// solo rule and the partMixChanged notification can never fork.
+export function mixerTogglePart(key, which) {
+    const st = _mixerPartStatePure(S.partMix, key);
+    _setPart(key, which === 'mute' ? { mute: !st.mute } : { solo: !st.solo });
+    _lastKey = '';
+    _mixerPanelRefresh();
+}
+export function mixerSetPart(key, patch) {
+    _setPart(key, patch);
+    // Keep the mixer panel's companion fader in sync when the change came in
+    // from the Tracks header column (track-session.js) — same as the M/S verb.
+    _lastKey = '';
+    _mixerPanelRefresh();
+}
+
 // One delegated listener pair on the (static) panel element — guarded so a
 // defensive double-init can never stack handlers. The panel element itself is
 // replaced when the host re-injects the screen, so nothing leaks across

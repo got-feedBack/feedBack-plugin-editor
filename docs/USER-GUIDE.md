@@ -139,9 +139,23 @@ gets the view that fits it automatically:
   read-only reference, with resolver-assisted authoring).
 - **Drum grid** — piece lanes, for drum tracks.
 
-Switch tracks from the track selector. **Tracks overview** (`Shift+A`) stacks every
-track for a bird's-eye look. Rename / reorder tracks from the **Track** menu.
-Add a track by importing into it (e.g. Import MIDI as a keys track).
+The **Tracks column** down the left side lists every track — the master mix,
+any studio stems, and each transcription part — beside a matching timeline lane.
+From a track's row you can:
+
+- **rename** it (double-click the name, or right-click ▸ Rename),
+- **reorder** it or drop it into a **folder** by dragging (＋ Folder up top),
+- **resize** its lane by dragging the bottom edge (or the ＋ / − header buttons
+  to grow/shrink them all),
+- **pair** a transcription with the studio stem it was charted against (the
+  dropdown on its row), and mute / solo / set its level,
+- **open** it in its native editor (double-click), or right-click a stem to
+  **lock it as the metronome guide**.
+
+Drag the divider to widen the column; narrow it and the detail controls fold
+away first, keeping each track's name and type visible. Removing an audio
+track is non-destructive — the media stays in the pack and can come back.
+`Shift+A` jumps to this Tracks view.
 
 ---
 

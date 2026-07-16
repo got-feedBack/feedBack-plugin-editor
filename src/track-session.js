@@ -30,12 +30,19 @@
 // The unified Tracks surface that renders the tree arrives in a follow-up
 // (see the docked mixer panel / parts view for today's surfaces).
 // ════════════════════════════════════════════════════════════════════
+import { host } from './host.js';
+import { _renameGuardPure } from './arrangement.js';
 import { _partViewKeyPure } from './keys.js';
+import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart } from './mixer-panel.js';
 import { S, markSessionDirty } from './state.js';
+import { _editorEscHtml, setStatus } from './ui.js';
 
 const MASTER_ID = 'master';
 const DRUM_TARGET_ID = 'drums';
 const VERSION = 2;
+const TRACK_LANE_DEFAULT = 56;
+const TRACK_LANE_MIN = 28;
+const TRACK_LANE_MAX = 160;
 const idOf = (value) => typeof value === 'string' && value.trim().length > 0 && value.length <= 160 ? value.trim() : '';
 const audioTrackId = (sourceId) => 'audio:' + sourceId;
 const transcriptionTrackId = (targetId) => 'transcription:' + targetId;
@@ -85,6 +92,20 @@ export function _trackSessionTargetsPure(arrangements, drumTab) {
     return out;
 }
 
+// Drop one arrangement's mix strip and renumber the higher `arr:<n>` keys
+// down a slot — the partMix analogue of splicing S.arrangements[index] out.
+// Drum + lower-index strips keep their mute/solo/volume untouched.
+export function _partMixDropArrangementPure(partMix, index) {
+    const out = {};
+    for (const [key, value] of Object.entries(partMix && typeof partMix === 'object' ? partMix : {})) {
+        if (!key.startsWith('arr:')) { out[key] = value; continue; }
+        const n = Number(key.slice(4));
+        if (!Number.isInteger(n) || n === index) continue;
+        out[n > index ? 'arr:' + (n - 1) : key] = value;
+    }
+    return out;
+}
+
 // Normalize any persisted/half-trusted tree against the loaded song: drop
 // rows whose source/target no longer exists, append rows for anything new,
 // repair parent cycles, and default the tempo guide. Idempotent — this is
@@ -92,11 +113,15 @@ export function _trackSessionTargetsPure(arrangements, drumTab) {
 export function _trackSessionNormalizePure(raw, sources, arrangements, drumTab) {
     const sourceList = Array.isArray(sources) ? sources : [];
     const targets = _trackSessionTargetsPure(arrangements, drumTab);
-    const knownSources = new Set(sourceList.map(s => s.id));
     const knownTargets = new Set(targets.map(t => t.id));
     const input = raw && typeof raw === 'object' ? raw : {};
+    // Keep every persisted tombstone, even for sources not currently loaded:
+    // a session installed before its audio arrives (S.audioUrl set late) would
+    // otherwise lose a `master` tombstone here and resurrect the Master Mix row
+    // once the audio loads. Unknown ids are inert (no matching source), so
+    // retaining them only defers reconciliation until the source shows up.
     const removedSourceIds = [...new Set((Array.isArray(input.removedSourceIds) ? input.removedSourceIds : [])
-        .map(idOf).filter(sourceId => knownSources.has(sourceId)))];
+        .map(idOf).filter(Boolean))].slice(0, 300);
     const removedSources = new Set(removedSourceIds);
     const visibleSources = sourceList.filter(source => !removedSources.has(source.id));
     const visibleSourceIds = new Set(visibleSources.map(source => source.id));
@@ -254,6 +279,12 @@ export function _trackSessionRestorePure(session, sourceId, sources, arrangement
     return _trackSessionNormalizePure(next, sources, arrangements, drumTab);
 }
 
+export function _trackSessionRemovedSourcesPure(session, sources) {
+    const removed = new Set((session && Array.isArray(session.removedSourceIds))
+        ? session.removedSourceIds : []);
+    return (Array.isArray(sources) ? sources : []).filter(source => source && removed.has(source.id));
+}
+
 export function _trackSessionMovePure(session, movedId, targetId, placement, sources, arrangements, drumTab) {
     const model = _trackSessionNormalizePure(session, sources, arrangements, drumTab);
     const from = model.tracks.findIndex(t => t.id === movedId);
@@ -294,6 +325,93 @@ export function _trackSessionRenamePure(session, trackId, name, sources, arrange
     return model;
 }
 
+// ── Lane geometry (shared by the header column AND the canvas lanes, so
+// the two surfaces line up 1:1) ───────────────────────────────────────
+export function _trackSessionLaneHeightPure(heights, trackId) {
+    const value = Number(heights && heights[trackId]);
+    return Number.isFinite(value)
+        ? Math.max(TRACK_LANE_MIN, Math.min(TRACK_LANE_MAX, Math.round(value)))
+        : TRACK_LANE_DEFAULT;
+}
+export function _trackSessionDensityPure(width) {
+    const value = Number(width) || 0;
+    return value < 230 ? 'compact' : value < 400 ? 'normal' : 'wide';
+}
+// Logic-style auto-fit, deliberately modest: spare viewport height improves
+// readability but the automatic bonus caps at 32px so a two-track song does
+// not turn into two enormous empty slabs. Never shrinks below authored.
+export function _trackSessionFittedHeightsPure(rows, heights, viewportHeight) {
+    const fitted = {};
+    let total = 0;
+    for (const row of (rows || [])) {
+        fitted[row.id] = _trackSessionLaneHeightPure(heights, row.id);
+        total += fitted[row.id];
+    }
+    const spare = Math.max(0, (Number(viewportHeight) || 0) - total);
+    if (!rows || !rows.length || spare <= 0) return fitted;
+    const bonus = Math.min(32, Math.floor(spare / rows.length));
+    for (const row of rows) fitted[row.id] = Math.min(TRACK_LANE_MAX, fitted[row.id] + bonus);
+    return fitted;
+}
+export function _trackSessionLaneLayoutPure(rows, heights, scrollY = 0, top = 40) {
+    const out = [];
+    let y = Number(top) || 0;
+    const scroll = Math.max(0, Number(scrollY) || 0);
+    for (const row of (rows || [])) {
+        const h = _trackSessionLaneHeightPure(heights, row.id);
+        out.push({ row, y: y - scroll, h });
+        y += h;
+    }
+    return { lanes: out, contentHeight: Math.max(0, y - (Number(top) || 0)) };
+}
+// Where a drag over a row would land: folders accept 'inside' in their
+// middle band (25–75%); everything else splits at the midline.
+export function _trackSessionDropPlacementPure(pointerY, rowTop, rowHeight, isFolder) {
+    const h = Math.max(1, Number(rowHeight) || 1);
+    const ratio = Math.max(0, Math.min(1, ((Number(pointerY) || 0) - (Number(rowTop) || 0)) / h));
+    if (isFolder && ratio >= .25 && ratio <= .75) return 'inside';
+    return ratio < .5 ? 'before' : 'after';
+}
+export function _trackRenameEditorMarkupPure(trackId, currentName) {
+    const id = _editorEscHtml(trackId);
+    const name = _editorEscHtml(currentName);
+    return `<input class="editor-track-inline-rename" data-track-rename-input data-track-id="${id}" value="${name}" draggable="false" aria-label="New track or folder name">`;
+}
+
+export function _trackSessionRetargetPure(session, oldTargetId, newTargetId) {
+    const oldId = idOf(oldTargetId);
+    const newId = idOf(newTargetId);
+    if (!oldId || !newId || oldId === newId) return session;
+    const oldTrackId = transcriptionTrackId(oldId);
+    const newTrackId = transcriptionTrackId(newId);
+    const next = { ...(session || {}), tracks: (session?.tracks || []).map(track => ({ ...track })) };
+    for (const track of next.tracks) {
+        if (track.type === 'transcription' && track.targetId === oldId) {
+            track.targetId = newId;
+            if (track.id === oldTrackId) track.id = newTrackId;
+        }
+        if (track.parentId === oldTrackId) track.parentId = newTrackId;
+    }
+    return next;
+}
+
+export function _trackLinksRetargetPure(stemLinks, oldTargetId, newTargetId = '') {
+    const links = { ...((stemLinks && typeof stemLinks === 'object') ? stemLinks : {}) };
+    const sourceId = links[oldTargetId];
+    delete links[oldTargetId];
+    if (newTargetId && sourceId) links[newTargetId] = sourceId;
+    return links;
+}
+
+export function _trackFocusSourcePure(row) {
+    if (!row || row.type !== 'transcription') return row?.sourceId || '';
+    return row.pairedSourceId || MASTER_ID;
+}
+
+export function _trackTranscriptionRenameGuardPure(oldName, requested, otherNames) {
+    return _renameGuardPure(oldName, requested, otherNames);
+}
+
 // True when the tree carries nothing the canonical song doesn't already
 // express: default order (sources then targets), no folders, no custom
 // names, no tombstones, default guide. A default tree persists as NO
@@ -331,6 +449,14 @@ export function installTrackSession(raw, audioUrl) {
         ? { ...raw, tempoGuideLocked: false, tempoGuideMode: 'audio' }
         : raw;
     S.trackSession = _trackSessionNormalizePure(input, sources, S.arrangements, S.drumTab);
+    S.selectedTrackId = '';
+    S.focusedSourceId = S.trackSession.tempoGuideSourceId;
+    S.trackScrollY = 0;
+    // The unified Tracks area is the landing surface for a session with
+    // tracks (i.e. any real song) — the DAW arrangement-view idiom.
+    S.partsViewMode = S.trackSession.tracks.length > 0;
+    lastRender = '';
+    refreshTrackSession();
 }
 
 // Create/import-boundary install (the #286 seam): the backend ships the
@@ -392,6 +518,8 @@ export function editorToggleTempoGuide(sourceId, mode = 'metronome') {
         tempoGuideMode: active ? 'audio' : wanted,
     }, sources, S.arrangements, S.drumTab);
     markSessionDirty();
+    lastRender = '';
+    refreshTrackSession();
     return !active;
 }
 
@@ -416,4 +544,547 @@ export function reconcileTempoGuideToStems() {
     }, sources, S.arrangements, S.drumTab);
     markSessionDirty();
     return true;
+}
+// ═════════════════════════════════════════════════════════════════════
+// The Tracks header column (the left <aside>) — the tree made visible.
+// One ordered list of header cells whose geometry (heights, order, fold
+// state, scroll) is IDENTICAL to the canvas lanes parts-view draws, so
+// the two surfaces always line up. All persistent listeners are delegated
+// on the panel element itself (replaced on host re-injection → no leaks);
+// the only window-level listeners are self-removing pointer drag pairs.
+// ═════════════════════════════════════════════════════════════════════
+
+let lastRender = '';
+let draggedId = '';
+let renamingTrackId = '';
+// Monotonic stamp for pairing snapshot writes — only the latest request's
+// response is allowed to mutate S.stemLinks / S.stems (see _syncPairing).
+let _pairingSeq = 0;
+// True only for the synchronous span of a header-column fader `input`: the
+// live vol write routes through host.partMixChanged → refreshTrackSession,
+// which would rebuild el.innerHTML and destroy the very <input type=range>
+// under the pointer, aborting the native drag. Suppress the rebuild there —
+// the fader already reflects its own value; the mixer panel dodges the same
+// self-destruction by never re-rendering itself from its fader input.
+let _faderDragging = false;
+const panel = () => (typeof document === 'undefined' ? null : document.getElementById('editor-track-session'));
+
+function _rowsLive() {
+    return _trackSessionRowsPure(S.trackSession, _liveSources(), S.arrangements, S.drumTab, S.stemLinks);
+}
+
+export function applyTrackHeaderWidth(width, persist = false) {
+    const value = Math.max(176, Math.min(576, Math.round(Number(width) || 320)));
+    S.trackHeaderWidth = value;
+    const el = panel();
+    if (el) {
+        el.style.width = value + 'px';
+        el.setAttribute('data-track-density', _trackSessionDensityPure(value));
+    }
+    if (persist) {
+        try { localStorage.setItem('editorTrackHeaderWidth', String(value)); } catch (_) { /* storage blocked */ }
+    }
+    return value;
+}
+
+function render() {
+    const el = panel();
+    if (!el) return;
+    const { model, rows, sources } = _rowsLive();
+    const removedSources = _trackSessionRemovedSourcesPure(model, _liveSources());
+    const fittedHeights = _trackSessionFittedHeightsPure(rows, S.trackHeights, S.trackViewportHeight);
+    // Pairing options are STEMS only — pairing lives in stemLinks (a stem
+    // id per chart key); "inherit" (no link) means the part transcribes
+    // against the master mix.
+    const stems = sources.filter(source => source.kind === 'stem');
+    const sourceOptions = selected => ['<option value="">— master mix —</option>']
+        .concat(stems.map(source => `<option value="${_editorEscHtml(source.id)}"${source.id === selected ? ' selected' : ''}>${_editorEscHtml(source.name)}</option>`)).join('');
+    const guide = sources.find(source => source.id === model.tempoGuideSourceId) || sources[0] || { name: 'No guide' };
+    // Per-part M/S/fader — the SAME canonical partMix the mixer panel owns
+    // (band-mode gains ramp off it live). Audio rows carry no strips yet:
+    // stem playback is the engine slice; strips arrive with it.
+    const mixControls = row => {
+        if (!row.mixKey || row.type !== 'transcription') return '';
+        const key = _editorEscHtml(row.mixKey);
+        const st = _mixerPartStatePure(S.partMix, row.mixKey);
+        return `<button class="editor-track-ms" data-track-action="mix-mute" data-mix-key="${key}" aria-pressed="${st.mute}" title="Mute track">M</button>`
+            + `<button class="editor-track-ms" data-track-action="mix-solo" data-mix-key="${key}" aria-pressed="${st.solo}" title="Solo track">S</button>`
+            + `<input class="editor-track-fader" type="range" min="0" max="100" step="1" value="${st.vol}" data-track-action="mix-vol" data-mix-key="${key}" aria-label="${_editorEscHtml(row.name)} fader level">`;
+    };
+    const resizeGrip = row => `<span class="editor-track-resize" data-track-action="resize" data-track-id="${_editorEscHtml(row.id)}" title="Drag to resize track"></span>`;
+    const trackName = (row, markup) => renamingTrackId === row.id
+        ? _trackRenameEditorMarkupPure(row.id, row.name)
+        : markup;
+    const guideMode = model.tempoGuideMode === 'metronome' ? ' · Click' : '';
+    const restore = removedSources.length
+        ? `<select data-track-action="restore-source" aria-label="Restore removed audio track"><option value="">Restore track…</option>${removedSources.map(source => `<option value="${_editorEscHtml(source.id)}">${_editorEscHtml(source.name)}</option>`).join('')}</select>`
+        : '';
+    el.innerHTML = `<div class="editor-track-session-head"><strong>Tracks</strong><button data-track-action="folder" title="Create optional folder">+ Folder</button>${restore}<span class="editor-track-guide-label">Guide</span><button class="editor-track-guide-source" data-track-action="guide-cycle" title="Cycle tempo guide">${_editorEscHtml(guide.name + guideMode)}</button><button data-track-action="guide-lock" aria-pressed="${model.tempoGuideLocked}" title="Lock tempo guide — assisted mapping (G) analyzes the locked guide">${model.tempoGuideLocked ? '🔒' : '🔓'}</button><button data-track-action="zoom-out" title="Reduce all track heights">−</button><button data-track-action="zoom-in" title="Increase all track heights">+</button></div><div class="editor-track-session-list">${rows.map(row => {
+        const trackId = _editorEscHtml(row.id); const name = _editorEscHtml(row.name); const indent = Math.min(5, row.depth) * 14;
+        const height = fittedHeights[row.id];
+        const style = `--track-indent:${indent}px;--track-row-height:${height}px`;
+        const selected = row.id === S.selectedTrackId ? ' editor-track-selected' : '';
+        if (row.type === 'folder') return `<div class="editor-track-row editor-track-folder${selected}" draggable="true" data-track-id="${trackId}" style="${style}"><button data-track-action="collapse" data-track-id="${trackId}">${row.collapsed ? '›' : '⌄'}</button>${trackName(row, `<span class="editor-track-name">${name}</span>`)}${resizeGrip(row)}</div>`;
+        if (row.type === 'audio') return `<div class="editor-track-row${selected}${row.sourceId === model.tempoGuideSourceId ? ' editor-track-guide' : ''}" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.sourceKind === 'master' ? 'MIX' : 'AUD'}</span>${trackName(row, `<span class="editor-track-name">${name}</span>`)}<button data-track-action="guide-set" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use for tempo">${row.sourceId === model.tempoGuideSourceId ? '★' : '☆'}</button>${resizeGrip(row)}</div>`;
+        return `<div class="editor-track-row editor-track-transcription${selected}" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.targetId === DRUM_TARGET_ID ? 'DRM' : 'MIDI'}</span>${trackName(row, `<button class="editor-track-name" data-track-action="select" data-target-id="${_editorEscHtml(row.targetId)}" title="Double-click to open editor">${name}</button>`)}${mixControls(row)}<select data-track-action="pair" data-track-id="${trackId}" data-target-id="${_editorEscHtml(row.targetId)}" aria-label="Audio reference for ${name}">${sourceOptions(row.pairedSourceId)}</select>${resizeGrip(row)}</div>`;
+    }).join('')}</div>`;
+    const list = el.querySelector('.editor-track-session-list');
+    if (list) list.scrollTop = Math.max(0, Number(S.trackScrollY) || 0);
+    const renameInput = el.querySelector('[data-track-rename-input]');
+    if (renameInput) { renameInput.focus(); renameInput.select(); }
+}
+
+export function refreshTrackSession() {
+    if (_faderDragging) return;
+    const key = JSON.stringify([S.trackSession, S.selectedTrackId, S.audioUrl, S.stems, S.stemLinks, S.partMix, S.trackHeights, S.trackViewportHeight,
+        (S.arrangements || []).map(a => a && [a.id, a.name]), S.drumTab && S.drumTab.name]);
+    if (key === lastRender) return;
+    lastRender = key; render();
+}
+export function refreshTrackSessionSelection() {
+    lastRender = '';
+    refreshTrackSession();
+}
+function refreshTrackSelectionClass() {
+    const el = panel();
+    if (!el) return;
+    for (const row of el.querySelectorAll('.editor-track-row[data-track-id]')) {
+        row.classList.toggle('editor-track-selected', row.getAttribute('data-track-id') === S.selectedTrackId);
+    }
+}
+
+function commit(next, status) {
+    S.trackSession = _trackSessionNormalizePure(next, _liveSources(), S.arrangements, S.drumTab);
+    markSessionDirty(); lastRender = ''; refreshTrackSession();
+    if (status) setStatus(status);
+    host.draw();
+}
+
+// Rename: canonical names stay canonical — a transcription rename writes the
+// arrangement / drum-tab name (what the game shows), while audio and folder
+// rows keep a display override on the TREE only (a stem's id is its identity
+// in the manifest; renaming that is the stem manager's backend op).
+function applyTrackRename(trackId, requested) {
+    if (!requested || !requested.trim()) return false;
+    const current = _rowsLive().rows.find(row => row.id === trackId);
+    let clean = requested.trim().slice(0, 120);
+    if (current?.type === 'transcription' && current.targetId !== DRUM_TARGET_ID) {
+        const target = _trackSessionTargetsPure(S.arrangements, S.drumTab)
+            .find(item => item.id === current.targetId);
+        const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
+        if (index >= 0 && S.arrangements[index]) {
+            const otherNames = S.arrangements
+                .filter((_, i) => i !== index).map(arr => arr && arr.name);
+            const guard = _trackTranscriptionRenameGuardPure(
+                S.arrangements[index].name, requested, otherNames);
+            if (!guard.ok) { if (guard.reason) setStatus(guard.reason); return false; }
+            clean = guard.name;
+        }
+    }
+    let next = _trackSessionRenamePure(S.trackSession, trackId, clean, _liveSources(), S.arrangements, S.drumTab);
+    let renamed = next.tracks.find(track => track.id === trackId);
+    if (!renamed) return false;
+    if (renamed.type === 'transcription') {
+        if (renamed.targetId === DRUM_TARGET_ID && S.drumTab) S.drumTab.name = clean;
+        const targets = _trackSessionTargetsPure(S.arrangements, S.drumTab);
+        const target = targets.find(item => item.id === renamed.targetId);
+        const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
+        if (index >= 0 && S.arrangements[index]) {
+            const oldTargetId = renamed.targetId;
+            S.arrangements[index].name = clean;
+            const newTargetId = idOf(_partViewKeyPure(S.arrangements[index])) || oldTargetId;
+            if (newTargetId !== oldTargetId) {
+                next = _trackSessionRetargetPure(next, oldTargetId, newTargetId);
+                S.stemLinks = _trackLinksRetargetPure(S.stemLinks, oldTargetId, newTargetId);
+                const newTrackId = transcriptionTrackId(newTargetId);
+                if (S.selectedTrackId === trackId) S.selectedTrackId = newTrackId;
+                if (S.trackHeights && Object.hasOwn(S.trackHeights, trackId)) {
+                    S.trackHeights[newTrackId] = S.trackHeights[trackId];
+                    delete S.trackHeights[trackId];
+                }
+                renamed = next.tracks.find(track => track.id === newTrackId) || renamed;
+            }
+        }
+        // The canonical name IS the display name — drop the tree override so
+        // the row keeps following the arrangement.
+        renamed.name = '';
+    }
+    commit(next, `${renamed.type === 'folder' ? 'Folder' : 'Track'} renamed to ${clean}.`);
+    _mixerPanelRefresh();
+    host.updateArrangementSelector();
+    return true;
+}
+
+function selectTrack(trackId, openEditor = false) {
+    const row = _rowsLive().rows.find(item => item.id === trackId);
+    if (!row) return false;
+    S.selectedTrackId = row.id;
+    if (row.type === 'audio') {
+        S.focusedSourceId = row.sourceId;
+        setStatus(`Audio track selected: ${row.name}`);
+    } else if (row.type === 'transcription') {
+        S.focusedSourceId = _trackFocusSourcePure(row);
+        host.selectTrackSessionTarget(row.targetId);
+        if (openEditor) host.openTrackSessionTarget(row.targetId);
+        setStatus(openEditor ? `Opened ${row.name} in the editor.` : `Transcription track selected: ${row.name}`);
+    } else setStatus(`Folder selected: ${row.name}`);
+    // Keep the row DOM stable between the two clicks of a double-click: a
+    // full rerender changes the event target and some browsers never
+    // deliver dblclick — selection only needs a class update here.
+    refreshTrackSelectionClass();
+    host.draw();
+    return true;
+}
+
+async function deleteTrack(trackId) {
+    const row = _rowsLive().rows.find(item => item.id === trackId);
+    if (!row) return false;
+    if (row.type === 'folder') {
+        if (!confirm(`Delete folder “${row.name}”? Its tracks will move to the folder's parent level.`)) return false;
+        commit(_trackSessionDeletePure(S.trackSession, row.id, _liveSources(), S.arrangements, S.drumTab), `Deleted folder “${row.name}”; its tracks were kept.`);
+    } else if (row.type === 'audio') {
+        if (!confirm(`Remove audio track “${row.name}” from this session? The media stays in the pack and can come back.`)) return false;
+        // Non-destructive: a tombstone in removedSourceIds, never a file op.
+        commit(_trackSessionDeletePure(S.trackSession, row.id, _liveSources(), S.arrangements, S.drumTab),
+            `Removed audio track “${row.name}” — the media stays inside the project.`);
+        host.partMixChanged();
+        host.audioSourcesChanged();
+    } else if (row.targetId === DRUM_TARGET_ID) {
+        if (!confirm(`Delete drum transcription “${row.name}”?`)) return false;
+        S.drumTab = null;
+        S.drumTabDirty = true;
+        delete S.partMix.drums;
+        S.stemLinks = _trackLinksRetargetPure(S.stemLinks, DRUM_TARGET_ID);
+        if (S.history) S.history.reset();
+        commit(S.trackSession, `Deleted drum transcription “${row.name}”.`);
+    } else {
+        const targets = _trackSessionTargetsPure(S.arrangements, S.drumTab);
+        const target = targets.find(item => item.id === row.targetId);
+        const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
+        if (index < 0) return false;
+        if (S.arrangements.length <= 1) {
+            setStatus('A feedpak requires at least one transcription arrangement; add another before deleting this track.');
+            return false;
+        }
+        S.currentArr = index;
+        const removed = await window.editorRemoveArrangement();
+        if (!removed) return false;
+        S.stemLinks = _trackLinksRetargetPure(S.stemLinks, row.targetId);
+        // Preserve every surviving strip's mute/solo/volume — the arrangement
+        // splice renumbers the higher indices, so shift the keys, don't wipe.
+        S.partMix = _partMixDropArrangementPure(S.partMix, index);
+        S.trackSession = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
+        lastRender = '';
+        refreshTrackSession();
+    }
+    if (S.selectedTrackId === row.id) S.selectedTrackId = '';
+    _mixerPanelRefresh();
+    host.draw();
+    return true;
+}
+
+// Pairing writes S.stemLinks (the ONE pairing store) and syncs the backend
+// session via /stem-op op 'links' — the same atomic-snapshot contract the
+// stem manager uses. Inlined here (not imported) because stem-tracks already
+// imports this module: seams, not cycles.
+export async function _syncPairing(targetId, sourceId, verb) {
+    let links = { ...(S.stemLinks || {}) };
+    delete links[targetId];
+    if (sourceId) links[targetId] = sourceId;
+    S.stemLinks = links;
+    lastRender = ''; refreshTrackSession();
+    if (!S.sessionId || typeof fetch !== 'function') { markSessionDirty(); return; }
+    // Full-snapshot writes: a slower earlier response resolving after a newer
+    // one would clobber the user's latest S.stemLinks selection. Stamp each
+    // request and ignore any response that a later pairing has superseded.
+    const seq = ++_pairingSeq;
+    try {
+        const resp = await fetch('/api/plugins/editor/stem-op', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: S.sessionId, op: 'links', stem_links: S.stemLinks || {} }),
+        });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        if (seq !== _pairingSeq) return;
+        S.stems = Array.isArray(data.stems) ? data.stems : S.stems;
+        S.stemLinks = (data.stem_links && typeof data.stem_links === 'object') ? data.stem_links : S.stemLinks;
+        if (!data.persisted) markSessionDirty();
+        lastRender = ''; refreshTrackSession();
+        if (host.stemUiChanged) host.stemUiChanged();
+        setStatus(verb);
+    } catch (e) {
+        if (seq !== _pairingSeq) return;
+        markSessionDirty();
+        setStatus(`Pairing sync failed: ${e.message} — the pairing is kept and ships with the next Save.`);
+    }
+}
+
+export function scrollTrackSessionBy(deltaY) {
+    const el = panel();
+    const list = el && el.querySelector('.editor-track-session-list');
+    if (!list) return false;
+    list.scrollTop = Math.max(0, list.scrollTop + deltaY);
+    S.trackScrollY = list.scrollTop;
+    host.draw();
+    return true;
+}
+
+export function initTrackSession() {
+    const el = panel();
+    if (!el || el.__trackSessionWired) return;
+    el.__trackSessionWired = true;
+    let storedWidth = 0;
+    try { storedWidth = Number(localStorage.getItem('editorTrackHeaderWidth')) || 0; } catch (_) { /* blocked */ }
+    applyTrackHeaderWidth(storedWidth || S.trackHeaderWidth);
+    // main.js sizes the canvas BEFORE this runs; a restored non-default width
+    // changes the flex layout after that, so resize once here or hit geometry
+    // stays stale until an unrelated resize.
+    host.resizeCanvas();
+    const splitter = document.getElementById('editor-track-session-splitter');
+    if (splitter && !splitter.__trackSplitterWired) {
+        splitter.__trackSplitterWired = true;
+        splitter.addEventListener('pointerdown', event => {
+            event.preventDefault();
+            const startX = event.clientX; const startWidth = S.trackHeaderWidth;
+            splitter.classList.add('is-dragging');
+            const move = moveEvent => {
+                applyTrackHeaderWidth(startWidth + moveEvent.clientX - startX);
+                host.resizeCanvas();
+            };
+            const up = () => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                splitter.classList.remove('is-dragging');
+                applyTrackHeaderWidth(S.trackHeaderWidth, true);
+                host.resizeCanvas();
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up, { once: true });
+        });
+    }
+    el.addEventListener('click', event => {
+        const clickedRow = event.target && event.target.closest ? event.target.closest('.editor-track-row[data-track-id]') : null;
+        if (clickedRow && !event.target.closest('[data-track-rename-input]')) selectTrack(clickedRow.getAttribute('data-track-id') || '');
+        const control = event.target && event.target.closest ? event.target.closest('[data-track-action]') : null;
+        if (!control) return;
+        const action = control.getAttribute('data-track-action');
+        if (action === 'resize') return;
+        if (action === 'mix-mute' || action === 'mix-solo') {
+            mixerTogglePart(control.getAttribute('data-mix-key') || '', action === 'mix-mute' ? 'mute' : 'solo');
+            lastRender = '';
+            refreshTrackSession();
+            return;
+        }
+        if (action === 'rename') {
+            const trackId = control.getAttribute('data-track-id') || '';
+            const menu = control.closest('.editor-track-context-menu');
+            if (menu) menu.remove();
+            if (!(S.trackSession.tracks || []).some(track => track.id === trackId)) return;
+            renamingTrackId = trackId;
+            lastRender = ''; refreshTrackSession();
+            return;
+        }
+        if (action === 'delete') {
+            const trackId = control.getAttribute('data-track-id') || '';
+            const menu = control.closest('.editor-track-context-menu');
+            if (menu) menu.remove();
+            deleteTrack(trackId);
+            return;
+        }
+        if (action === 'metronome-guide') {
+            const trackId = control.getAttribute('data-track-id') || '';
+            const menu = control.closest('.editor-track-context-menu');
+            if (menu) menu.remove();
+            const track = (S.trackSession.tracks || []).find(item => item.id === trackId && item.type === 'audio');
+            if (track) {
+                const locked = editorToggleTempoGuide(track.sourceId, 'metronome');
+                setStatus(locked
+                    ? 'Locked as the metronome guide — assisted tempo mapping (G) analyzes this track.'
+                    : 'Metronome guide unlocked — assisted mapping analyzes the main recording again.');
+            }
+            return;
+        }
+        if (action === 'folder') {
+            commit(_trackSessionCreateFolderPure(S.trackSession, _liveSources(), S.arrangements, S.drumTab, ''), 'Folder added — drag tracks to arrange the session.');
+        } else if (action === 'zoom-in' || action === 'zoom-out') {
+            const delta = action === 'zoom-in' ? 8 : -8;
+            const rows = _rowsLive().rows;
+            const next = { ...(S.trackHeights || {}) };
+            for (const row of rows) next[row.id] = _trackSessionLaneHeightPure(next, row.id) + delta;
+            S.trackHeights = next; lastRender = ''; refreshTrackSession(); host.draw();
+        } else if (action === 'collapse') {
+            const trackId = control.getAttribute('data-track-id') || '';
+            const next = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
+            const folder = next.tracks.find(track => track.id === trackId && track.type === 'folder');
+            if (folder) { folder.collapsed = !folder.collapsed; commit(next); }
+        } else if (action === 'guide-lock') {
+            const next = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
+            next.tempoGuideLocked = !next.tempoGuideLocked;
+            commit(next, next.tempoGuideLocked
+                ? 'Tempo guide locked — assisted mapping (G) analyzes the guide track.'
+                : 'Tempo guide unlocked — assisted mapping analyzes the session recording.');
+        } else if (action === 'guide-cycle' || action === 'guide-set') {
+            const next = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
+            const sources = _liveSources().filter(source => !next.removedSourceIds.includes(source.id));
+            if (!sources.length) return;
+            if (action === 'guide-set') {
+                next.tempoGuideSourceId = control.getAttribute('data-source-id') || MASTER_ID;
+            } else {
+                const at = sources.findIndex(source => source.id === next.tempoGuideSourceId);
+                next.tempoGuideSourceId = sources[(at + 1) % sources.length].id;
+            }
+            const chosen = sources.find(source => source.id === next.tempoGuideSourceId);
+            commit(next, `Tempo guide: ${chosen ? chosen.name : next.tempoGuideSourceId}.`);
+        }
+    });
+    el.addEventListener('dblclick', event => {
+        if (event.target && event.target.closest && event.target.closest('select,input,[data-track-action="resize"]')) return;
+        const row = event.target && event.target.closest ? event.target.closest('.editor-track-row[data-track-id]') : null;
+        if (!row) return;
+        const track = (S.trackSession.tracks || []).find(item => item.id === row.getAttribute('data-track-id'));
+        if (track && track.type === 'transcription') selectTrack(track.id, true);
+        else if (track) selectTrack(track.id);
+    });
+    el.addEventListener('input', event => {
+        const range = event.target && event.target.matches && event.target.matches('[data-track-action="mix-vol"]') ? event.target : null;
+        if (!range) return;
+        _faderDragging = true;
+        try { mixerSetPart(range.getAttribute('data-mix-key') || '', { vol: Number(range.value) }); }
+        finally { _faderDragging = false; }
+    });
+    el.addEventListener('change', event => {
+        const restore = event.target && event.target.matches
+            && event.target.matches('[data-track-action="restore-source"]') ? event.target : null;
+        if (restore) {
+            const sourceId = restore.value || '';
+            if (!sourceId) return;
+            const source = _liveSources().find(item => item.id === sourceId);
+            commit(_trackSessionRestorePure(S.trackSession, sourceId,
+                _liveSources(), S.arrangements, S.drumTab),
+            `Restored audio track “${source ? source.name : sourceId}”.`);
+            host.audioSourcesChanged();
+            return;
+        }
+        const select = event.target && event.target.matches && event.target.matches('[data-track-action="pair"]') ? event.target : null;
+        if (!select) return;
+        const targetId = select.getAttribute('data-target-id') || '';
+        _syncPairing(targetId, select.value || '', select.value
+            ? 'Paired transcription with its studio track — saved with the song.'
+            : 'Transcription follows the master mix.');
+    });
+    el.addEventListener('scroll', event => {
+        const list = event.target && event.target.matches && event.target.matches('.editor-track-session-list') ? event.target : null;
+        if (!list) return;
+        S.trackScrollY = list.scrollTop;
+        host.draw();
+    }, true);
+    el.addEventListener('keydown', event => {
+        const input = event.target && event.target.matches && event.target.matches('[data-track-rename-input]') ? event.target : null;
+        if (!input || (event.key !== 'Enter' && event.key !== 'Escape')) return;
+        event.preventDefault();
+        const trackId = input.getAttribute('data-track-id') || '';
+        const value = input.value;
+        renamingTrackId = ''; lastRender = '';
+        if (event.key === 'Enter') { if (!applyTrackRename(trackId, value)) refreshTrackSession(); }
+        else refreshTrackSession();
+    });
+    el.addEventListener('focusout', event => {
+        const input = event.target && event.target.matches && event.target.matches('[data-track-rename-input]') ? event.target : null;
+        if (!input || !renamingTrackId) return;
+        const trackId = input.getAttribute('data-track-id') || ''; const value = input.value;
+        renamingTrackId = ''; lastRender = '';
+        if (!applyTrackRename(trackId, value)) refreshTrackSession();
+    });
+    el.addEventListener('pointerdown', event => {
+        // Any click outside the context menu dismisses it.
+        const menu = document.getElementById('editor-track-context-menu');
+        if (menu && !(event.target && menu.contains(event.target))) menu.remove();
+        const renameInput = event.target && event.target.closest ? event.target.closest('[data-track-rename-input]') : null;
+        if (renameInput) {
+            // A track row is draggable. Keep text-selection gestures inside
+            // the editor instead of letting the row or desktop shell claim them.
+            event.stopPropagation();
+            return;
+        }
+        const grip = event.target && event.target.closest ? event.target.closest('[data-track-action="resize"]') : null;
+        if (!grip) return;
+        event.preventDefault();
+        const trackId = grip.getAttribute('data-track-id') || '';
+        const startY = event.clientY;
+        const startH = _trackSessionLaneHeightPure(S.trackHeights, trackId);
+        const move = moveEvent => {
+            S.trackHeights = { ...(S.trackHeights || {}), [trackId]: startH + moveEvent.clientY - startY };
+            lastRender = ''; refreshTrackSession(); host.draw();
+        };
+        const up = () => {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up, { once: true });
+    });
+    const clearDropTarget = () => {
+        for (const row of el.querySelectorAll('.editor-track-drop-before,.editor-track-drop-after,.editor-track-drop-inside')) {
+            row.classList.remove('editor-track-drop-before', 'editor-track-drop-after', 'editor-track-drop-inside');
+        }
+    };
+    const dropInfo = event => {
+        const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null;
+        if (!row) return null;
+        const rect = row.getBoundingClientRect();
+        const track = (S.trackSession.tracks || []).find(item => item.id === row.getAttribute('data-track-id'));
+        return { row, id: row.getAttribute('data-track-id') || '', placement: _trackSessionDropPlacementPure(event.clientY, rect.top, rect.height, track && track.type === 'folder') };
+    };
+    el.addEventListener('dragstart', event => {
+        const renameInput = event.target && event.target.closest ? event.target.closest('[data-track-rename-input]') : null;
+        if (renameInput) {
+            event.preventDefault(); event.stopPropagation(); draggedId = '';
+            return;
+        }
+        const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null;
+        draggedId = row ? row.getAttribute('data-track-id') || '' : '';
+    });
+    el.addEventListener('dragover', event => {
+        if (!draggedId) return;
+        event.preventDefault(); clearDropTarget();
+        const info = dropInfo(event);
+        if (info && info.id !== draggedId) info.row.classList.add('editor-track-drop-' + info.placement);
+    });
+    el.addEventListener('dragleave', event => { if (!el.contains(event.relatedTarget)) clearDropTarget(); });
+    el.addEventListener('dragend', () => { draggedId = ''; clearDropTarget(); });
+    el.addEventListener('drop', event => {
+        event.preventDefault();
+        const info = dropInfo(event); clearDropTarget();
+        if (draggedId && info && info.id && draggedId !== info.id) {
+            commit(_trackSessionMovePure(S.trackSession, draggedId, info.id, info.placement,
+                _liveSources(), S.arrangements, S.drumTab), 'Track and folder order saved with the song.');
+        }
+        draggedId = '';
+    });
+    el.addEventListener('contextmenu', event => {
+        const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null;
+        if (!row) return;
+        event.preventDefault();
+        const trackId = row.getAttribute('data-track-id') || '';
+        selectTrack(trackId);
+        let menu = document.getElementById('editor-track-context-menu');
+        if (!menu) {
+            menu = document.createElement('div');
+            menu.id = 'editor-track-context-menu';
+            menu.className = 'editor-track-context-menu';
+            el.appendChild(menu);
+        }
+        const track = (S.trackSession.tracks || []).find(item => item.id === trackId);
+        const guideState = editorTempoGuideState();
+        const isGuide = track && track.type === 'audio' && guideState.locked
+            && guideState.sourceId === track.sourceId && guideState.mode === 'metronome';
+        const metronome = track && track.type === 'audio'
+            ? `<button data-track-action="metronome-guide" data-track-id="${_editorEscHtml(trackId)}">${isGuide ? 'Unlock Metronome Guide' : 'Use as Metronome Guide'}</button>` : '';
+        const deleteLabel = track && track.type === 'folder' ? 'Delete Folder'
+            : track && track.type === 'audio' ? 'Remove Track (keep media)' : 'Delete Track';
+        menu.innerHTML = `<button data-track-action="rename" data-track-id="${_editorEscHtml(trackId)}">Rename</button>${metronome}<button class="editor-track-delete" data-track-action="delete" data-track-id="${_editorEscHtml(trackId)}">${deleteLabel}</button>`;
+        menu.style.left = `${event.clientX}px`;
+        menu.style.top = `${event.clientY}px`;
+    });
 }
