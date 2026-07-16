@@ -26,7 +26,7 @@ import { S, markSessionDirty } from './state.js';
 import { host } from './host.js';
 import { setStatus, _editorPromptText } from './ui.js';
 import { _partViewKeyPure } from './keys.js';
-import { editorTempoGuideState, editorToggleTempoGuide } from './track-session.js';
+import { editorTempoGuideState, editorToggleTempoGuide, reconcileTempoGuideToStems } from './track-session.js';
 
 /* @pure:stem-tracks:start */
 // The manager's row model: one row per stem, in S.stems order, with its
@@ -83,6 +83,9 @@ async function _post(url, body) {
 function _adopt(data) {
     S.stems = Array.isArray(data.stems) ? data.stems : [];
     S.stemLinks = (data.stem_links && typeof data.stem_links === 'object') ? data.stem_links : {};
+    // A rename/delete just rewrote the stem list: unlock the tempo guide if its
+    // source vanished, so the still-locked role can't dangle onto a survivor.
+    reconcileTempoGuideToStems();
     // Zip-form / create sessions persist stem changes only on the next
     // Save / Build, so the lifecycle guard must know there is something to
     // lose. A dir-form sloppak writes straight into the library

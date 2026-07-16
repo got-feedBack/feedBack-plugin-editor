@@ -385,3 +385,26 @@ export function editorToggleTempoGuide(sourceId, mode = 'metronome') {
     markSessionDirty();
     return !active;
 }
+
+// Keep the locked-guide reference honest when the stem list changes underneath
+// it. Rename and delete in the tracks manager rewrite S.stems (via _adopt) but
+// leave the guide role untouched, so its sourceId can dangle. A dangling LOCKED
+// guide is not harmless: G can't find the source live, and the save-time
+// normalize silently repoints the still-locked role onto the first surviving
+// source (usually the master recording), so a reopened song would analyze the
+// wrong track as a click. Unlock back to the default instead. Reorder keeps
+// ids, so this is a no-op there. Returns true when it actually cleared a guide.
+export function reconcileTempoGuideToStems() {
+    const tree = S.trackSession;
+    if (!tree || !tree.tempoGuideLocked) return false;
+    const sources = _liveSources();
+    if (sources.some(s => s.id === tree.tempoGuideSourceId)) return false;
+    S.trackSession = _trackSessionNormalizePure({
+        ...tree,
+        tempoGuideSourceId: sources[0] ? sources[0].id : '',
+        tempoGuideLocked: false,
+        tempoGuideMode: 'audio',
+    }, sources, S.arrangements, S.drumTab);
+    markSessionDirty();
+    return true;
+}

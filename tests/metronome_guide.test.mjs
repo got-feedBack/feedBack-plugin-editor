@@ -34,7 +34,7 @@ const {
 } = await import('../src/tempo-suggest.js');
 const { _tempoSuggestScopePure, _tempoGuideAnalysisPure, _tempoGuideRequestStillCurrentPure } = await import('../src/input.js');
 const { editorAcceptWholeTempoFit } = await import('../src/tempo.js');
-const { editorTempoGuideState, editorToggleTempoGuide, trackSessionSavePayload } =
+const { editorTempoGuideState, editorToggleTempoGuide, trackSessionSavePayload, reconcileTempoGuideToStems } =
     await import('../src/track-session.js');
 const { EditHistory } = await import('../src/history.js');
 const { S } = await import('../src/state.js');
@@ -222,6 +222,32 @@ t('editorToggleTempoGuide locks/unlocks and persists through the save payload', 
         'a locked guide is worth persisting');
     assert.strictEqual(editorToggleTempoGuide('Click'), false, 'toggling the active guide unlocks');
     assert.strictEqual(trackSessionSavePayload(), null, 'back to default — no residue');
+});
+
+t('a deleted/renamed guide stem unlocks the guide — the lock never transfers to a survivor', () => {
+    seedState({
+        arrangements: [{ name: 'Lead' }],
+        drumTab: null,
+        stems: [{ id: 'Click', url: '/click.ogg' }],
+        audioUrl: '/master.ogg',
+        trackSession: { version: 2, tracks: [], removedSourceIds: [], tempoGuideSourceId: '', tempoGuideLocked: false, tempoGuideMode: 'audio' },
+    });
+    assert.strictEqual(editorToggleTempoGuide('Click'), true);
+    // The tracks manager's rename/delete rewrite S.stems (via _adopt) but not
+    // the guide role. Simulate the stem list changing out from under a locked
+    // guide (the deleted/renamed source is gone).
+    S.stems = [];
+    reconcileTempoGuideToStems();
+    assert.deepStrictEqual(editorTempoGuideState(), { sourceId: 'master', locked: false, mode: 'audio' },
+        'the dangling guide is unlocked, not silently repointed onto a locked survivor');
+    const payload = trackSessionSavePayload();
+    assert.ok(!payload || !payload.tempoGuideLocked,
+        'the save payload never persists a locked guide on a source the user never chose');
+    // A live guide is left alone (reorder keeps ids → no spurious unlock).
+    S.stems = [{ id: 'Click', url: '/click.ogg' }];
+    assert.strictEqual(editorToggleTempoGuide('Click'), true);
+    assert.strictEqual(reconcileTempoGuideToStems(), false, 'a guide whose source still exists is untouched');
+    assert.strictEqual(editorTempoGuideState().locked, true);
 });
 
 // ── Accept Whole Fit: one undoable edit ──────────────────────────────
