@@ -93,6 +93,27 @@ def test_hand_junk_never_rides_the_wire(junk):
     assert "hand" not in wire["notes"][0]
 
 
+def test_hand_edit_flips_the_notes_fingerprint():
+    """A hand EDIT must invalidate a preserved authored notation payload —
+    the sidecar's whole point is the hand split, so freezing it over an
+    edited hand would silently show the old hands forever. `hand` is the
+    ONE technique in the identity tuple; other technique edits still don't
+    invalidate (they're irrelevant to keys/staff notation)."""
+    base = [_editor_note(0.0, 60)]
+    with_hand = [_editor_note(0.0, 60, "rh")]
+    assert _notes_fingerprint(base, []) != _notes_fingerprint(with_hand, [])
+    # Same hand, editor shape vs wire shape → SAME fingerprint (the
+    # import-time / save-time agreement the rail depends on).
+    wire_shape = [{"t": 0.0, "s": 2, "f": 12, "sus": 0.5, "hand": "rh"}]
+    assert _notes_fingerprint(with_hand, []) == _notes_fingerprint(wire_shape, [])
+    # A non-hand technique edit still leaves the fingerprint alone.
+    with_pm = [dict(_editor_note(0.0, 60), techniques={"palm_mute": True})]
+    assert _notes_fingerprint(base, []) == _notes_fingerprint(with_pm, [])
+    # Junk hand values read as unassigned on both shapes.
+    junk = [dict(_editor_note(0.0, 60), techniques={"hand": "LH"})]
+    assert _notes_fingerprint(base, []) == _notes_fingerprint(junk, [])
+
+
 def test_hand_rides_chord_member_notes():
     chord = {
         "time": 0.0, "chord_id": 0, "high_density": False,

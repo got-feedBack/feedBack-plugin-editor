@@ -352,6 +352,43 @@ export class ToggleTechniqueCmd {
 // Set a SCALAR technique (`bend` peak, `slide_to`, `slide_unpitch_to`) to an
 // absolute value across a selection as one undoable edit — the inspector's
 // numeric technique inputs, which used to mutate n.techniques in place with no
+// SetTechScalarCmd's per-note sibling: one undoable command that writes a
+// DIFFERENT scalar value per index (values[k] onto indices[k]) — the shape a
+// bulk generator needs (e.g. the keys hand split-point stamp, where notes
+// below the split take 'lh' and the rest 'rh' in one Ctrl+Z step). No bend
+// special-casing: never use it for `bend` (SetTechScalarCmd owns the curve
+// rescale); it exists for plain scalar marks like `hand`.
+export class SetTechScalarPerNoteCmd {
+    constructor(indices, key, values) {
+        this.indices = indices.slice();
+        this.key = key;
+        this.values = values.slice();
+        const nn = notes();
+        this.old = this.indices.map(i => {
+            const t = (nn[i] && nn[i].techniques) || {};
+            return t[key];
+        });
+    }
+    exec() {
+        const nn = notes();
+        this.indices.forEach((i, k) => {
+            const n = nn[i];
+            if (!n) return;
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.values[k];
+        });
+    }
+    rollback() {
+        const nn = notes();
+        this.indices.forEach((i, k) => {
+            const n = nn[i];
+            if (!n) return;
+            if (!n.techniques) n.techniques = {};
+            n.techniques[this.key] = this.old[k];
+        });
+    }
+}
+
 // undo (the documented PR3b trap). Snapshots the prior scalar per note; for
 // `bend` it also carries the authored curve (bend_values) through the same
 // rescale-to-new-peak the in-place path did, and snapshots it so undo restores
