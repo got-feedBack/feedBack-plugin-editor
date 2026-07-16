@@ -204,6 +204,22 @@ away first, keeping each track's name and type visible. Removing an audio
 track is non-destructive — the media stays in the pack and can come back.
 `Shift+A` jumps to this Tracks view.
 
+### Hands on keyboard tracks
+
+Keys notes can carry a **left/right hand** assignment — a MusicXML import
+brings the score's own hands in, and you can author them yourself:
+
+- Select notes, then **Note ▸ Hand (keys) ▸ Left / Right / Clear**.
+- **Track ▸ Assign hands by split…** stamps the whole part (or your
+  selection) in one undoable step: pick a split note (like `C4`) — below it
+  goes left, at or above goes right. Fix any crossings per-note afterwards;
+  your per-note calls always win.
+- On the piano roll, **hand shading** (View ▸, on by default) draws LH notes
+  warm and RH notes cool; unassigned notes keep their octave color.
+
+Saved hands drive the grand-staff view's hand split — edit a hand and the
+notation follows on the next save.
+
 ---
 
 ## 6. Tempo mapping — line the grid up to the music
