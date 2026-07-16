@@ -15,35 +15,68 @@ profiles in **Help ▸ Shortcut profile** or the shortcut panel (`?`).
 
 ![The Song Editor loaded with a song: the menu bar and toolbars up top, the timeline (waveform and colored note blocks per string) in the middle, the transport and inspector around it.](../assets/guide/workspace.png)
 
+**The whole journey, at a glance** — a feedpak goes from nothing to playable in
+six steps, and this guide follows them in order:
+
+1. **Start** (§1) — create a project from a recording, an existing chart, or both.
+2. **Line up the grid** (§6) — the tempo map fits bars and beats to the recording.
+3. **Chart the notes** (§4) — place, edit, and mark up every note and technique.
+4. **Build out the tracks** (§5, §7) — more parts, keys with hands, drums, studio stems.
+5. **Hear it** (§3) — guide claps, the metronome, loops, and the mixer console.
+6. **Save and build** (§9) — `Ctrl+S` while you work; **Build** writes the `.feedpak`.
+
 ---
 
 ## 1. Start a project
 
-You begin one of two ways:
+Opening the editor with nothing loaded lands you at the front door:
 
-- **From a recording** — open the editor, load an audio file, and you get an
-  empty timeline over the waveform. Set the tempo grid (Section 6) and start
-  placing notes.
-- **From an import** — bring in an existing chart and edit it. The editor reads
-  **Guitar Pro** (GP3–GP8), **MIDI** (with its tempo map), community
-  **arrangement XML**, **GoPlayAlong** sync sidecars, and existing
-  **`.feedpak`** / archive files. Every format normalizes into the same internal
-  model, so editing works the same regardless of where a chart came from.
+![The Song Editor start screen: Load an existing feedpak to edit, or Create New.](../assets/guide/landing.png)
 
-In **New…**, use **Add File** for audio, Guitar Pro, MIDI, or XML. Every audio
-source and every chart track appears in one table. Check the tracks to import,
-then choose one audio row in **Guide** as the recording the tempo map
-follows. You can add several audio files; they remain separate source tracks.
-The YouTube field adds another possible audio source.
+**Load…** opens a feedpak from your library to edit. **Create New** starts a
+project — and it takes almost anything as a starting point:
 
-![The Create New Arrangement dialog: add session files, review every imported track in one table, and choose a Guide audio source.](../assets/guide/import.png)
+- **A recording** — drop in an audio file (**MP3, WAV, FLAC, OGG, M4A, OPUS,
+  AAC, WEM**) or paste a **YouTube URL**. You get a timeline over the
+  waveform: set the grid (§6) and chart from scratch.
+- **An existing chart** — **Guitar Pro (GP3–GP8)**, **MIDI** (its tempo map
+  comes along), community **arrangement XML**, or an existing
+  **`.feedpak`/archive**. Every format normalizes into one internal model, so
+  editing works the same wherever the chart came from.
+- **Both at once** — the recommended start. Add one audio file *and* a chart
+  file; **auto-sync** then lines the imported chart up to the recording bar
+  by bar, so you begin from a chart that already follows the take instead of
+  a straight metronomic grid.
+- **Nothing at all** — pick your arrangements from the chips (Lead / Rhythm /
+  Bass / Keys / Drums…) and start with an empty timeline.
 
-Import lives under the **File** menu (Import ▸ …). MIDI and XML/GP imports keep
-their note data; a GoPlayAlong sidecar brings bar→time sync points only (no
-notes) — useful for lining a grid up fast.
+Everything you add lands in one table: every audio source and every track
+inside every chart file, each with its instrument and note count. Check the
+tracks you want as arrangements, and pick one audio row as the **Guide** —
+the recording the tempo map follows. Extra audio files stay available as
+separate source tracks.
+
+![The Create New Arrangement dialog: arrangement chips, a master audio and a Guitar Pro chart staged for import, the track table, and song details auto-filled.](../assets/guide/import.png)
+
+Song details (title, artist, album, art) auto-fill from the import where they
+can — **Find cover…**, **Identify from audio…**, and **Match…** fill in the
+rest from MusicBrainz. Then hit **Create & Open in Editor**.
+
+A few sources arrive through their own doors, any time after creation:
+
+- **File ▸ Import** — bring another GP / MIDI / XML chart into the open project.
+- **Add ▸ Track** — add **Drums** (from a chart or by hand) or **Record
+  MIDI** (play a take on a connected device; it becomes a keys track).
+- **Add Keys ▸ MusicXML** — a MusicXML score imports as a keys track and
+  keeps the score's own **left/right hand** assignments (§5).
+- **Studio stems** — after creating, load per-instrument stems (vocals,
+  bass, drums…) through the stem manager (§5) for isolated listening and
+  per-stem charting.
+- A **GoPlayAlong** sidecar brings bar→time sync points only (no notes) —
+  useful for lining a grid up fast.
 
 > **Autosave is not a thing.** Nothing touches your library until you **Build**
-> (Section 10). Save early with `Ctrl+S`.
+> (§9). Save early with `Ctrl+S`.
 
 ---
 
@@ -303,13 +336,26 @@ These live in the **Add** menu (Markers) and show in the inspector when selected
 
 ---
 
-## 9. Save and build
+## 9. Save and build — the finish line
 
-- **`Ctrl+S`** saves your working session.
-- **Build** assembles the finished **`.feedpak`** through the host's core
-  libraries and writes it to your library — this is the only step that changes
-  what the rest of the app sees. Build once the grid fits, the notes are placed,
-  and playback (guide claps against the recording) sounds right.
+- **`Ctrl+S`** saves your working session. The first save of a new project
+  asks where the feedpak should live; after that it's silent.
+- **Build feedpak** (the toolbar button, or File ▸ Build feedpak) assembles
+  the finished **`.feedpak`** through the host's core libraries and writes it
+  to your library — this is the only step that changes what the rest of the
+  app sees. The pack carries everything you authored: every arrangement,
+  the tempo map, sections and phrases, techniques, keys notation with its
+  hand split, stems, tones, and art.
+
+**Ready to build?** A quick pre-flight:
+
+1. The grid follows the recording (§6) — the Map Health pill isn't complaining.
+2. Guide claps (`C`) against the recording sound tight where it matters.
+3. The lint flags you care about are addressed (they *advise*, never block).
+4. Song details are filled (title, artist, art) — they're the library card.
+
+Build again any time — rebuilding replaces the pack, and your working session
+stays editable.
 
 **Undo/redo is the safety net.** Every edit — including tempo moves, offset, and
 imports — is undoable (`Ctrl+Z` / `Ctrl+Y`). If something looks wrong, undo it.
@@ -329,7 +375,7 @@ you'll reach for constantly (FeedBack profile):
 | `F` | Edit fret | `0`–`9` | Set fret |
 | `↑` / `↓` | Move string | `Shift+↑`/`↓` | Move, keep pitch |
 | `Shift+R` | Resnap selection to grid | `Ctrl+D` | Duplicate selection |
-| `T` | Tempo Map mode | `W` | Show/hide waveform |
+| `T` | Tool palette (`T,T` = Tempo Map) | `W` | Show/hide waveform |
 | `Alt+B` | Loop A/B (audio ↔ guide) | `Shift+L` | Follow playhead |
 | `Shift+M` | Add section | `Shift+F` | Set anchor |
 
