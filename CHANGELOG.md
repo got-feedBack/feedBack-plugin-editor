@@ -141,9 +141,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which audio source is the session's tempo reference. This slice is the
   data-model and persistence foundation for the unified Tracks surface
   described above.
+### Fixed
+
+- **Undo after adding a phrase now undoes the phrase — not your previous edit.**
+  Adding a phrase (Shift+P) was the one structural add that bypassed the undo
+  history, so pressing Ctrl+Z afterward silently rolled back whatever you did
+  *before* the phrase (a note move, a fret change) and left the phrase in place.
+  A phrase add is now its own undoable step like every other add, so undo/redo
+  stays truthful.
 
 ### Changed
 
+- **Escape now clears the selection.** In note and drum editing, Escape drops
+  the current note/drum selection — the standard DAW gesture, previously inert
+  outside tempo-map mode. It stays layered under every existing Escape owner
+  (open dialogs, the read-only preview/guide lenses, and tempo-map's own
+  Escape handling all still win first), and it changes no data, so it never
+  touches undo.
+- **Sustain shorten/lengthen has keys in the default profile.** `[` and `]`
+  now shorten and lengthen the selected note's sustain by one grid step in the
+  FeedBack profile — the commands existed but were only bound in the Legacy
+  (EOF) profile, so default-profile users had no keyboard way to edit note
+  length. In tempo-map mode the bracket keys stay the beat-count controls.
 - **Assisted tempo mapping trusts a bridged gap once the far side confirms.**
   When Suggest marches across a sustained or held bar (no attack to snap to),
   it keeps going on prediction but marks those bars very low confidence — and

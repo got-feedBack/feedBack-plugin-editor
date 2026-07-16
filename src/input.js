@@ -807,14 +807,48 @@ function _editorAddSectionAtCursor() {
     return true;
 }
 
+/* @pure:phrase-cmds:start */
+// Phrases (arr.phrases = [{name, number, start_time, levels}]) are the
+// per-arrangement sibling of sections and likewise kept sorted by start_time.
+// Adding one used to raw push+sort with NO undo — the ONLY add-* verb that
+// bypassed EditHistory, so Ctrl+Z after a phrase-add rolled back the previous
+// NOTE edit instead (the exact trap the section commands above closed). This
+// routes the add through the history. It holds the phrase OBJECT and its
+// OWNING arr.phrases ARRAY by reference (never S.currentArr — the armed
+// arrangement can change before an undo, but the array identity is stable), so
+// exec↔rollback restore that arrangement's phrases exactly, sort order included.
+class AddPhraseCmd {
+    // songScope: a phrase is arrangement STRUCTURE (name/number/start_time/
+    // levels), never a fretted NOTE write — so the read-only-roll lock, which
+    // exists only to stop silent pitch writes to a fretted chart shown read-only
+    // in the piano roll, must not refuse it. Without this the pre-history raw
+    // push kept working in that view but routing through EditHistory would drop
+    // the add on the floor while still reporting "Phrase added". Same carve-out
+    // the drum-tab / tempo-grid structural commands take. The command is
+    // ref-held (holds arr.phrases directly), so songScope's _arrIdx=-1 (no undo
+    // arrangement-switch) is correct: rollback splices the captured array
+    // whatever arrangement is armed.
+    constructor(phrases, phrase) { this.phrases = phrases; this.phrase = phrase; this.songScope = true; }
+    exec() {
+        this.phrases.push(this.phrase);
+        this.phrases.sort((a, b) => (a.start_time || 0) - (b.start_time || 0));
+    }
+    rollback() {
+        const i = this.phrases.indexOf(this.phrase);
+        if (i >= 0) this.phrases.splice(i, 1);
+    }
+}
+/* @pure:phrase-cmds:end */
+
 function _editorAddPhraseAtCursor() {
     const arr = S.arrangements[S.currentArr];
     if (!arr) return false;
     if (!Array.isArray(arr.phrases)) arr.phrases = [];
     const name = 'phrase';
     const num = arr.phrases.filter(p => p.name === name).length + 1;
-    arr.phrases.push({ name, number: num, start_time: snapTime(S.cursorTime || 0), levels: [] });
-    arr.phrases.sort((a, b) => (a.start_time || 0) - (b.start_time || 0));
+    S.history.exec(new AddPhraseCmd(
+        arr.phrases,
+        { name, number: num, start_time: snapTime(S.cursorTime || 0), levels: [] }));
     host.draw();
     setStatus('Phrase added');
     return true;
@@ -1471,6 +1505,21 @@ export function onKeyDown(e) {
         return;
     }
 
+    // The right-click context / section menu owns Escape to dismiss itself, and
+    // it is closed HERE — not by main.js's import-time Escape listener — for the
+    // same reason the User Guide close lives here: this runs BEFORE the note /
+    // drum deselect branch below, so Escape-to-dismiss a menu can't ALSO wipe
+    // the selection the menu was opened on (right-click keeps/sets a selection,
+    // then Escape would clear it if both the menu-close and the deselect fired
+    // on one keypress). Only Escape is claimed; every other key still passes
+    // through to the chart behind the menu, exactly as before.
+    const _ctxMenu = document.getElementById('editor-context-menu');
+    if (e.key === 'Escape' && _ctxMenu && !_ctxMenu.classList.contains('hidden')) {
+        e.preventDefault();
+        hideContextMenu();
+        return;
+    }
+
     // Select All belongs to the active DAW surface, not Chromium's page-text
     // selection. Claim it before the recording and Parts-view guards below;
     // those read-only states must suppress the browser default without
@@ -1612,6 +1661,28 @@ export function onKeyDown(e) {
             && !e.target.matches('input, select, textarea')) {
         e.preventDefault();
         S.tempoSelMulti.clear();
+        host.draw();
+        setStatus('Selection cleared');
+        return;
+    }
+    // Escape drops the note / drum selection — the standard DAW "clear
+    // selection" gesture, absent until now (Escape only ever fired in
+    // tempo-map mode). Layered UNDER every earlier Escape owner: the read-only
+    // Tab-preview / User-Guide lenses (handled at the top of onKeyDown, which
+    // return before reaching here) and the tempo-map suggest-dismiss /
+    // barline-clear branches just above (which return in tempo mode; guarded
+    // out here by !S.tempoMapMode). The transient modals (add-note, context
+    // menu, load, palette) are closed by main.js's import-time keydown
+    // listener, which runs first. Non-destructive: selection is not undo
+    // state, so this touches no history; it no-ops (falls through) when
+    // nothing is selected, keeping Escape free for anything downstream.
+    if (e.key === 'Escape' && !S.tempoMapMode
+            && !e.target.matches('input, select, textarea')
+            && (S.sel.size || (S.drumSel && S.drumSel.size))) {
+        e.preventDefault();
+        S.sel.clear();
+        if (S.drumSel) S.drumSel.clear();
+        _renderInspector();
         host.draw();
         setStatus('Selection cleared');
         return;

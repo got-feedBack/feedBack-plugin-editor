@@ -836,19 +836,34 @@ _globalListeners.add(document, 'keydown', (e) => {
         window.editorConfirmAddNote();
     }
     if (e.key === 'Escape') {
+        // Whether a transient modal this listener owns was actually open —
+        // sampled BEFORE the hide* calls close it. add-note / load / palette all
+        // focus a text input, so the common case is already blocked by
+        // onKeyDown's own input-focus guard; this closes the focus-left-the-modal
+        // edge (click onto the menu bar, then Escape), where that guard wouldn't.
+        const _open = (id) => {
+            const el = document.getElementById(id);
+            return !!el && !el.classList.contains('hidden');
+        };
+        const consumed = !!addNoteData || _open('editor-load-modal') || _open('editor-command-palette');
         hideAddNote();
-        hideContextMenu();
         window.editorHideLoadModal();
         // The palette's own Escape (on its input) stops propagation, so this
         // only fires when focus has LEFT the palette — a click on the menu bar
         // or a toolbar, both of which sit outside the canvas-wrap its backdrop
         // covers. Without it that click strands the overlay open.
         editorCloseCommandPalette();
-        // The User Guide is NOT closed here: this listener registers at import
-        // time, so it runs before input.js onKeyDown — closing the guide here
-        // would blind onKeyDown's read-only-lens gate (it would read the modal
-        // as already closed and let Escape fall through to tempo/suggest
-        // handlers). The gate owns Escape-close for the guide.
+        // A modal that owned this Escape consumes it: stop the event so the
+        // note/drum deselect branch in onKeyDown (a later document keydown
+        // listener firing on the SAME keypress) can't also clear the selection
+        // behind the modal — the intended "open dialogs win first" layering.
+        if (consumed) e.stopImmediatePropagation();
+        // The User Guide and the right-click context / section menu are NOT
+        // closed here: this listener registers at import time, so it runs before
+        // input.js onKeyDown. Closing them here would let their Escape ALSO fall
+        // through to onKeyDown's deselect branch and wipe the selection (and, for
+        // the guide, blind its read-only-lens gate). onKeyDown owns Escape-close
+        // for both.
     }
 });
 
