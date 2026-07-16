@@ -25,7 +25,19 @@ import assert from 'node:assert';
 import { beatOf as _beatOf, timeOf as _timeOf } from '../src/beats.js';
 import {
     _applyBeatLocksPure, _beatLockParsePure, _beatLockStorageKeyPure, _respaceWithLocksPure,
+    _restoreBeatLocks,
 } from '../src/tempo.js';
+import { S } from '../src/state.js';
+
+// Map-backed localStorage so _restoreBeatLocks' get/removeItem actually behave.
+// tempo.js reads globalThis.localStorage at CALL time, so setting it here (after
+// the hoisted import) is fine.
+const _mem = new Map();
+globalThis.localStorage = {
+    getItem: k => (_mem.has(k) ? _mem.get(k) : null),
+    setItem: (k, v) => { _mem.set(k, String(v)); },
+    removeItem: k => { _mem.delete(k); },
+};
 
 // beatOf / timeOf (the beat-primary converter) — used to prove the sync path
 // reprojects notes/sections onto the warped grid instead of drifting them off
@@ -178,10 +190,13 @@ t('sync reprojects SECTION times onto the warped grid under a lock (FIX A)', () 
 });
 
 // ── 2. persistence pures ─────────────────────────────────────────────────────
-t('_beatLockStorageKeyPure keys by filename (empty ⇒ bare prefix)', () => {
+t('_beatLockStorageKeyPure keys by filename; an unsaved project has NO key', () => {
     assert.strictEqual(_beatLockStorageKeyPure('song.sloppak'), 'editorBeatLocks:song.sloppak');
-    assert.strictEqual(_beatLockStorageKeyPure(''), 'editorBeatLocks:');
-    assert.strictEqual(_beatLockStorageKeyPure(null), 'editorBeatLocks:');
+    // No filename → null, NOT the shared bare `editorBeatLocks:` key. That
+    // shared blank key leaked locks from one unsaved project into the next.
+    assert.strictEqual(_beatLockStorageKeyPure(''), null);
+    assert.strictEqual(_beatLockStorageKeyPure(null), null);
+    assert.strictEqual(_beatLockStorageKeyPure(undefined), null);
 });
 
 t('_beatLockParsePure is defensive (junk/array-shape/bad-values all drop out)', () => {
@@ -204,6 +219,30 @@ t('_applyBeatLocksPure matches within tolerance and the nearest beat only', () =
     assert.deepStrictEqual(beats.map(b => !!b.locked), [false, true, false]);
     _applyBeatLocksPure(beats, [1.5], 0.02);        // 500 ms off ⇒ no match, and prior lock cleared
     assert.deepStrictEqual(beats.map(b => !!b.locked), [false, false, false]);
+});
+
+// ── 3. _restoreBeatLocks — the phantom-inheritance fix (stateful) ─────────────
+t('_restoreBeatLocks: a genuinely loaded project keeps its persisted locks', () => {
+    _mem.clear();
+    _mem.set('editorBeatLocks:songA.feedpak', JSON.stringify([1.0, 3.0]));
+    S.filename = 'songA.feedpak';
+    S.beats = grid([0, 1, 2, 3, 4]).map(b => ({ time: b.time }));   // no locks yet
+    _restoreBeatLocks();
+    assert.deepStrictEqual(S.beats.map(b => !!b.locked), [false, true, false, true, false]);
+});
+
+t('_restoreBeatLocks: an unsaved project inherits NO phantom locks (fix)', () => {
+    // Residue a PRE-FIX unsaved session left under the shared blank key, plus an
+    // in-memory lock a prior new song carried on the grid — both must vanish.
+    _mem.clear();
+    _mem.set('editorBeatLocks:', JSON.stringify([1.0]));
+    S.filename = '';
+    S.beats = grid([0, 1, 2, 3], [1]).map(b => ({ time: b.time, locked: b.locked }));
+    _restoreBeatLocks();
+    // Pre-fix this read the blank key and re-locked beat 1 ⇒ this line fails there.
+    assert.deepStrictEqual(S.beats.map(b => !!b.locked), [false, false, false, false]);
+    // …and the leaky blank-key residue is scrubbed so the NEXT new song is clean.
+    assert.strictEqual(globalThis.localStorage.getItem('editorBeatLocks:'), null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
