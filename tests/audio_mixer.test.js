@@ -88,12 +88,12 @@ function makeEnv({ ctxState = 'running', storage = {} } = {}) {
     const S = { audioCtx: stubCtx(ctxState) };
     const voices = [];
     const env = new Function(
-        'S', 'localStorage', '_guideVoices',
+        'S', 'localStorage', '_guideVoices', '_attachMeterTap',
         '"use strict";' + mixBlock + '\n' + busBlock
         + '\nreturn { _ensureMasterBus, _ensureRefGain, _mixLoadPct, _mixSetBusGain,'
         + ' _mixApplyFirstPlayFade, _mixResetFirstPlay, _editBlipAt, editorEditBlipEnabled,'
         + ' voices: () => _guideVoices };'
-    )(S, ls, voices);
+    )(S, ls, voices, () => {});   // meter taps are a no-op in the sliced env
     return { ...env, S, ls, initialVoices: voices };
 }
 
@@ -108,17 +108,35 @@ function t(name, fn) {
 t('stored percents parse with clamping; junk falls back', () => {
     assert.strictEqual(P._mixPctFromStoredPure('42', 100), 42);
     assert.strictEqual(P._mixPctFromStoredPure('-5', 100), 0);
-    assert.strictEqual(P._mixPctFromStoredPure('250', 100), 100);
+    // Christian's console rule: every fader is unity + 10 dB of headroom, so
+    // the clamp ceiling is 110 — and a corrupted pref can never exceed it.
+    assert.strictEqual(P._mixPctFromStoredPure('250', 100), 110);
+    assert.strictEqual(P._mixPctFromStoredPure('105', 100), 105);
     assert.strictEqual(P._mixPctFromStoredPure(null, 35), 35);
     assert.strictEqual(P._mixPctFromStoredPure('abc', 25), 25);
 });
 
-t('percent → gain is linear, clamped, NaN-safe', () => {
+t('percent → gain: linear to unity, dB curve above, clamped, NaN-safe', () => {
     assert.strictEqual(P._mixGainForPctPure(0), 0);
     assert.strictEqual(P._mixGainForPctPure(35), 0.35);
     assert.strictEqual(P._mixGainForPctPure(100), 1);
-    assert.strictEqual(P._mixGainForPctPure(150), 1);
+    // 100..110 is the +10 dB headroom zone — same curve as the channel
+    // strips (mixer-panel.js), so bus and strip faders can never disagree.
+    assert.ok(Math.abs(P._mixGainForPctPure(106) - 10 ** (6 / 20)) < 1e-9, '+6 dB at 106');
+    assert.ok(Math.abs(P._mixGainForPctPure(110) - 10 ** (10 / 20)) < 1e-9, '+10 dB at 110');
+    assert.ok(Math.abs(P._mixGainForPctPure(150) - 10 ** (10 / 20)) < 1e-9, 'clamps at +10 dB');
     assert.strictEqual(P._mixGainForPctPure(NaN), 0);
+});
+
+t('every fader gets the +10 dB headroom — buses and master included', () => {
+    // Christian's ruling (2026-07-16): unity with 10 dB of headroom on THE
+    // FADERS — all of them. No fader has an inert zone; the master/utility
+    // buses ride the same 0..110 scale as the channel strips.
+    const env = makeEnv();
+    env._ensureMasterBus();
+    assert.strictEqual(env._mixSetBusGain('master', '110'), 110, 'master bus reaches +10 dB');
+    assert.strictEqual(env.ls.map.get('editorMixMaster'), '110');
+    assert.strictEqual(env._mixSetBusGain('guide', '105'), 105, 'utility buses too');
 });
 
 t('first-play start gain: reduced but never inaudible, never above target', () => {
@@ -157,11 +175,17 @@ t('master bus defaults preserve the shipped balance (0.35 / 0.25)', () => {
     assert.ok(Math.abs(bus.clickGain.gain.value - 0.25) < 1e-9);
 });
 
-t('reference gain node: unity by default, straight to destination, not the limiter', () => {
+t('reference gain node: unity by default, routes post-limiter to the master gain', () => {
     const env = makeEnv();
     const rg = env._ensureRefGain();
     assert.strictEqual(rg.gain.value, 1);
-    assert.strictEqual(rg.to, env.S.audioCtx.destination, 'connects to destination, not through the limiter');
+    // The recording now joins the master gain (post-limiter) so it's metered
+    // and master-trimmed — but still NEVER through the limiter, so a hot
+    // recording is never colored.
+    const bus = env._ensureMasterBus();
+    assert.strictEqual(rg.to, bus.masterGain, 'connects to master gain, not the limiter');
+    assert.strictEqual(bus.masterGain.to, env.S.audioCtx.destination, 'master gain feeds destination');
+    assert.notStrictEqual(rg.to, bus.limiter, 'never through the limiter');
 });
 
 t('fader move persists the pref and ramps the live node (never a step)', () => {
@@ -177,11 +201,29 @@ t('fader move persists the pref and ramps the live node (never a step)', () => {
     assert.ok(last[3] > 0, 'nonzero smoothing time constant');
 });
 
+t('master fader ramps the post-limiter master gain and persists its own pref', () => {
+    // Regression: the MASTER strip was wired to editorSetMixLevel('master'),
+    // but _mixSetBusGain mapped anything-but-ref/guide to the CLICK key + node
+    // — so a master move silently retuned the click bus and never trimmed the
+    // output. It must ramp masterGain and persist editorMixMaster alone.
+    const env = makeEnv();
+    const bus = env._ensureMasterBus();
+    const p = env._mixSetBusGain('master', '50');
+    assert.strictEqual(p, 50);
+    assert.strictEqual(env.ls.map.get('editorMixMaster'), '50');
+    assert.strictEqual(env.ls.map.get('editorMixClick'), undefined, 'never touches the click pref');
+    const mCalls = bus.masterGain.gain.calls;
+    const last = mCalls[mCalls.length - 1];
+    assert.strictEqual(last[0], 'target', 'ramps the master gain');
+    assert.ok(Math.abs(last[1] - 0.5) < 1e-9);
+    assert.strictEqual(bus.clickGain.gain.calls.length, 0, 'click gain never moved');
+});
+
 t('fader input clamps out-of-range values before persisting', () => {
     const env = makeEnv();
     env._ensureRefGain();
-    assert.strictEqual(env._mixSetBusGain('ref', '9999'), 100);
-    assert.strictEqual(env.ls.map.get('editorMixRef'), '100');
+    assert.strictEqual(env._mixSetBusGain('ref', '9999'), 110);   // +10 dB ceiling
+    assert.strictEqual(env.ls.map.get('editorMixRef'), '110');
 });
 
 t('first-play fade ramps the reference up once, then never again', () => {

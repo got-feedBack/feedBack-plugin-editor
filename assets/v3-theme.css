@@ -597,3 +597,72 @@ html.fb-immersive #plugin-editor .editor-root {
 #plugin-editor .editor-track-context-menu .editor-track-delete { color: #fca5a5; }
 #plugin-editor .editor-track-context-menu .editor-track-delete:hover { background: rgba(153,27,27,.65); color: #fff; }
 #plugin-editor .editor-track-inline-rename { flex: 1; min-width: 3rem; padding: .25rem .35rem; border: 1px solid #22d3ee; border-radius: 3px; background: #030712; color: #f3f4f6; outline: none; box-shadow: 0 0 0 1px rgba(34,211,238,.2); cursor: text; user-select: text; -webkit-user-select: text; -webkit-app-region: no-drag; }
+
+/* ── Bottom-drawer DAW mixer: vertical channel strips + live meters (faithful to #285) ── */
+#plugin-editor .editor-mixer-drawer {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 45; height: 20rem;
+    display: flex; flex-direction: column; overflow: hidden; background: rgba(11,15,23,.985);
+    border-top: 1px solid #4b5563; box-shadow: 0 -12px 30px rgba(0,0,0,.42);
+    animation: editor-mixer-rise .18s ease-out both;
+}
+#plugin-editor .editor-mixer-drawer.hidden { display: none; }
+#plugin-editor .editor-mixer-drawer.editor-mixer-closing {
+    animation: editor-mixer-fall .18s ease-in both; pointer-events: none;
+}
+@keyframes editor-mixer-rise { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes editor-mixer-fall { from { transform: translateY(0); } to { transform: translateY(100%); } }
+@media (prefers-reduced-motion: reduce) {
+    #plugin-editor .editor-mixer-drawer,
+    #plugin-editor .editor-mixer-drawer.editor-mixer-closing { animation: none; }
+}
+#plugin-editor .editor-mixer-titlebar {
+    height: 2rem; flex: none; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 .75rem; border-bottom: 1px solid #374151; color: #d1d5db; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .08em;
+}
+#plugin-editor #editor-mixer-close { color: #9ca3af; font-size: 18px; }
+/* The full-text "All tracks" toggle sizes to its label (never the fixed M/S box). */
+#plugin-editor .editor-mixer-playall {
+    width: auto; height: 1.4rem; padding: 0 .55rem; border: 1px solid #4b5563; border-radius: 3px;
+    background: #1f2937; color: #9ca3af; font: 700 10px/1 monospace; text-transform: none; letter-spacing: 0;
+}
+#plugin-editor .editor-mixer-playall[aria-pressed="true"] { background: #164e63; color: #a5f3fc; border-color: #22d3ee; }
+#plugin-editor .editor-mixer-console { min-height: 0; flex: 1; display: flex; overflow-x: auto; align-items: stretch; padding: .55rem; gap: .5rem; }
+#plugin-editor .editor-mixer-strips { display: flex; align-items: stretch; gap: .45rem; }
+#plugin-editor .editor-mixer-utility-strips { display: flex; gap: .35rem; padding-left: .55rem; border-left: 1px solid #374151; }
+#plugin-editor .editor-mixer-strip {
+    width: 6.25rem; min-width: 6.25rem; display: flex; flex-direction: column; align-items: center; gap: .3rem;
+    padding: .4rem .35rem; border: 1px solid #374151; border-radius: 4px;
+    background: linear-gradient(#202938, #111827); color: #d1d5db;
+}
+#plugin-editor .editor-mixer-strip-type { font: 8px/1 monospace; color: #67e8f9; letter-spacing: .08em; }
+#plugin-editor .editor-mixer-ms-row { display: flex; gap: .25rem; }
+#plugin-editor .editor-mix-ms, #plugin-editor .editor-track-ms {
+    width: 1.45rem; height: 1.25rem; border: 1px solid #4b5563; border-radius: 3px;
+    background: #1f2937; color: #9ca3af; font: 700 9px/1 monospace;
+}
+#plugin-editor [data-mix-act="mute"][aria-pressed="true"], #plugin-editor [data-track-action="mix-mute"][aria-pressed="true"] { background: #b45309; color: #fff; border-color: #f59e0b; }
+#plugin-editor [data-mix-act="solo"][aria-pressed="true"], #plugin-editor [data-track-action="mix-solo"][aria-pressed="true"] { background: #ca8a04; color: #111827; border-color: #fde047; }
+#plugin-editor .editor-mixer-channel { flex: 1; min-height: 7.2rem; display: flex; align-items: center; justify-content: center; gap: .25rem; }
+#plugin-editor .editor-mixer-meter-group { width: 2.15rem; display: grid; grid-template-columns: .65rem 1.35rem; grid-template-rows: 5.7rem 1rem; column-gap: .15rem; align-items: stretch; flex: none; }
+#plugin-editor .editor-mixer-meter { width: .55rem; height: 5.7rem; flex: none; border-radius: 2px; background: #030712; position: relative; overflow: hidden; box-shadow: inset 0 0 0 1px #374151; }
+#plugin-editor .editor-mixer-meter span { position: absolute; left: 1px; right: 1px; bottom: 1px; height: 0; transition: height 45ms linear; background: linear-gradient(to top,#22c55e 0 72%,#eab308 72% 88%,#ef4444 88%); }
+#plugin-editor .editor-mixer-db-scale { position: relative; height: 5.7rem; color: #6b7280; font: 7px/1 monospace; }
+#plugin-editor .editor-mixer-db-scale i { position: absolute; left: 0; font-style: normal; transform: translateY(-50%); }
+#plugin-editor .editor-mixer-db-scale i:nth-child(1) { top: 0; transform: none; }
+#plugin-editor .editor-mixer-db-scale i:nth-child(2) { top: 10%; }
+#plugin-editor .editor-mixer-db-scale i:nth-child(3) { top: 20%; }
+#plugin-editor .editor-mixer-db-scale i:nth-child(4) { top: 40%; }
+#plugin-editor .editor-mixer-db-scale i:nth-child(5) { top: 80%; }
+#plugin-editor .editor-mixer-db-scale i:nth-child(6) { bottom: 0; transform: none; }
+#plugin-editor .editor-mixer-db-readout { grid-column: 1 / 3; align-self: end; color: #9ca3af; font: 7px/1 monospace; text-align: center; white-space: nowrap; }
+#plugin-editor .editor-mixer-db-readout.is-clipping { color: #f87171; font-weight: 700; }
+#plugin-editor .editor-mixer-fader { width: 5.8rem; height: 1rem; transform: rotate(-90deg); margin: 0 -2.25rem; accent-color: #22d3ee; }
+#plugin-editor .editor-mixer-value { font: 9px/1 monospace; color: #9ca3af; }
+#plugin-editor .editor-mixer-strip-name, #plugin-editor .editor-mixer-bus-name { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 10px; color: #e5e7eb; }
+#plugin-editor .editor-mixer-bus-strip { background: linear-gradient(#283142,#151b27); }
+#plugin-editor .editor-mixer-transcription-strip { border-color: rgba(74,222,128,.42); background: linear-gradient(#1d332b,#111c18); }
+#plugin-editor .editor-mixer-transcription-strip .editor-mixer-strip-type { color: #86efac; }
+#plugin-editor .editor-mixer-strip.editor-mixer-selected { border-color: #38bdf8; box-shadow: 0 0 0 1px rgba(56,189,248,.65); }
+#plugin-editor .editor-mixer-master-strip { margin-left: .2rem; border-color: #0891b2; background: linear-gradient(#164e63,#111827); }
+#plugin-editor .editor-mixer-master-meter { width: .72rem; }

@@ -45,7 +45,8 @@ function makeEl(id) {
 const els = {};
 for (const id of ['editor-mixer-panel', 'editor-mixer-parts', 'editor-mixer-btn', 'editor-tp-mixer',
     'editor-mix-ref', 'editor-mix-ref-val', 'editor-mix-guide', 'editor-mix-guide-val',
-    'editor-mix-click', 'editor-mix-click-val', 'editor-mix-blip', 'editor-status']) {
+    'editor-mix-click', 'editor-mix-click-val', 'editor-mix-master', 'editor-mix-master-val',
+    'editor-mixer-close', 'editor-mixer-play-all', 'editor-status']) {
     els[id] = makeEl(id);
 }
 globalThis.document = globalThis.document || {
@@ -53,6 +54,9 @@ globalThis.document = globalThis.document || {
     addEventListener: () => {},
     activeElement: null,
 };
+globalThis.window = globalThis.window || globalThis;
+if (typeof globalThis.requestAnimationFrame !== 'function') globalThis.requestAnimationFrame = () => 0;
+if (typeof globalThis.cancelAnimationFrame !== 'function') globalThis.cancelAnimationFrame = () => {};
 const store = new Map();
 globalThis.localStorage = globalThis.localStorage || {
     getItem: (k) => (store.has(k) ? store.get(k) : null),
@@ -63,6 +67,7 @@ globalThis.window = globalThis.window || globalThis;
 const {
     _mixerPartsPure, _mixerPartStatePure, _mixerAnySoloPure, _mixerPartAudiblePure,
     _mixerClapStatePure, _mixerOpenFromStoredPure, _mixerClapState,
+    _mixerGainForFaderPure, _mixerFaderLabelPure,
     _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel,
 } = await import('../src/mixer-panel.js');
 const { S } = await import('../src/state.js');
@@ -89,13 +94,26 @@ t('one strip per arrangement, keyed by index, drums appended only with hits', ()
     assert.deepStrictEqual(_mixerPartsPure(null, null), []);
 });
 
-t('strip state defaults to audible unity; volume clamps into [0, 100]', () => {
+t('strip state defaults to audible unity; volume clamps into [0, 110] (+10 dB ceiling)', () => {
     assert.deepStrictEqual(_mixerPartStatePure({}, 'arr:0'), { vol: 100, mute: false, solo: false });
     assert.deepStrictEqual(_mixerPartStatePure(null, 'arr:0'), { vol: 100, mute: false, solo: false });
-    assert.strictEqual(_mixerPartStatePure({ 'arr:0': { vol: 250 } }, 'arr:0').vol, 100);
+    assert.strictEqual(_mixerPartStatePure({ 'arr:0': { vol: 250 } }, 'arr:0').vol, 110, 'clamps to the +10 dB ceiling');
     assert.strictEqual(_mixerPartStatePure({ 'arr:0': { vol: -5 } }, 'arr:0').vol, 0);
     assert.strictEqual(_mixerPartStatePure({ 'arr:0': { vol: 'junk' } }, 'arr:0').vol, 100);
     assert.strictEqual(_mixerPartStatePure({ 'arr:0': { mute: 1, solo: 0 } }, 'arr:0').mute, true);
+});
+
+t('fader: unity detent at 0 dB, +10 dB of headroom at the ceiling', () => {
+    assert.strictEqual(_mixerGainForFaderPure(0), 0);
+    assert.strictEqual(_mixerGainForFaderPure(50), 0.5);
+    assert.strictEqual(_mixerGainForFaderPure(100), 1, 'unity detent = 0 dB gain 1.0');
+    // Ceiling is +10 dB ≈ 3.162 (10^(10/20)) — FAILS the old +6/1.995 mapping.
+    assert.ok(Math.abs(_mixerGainForFaderPure(110) - 3.1622776601683795) < 1e-9, '+10 dB (≈3.162) at max');
+    assert.ok(Math.abs(_mixerGainForFaderPure(110) - 10 ** (10 / 20)) < 1e-9);
+    assert.strictEqual(_mixerGainForFaderPure(999), _mixerGainForFaderPure(110), 'clamps at the +10 ceiling');
+    assert.strictEqual(_mixerFaderLabelPure(100), '+0.0 dB');
+    assert.strictEqual(_mixerFaderLabelPure(110), '+10.0 dB');
+    assert.strictEqual(_mixerFaderLabelPure(0), '−∞ dB');
 });
 
 t('audibility: no solo → everything unmuted sounds; mute always wins', () => {
@@ -156,30 +174,35 @@ t('toggle opens/closes the panel, persists the pref, and lights both Mix buttons
     assert.strictEqual(store.get('editorMixerPanel'), '1');
     assert.strictEqual(els['editor-mixer-btn'].getAttribute('aria-pressed'), 'true');
     assert.strictEqual(els['editor-tp-mixer'].getAttribute('aria-pressed'), 'true');
-    editorToggleMixerPanel(false);
+    // Close is animated (drawer fall); pass instant=true for a deterministic
+    // synchronous hide in the unit env.
+    editorToggleMixerPanel(false, true);
     assert.strictEqual(els['editor-mixer-panel'].classList.contains('hidden'), true);
     assert.strictEqual(store.get('editorMixerPanel'), '0');
     assert.strictEqual(els['editor-mixer-btn'].getAttribute('aria-pressed'), 'false');
 });
 
-t('init restores the persisted open state', () => {
-    store.set('editorMixerPanel', '1');
-    els['editor-mixer-panel'].classList.add('hidden');
+t('init always opens the drawer CLOSED (a per-screen view toggle, not a saved pref)', () => {
+    store.set('editorMixerPanel', '1');           // even with a stale "open" pref…
+    els['editor-mixer-panel'].classList.remove('hidden');
     initMixerPanel();
-    assert.strictEqual(els['editor-mixer-panel'].classList.contains('hidden'), false);
-    editorToggleMixerPanel(false);
+    assert.strictEqual(els['editor-mixer-panel'].classList.contains('hidden'), true,
+        'a project opens with maximum track-area space');
 });
 
-t('bus faders + blip seed from host.mixUiState on open', () => {
+t('bus faders seed from host.mixUiState on open (incl. master, dB labels)', () => {
     const prev = host.mixUiState;
-    host.mixUiState = () => ({ pcts: { ref: 80, guide: 15, click: 5 }, blip: false });
-    editorToggleMixerPanel(true);
-    assert.strictEqual(els['editor-mix-ref'].value, '80');
-    assert.strictEqual(els['editor-mix-guide-val'].textContent, '15%');
-    assert.strictEqual(els['editor-mix-click'].value, '5');
-    assert.strictEqual(els['editor-mix-blip'].checked, false);
-    host.mixUiState = prev;
-    editorToggleMixerPanel(false);
+    try {
+        host.mixUiState = () => ({ pcts: { ref: 80, guide: 15, click: 5, master: 100 }, blip: false });
+        editorToggleMixerPanel(true);
+        assert.strictEqual(els['editor-mix-ref'].value, '80');
+        assert.strictEqual(els['editor-mix-guide-val'].textContent, _mixerFaderLabelPure(15), 'dB label, not %');
+        assert.strictEqual(els['editor-mix-click'].value, '5');
+        assert.strictEqual(els['editor-mix-master'].value, '100');
+    } finally {
+        host.mixUiState = prev;
+        editorToggleMixerPanel(false, true);
+    }
 });
 
 // ── Render + memo ────────────────────────────────────────────────────
@@ -195,6 +218,7 @@ t('strips render one row per part; the refresh is memoized until state changes',
     assert.ok(html.includes('data-mix-part="arr:1"'), 'second strip');
     assert.ok(html.includes('data-mix-part="drums"'), 'drums strip');
     assert.ok(html.includes('data-mix-act="solo"'), 'solo button');
+    assert.ok(html.includes('aria-valuetext="+0.0 dB"'), 'fader exposes its dB value to screen readers');
     // Memo: same state → no re-render (a sentinel survives the call).
     els['editor-mixer-parts'].innerHTML = 'SENTINEL';
     _mixerPanelRefresh();

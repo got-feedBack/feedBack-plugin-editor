@@ -1178,22 +1178,28 @@ export function editorMetronomeEnabled() {
 }
 
 /* @pure:audio-mixer:start */
-// Mixer math for the 3-fader popover (recording / guide / click) and the
+// Mixer math for the bus faders (source / guide / click / master) and the
 // edit-preview blip gating. Fader percents live in editor prefs (never the
-// pack) and map linearly onto bus gain, so 100% = the bus's design ceiling
-// (unity) — nothing here can boost a bus past the shipped headroom.
-const MIX_DEFAULT_PCT = Object.freeze({ ref: 100, guide: 35, click: 25 });
-// Parse a stored fader percent: corrupted values clamp into [0, 100] and
+// pack). Christian's console rule: EVERY fader — buses and master included —
+// is unity at 100 with +10 dB of headroom above (100..110 maps to dB, the
+// same curve as the channel strips in mixer-panel.js), so no fader has an
+// inert zone. Corrupted prefs still clamp, so a bad value can never blast
+// a bus past +10 dB.
+const MIX_DEFAULT_PCT = Object.freeze({ ref: 100, guide: 35, click: 25, master: 100 });
+const MIX_FADER_MAX_PCT = 110;   // unity + 10 dB, matching MIXER_FADER_MAX
+// Parse a stored fader percent: corrupted values clamp into [0, 110] and
 // non-numeric ones fall back, so a bad pref can never blast a bus.
 function _mixPctFromStoredPure(raw, fallbackPct) {
     const n = parseInt(raw, 10);
     if (!Number.isFinite(n)) return fallbackPct;
-    return Math.max(0, Math.min(100, n));
+    return Math.max(0, Math.min(MIX_FADER_MAX_PCT, n));
 }
 function _mixGainForPctPure(pct) {
     const p = Number(pct);
     if (!Number.isFinite(p)) return 0;
-    return Math.max(0, Math.min(100, p)) / 100;
+    const c = Math.max(0, Math.min(MIX_FADER_MAX_PCT, p));
+    if (c <= 100) return c / 100;
+    return 10 ** ((c - 100) / 20);   // 100..110 → 0..+10 dB
 }
 // First play of a session starts the recording below target and ramps up
 // (~0.35 s): an unexpectedly hot recording is reached, never jumped to.
@@ -1218,7 +1224,84 @@ export function _mixDragChangedPitchPure(dstrings, dfrets) {
     const df = Array.isArray(dfrets) && dfrets.some(d => d !== 0);
     return ds || df;
 }
+// Time-domain samples → a DAW meter position. Visible range −60..0 dBFS;
+// silence and invalid samples pin at zero.
+export function _mixMeterLevelPure(samples) {
+    if (!samples || !samples.length) return 0;
+    let sum = 0;
+    for (let i = 0; i < samples.length; i++) {
+        const sample = Number(samples[i]);
+        if (Number.isFinite(sample)) sum += sample * sample;
+    }
+    const rms = Math.sqrt(sum / samples.length);
+    if (!(rms > 0)) return 0;
+    const db = 20 * Math.log10(rms);
+    return Math.max(0, Math.min(1, (db + 60) / 60));
+}
+// Peak sample level in dBFS (for the clip-aware readout). −Infinity on silence.
+export function _mixMeterPeakDbPure(samples) {
+    if (!samples || !samples.length) return -Infinity;
+    let peak = 0;
+    for (let i = 0; i < samples.length; i++) {
+        const sample = Math.abs(Number(samples[i]));
+        if (Number.isFinite(sample) && sample > peak) peak = sample;
+    }
+    return peak > 0 ? 20 * Math.log10(peak) : -Infinity;
+}
 /* @pure:audio-mixer:end */
+
+// ── Live metering ────────────────────────────────────────────────────
+// An AnalyserNode taps each metered node; a zero-gain sink keeps the browser
+// processing the analyser without adding an audible copy. Bus taps persist
+// across songs; per-track ('track:...') taps are dropped on song switch.
+const _meterAnalysers = Object.create(null);
+let _meterSilentSink = null;
+
+function _attachMeterTap(node, key) {
+    const ctx = S.audioCtx;
+    if (!node || !ctx || typeof ctx.createAnalyser !== 'function' || _meterAnalysers[key]) return;
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.65;
+    if (!_meterSilentSink && typeof ctx.createGain === 'function') {
+        _meterSilentSink = ctx.createGain();
+        _meterSilentSink.gain.value = 0;
+        _meterSilentSink.connect(ctx.destination);
+    }
+    node.connect(analyser);
+    if (_meterSilentSink) analyser.connect(_meterSilentSink);
+    _meterAnalysers[key] = analyser;
+}
+
+function _detachMeterTap(key) {
+    const analyser = _meterAnalysers[key];
+    if (!analyser) return;
+    try { analyser.disconnect(); } catch (_) { /* already gone */ }
+    delete _meterAnalysers[key];
+}
+
+// The host-hook read side: current post-fader levels + peak dB per bus and
+// per stem track. The mixer panel samples this each frame.
+export function audioMixerMeterLevels() {
+    const levels = { ref: 0, guide: 0, click: 0, master: 0, tracks: {}, peaks: {}, trackPeaks: {} };
+    for (const key of ['ref', 'guide', 'click', 'master']) {
+        const analyser = _meterAnalysers[key];
+        if (!analyser || typeof analyser.getFloatTimeDomainData !== 'function') continue;
+        const samples = new Float32Array(analyser.fftSize || 256);
+        analyser.getFloatTimeDomainData(samples);
+        levels[key] = _mixMeterLevelPure(samples);
+        levels.peaks[key] = _mixMeterPeakDbPure(samples);
+    }
+    for (const [key, analyser] of Object.entries(_meterAnalysers)) {
+        if (!key.startsWith('track:') || !analyser || typeof analyser.getFloatTimeDomainData !== 'function') continue;
+        const samples = new Float32Array(analyser.fftSize || 256);
+        analyser.getFloatTimeDomainData(samples);
+        const trackKey = key.slice(6);   // drop 'track:'
+        levels.tracks[trackKey] = _mixMeterLevelPure(samples);
+        levels.trackPeaks[trackKey] = _mixMeterPeakDbPure(samples);
+    }
+    return levels;
+}
 
 /* @pure:audio-bus:start */
 // Guide-voice bus ONLY: the claps sum through their own gain into a limiter
@@ -1244,10 +1327,20 @@ function _ensureMasterBus() {
     limiter.ratio.value = 20;
     limiter.attack.value = 0.003;
     limiter.release.value = 0.25;
+    // A master gain sits AFTER the limiter — the program's final trim and the
+    // point the master meter taps. The reference recording joins here too
+    // (post-limiter), so it's metered and master-trimmed without ever being
+    // colored by the guide limiter.
+    const masterGain = ctx.createGain();
+    masterGain.gain.value = _mixGainForPctPure(_mixLoadPct().master);
     guideGain.connect(limiter);
     clickGain.connect(limiter);
-    limiter.connect(ctx.destination);
-    _masterBus = { guideGain, clickGain, limiter };
+    limiter.connect(masterGain);
+    masterGain.connect(ctx.destination);
+    _masterBus = { guideGain, clickGain, limiter, masterGain };
+    _attachMeterTap(guideGain, 'guide');
+    _attachMeterTap(clickGain, 'click');
+    _attachMeterTap(masterGain, 'master');
     return _masterBus;
 }
 
@@ -1256,16 +1349,18 @@ function _ensureMasterBus() {
 let _mixPctCache = null;
 export function _mixLoadPct() {
     if (_mixPctCache) return _mixPctCache;
-    let ref = null, guide = null, click = null;
+    let ref = null, guide = null, click = null, master = null;
     try {
         ref = localStorage.getItem('editorMixRef');
         guide = localStorage.getItem('editorMixGuide');
         click = localStorage.getItem('editorMixClick');
+        master = localStorage.getItem('editorMixMaster');
     } catch (_) {}
     _mixPctCache = {
         ref: _mixPctFromStoredPure(ref, MIX_DEFAULT_PCT.ref),
         guide: _mixPctFromStoredPure(guide, MIX_DEFAULT_PCT.guide),
         click: _mixPctFromStoredPure(click, MIX_DEFAULT_PCT.click),
+        master: _mixPctFromStoredPure(master, MIX_DEFAULT_PCT.master),
     };
     return _mixPctCache;
 }
@@ -1278,7 +1373,12 @@ function _ensureRefGain() {
     if (_refGain || !S.audioCtx) return _refGain;
     _refGain = S.audioCtx.createGain();
     _refGain.gain.value = _mixGainForPctPure(_mixLoadPct().ref);
-    _refGain.connect(S.audioCtx.destination);
+    // Route to the master gain (post-limiter) so the recording rides the
+    // master trim and feeds the 'ref' meter — still bypassing the limiter,
+    // so a hot recording is never colored.
+    const bus = _ensureMasterBus();
+    _refGain.connect(bus ? bus.masterGain : S.audioCtx.destination);
+    _attachMeterTap(_refGain, 'ref');
     return _refGain;
 }
 
@@ -1309,12 +1409,14 @@ function _mixResetFirstPlay() {
 // smoothing) — a gain change is never a stepped jump mid-audio.
 function _mixSetBusGain(bus, pct) {
     const key = bus === 'ref' ? 'editorMixRef'
-        : bus === 'guide' ? 'editorMixGuide' : 'editorMixClick';
+        : bus === 'guide' ? 'editorMixGuide'
+        : bus === 'master' ? 'editorMixMaster' : 'editorMixClick';
     const p = _mixPctFromStoredPure(String(pct), MIX_DEFAULT_PCT[bus]);
     _mixLoadPct()[bus] = p;
     try { localStorage.setItem(key, String(p)); } catch (_) {}
     const node = bus === 'ref' ? _refGain
         : bus === 'guide' ? (_masterBus && _masterBus.guideGain)
+        : bus === 'master' ? (_masterBus && _masterBus.masterGain)
         : (_masterBus && _masterBus.clickGain);
     if (node && S.audioCtx) {
         // The recording fader must never un-mute an active A/B guide pass:
@@ -1539,6 +1641,7 @@ function _ensurePartGain(key) {
         const st = host.partStripState(key);
         g.gain.value = st.audible ? st.vol : 0;
         g.connect(bus.guideGain);
+        _attachMeterTap(g, 'track:' + key);
         _partGains[key] = g;
     }
     return _partGains[key];
@@ -1557,6 +1660,7 @@ export function _partGainsApply(immediate) {
 function _partGainsReset() {
     if (_partGains) {
         for (const key of Object.keys(_partGains)) {
+            _detachMeterTap('track:' + key);
             try { _partGains[key].disconnect(); } catch (_) { /* context gone */ }
         }
     }
@@ -1577,7 +1681,7 @@ function _partGainsReset() {
 // host.partStripState('audio:<id>') — the SAME S.partMix store and whole-map
 // solo rule the synth parts use — and connects to _refGain (the transparent
 // path, never the guide limiter). Volume ceiling is unity, matching the
-// current per-part contract; meters and +6 dB headroom are a later polish.
+// current per-part contract; meters and +10 dB headroom are a later polish.
 //
 // Known limitation: at audition speed < 1 the master reroutes to a
 // pitch-preserving MediaElement and the sample-accurate BufferSource path is
@@ -1694,7 +1798,7 @@ export function resetStemAudioCache() {
     stemDecodeGeneration++;
     stemAudioCache.clear();
     _stopStemSources();
-    _stemGainsReset();
+    _stemGainsReset();   // detaches each stem's meter tap with its gain
 }
 
 // A stem's cached min/max waveform peaks for its lane (lazy — built on first
@@ -1715,6 +1819,7 @@ function _ensureStemGain(sourceId) {
     // never leaks its first sample (mirrors _ensurePartGain).
     gain.gain.value = st && st.audible !== false ? Math.max(0, Number(st.vol) || 0) : 0;
     gain.connect(_ensureRefGain() || S.audioCtx.destination);
+    _attachMeterTap(gain, 'track:audio:' + sourceId);
     stemGainNodes.set(sourceId, gain);
     return gain;
 }
@@ -1767,7 +1872,8 @@ function _stopStemSources() {
 }
 
 function _stemGainsReset() {
-    for (const gain of stemGainNodes.values()) {
+    for (const [sourceId, gain] of stemGainNodes) {
+        _detachMeterTap('track:audio:' + sourceId);   // own the tap we attached
         try { gain.disconnect(); } catch (_) { /* context gone */ }
     }
     stemGainNodes.clear();
@@ -2329,11 +2435,19 @@ export function _editorToggleMetronome() {
 // host.mixUiState (wired in main.js to _mixLoadPct + editorEditBlipEnabled).
 
 export function editorSetMixLevel(bus, val) {
-    if (bus !== 'ref' && bus !== 'guide' && bus !== 'click') return;
+    if (bus !== 'ref' && bus !== 'guide' && bus !== 'click' && bus !== 'master') return;
     const p = _mixSetBusGain(bus, val);
-    const label = document.getElementById(
-        (bus === 'ref' ? 'editor-mix-ref' : bus === 'guide' ? 'editor-mix-guide' : 'editor-mix-click') + '-val');
-    if (label) label.textContent = p + '%';
+    const label = document.getElementById('editor-mix-' + bus + '-val');
+    // dB label (matching the strips), never '%'. Uses the shared pct→gain
+    // curve so the label is honest above unity too (100..110 → 0..+10 dB).
+    const gain = _mixGainForPctPure(p);
+    const text = gain > 0
+        ? (gain >= 1 ? '+' : '−') + Math.abs(20 * Math.log10(gain)).toFixed(1) + ' dB'
+        : '−∞ dB';
+    if (label) label.textContent = text;
+    // Keep the slider's screen-reader value in step with the visible dB label.
+    const slider = document.getElementById('editor-mix-' + bus);
+    if (slider) slider.setAttribute?.('aria-valuetext', text);
 }
 
 export function editorSetEditBlip(on) {
