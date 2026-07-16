@@ -204,7 +204,7 @@ away first, keeping each track's name and type visible. Removing an audio
 track is non-destructive — the media stays in the pack and can come back.
 `Shift+A` jumps to this Tracks view.
 
-### Hands on keys tracks
+### Hands on keyboard tracks
 
 Keys notes can carry a **left/right hand** assignment — a MusicXML import
 brings the score's own hands in, and you can author them yourself:

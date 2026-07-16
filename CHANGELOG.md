@@ -88,10 +88,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `techniques`. MusicXML imports arrive with it pre-filled from staff
   provenance (staff 1→`rh`, 2→`lh`; other staves stay unassigned). Known
   tracked follow-ups: core's sloppak loader must learn the field for
-  reload round-trips (core PR), a hand EDIT doesn't yet invalidate a
-  preserved authored notation sidecar (`_notes_fingerprint` deliberately
-  ignores techniques), and `split_hands` doesn't yet respect per-note
-  overrides — both land with the hand-aware lift slice.
+  reload round-trips (core PR), and `split_hands` doesn't yet respect per-note
+  overrides — this lands with the hand-aware lift slice. (A hand EDIT now
+  invalidates a preserved authored notation sidecar: `hand` joins the
+  notation fingerprint, per the hand authoring change above.)
 
 - **View ▸ Canvas appearance… — customizable grid & canvas** (community ask:
   beat grid lines were invisible on some screens; the request was Live-style
