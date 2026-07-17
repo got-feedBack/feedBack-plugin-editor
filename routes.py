@@ -49,6 +49,33 @@ def _coerce_create_audio_tracks(value):
     return rows
 
 
+def _pick_timeline_xml_root(xml_paths):
+    """The parsed root of the first converted-track XML that carries a beat
+    grid (a non-empty ``<ebeats>``), falling back to the first parseable XML.
+
+    The song timeline (songLength / ebeats / sections) is read from ONE
+    track's XML — every track carries the same song-wide grid, EXCEPT tracks
+    the converter emits empty: a lyrics-only GP vocal track converts to an
+    XML with no ebeats and no notes. Reading blindly from ``xml_paths[0]``
+    let such a track land first and import a GRID-LESS session — notes
+    present, no beats, and the whole Tempo Map surface hidden with no hint
+    why (the button gates on a >=2-beat grid).
+    """
+    import xml.etree.ElementTree as XET
+    first_root = None
+    for p in xml_paths or []:
+        try:
+            root = XET.parse(p).getroot()
+        except (XET.ParseError, OSError):
+            continue
+        if first_root is None:
+            first_root = root
+        container = root.find("ebeats")
+        if container is not None and container.find("ebeat") is not None:
+            return root
+    return first_root
+
+
 def _copy_create_audio_tracks(stems_dir, audio_file, audio_tracks):
     """Copy non-guide create sources into ``stems/`` and return manifest rows."""
     stems_dir = Path(stems_dir)
@@ -4427,6 +4454,23 @@ def setup(app, context):
             return JSONResponse({"error": "No active session"}, 400)
         session["last_touched"] = time.time()
 
+        # A create-mode session has nothing on disk to save over — persisting
+        # it goes through /build. The frontend routes Save there itself
+        # (saveCDLC's create-mode leg); this guard catches older or other
+        # clients with an actionable message instead of the bare sloppak-format
+        # rejection below (which reads as a bug when an hour of work is on the
+        # line, and used to fire as the even-more-baffling drum_tab variant
+        # when the session carried a drum chart).
+        if session.get("create_mode"):
+            return JSONResponse(
+                {
+                    "error": "This song hasn't been built yet — use "
+                             "File ▸ Build feedpak to add it to your "
+                             "library; after that, Save saves it in place"
+                },
+                status_code=400,
+            )
+
         raw_arr_idx = data.get("arrangement_index")
         if raw_arr_idx is None:
             arrangement_index = 0
@@ -4490,8 +4534,8 @@ def setup(app, context):
         #             untouched. This is what the editor frontend sends
         #             unless the user imported/edited a drum tab this session.
         #   - None  → explicit removal — unlinks drum_tab.json and clears the
-        #             manifest key. Supported by the API for completeness;
-        #             the current editor UI has no remove-drums control.
+        #             manifest key. The Tracks column's drum-transcription
+        #             delete ships this (a dirty null in _buildSaveBody).
         drum_tab_payload = data.get("drum_tab", _DRUM_TAB_ABSENT)
         if drum_tab_payload is not _DRUM_TAB_ABSENT and not isinstance(
             drum_tab_payload, (dict, type(None))
@@ -6941,12 +6985,12 @@ def setup(app, context):
                 arr = parse_arrangement(xml_path)
                 song.arrangements.append(arr)
 
-            # Get beats and sections from first XML
-            if xml_paths:
-                import xml.etree.ElementTree as XET
-                tree = XET.parse(xml_paths[0])
-                root = tree.getroot()
-
+            # Get beats and sections from the first XML that actually carries
+            # a grid — NOT blindly xml_paths[0]: an empty converted track
+            # (e.g. a lyrics-only GP vocal track) landing first used to
+            # import a grid-less session. See _pick_timeline_xml_root.
+            root = _pick_timeline_xml_root(xml_paths)
+            if root is not None:
                 el = root.find("songLength")
                 if el is not None and el.text:
                     song.song_length = float(el.text)
@@ -8114,6 +8158,14 @@ def setup(app, context):
             import traceback
             traceback.print_exc()
             return JSONResponse({"error": str(e)}, 500)
+
+        # Record the built pack on the session so /session/export (the Save As
+        # external-copy source) can serve it. Builds land at the DLC root, so
+        # the bare name is the library-relative filename export resolves.
+        # Nothing else keys off `filename` for a create-mode session: /save is
+        # gated off above it, and save_as_sloppak only accepts archive
+        # sessions.
+        session["filename"] = Path(output_path).name
 
         return {
             "success": True,

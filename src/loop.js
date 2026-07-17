@@ -19,7 +19,7 @@
 // Browser surface: the loop strip and its controls.
 // ════════════════════════════════════════════════════════════════════
 import {
-    _abApplyRefGain, _abDisarm, _abOn, _audioTimelineDurationPure,
+    _abApplyRefGain, _abDisarm, _abOn, _audioTimelineDurationPure, _composeSongDuration,
     _ensureOnsetsShifted, _nearestOnsetTimePure, _refreshLoopABBtn, _trainerDisarm,
 } from './audio.js';
 import { beatOf, timeOf } from './beats.js';
@@ -39,7 +39,17 @@ export function _editorViewportDuration() {
 }
 
 export function _editorClampScrollX(scrollX) {
-    const duration = _audioTimelineDurationPure(S.duration, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
+    let duration = _audioTimelineDurationPure(S.duration, S.audioShift, S.audioBuffer && S.audioBuffer.duration);
+    // Compose/MIDI-only sessions have no audio to bound the timeline, and
+    // S.duration is only derived from the grid inside startPlayback() — so
+    // before the first Play the audio-derived duration here is 0, maxScroll
+    // clamps to 0, and EVERY horizontal-scroll input (wheel, middle-drag pan,
+    // even the minimap, whose own songDur() knows better but funnels through
+    // this clamp) silently pins the view to t = 0. Fall back to the same rule
+    // playback itself uses: the grid/content defines the song's length
+    // (§1.7). Guarded so audio-bounded sessions never pay for the walk over
+    // the authored content.
+    if (!(duration > 0)) duration = _composeSongDuration();
     return _editorClampScrollXPure(scrollX, duration, _editorViewportDuration(), EDITOR_SCROLL_TAIL_SECONDS);
 }
 
