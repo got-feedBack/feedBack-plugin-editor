@@ -28,7 +28,7 @@ import { EditHistory } from './history.js';
 import { host } from './host.js';
 import { KEYS_PATTERN, isKeysMode, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
-import { S, markSessionDirty } from './state.js';
+import { S, markSessionDirty, markSessionSaved } from './state.js';
 import { _marksSanitizePure } from './tempo-marks.js';
 import { disposeBackendSession, stopSessionProcesses } from './session-lifecycle.js';
 import { _ensureOnsetsShifted, _guideAnalysisReset, resetStemAudioCache, syncStemAudio } from './audio.js';
@@ -2424,15 +2424,18 @@ async function _editorDoEofCreate() {
     }
 }
 
+// Resolves true only after the pack was durably written to the library —
+// saveCDLC's create-mode leg (Save/Ctrl+S, the close-guard's "Save", the
+// host saveSession hook) relies on this to report save success honestly.
 export async function editorBuild() {
-    if (!S.sessionId || !S.createMode) return;
+    if (!S.sessionId || !S.createMode) return false;
     // PR3c: warn before building when authored tone slots have no
     // matching gear definition — DLC Builder defaults them to stock
     // clean in the output archive. Confirm prompt lets the user
     // continue or bail back to the modal to pull definitions in.
     if (!_editorConfirmToneDefinitions()) {
         setStatus('Build cancelled');
-        return;
+        return false;
     }
     setStatus('Building custom song...');
 
@@ -2559,15 +2562,20 @@ export async function editorBuild() {
             }),
         });
         const data = await resp.json();
-        if (data.error) { setStatus('Build error: ' + data.error); return; }
+        if (data.error) { setStatus('Build error: ' + data.error); return false; }
         host.kickLibraryRescan();   // refresh the library grid in the background
         // C1: the surface shaped while arranging becomes the built file's
         // memory, so re-opening it from the library lands on the same tools.
         // (The create session itself has no filename — this is the handoff.)
         if (data.filename) surfacePersistFor(data.filename);
+        // A build IS this session's durable save — clear the dirty flag so
+        // the unsaved-changes guard doesn't re-prompt over persisted work.
+        markSessionSaved();
         setStatus('Built - added to library!');
+        return true;
     } catch (e) {
         setStatus('Build failed: ' + e.message);
+        return false;
     } finally {
         // Re-flatten current arrangement for continued editing
         flattenChords();

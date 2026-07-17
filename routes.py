@@ -4427,6 +4427,23 @@ def setup(app, context):
             return JSONResponse({"error": "No active session"}, 400)
         session["last_touched"] = time.time()
 
+        # A create-mode session has nothing on disk to save over — persisting
+        # it goes through /build. The frontend routes Save there itself
+        # (saveCDLC's create-mode leg); this guard catches older or other
+        # clients with an actionable message instead of the bare sloppak-format
+        # rejection below (which reads as a bug when an hour of work is on the
+        # line, and used to fire as the even-more-baffling drum_tab variant
+        # when the session carried a drum chart).
+        if session.get("create_mode"):
+            return JSONResponse(
+                {
+                    "error": "This song hasn't been built yet — use "
+                             "File ▸ Build feedpak to add it to your "
+                             "library; after that, Save saves it in place"
+                },
+                status_code=400,
+            )
+
         raw_arr_idx = data.get("arrangement_index")
         if raw_arr_idx is None:
             arrangement_index = 0
@@ -4490,8 +4507,8 @@ def setup(app, context):
         #             untouched. This is what the editor frontend sends
         #             unless the user imported/edited a drum tab this session.
         #   - None  → explicit removal — unlinks drum_tab.json and clears the
-        #             manifest key. Supported by the API for completeness;
-        #             the current editor UI has no remove-drums control.
+        #             manifest key. The Tracks column's drum-transcription
+        #             delete ships this (a dirty null in _buildSaveBody).
         drum_tab_payload = data.get("drum_tab", _DRUM_TAB_ABSENT)
         if drum_tab_payload is not _DRUM_TAB_ABSENT and not isinstance(
             drum_tab_payload, (dict, type(None))
@@ -8114,6 +8131,14 @@ def setup(app, context):
             import traceback
             traceback.print_exc()
             return JSONResponse({"error": str(e)}, 500)
+
+        # Record the built pack on the session so /session/export (the Save As
+        # external-copy source) can serve it. Builds land at the DLC root, so
+        # the bare name is the library-relative filename export resolves.
+        # Nothing else keys off `filename` for a create-mode session: /save is
+        # gated off above it, and save_as_sloppak only accepts archive
+        # sessions.
+        session["filename"] = Path(output_path).name
 
         return {
             "success": True,
