@@ -529,7 +529,8 @@ export function _activeArrangementExceedsArchiveLimit() {
 // arrangements, then return the request body for the chosen endpoint.
 // `forceFullSnapshot` is true for save_as_sloppak so the new sloppak
 // gets every arrangement (not just S.currentArr).
-function _buildSaveBody(forceFullSnapshot) {
+// (Exported for tests — the drum_tab wire semantics are pinned there.)
+export function _buildSaveBody(forceFullSnapshot) {
     if (_recState === 'recording') window.editorStopRecordMidi();
 
     // Persist suggested marks BEFORE reconstructChords mints fresh note objects
@@ -663,11 +664,15 @@ function _buildSaveBody(forceFullSnapshot) {
     // Drum-tab payload — separate from arrangements (see sloppak-spec §5.3).
     // S.drumTab is null while the sloppak has none; after +Drums it holds the
     // parsed JSON dict. Only ship `drum_tab` when the user actually
-    // imported / edited it this session (`S.drumTabDirty`) — a tab merely
-    // loaded from disk is left out so the backend's no-op path preserves
-    // the manifest entry unchanged instead of re-serialising the whole
-    // hit list on every unrelated save.
-    if (S.drumTabDirty && S.drumTab !== undefined && S.drumTab !== null) {
+    // imported / edited / DELETED it this session (`S.drumTabDirty`) — a tab
+    // merely loaded from disk is left out so the backend's no-op path
+    // preserves the manifest entry unchanged instead of re-serialising the
+    // whole hit list on every unrelated save. A dirty null MUST ship: it is
+    // the explicit-removal wire (the Tracks column's drum delete) — the
+    // backend only unlinks drum_tab.json on a literal null, so omitting the
+    // field here hit the absent→preserve path and the deleted drums
+    // resurrected on the next load.
+    if (S.drumTabDirty && S.drumTab !== undefined) {
         body.drum_tab = S.drumTab;
     }
     // Beat-primary: strip the runtime beat cache so the wire stays seconds-only.

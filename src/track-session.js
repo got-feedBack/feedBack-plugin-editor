@@ -790,6 +790,59 @@ function selectTrack(trackId, openEditor = false) {
     return true;
 }
 
+// Deleting the drum transcription, as ONE undoable command. This used to
+// blank S.drumTab in place and RESET the whole undo stack — losing not just
+// the delete but every prior edit's undo (the shortcut for "commands in the
+// stack hold references into the tab"). As a command, stack ORDER gives the
+// same guarantee for free: no older drum edit can be undone until this
+// rollback has put the very same tab object back.
+//
+// The capture set is everything the delete touches:
+//   - the tab REFERENCE (identity matters — older drum commands hold
+//     references into its hits; restoring the same object keeps them valid);
+//   - the drumTabDirty flag (a tab loaded from disk and deleted must return
+//     to clean on undo, so an unrelated later save doesn't re-serialize it);
+//   - the drums mixer strip (session mix state, dropped by the delete);
+//   - the pairing map (replaced immutably by _trackLinksRetargetPure, so the
+//     captured reference IS the restore);
+//   - the tree (normalize drops the drum row on exec; committing the
+//     captured tree back restores its folder placement and display rename).
+export class DeleteDrumTabCmd {
+    constructor(rowName) {
+        // Song-level data (like tempo-grid commands): the read-only-roll lock
+        // must not block deleting/undeleting drums while a fretted part is
+        // shown in the piano roll.
+        this.songScope = true;
+        this._name = rowName;
+        this._tab = S.drumTab;
+        this._dirty = !!S.drumTabDirty;
+        this._hadMixStrip = !!(S.partMix && ('drums' in S.partMix));
+        this._mixStrip = S.partMix ? S.partMix.drums : undefined;
+        this._links = S.stemLinks;
+        this._tree = S.trackSession;
+    }
+    exec() {
+        S.drumTab = null;
+        // Dirty is what ships the explicit `drum_tab: null` removal on the
+        // next save (see _buildSaveBody) — without it the backend's
+        // absent→preserve path would resurrect drum_tab.json on reload.
+        S.drumTabDirty = true;
+        if (S.partMix) delete S.partMix.drums;
+        S.stemLinks = _trackLinksRetargetPure(S.stemLinks, DRUM_TARGET_ID);
+        commit(S.trackSession, `Deleted drum transcription “${this._name}”.`);
+    }
+    rollback() {
+        S.drumTab = this._tab;
+        S.drumTabDirty = this._dirty;
+        if (this._hadMixStrip) {
+            if (!S.partMix) S.partMix = {};
+            S.partMix.drums = this._mixStrip;
+        }
+        S.stemLinks = this._links;
+        commit(this._tree, `Restored drum transcription “${this._name}”.`);
+    }
+}
+
 async function deleteTrack(trackId) {
     const row = _rowsLive().rows.find(item => item.id === trackId);
     if (!row) return false;
@@ -806,12 +859,8 @@ async function deleteTrack(trackId) {
         host.audioSourcesChanged();
     } else if (row.targetId === DRUM_TARGET_ID) {
         if (!confirm(`Delete drum transcription “${row.name}”?`)) return false;
-        S.drumTab = null;
-        S.drumTabDirty = true;
-        delete S.partMix.drums;
-        S.stemLinks = _trackLinksRetargetPure(S.stemLinks, DRUM_TARGET_ID);
-        if (S.history) S.history.reset();
-        commit(S.trackSession, `Deleted drum transcription “${row.name}”.`);
+        const cmd = new DeleteDrumTabCmd(row.name);
+        if (S.history) S.history.exec(cmd); else cmd.exec();
     } else {
         const targets = _trackSessionTargetsPure(S.arrangements, S.drumTab);
         const target = targets.find(item => item.id === row.targetId);
