@@ -22,15 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hands, canvas appearance, stems).
 
 ### Added
+- **The master mix can be muted (and soloed, and faded) from the Tracks
+  pane.** The master row used to carry no inline strip — its controls lived
+  only in the mixer drawer. The pane now mirrors the drawer: same M/S/fader,
+  same canonical mix state, and the master keeps its output-bus semantics
+  (its own mute silences it; another track's solo never does).
 - **The master mix is a channel strip in the mixer.** Every audio source now has
   a vertical strip in the mixer drawer — the master mix leads the audio band
   (matching the DAW console), followed by the stems, then the MIDI parts and the
   SOURCE/GUIDE/CLICK/MASTER buses. Its fader, mute, and solo are real: the active
   source's reference playback now routes through its own per-source gain before
   the SOURCE submix, so riding the master strip actually changes its level. The
-  Tracks pane still lists the master as a selectable source row (click it to
-  chart against the full mix), but its strip **controls** — fader, mute, solo —
-  live only in the mixer, not the pane.
+  Tracks pane also exposes the same master fader, mute, and solo controls
+  inline, so the pane and mixer drawer share one canonical mix state.
 - **Click a track to chart against it.** Selecting an audio track (the master
   mix or any stem) in the Tracks column now makes it the **active source**:
   the main waveform shows that track and the onset tools (Suggest, snapping)
