@@ -278,6 +278,11 @@ Three ways to set the tempo, from coarse to fine:
      visibly low-confidence estimates (never committed on their own). Click a
      ghost handle to accept through it, or press **Accept Whole Fit** in the
      tempo toolbar to take the entire proposal as one undoable edit.
+   - **`H` / `Shift+H` — walk the drifting bars**: `H` jumps to the next bar
+     Grid health says disagrees with the recording (`Shift+H` goes back),
+     wrapping at the ends. Each landing arrives like clicking the grid pill —
+     the bar scrolled into view with Suggest anchored on its downbeat — so
+     refinement is fix, `H`, fix, `H`, done.
    - **Metronome guide**: if your session includes a click/reference stem,
      open **Audio tracks** (the stem manager) and click the **♩** on that row
      to lock it as the tempo guide. `G` then analyzes the click instead of

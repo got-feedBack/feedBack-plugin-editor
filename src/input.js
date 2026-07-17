@@ -23,6 +23,7 @@ import { lanes, _stringCountFor } from './lanes.js';
 import {
     _editorClampScrollX, _loopNudgeEdge, editorToggleLoopRegion, snapGuidelineAfter, snapTime,
 } from './loop.js';
+import { _mapHealthStepProblem } from './ruler.js';
 import { _editorSongFit } from './song-fit.js';
 import { _recState } from './midi-record.js';
 import { editorSoloMyStem, editorToggleStemTracks } from './stem-tracks.js';
@@ -1281,6 +1282,8 @@ export function _editorRunEofCommand(cmd) {
     case 'tempoBeatUnit': return _editorPromptTempoBeatUnitAtSelection();
     case 'tempoSetBpm': return _editorPromptTempoBpmAtSelection();
     case 'tempoSuggestFit': return _editorTempoSuggestFit();
+    case 'mapHealthNextProblem': return _mapHealthStepProblem(1);
+    case 'mapHealthPrevProblem': return _mapHealthStepProblem(-1);
     case 'tempoAcceptWholeFit':
         if (S.tempoMapMode) editorAcceptWholeTempoFit();
         else setStatus('Enter Tempo Map (T) first — Accept Whole Fit commits the active suggestions.');

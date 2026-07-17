@@ -163,6 +163,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'tempoModulate', label: 'Metric modulation at selected barline', group: 'Tempo map', status: 'ready', keys: { feedback: 'M (Tempo Map)', eof: 'M (Tempo Map)' } },
     { id: 'tempoTapBpm', label: 'Tap tempo for selected barline', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+B (Tempo Map)', eof: 'Shift+B (Tempo Map)' } },
     { id: 'tempoSuggestFit', label: 'Suggest barline fit from anchor (onsets)', group: 'Tempo map', status: 'ready', keys: { feedback: 'G (Tempo Map)', eof: 'G (Tempo Map)' } },
+    { id: 'mapHealthNextProblem', label: 'Jump to next drifting bar (grid health)', group: 'Tempo map', status: 'ready', keys: { feedback: 'H (Tempo Map)', eof: 'H (Tempo Map)' } },
+    { id: 'mapHealthPrevProblem', label: 'Jump to previous drifting bar (grid health)', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+H (Tempo Map)', eof: 'Shift+H (Tempo Map)' } },
     { id: 'tempoAcceptWholeFit', label: 'Accept whole tempo fit (all suggestions)', group: 'Tempo map', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'tempoInsertSync', label: 'Mark barline at cursor', group: 'Tempo map', status: 'ready', keys: { feedback: 'I (Tempo Map)', eof: 'I / Insert (Tempo Map)' } },
     { id: 'tempoDeleteSync', label: 'Delete selected barline', group: 'Tempo map', status: 'ready', keys: { feedback: 'Del (Tempo Map)', eof: 'Del (Tempo Map)' } },
@@ -210,6 +212,8 @@ export function _editorEofCommandForKeyPure(e, mode) {
         if (plain && key === 'd') return 'tempoBeatUnit';
         if (plain && key === 's') return 'tempoToggleSyncLock';
         if (plain && key === 'g') return 'tempoSuggestFit';
+        if (plain && key === 'h') return 'mapHealthNextProblem';
+        if (shift && key === 'h') return 'mapHealthPrevProblem';
         if (shift && key === 't') return 'setTimeSignature';
         if (alt && key === 't') return 'tempoFullDialog';
         if (ctrlShift && key === 't') return 'tempoRebuildGrid';
@@ -438,6 +442,8 @@ export function _editorFeedbackCommandForKeyPure(e, mode) {
         if (plain && key === 'd') return 'tempoBeatUnit';
         if (plain && key === 's') return 'tempoToggleSyncLock';
         if (plain && key === 'g') return 'tempoSuggestFit';
+        if (plain && key === 'h') return 'mapHealthNextProblem';
+        if (shift && key === 'h') return 'mapHealthPrevProblem';
         if (shift && key === 't') return 'setTimeSignature';
         if (alt && key === 't') return 'tempoFullDialog';
         if (ctrlShift && key === 't') return 'tempoRebuildGrid';

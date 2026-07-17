@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hands, canvas appearance, stems).
 
 ### Added
+- **Map-health worklist: H / Shift+H walk the drifting bars.** In Tempo Map
+  mode, H jumps to the next amber/red bar from the playhead (Shift+H goes
+  back), wrapping at the ends — each landing arrives the same way the grid
+  pill does: Tempo Map open, the bar scrolled into view, Suggest anchored on
+  its downbeat. Fix a bar, press H, land on the next: map refinement becomes
+  a triage loop instead of a full-song scrub.
 - **The master mix can be muted (and soloed, and faded) from the Tracks
   pane.** The master row used to carry no inline strip — its controls lived
   only in the mixer drawer. The pane now mirrors the drawer: same M/S/fader,
