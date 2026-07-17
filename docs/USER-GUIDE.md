@@ -338,8 +338,10 @@ These live in the **Add** menu (Markers) and show in the inspector when selected
 
 ## 9. Save and build — the finish line
 
-- **`Ctrl+S`** saves your working session. The first save of a new project
-  asks where the feedpak should live; after that it's silent.
+- **`Ctrl+S`** saves your working session. For an exportable packed song, the
+  first save can ask where to keep an external copy when your browser supports
+  a file picker; otherwise it saves straight to the library. Later saves reuse
+  the chosen location.
 - **Build feedpak** (the toolbar button, or File ▸ Build feedpak) assembles
   the finished **`.feedpak`** through the host's core libraries and writes it
   to your library — this is the only step that changes what the rest of the
