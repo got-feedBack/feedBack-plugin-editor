@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The master mix can be muted (and soloed, and faded) from the Tracks
+  pane.** The master row used to carry no inline strip — its controls lived
+  only in the mixer drawer. The pane now mirrors the drawer: same M/S/fader,
+  same canonical mix state, and the master keeps its output-bus semantics
+  (its own mute silences it; another track's solo never does).
 - **The master mix is a channel strip in the mixer.** Every audio source now has
   a vertical strip in the mixer drawer — the master mix leads the audio band
   (matching the DAW console), followed by the stems, then the MIDI parts and the
