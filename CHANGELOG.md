@@ -25,6 +25,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *analyze* follows the click.
 
 ### Fixed
+- **Saving a from-scratch song now works — Save builds it.** A create-mode
+  session (New… → GP/MIDI import or blank draft) used to dead-end on Save with
+  "Only sloppak-format sessions can be saved" (or the baffling "drum_tab can
+  only be saved to sloppak-format songs" when the import brought drums): the
+  `/save` route only writes over an existing library pack, and a new song has
+  none yet. Save (Ctrl+S), Save As, and the close-guard's "Save" now route a
+  create-mode session through the build — the pack lands in the library as
+  `<Title>_<Artist>.feedpak` (repeat saves overwrite in place), the build
+  clears the unsaved-changes flag, and `/build` records the filename on the
+  session so Save As can export a copy to the picked file. The backend `/save`
+  rejection is now an actionable message pointing at Build for older clients.
+- **A failed Save As no longer strands a 0-byte `.feedpak`.** The native
+  picker creates the file the moment the destination is confirmed, so a save
+  that then failed left an empty husk where the user expected their song. The
+  husk is now removed after a failed save — only when the file is genuinely
+  empty, so overwriting an existing pack never risks its bytes.
+- **Save As suggests the real name for a new song.** A create-mode session has
+  no filename yet; the picker used to suggest `song.feedpak`. It now derives
+  `<Title>_<Artist>.feedpak` — the same name the build writes.
 - **Audio stem lanes now draw their waveforms.** The per-stem waveform builder
   was handed the decoded `AudioBuffer` instead of its channel `Float32Array`, so
   every sample read `undefined` and the peaks collapsed to ±Infinity — the lane
