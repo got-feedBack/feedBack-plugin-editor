@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *analyze* follows the click.
 
 ### Fixed
+- **Horizontal scrolling works before the first Play in MIDI-only sessions.**
+  A session with no decoded audio only learned its length inside
+  `startPlayback()`, so until the user pressed Play once the scroll clamp saw
+  a 0-length song and pinned the view to the start — wheel, middle-drag pan,
+  and the minimap all refused to scroll left/right, then mysteriously cured
+  themselves after the first Play. The clamp now falls back to the same rule
+  playback uses: the grid / authored content bounds the song. Audio-bounded
+  sessions keep their exact old clamp.
 - **Audio stem lanes now draw their waveforms.** The per-stem waveform builder
   was handed the decoded `AudioBuffer` instead of its channel `Float32Array`, so
   every sample read `undefined` and the peaks collapsed to ±Infinity — the lane
