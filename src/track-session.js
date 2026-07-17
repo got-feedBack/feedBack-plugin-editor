@@ -338,6 +338,13 @@ export function _trackSessionDensityPure(width) {
     const value = Number(width) || 0;
     return value < 230 ? 'compact' : value < 400 ? 'normal' : 'wide';
 }
+// Which Tracks-pane rows show the inline M/S/fader strip: every row with a
+// mix key — transcription parts, stem audio rows, AND the master mix (its
+// old master-excluded carve-out is gone: the pane mirrors the mixer drawer;
+// see mixControls in render()). Folders have no strip key and never strip.
+export function _trackRowShowsStripPure(row) {
+    return !!(row && row.mixKey);
+}
 // Logic-style auto-fit, deliberately modest: spare viewport height improves
 // readability but the automatic bonus caps at 32px so a two-track song does
 // not turn into two enormous empty slabs. Never shrinks below authored.
@@ -641,16 +648,16 @@ function render() {
     const guideName = guideRow ? guideRow.name
         : ((sources.find(s => s.id === model.tempoGuideSourceId) || sources[0] || {}).name || 'No guide');
     // Per-part M/S/fader — the SAME canonical partMix the mixer panel owns
-    // (band-mode gains ramp off it live). Transcription parts AND stem audio
-    // rows get strips inline here. The MASTER mix is DELIBERATELY excluded from
-    // the left Tracks pane: it lives as a channel strip in the mixer drawer (its
-    // fader/mute/solo are real there — reference playback routes through a
-    // per-source gain, audio.js), and Christian wants the left pane kept to the
-    // tracks themselves, not the master-out or bus mixes.
+    // (band-mode gains ramp off it live). EVERY row with a strip key gets the
+    // inline controls, the master mix included: it used to be deliberately
+    // excluded here (mixer-drawer-only, an early preference), but muting the
+    // master from the pane is a real workflow — dogfooding sessions kept
+    // reaching for it — so the pane now mirrors the drawer. Same keys, same
+    // handlers (mix-mute/mix-solo/mix-vol are key-generic), and the master
+    // keeps its output-bus semantics: its own mute silences it, other tracks'
+    // solo never does (_mixerPartAudiblePure's 'audio:master' carve-out).
     const mixControls = row => {
-        const stripped = row.type === 'transcription'
-            || (row.type === 'audio' && row.sourceKind !== 'master');
-        if (!row.mixKey || !stripped) return '';
+        if (!_trackRowShowsStripPure(row)) return '';
         const key = _editorEscHtml(row.mixKey);
         const st = _mixerPartStatePure(S.partMix, row.mixKey);
         return `<button class="editor-track-ms" data-track-action="mix-mute" data-mix-key="${key}" aria-pressed="${st.mute}" title="Mute track">M</button>`
