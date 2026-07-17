@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs refresh — the guide walks the whole journey.** The User Guide
+  (Help ▸ User Guide) opens with a six-step journey map, and §1 now showcases
+  every way to start a feedpak (audio formats + YouTube, GP/MIDI/XML,
+  MusicXML keys, stems, blank + arrangement chips, GoPlayAlong) through to a
+  pre-flight-checklisted §9 Save & Build. Fresh screenshots captured from
+  current main (start landing, the create dialog with a real audio+chart
+  import staged, the synced workspace, note editing); the `T` shortcut row
+  corrected to the tool palette (`T,T` = Tempo Map). README rewritten as the
+  repo landing page: hero shot, User Guide link up top, and a feature list
+  matching what shipped (track sessions + mixer console, click tools, keys
+  hands, canvas appearance, stems).
+
 ### Added
 - **The master mix is a channel strip in the mixer.** Every audio source now has
   a vertical strip in the mixer drawer — the master mix leads the audio band
