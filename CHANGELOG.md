@@ -19,9 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SOURCE/GUIDE/CLICK/MASTER buses. Its fader, mute, and solo are real: the active
   source's reference playback now routes through its own per-source gain before
   the SOURCE submix, so riding the master strip actually changes its level. The
-  Tracks pane still lists the master as a selectable source row (click it to
-  chart against the full mix), but its strip **controls** — fader, mute, solo —
-  live only in the mixer, not the pane.
+  Tracks pane also exposes the same master fader, mute, and solo controls
+  inline, so the pane and mixer drawer share one canonical mix state.
 - **Click a track to chart against it.** Selecting an audio track (the master
   mix or any stem) in the Tracks column now makes it the **active source**:
   the main waveform shows that track and the onset tools (Suggest, snapping)
