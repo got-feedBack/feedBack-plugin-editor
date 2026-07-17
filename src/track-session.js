@@ -820,6 +820,7 @@ export class DeleteDrumTabCmd {
         this._mixStrip = S.partMix ? S.partMix.drums : undefined;
         this._links = S.stemLinks;
         this._tree = S.trackSession;
+        this._selectedTrackId = S.selectedTrackId;
     }
     exec() {
         S.drumTab = null;
@@ -829,7 +830,11 @@ export class DeleteDrumTabCmd {
         S.drumTabDirty = true;
         if (S.partMix) delete S.partMix.drums;
         S.stemLinks = _trackLinksRetargetPure(S.stemLinks, DRUM_TARGET_ID);
+        if (S.selectedTrackId === transcriptionTrackId(DRUM_TARGET_ID)) {
+            S.selectedTrackId = '';
+        }
         commit(S.trackSession, `Deleted drum transcription “${this._name}”.`);
+        host.partMixChanged();
     }
     rollback() {
         S.drumTab = this._tab;
@@ -839,7 +844,12 @@ export class DeleteDrumTabCmd {
             S.partMix.drums = this._mixStrip;
         }
         S.stemLinks = this._links;
+        if (this._selectedTrackId === transcriptionTrackId(DRUM_TARGET_ID)
+                && !S.selectedTrackId) {
+            S.selectedTrackId = this._selectedTrackId;
+        }
         commit(this._tree, `Restored drum transcription “${this._name}”.`);
+        host.partMixChanged();
     }
 }
 

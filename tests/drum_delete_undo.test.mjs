@@ -95,6 +95,22 @@ t('redo re-deletes; a second undo restores again (round-trip stability)', () => 
     assert.strictEqual(S.drumTabDirty, false);
 });
 
+t('redo clears a drum selection made after undo', () => {
+    seed();
+    S.selectedTrackId = 'transcription:drums';
+    S.history.exec(new DeleteDrumTabCmd('Drums'));
+    assert.strictEqual(S.selectedTrackId, '', 'initial delete cannot leave a dangling selection');
+    S.history.doUndo();
+    assert.strictEqual(S.selectedTrackId, 'transcription:drums',
+        'undo restores the selection captured with the deleted row');
+    // This interaction happens outside history, after the row exists again.
+    // Redo calls DeleteDrumTabCmd.exec directly, not deleteTrack's click handler.
+    S.selectedTrackId = 'transcription:drums';
+    S.history.doRedo();
+    assert.strictEqual(S.selectedTrackId, '',
+        'redo owns selection cleanup instead of leaving a missing row selected');
+});
+
 t('a dirty tab deleted and undone returns dirty (its edits still need saving)', () => {
     seed();
     S.drumTabDirty = true;   // the user edited hits earlier this session
