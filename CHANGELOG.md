@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *analyze* follows the click.
 
 ### Fixed
+- **A Guitar Pro import whose first track is empty no longer loses the beat
+  grid.** The create flow read the song timeline (beats/sections/length)
+  blindly from the first converted track's XML — and a lyrics-only GP vocal
+  track converts to an empty XML, so charts with a vocal track listed first
+  imported grid-less: notes present but no beats, with the entire Tempo Map
+  surface silently hidden (its button gates on a ≥2-beat grid). The timeline
+  is now read from the first track that actually carries a grid.
 - **Horizontal scrolling works before the first Play in MIDI-only sessions.**
   A session with no decoded audio only learned its length inside
   `startPlayback()`, so until the user pressed Play once the scroll clamp saw
