@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Map-health worklist: H / Shift+H walk the drifting bars.** In Tempo Map
+  mode, H jumps to the next amber/red bar from the playhead (Shift+H goes
+  back), wrapping at the ends — each landing arrives the same way the grid
+  pill does: Tempo Map open, the bar scrolled into view, Suggest anchored on
+  its downbeat. Fix a bar, press H, land on the next: map refinement becomes
+  a triage loop instead of a full-song scrub.
 - **The master mix is a channel strip in the mixer.** Every audio source now has
   a vertical strip in the mixer drawer — the master mix leads the audio band
   (matching the DAW console), followed by the stems, then the MIDI parts and the

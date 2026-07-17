@@ -33,7 +33,7 @@
 
 import { _ensureOnsets, _ensureOnsetsShifted, startPlayback, stopPlayback } from './audio.js';
 import { ctx } from './canvas.js';
-import { _mapHealthPure, MAP_HEALTH_COLORS } from './map-health.js';
+import { _mapHealthProblemsPure, _mapHealthPure, _mapHealthStepProblemPure, MAP_HEALTH_COLORS } from './map-health.js';
 import {
     LABEL_W, MINIMAP_H, RULER_H, TIMELINE_TOP, timeToX, xToTime,
 } from './geometry.js';
@@ -505,6 +505,27 @@ export function _mapHealthGotoMeasure(m) {
     const cmd = _editorCommandById('tempoSuggestFit');
     const key = ((cmd && cmd.keys && cmd.keys[editorShortcutProfile]) || 'G').split(' (')[0];
     setStatus(`Bar ${m.measure} drifts ${pct}% from the recording — Tempo Map opened; press ${key} to fit the barlines from here.`);
+}
+
+// The worklist walk (map-health triage loop): jump to the next/previous
+// DRIFTING bar from the playhead, wrapping — the same take-me-to-the-fix
+// motion as the LCD pill and the wash click-through, so each landing arrives
+// with Tempo Map open and Suggest anchored. Fix a bar, press the key again,
+// land on the next: refinement stops being a full-song scrub. Works with the
+// wash toggled off, like the pill does.
+export function _mapHealthStepProblem(dir) {
+    if (!S.audioBuffer) {
+        setStatus('Grid health needs a recording to judge against.');
+        return true;
+    }
+    const problems = _mapHealthProblemsPure(_mapHealthResults());
+    if (!problems.length) {
+        setStatus('Grid health: no drifting bars — nothing to fix.');
+        return true;
+    }
+    const m = _mapHealthStepProblemPure(problems, S.cursorTime, dir);
+    if (m) _mapHealthGotoMeasure(m);
+    return true;
 }
 
 export function rulerOnMouseDown(e, x, y, w) {

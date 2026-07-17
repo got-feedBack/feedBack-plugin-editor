@@ -198,4 +198,32 @@ export function _mapHealthWorstPure(result) {
     }
     return worst;
 }
+
+// The worklist: every DRIFTING measure (amber/red), in song order. Green and
+// grey never appear — same no-crying-wolf rule as the wash and the pill.
+export function _mapHealthProblemsPure(result) {
+    const ms = result && Array.isArray(result.measures) ? result.measures : [];
+    return ms.filter(m => m.band === 'red' || m.band === 'amber')
+        .slice()
+        .sort((a, b) => (a.startTime || 0) - (b.startTime || 0));
+}
+
+// Next (dir >= 0) or previous (dir < 0) problem measure relative to
+// `fromTime`, wrapping at the ends so repeated presses cycle the worklist.
+// The epsilon keeps a landed-on bar from matching itself (goto seeks the
+// playhead to the bar's own startTime — without it, "next" would re-find
+// the bar you are standing on forever).
+export function _mapHealthStepProblemPure(problems, fromTime, dir) {
+    const list = Array.isArray(problems) ? problems : [];
+    if (!list.length) return null;
+    const t = Number.isFinite(fromTime) ? fromTime : 0;
+    const EPS = 1e-3;
+    if (!(dir < 0)) {
+        return list.find(m => (m.startTime || 0) > t + EPS) || list[0];
+    }
+    for (let i = list.length - 1; i >= 0; i--) {
+        if ((list[i].startTime || 0) < t - EPS) return list[i];
+    }
+    return list[list.length - 1];
+}
 /* @pure:map-health:end */
