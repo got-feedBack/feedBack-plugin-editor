@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *analyze* follows the click.
 
 ### Fixed
+- **A Guitar Pro import whose first track is empty no longer loses the beat
+  grid.** The create flow read the song timeline (beats/sections/length)
+  blindly from the first converted track's XML — and a lyrics-only GP vocal
+  track converts to an empty XML, so charts with a vocal track listed first
+  imported grid-less: notes present but no beats, with the entire Tempo Map
+  surface silently hidden (its button gates on a ≥2-beat grid). The timeline
+  is now read from the first track that actually carries a grid.
 - **Audio stem lanes now draw their waveforms.** The per-stem waveform builder
   was handed the decoded `AudioBuffer` instead of its channel `Float32Array`, so
   every sample read `undefined` and the peaks collapsed to ±Infinity — the lane

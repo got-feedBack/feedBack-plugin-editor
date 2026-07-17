@@ -49,6 +49,33 @@ def _coerce_create_audio_tracks(value):
     return rows
 
 
+def _pick_timeline_xml_root(xml_paths):
+    """The parsed root of the first converted-track XML that carries a beat
+    grid (a non-empty ``<ebeats>``), falling back to the first parseable XML.
+
+    The song timeline (songLength / ebeats / sections) is read from ONE
+    track's XML — every track carries the same song-wide grid, EXCEPT tracks
+    the converter emits empty: a lyrics-only GP vocal track converts to an
+    XML with no ebeats and no notes. Reading blindly from ``xml_paths[0]``
+    let such a track land first and import a GRID-LESS session — notes
+    present, no beats, and the whole Tempo Map surface hidden with no hint
+    why (the button gates on a >=2-beat grid).
+    """
+    import xml.etree.ElementTree as XET
+    first_root = None
+    for p in xml_paths or []:
+        try:
+            root = XET.parse(p).getroot()
+        except (XET.ParseError, OSError):
+            continue
+        if first_root is None:
+            first_root = root
+        container = root.find("ebeats")
+        if container is not None and container.find("ebeat") is not None:
+            return root
+    return first_root
+
+
 def _copy_create_audio_tracks(stems_dir, audio_file, audio_tracks):
     """Copy non-guide create sources into ``stems/`` and return manifest rows."""
     stems_dir = Path(stems_dir)
@@ -6941,12 +6968,12 @@ def setup(app, context):
                 arr = parse_arrangement(xml_path)
                 song.arrangements.append(arr)
 
-            # Get beats and sections from first XML
-            if xml_paths:
-                import xml.etree.ElementTree as XET
-                tree = XET.parse(xml_paths[0])
-                root = tree.getroot()
-
+            # Get beats and sections from the first XML that actually carries
+            # a grid — NOT blindly xml_paths[0]: an empty converted track
+            # (e.g. a lyrics-only GP vocal track) landing first used to
+            # import a grid-less session. See _pick_timeline_xml_root.
+            root = _pick_timeline_xml_root(xml_paths)
+            if root is not None:
                 el = root.find("songLength")
                 if el is not None and el.text:
                     song.song_length = float(el.text)
