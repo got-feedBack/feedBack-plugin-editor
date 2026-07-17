@@ -4507,8 +4507,8 @@ def setup(app, context):
         #             untouched. This is what the editor frontend sends
         #             unless the user imported/edited a drum tab this session.
         #   - None  → explicit removal — unlinks drum_tab.json and clears the
-        #             manifest key. Supported by the API for completeness;
-        #             the current editor UI has no remove-drums control.
+        #             manifest key. The Tracks column's drum-transcription
+        #             delete ships this (a dirty null in _buildSaveBody).
         drum_tab_payload = data.get("drum_tab", _DRUM_TAB_ABSENT)
         if drum_tab_payload is not _DRUM_TAB_ABSENT and not isinstance(
             drum_tab_payload, (dict, type(None))

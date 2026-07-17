@@ -43,6 +43,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *analyze* follows the click.
 
 ### Fixed
+- **Deleting the drum transcription is undoable — and no longer wipes the
+  whole undo stack.** The Tracks column's drum delete used to blank the drum
+  tab in place and reset undo history entirely, so one confirm click could
+  strand an hour of edits with nothing to undo. It is now a single history
+  command: Ctrl+Z brings the drums back (same tab object, mixer strip,
+  stem pairing, and tree placement included), and every earlier edit keeps
+  its undo.
+- **A deleted drum transcription stays deleted after Save.** The save body
+  only shipped `drum_tab` when it was non-null, so a delete never reached
+  the backend's explicit-removal path — the pack kept its `drum_tab.json`
+  and the drums resurrected on the next load. A dirty null now ships as the
+  removal wire.
 - **Saving a from-scratch song now works — Save builds it.** A create-mode
   session (New… → GP/MIDI import or blank draft) used to dead-end on Save with
   "Only sloppak-format sessions can be saved" (or the baffling "drum_tab can
