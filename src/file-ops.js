@@ -7,6 +7,7 @@ import { _anchorsAreDirty, _stripToneInternals, _tonesAreDirty, _updateTonesButt
 import { _abDisarm, _guideAnalysisReset, _resetAuditionForNewSong, loadAudio, resetStemAudioCache, syncStemAudio } from './audio.js';
 import { _handshapesAreDirty, _normalizeHandshape, flattenChords, reconstructChords } from './chords.js';
 import { _normalizeTuningToLanes } from './commands.js';
+import { editorBuild } from './create.js';
 import { EditHistory } from './history.js';
 import { isKeysMode, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning, _stringCountFor } from './lanes.js';
@@ -68,7 +69,7 @@ async function _writeExternalCopy(handle) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = (S.filename || 'song.feedpak').split(/[\\/]/).pop();
+    a.download = _suggestedSaveNamePure(S.filename, S.title, S.artist);
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 0);
 }
@@ -83,6 +84,42 @@ async function _mirrorExternalCopy() {
         setStatus('Save As copy failed: ' + e.message);
         return false;
     }
+}
+
+// showSaveFilePicker creates the file on disk the moment the user confirms
+// the dialog, so a save that then fails strands a 0-byte husk exactly where
+// the user expected their song. Remove it — but ONLY when it is actually
+// empty: Save As can also target an existing pack (overwrite), whose bytes
+// survive a failed save untouched (createWritable() stages into a swap file
+// until close()), and those must never be deleted. handle.remove() is
+// Chromium-only and still marked experimental, hence the typeof gate and
+// the swallow-everything catch: cleanup is best-effort, the save error is
+// the thing the user needs to see.
+export async function _removeEmptyPickedFile(handle) {
+    if (!handle) return;
+    try {
+        const f = await handle.getFile();
+        if (f.size === 0 && typeof handle.remove === 'function') {
+            await handle.remove();
+        }
+    } catch (_) { /* best-effort cleanup only */ }
+}
+
+// The Save As suggested filename. Library sessions rename their own file
+// (swapping the extension to .feedpak); a create-mode session has no
+// filename yet, so approximate the name the build endpoint will derive
+// (routes.py _build_sloppak: "<Title>_<Artist>.feedpak" with
+// Windows-reserved characters replaced) instead of a generic
+// "song.feedpak".
+export function _suggestedSaveNamePure(filename, title, artist) {
+    const base = (filename || '').split(/[\\/]/).pop()
+        .replace(/\.(archive|sloppak)$/i, '.feedpak');
+    if (base) return base;
+    const clean = (s) => String(s || '').replace(/[<>:"/\\|?*]/g, '_').trim();
+    const t = clean(title);
+    const a = clean(artist);
+    if (!t && !a) return 'song.feedpak';
+    return `${t || 'Untitled'}_${a || 'Unknown'}.feedpak`;
 }
 
 export async function loadCDLC(filename, options = {}) {
@@ -676,6 +713,21 @@ function _buildSaveBody(forceFullSnapshot) {
 
 export async function saveCDLC(options = {}) {
     if (!S.sessionId) return false;
+    // A create-mode session has no library file to save over — /save rejects
+    // it outright. Persisting one IS building: route every save (Ctrl+S, the
+    // close-guard's "Save", the host saveSession hook) through editorBuild,
+    // which writes "<Title>_<Artist>.feedpak" into the library — the same
+    // deterministic filename every time, so repeat saves overwrite in place.
+    // Without this leg an hour of create-mode charting dead-ends in
+    // "Save error: Only sloppak-format sessions can be saved" (or its
+    // drum_tab variant) with no way to persist. editorBuild owns
+    // markSessionSaved() and the status line; the external mirror rides
+    // after it exactly as it does after a library save.
+    if (S.createMode) {
+        if (!(await editorBuild())) return false;
+        if (!options.skipExternal && !(await _mirrorExternalCopy())) return false;
+        return true;
+    }
     // archive can't carry >6-string guitar / >4-string bass. If the user
     // pushed past those limits while editing, ask them whether to spill
     // into a new .sloppak or accept the truncation before we touch disk.
@@ -790,8 +842,7 @@ export async function editorSaveAs() {
     if (typeof window.showSaveFilePicker === 'function') {
         try {
             handle = await window.showSaveFilePicker({
-                suggestedName: (S.filename || 'song.feedpak').split(/[\\/]/).pop()
-                    .replace(/\.(archive|sloppak)$/i, '.feedpak'),
+                suggestedName: _suggestedSaveNamePure(S.filename, S.title, S.artist),
                 types: [{
                     description: 'feedBack song package',
                     accept: { 'application/zip': ['.feedpak', '.sloppak'] },
@@ -804,10 +855,17 @@ export async function editorSaveAs() {
         }
     }
 
+    // A create-mode session rides the saveCDLC leg: its create-mode branch
+    // builds the pack into the library (and /build records the filename on
+    // the backend session, which is what lets /session/export serve the
+    // external copy below).
     const saved = S.format === 'archive'
         ? await editorSaveAsSloppakConfirm()
         : await saveCDLC({ skipExternal: true });
-    if (!saved) return false;
+    if (!saved) {
+        await _removeEmptyPickedFile(handle);   // don't strand a 0-byte husk
+        return false;
+    }
     try {
         await _writeExternalCopy(handle);
         externalSaveHandle = handle;
@@ -817,6 +875,7 @@ export async function editorSaveAs() {
     } catch (e) {
         markSessionDirty();
         setStatus('Save As failed: ' + e.message);
+        await _removeEmptyPickedFile(handle);   // ditto for a failed write
         return false;
     }
 }
@@ -835,12 +894,15 @@ export async function editorSaveAs() {
 // this session (hasHandle=false) AND the picker API exists (without it,
 // editorSaveAs can only trigger a download, so fall back to the library save)
 // AND the session can actually complete the Save As flow (sessionCanExport).
-// The last gate matters: a create-mode session is rejected by /save outright,
-// and a directory-form sloppak library-saves fine but /session/export can't
-// serve a packed file for it — routing either through the picker would pop
-// the explorer, have the user pick a destination, then fail (and re-prompt on
-// every subsequent Ctrl+S, with the dir-form session falsely re-marked dirty
-// after a library save that succeeded).
+// The last gate matters: a directory-form sloppak library-saves fine but
+// /session/export can't serve a packed file for it — routing it through the
+// picker would pop the explorer, have the user pick a destination, then fail
+// (and re-prompt on every subsequent Ctrl+S, with the session falsely
+// re-marked dirty after a library save that succeeded). A create-mode
+// session is also kept off the first-save picker, for a different reason:
+// its Save is a Build whose pack lands in the library under a
+// title/artist-derived name — there is no location to choose. An explicit
+// Save As still works there (build + export a copy to the picked file).
 export function _saveShouldPickPure(hasHandle, hasPickerApi, sessionCanExport) {
     return !hasHandle && !!hasPickerApi && !!sessionCanExport;
 }
