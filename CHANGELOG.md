@@ -7,16 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Docs refresh — the guide walks the whole journey.** The User Guide
+  (Help ▸ User Guide) opens with a six-step journey map, and §1 now showcases
+  every way to start a feedpak (audio formats + YouTube, GP/MIDI/XML,
+  MusicXML keys, stems, blank + arrangement chips, GoPlayAlong) through to a
+  pre-flight-checklisted §9 Save & Build. Fresh screenshots captured from
+  current main (start landing, the create dialog with a real audio+chart
+  import staged, the synced workspace, note editing); the `T` shortcut row
+  corrected to the tool palette (`T,T` = Tempo Map). README rewritten as the
+  repo landing page: hero shot, User Guide link up top, and a feature list
+  matching what shipped (track sessions + mixer console, click tools, keys
+  hands, canvas appearance, stems).
+
 ### Added
+- **The master mix can be muted (and soloed, and faded) from the Tracks
+  pane.** The master row used to carry no inline strip — its controls lived
+  only in the mixer drawer. The pane now mirrors the drawer: same M/S/fader,
+  same canonical mix state, and the master keeps its output-bus semantics
+  (its own mute silences it; another track's solo never does).
 - **The master mix is a channel strip in the mixer.** Every audio source now has
   a vertical strip in the mixer drawer — the master mix leads the audio band
   (matching the DAW console), followed by the stems, then the MIDI parts and the
   SOURCE/GUIDE/CLICK/MASTER buses. Its fader, mute, and solo are real: the active
   source's reference playback now routes through its own per-source gain before
   the SOURCE submix, so riding the master strip actually changes its level. The
-  Tracks pane still lists the master as a selectable source row (click it to
-  chart against the full mix), but its strip **controls** — fader, mute, solo —
-  live only in the mixer, not the pane.
+  Tracks pane also exposes the same master fader, mute, and solo controls
+  inline, so the pane and mixer drawer share one canonical mix state.
 - **Click a track to chart against it.** Selecting an audio track (the master
   mix or any stem) in the Tracks column now makes it the **active source**:
   the main waveform shows that track and the onset tools (Suggest, snapping)
@@ -32,6 +50,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imported grid-less: notes present but no beats, with the entire Tempo Map
   surface silently hidden (its button gates on a ≥2-beat grid). The timeline
   is now read from the first track that actually carries a grid.
+- **Horizontal scrolling works before the first Play in MIDI-only sessions.**
+  A session with no decoded audio only learned its length inside
+  `startPlayback()`, so until the user pressed Play once the scroll clamp saw
+  a 0-length song and pinned the view to the start — wheel, middle-drag pan,
+  and the minimap all refused to scroll left/right, then mysteriously cured
+  themselves after the first Play. The clamp now falls back to the same rule
+  playback uses: the grid / authored content bounds the song. Audio-bounded
+  sessions keep their exact old clamp.
+- **Deleting the drum transcription is undoable — and no longer wipes the
+  whole undo stack.** The Tracks column's drum delete used to blank the drum
+  tab in place and reset undo history entirely, so one confirm click could
+  strand an hour of edits with nothing to undo. It is now a single history
+  command: Ctrl+Z brings the drums back (same tab object, mixer strip,
+  stem pairing, and tree placement included), and every earlier edit keeps
+  its undo.
+- **A deleted drum transcription stays deleted after Save.** The save body
+  only shipped `drum_tab` when it was non-null, so a delete never reached
+  the backend's explicit-removal path — the pack kept its `drum_tab.json`
+  and the drums resurrected on the next load. A dirty null now ships as the
+  removal wire.
+- **Saving a from-scratch song now works — Save builds it.** A create-mode
+  session (New… → GP/MIDI import or blank draft) used to dead-end on Save with
+  "Only sloppak-format sessions can be saved" (or the baffling "drum_tab can
+  only be saved to sloppak-format songs" when the import brought drums): the
+  `/save` route only writes over an existing library pack, and a new song has
+  none yet. Save (Ctrl+S), Save As, and the close-guard's "Save" now route a
+  create-mode session through the build — the pack lands in the library as
+  `<Title>_<Artist>.feedpak` (repeat saves overwrite in place), the build
+  clears the unsaved-changes flag, and `/build` records the filename on the
+  session so Save As can export a copy to the picked file. The backend `/save`
+  rejection is now an actionable message pointing at Build for older clients.
+- **A failed Save As no longer strands a 0-byte `.feedpak`.** The native
+  picker creates the file the moment the destination is confirmed, so a save
+  that then failed left an empty husk where the user expected their song. The
+  husk is now removed after a failed save — only when the file is genuinely
+  empty, so overwriting an existing pack never risks its bytes.
+- **Save As suggests the real name for a new song.** A create-mode session has
+  no filename yet; the picker used to suggest `song.feedpak`. It now derives
+  `<Title>_<Artist>.feedpak` — the same name the build writes.
 - **Audio stem lanes now draw their waveforms.** The per-stem waveform builder
   was handed the decoded `AudioBuffer` instead of its channel `Float32Array`, so
   every sample read `undefined` and the peaks collapsed to ±Infinity — the lane

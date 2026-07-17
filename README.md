@@ -1,36 +1,58 @@
 # Arrangement Editor
 
 The **Song Editor** plugin for [feedBack](https://github.com/got-feedback/feedback)
-(plugin id `editor`) — a DAW-style timeline editor for building and editing
-feedpak arrangements: import Guitar Pro tabs, MIDI, or community XML; sync a
-chart to a recording; author and tune every note; and build the result back
-into a `.feedpak` package the rest of the ecosystem plays.
+(plugin id `editor`) — a DAW-style timeline editor that turns a recording into
+a playable feedBack chart: import a tab or start from audio, line the grid up
+to the take, author every note, and build a `.feedpak` the whole ecosystem
+plays.
+
+![The Song Editor: waveform, beat grid, and a synced Guitar Pro chart on the string lanes.](assets/guide/workspace.png)
+
+**New here?** The **[User Guide](docs/USER-GUIDE.md)** (also in-app under
+Help ▸ User Guide) walks the whole journey — create a project from a
+recording, a chart, or both; fit the tempo map; chart the notes; add tracks,
+stems, and drums; mix; and build the finished feedpak.
 
 It is the largest plugin in the ecosystem. If you are here to work on it,
 read this top-to-bottom once — the architecture section saves real time.
 
 ## What it does
 
-- **Import** — Guitar Pro (GP3–GP8), MIDI (with tempo-map import), community
-  arrangement XML, MusicXML-adjacent sources, GoPlayAlong sync sidecars, and
-  existing `.feedpak`/archive files, all normalized into one internal model.
-- **Edit** — a canvas timeline with per-part views: String view (lanes per
-  string), a piano roll (with resolver-assisted fretted authoring), a drum
-  piece-lane grid, and a read-only engraved tab preview. Undo/redo is the
-  edit contract: every mutation is a command with exec/rollback.
+- **Start from anything** — audio (MP3/WAV/FLAC/OGG/M4A/OPUS/AAC/WEM, or a
+  YouTube URL), Guitar Pro (GP3–GP8), MIDI (tempo map included), community
+  arrangement XML, MusicXML keys scores, GoPlayAlong sync sidecars, existing
+  `.feedpak`/archive files — or a blank timeline. Audio + chart together get
+  **auto-sync**: the imported chart lines up to the recording bar by bar.
+- **Edit like a DAW** — a canvas timeline with per-part views: String view
+  (lanes per string), a piano roll (with resolver-assisted fretted
+  authoring), a drum piece-lane grid, and a live engraved tab/score view.
+  A Logic-style **tool palette** (`T`: pointer, pencil/draw, eraser, marquee,
+  mute, scissors), four **shortcut profiles** (FeedBack / Logical / Cableton /
+  Legacy-EOF), a searchable command palette (`Ctrl+K`), and a customizable
+  canvas (grid strength, brightness, hue). Undo/redo is the edit contract:
+  every mutation is a command with exec/rollback.
 - **Time** — a beat-primary tempo map (`beatOf`/`timeOf` over one anchor
   set): Tempo Map mode fits the grid to a recording (sync points, tap tempo,
-  metric modulation, beat-lock), snap rides the same converter (grid, onset,
-  swing), and loop regions/bookmarks/count-in ride the transport.
-  The authoritative musical ruler fits bars and beats to fixed source audio;
-  authored musical content aligns through that ruler. See
+  metric modulation, beat-lock, assisted mapping, Map Health), snap rides the
+  same converter (grid, onset, swing), and loop regions/bookmarks/count-in
+  ride the transport. The authoritative musical ruler fits bars and beats to
+  fixed source audio; authored musical content aligns through that ruler. See
   [`docs/TEMPO-MAPPING-DESIGN.md`](docs/TEMPO-MAPPING-DESIGN.md) for the four
   timing domains, marker model, assisted mapping, and audition-speed rules.
-- **Companion strips** — a fretboard strip for fretted parts (candidate
-  positions from the suggest-position resolver, click to assign) and a drum
-  kit / pad strip for drum parts (GM-mapped, MIDI-monitor capable).
-- **Advisory lints** — drum limb feasibility and fretted playability checks
-  that name physical questions without ever blocking or auto-fixing.
+- **Tracks, stems, and the mixer** — tracks are first-class objects in a
+  persistent track column: rename, reorder, fold into folders, pair a
+  transcription with the studio stem it was charted against. Load
+  per-instrument **stems** and chart against any of them in isolation. The
+  **mixer console** (`Shift+C`) is vertical channel strips with live meters
+  over SOURCE/GUIDE/CLICK buses and a MASTER output — every fader unity with
+  +10 dB of headroom.
+- **Keys with hands** — MusicXML imports keep the score's left/right hand
+  split; hands are authorable per note or stamped by split point, shaded on
+  the roll, and drive the grand-staff notation's hand split.
+- **Companion strips & lints** — a fretboard strip for fretted parts
+  (candidate positions from the suggest-position resolver, click to assign),
+  a drum kit / pad strip (GM-mapped, MIDI-monitor capable), and advisory
+  playability/limb lints that name physical questions without ever blocking.
 - **Build** — assembles the finished `.feedpak` through the host's core
   libraries, so output packages are compatible everywhere.
 
