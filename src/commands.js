@@ -1214,11 +1214,34 @@ export class RemoveStringCmd {
 // non-flattened arrangement to the modal instead.
 export class RemoveStringWithNotesCmd {
     constructor(arrIdx, position, noteIndices) {
+        this.arrIdx = arrIdx;
         this.deleteCmd = new DeleteNotesCmd(noteIndices);
         this.removeCmd = new RemoveStringCmd(arrIdx, position);
     }
-    exec() { this.deleteCmd.exec(); this.removeCmd.exec(); }
-    rollback() { this.removeCmd.rollback(); this.deleteCmd.rollback(); }
+    _inArrangement(fn) {
+        const previousArr = S.currentArr;
+        const previousSelection = previousArr === this.arrIdx ? null : new Set(S.sel);
+        S.currentArr = this.arrIdx;
+        try { fn(); } finally {
+            S.currentArr = previousArr;
+            if (previousSelection) {
+                S.sel.clear();
+                for (const index of previousSelection) S.sel.add(index);
+            }
+        }
+    }
+    exec() {
+        this._inArrangement(() => {
+            this.deleteCmd.exec();
+            this.removeCmd.exec();
+        });
+    }
+    rollback() {
+        this._inArrangement(() => {
+            this.removeCmd.rollback();
+            this.deleteCmd.rollback();
+        });
+    }
 }
 
 /* @pure:replace-chart:start */

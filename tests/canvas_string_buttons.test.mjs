@@ -99,6 +99,33 @@ t('remove-with-notes composes with a prior AddStringCmd round trip', () => {
     assert.deepStrictEqual(snap(arr), withNote);
 });
 
+t('remove-with-notes undo and redo stay bound to their original arrangement', () => {
+    const { S, arr } = seedBass5();
+    const other = {
+        name: 'Lead', tuning: [0, 0, 0, 0, 0, 0],
+        notes: [N(9, 0, 9)], chords: [], chord_templates: [],
+    };
+    S.arrangements.push(other);
+    const before = snap(arr);
+    const otherBefore = snap(other);
+    S.history.exec(new RemoveStringWithNotesCmd(0, 'low', [0, 1]));
+    const after = snap(arr);
+
+    S.currentArr = 1;
+    S.sel = new Set([0]);
+    S.history.doUndo();
+    assert.strictEqual(S.currentArr, 1, 'undo restores the user-selected arrangement');
+    assert.deepStrictEqual([...S.sel], [0], 'undo preserves its selection');
+    assert.deepStrictEqual(snap(arr), before, 'undo restores notes to the original arrangement');
+    assert.deepStrictEqual(snap(other), otherBefore, 'undo leaves the selected arrangement untouched');
+
+    S.history.doRedo();
+    assert.strictEqual(S.currentArr, 1, 'redo restores the user-selected arrangement');
+    assert.deepStrictEqual([...S.sel], [0], 'redo preserves its selection');
+    assert.deepStrictEqual(snap(arr), after, 'redo edits the original arrangement');
+    assert.deepStrictEqual(snap(other), otherBefore, 'redo leaves the selected arrangement untouched');
+});
+
 t('visibility: fretted String view only', () => {
     const none = {};
     assert.strictEqual(_stringButtonsVisiblePure('Lead', none), true);
