@@ -40,7 +40,7 @@ project — and it takes almost anything as a starting point:
   AAC, WEM**) or paste a **YouTube URL**. You get a timeline over the
   waveform: set the grid (§6) and chart from scratch.
 - **An existing chart** — **Guitar Pro (GP3–GP8)**, **MIDI** (its tempo map
-  comes along), **MusicXML** (imported as keys), community **arrangement XML**,
+  comes along), **MusicXML** (TAB guitar/bass or keys), community **arrangement XML**,
   or an existing
   **`.feedpak`/archive**. Every format normalizes into one internal model, so
   editing works the same wherever the chart came from.
@@ -72,8 +72,9 @@ A few sources arrive through their own doors, any time after creation:
   **from a file** (§5). **Record MIDI** still captures a live take from a
   connected device into a keys track.
 - **MusicXML** — add it directly in Create New's **Content Import**, or use
-  **Keys from MusicXML** in an open song. It imports as a keys track and
-  keeps the score's own **left/right hand** assignments (§5).
+  **Keys from MusicXML** in an open song. Authored TAB imports as a fretted
+  track with its tuning and string/fret positions; grand-staff notation imports
+  as keys and keeps the score's **left/right hand** assignments (§5).
 - **Studio stems** — after creating, load per-instrument stems (vocals,
   bass, drums…) through the stem manager (§5) for isolated listening and
   per-stem charting.
