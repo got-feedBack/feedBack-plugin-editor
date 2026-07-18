@@ -1980,6 +1980,13 @@ async function _editorDoMidiCreate() {
     }
 }
 
+export function _musicXmlCreateFailureMessagePure(detail) {
+    const reason = String(detail || '').trim().replace(/[.\s]+$/, '');
+    return 'MusicXML import failed after project creation'
+        + (reason ? ': ' + reason : '')
+        + '. The placeholder track is still open; use Add Keys ▸ MusicXML to retry.';
+}
+
 async function _editorDoMusicXmlCreate() {
     const seedPlan = _midiSeedRosterPure(createState.roster, false);
     createState.roster = seedPlan.roster;
@@ -1987,9 +1994,13 @@ async function _editorDoMusicXmlCreate() {
     await _editorDoBlankCreate();
     if (!S.sessionId || !S.arrangements.length || !data?.arrangement) return;
     if (seedPlan.seeded) { S._midiSeedArrIdx = 0; S._midiSeedSession = S.sessionId; }
-    await importMusicXmlArrangementIntoSession(
-        data.arrangement, document.getElementById('editor-create-status'),
+    const status = document.getElementById('editor-create-status');
+    const added = await importMusicXmlArrangementIntoSession(
+        data.arrangement, status,
         { label: 'MusicXML' });
+    // Blank-create already hid the modal. Surface append failures in the
+    // visible editor status instead of leaving an unexplained Lead seed.
+    if (!added) setStatus(_musicXmlCreateFailureMessagePure(status?.textContent));
 }
 
 export async function editorDoCreate() {

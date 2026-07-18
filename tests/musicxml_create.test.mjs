@@ -8,7 +8,9 @@ globalThis.document = globalThis.document || {
 globalThis.window = globalThis.window || globalThis;
 globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setItem() {} };
 
-const { _xmlImportKindPure } = await import('../src/create.js');
+const {
+    _musicXmlCreateFailureMessagePure, _xmlImportKindPure,
+} = await import('../src/create.js');
 
 const realWorldHeader = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.0 Partwise//EN"
@@ -24,8 +26,17 @@ assert.strictEqual(_xmlImportKindPure('<song><arrangement>Lead</arrangement></so
 assert.strictEqual(_xmlImportKindPure('<!-- <score-partwise/> --><song/>'), 'arrangement',
     'MusicXML-looking example markup in a comment is not the document root');
 
+assert.strictEqual(
+    _musicXmlCreateFailureMessagePure('Error registering arrangement: backend unavailable.'),
+    'MusicXML import failed after project creation: Error registering arrangement: backend unavailable. '
+        + 'The placeholder track is still open; use Add Keys ▸ MusicXML to retry.',
+);
+
 const screen = fs.readFileSync(new URL('../screen.html', import.meta.url), 'utf8');
 assert.match(screen, /accept="[^"]*\.musicxml[^"]*\.mxl[^"]*"/,
     'Content Import exposes MusicXML and compressed MusicXML extensions');
+const createSource = fs.readFileSync(new URL('../src/create.js', import.meta.url), 'utf8');
+assert.match(createSource, /if \(!added\) setStatus\(_musicXmlCreateFailureMessagePure/,
+    'post-create append failures must reach the visible editor status');
 
-console.log('musicxml create routing: 6 passed');
+console.log('musicxml create routing: 8 passed');
