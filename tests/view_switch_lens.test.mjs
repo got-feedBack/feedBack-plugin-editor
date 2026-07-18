@@ -22,6 +22,8 @@ globalThis.window = globalThis.window || globalThis;
 
 const { S } = await import('../src/state.js');
 const { _viewSwitchValuePure, editorSetViewMode } = await import('../src/key-view.js');
+const { _drumDensityMode, _editorSetDrumDensity, _editorToggleDrumDensity } =
+    await import('../src/drum.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -71,12 +73,15 @@ t('String exits the lens', () => {
     assert.strictEqual(S.tabViewMode, false, 'lens dropped on return to timeline');
 });
 
-t('drum mode: value derives from the lens bit alone', () => {
-    assert.strictEqual(_viewSwitchValuePure('string', false, 'tab', true), 'drum-grid');
-    assert.strictEqual(_viewSwitchValuePure('piano', true, 'both', true), 'drum-notation');
+t('drum mode: the lens wins, else the row density picks grid vs piano roll', () => {
+    assert.strictEqual(_viewSwitchValuePure('string', false, 'tab', true, 'full'), 'drum-grid');
+    assert.strictEqual(_viewSwitchValuePure('string', false, 'tab', true, 'compact'), 'drum-grid');
+    assert.strictEqual(_viewSwitchValuePure('string', false, 'tab', true, 'midi'), 'drum-piano');
+    // The engraved lens overrides whatever density sits underneath it.
+    assert.strictEqual(_viewSwitchValuePure('piano', true, 'both', true, 'midi'), 'drum-notation');
 });
 
-t("drum parity: 'drum-notation' engraves WITHOUT leaving the drum editor", () => {
+function seedDrumMode() {
     Object.assign(S, {
         filename: 'switch-test.sloppak',
         arrangements: [{ name: 'Lead', tuning: [0, 0, 0, 0, 0, 0], notes: [], chords: [] }],
@@ -86,12 +91,58 @@ t("drum parity: 'drum-notation' engraves WITHOUT leaving the drum editor", () =>
         drumSel: new Set(),
         tempoMapMode: false, partsViewMode: false,
     });
+}
+
+t("drum parity: 'drum-notation' engraves WITHOUT leaving the drum editor", () => {
+    seedDrumMode();
     editorSetViewMode('drum-notation');
     assert.strictEqual(S.tabViewMode, true, 'lens on');
     assert.strictEqual(S.drumEditMode, true, 'drum mode kept under the lens');
     editorSetViewMode('drum-grid');
     assert.strictEqual(S.tabViewMode, false, 'back to the grid');
     assert.strictEqual(S.drumEditMode, true, 'still in the drum editor');
+    S.drumEditMode = false; S.drumTab = null;
+});
+
+t("drum parity: 'Piano roll' IS the GM-roll density, and both controls agree", () => {
+    seedDrumMode();
+    _editorSetDrumDensity('full');
+    editorSetViewMode('drum-piano');
+    assert.strictEqual(_drumDensityMode(), 'midi', 'the dropdown sets GM-roll density');
+    // The Rows button and the dropdown read the same state — no drift.
+    assert.strictEqual(
+        _viewSwitchValuePure('string', false, 'tab', true, _drumDensityMode()), 'drum-piano');
+    S.drumEditMode = false; S.drumTab = null;
+});
+
+t('drum parity: leaving Piano roll restores the density you came from', () => {
+    seedDrumMode();
+    // A Compact user takes a trip through the roll and back.
+    _editorSetDrumDensity('compact');
+    editorSetViewMode('drum-piano');
+    assert.strictEqual(_drumDensityMode(), 'midi');
+    editorSetViewMode('drum-grid');
+    assert.strictEqual(_drumDensityMode(), 'compact', 'Compact survives the round trip');
+    // A Full user gets Full back, not Compact.
+    _editorSetDrumDensity('full');
+    editorSetViewMode('drum-piano');
+    editorSetViewMode('drum-grid');
+    assert.strictEqual(_drumDensityMode(), 'full');
+    S.drumEditMode = false; S.drumTab = null;
+});
+
+t('the Rows button and the dropdown share one setter (cycle still works)', () => {
+    seedDrumMode();
+    _editorSetDrumDensity('full');
+    _editorToggleDrumDensity();
+    assert.strictEqual(_drumDensityMode(), 'compact');
+    _editorToggleDrumDensity();
+    assert.strictEqual(_drumDensityMode(), 'midi', 'cycles into the GM roll');
+    // ...and the dropdown reflects the button's move immediately.
+    assert.strictEqual(
+        _viewSwitchValuePure('string', false, 'tab', true, _drumDensityMode()), 'drum-piano');
+    _editorToggleDrumDensity();
+    assert.strictEqual(_drumDensityMode(), 'full', 'wraps');
     S.drumEditMode = false; S.drumTab = null;
 });
 

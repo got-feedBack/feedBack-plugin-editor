@@ -11,6 +11,7 @@ import { notes } from './notes.js';
 import { S } from './state.js';
 import { PIANO_NOTE_NAMES, SCALE_INTERVALS, SCALE_LABELS, _detectKeyPure, _noteNamesForKeyPure } from './theory.js';
 import { setStatus } from './ui.js';
+import { _drumDensityMode, _drumKitDensityBack, _editorSetDrumDensity } from './drum.js';
 import { editorSetTabViewStaff, editorToggleTabView } from './tab-view-live.js';
 import { host } from './host.js';
 import { revealToolbar } from './toolbars.js';
@@ -83,10 +84,14 @@ export const editorDetectKey = () => {
 // The dropdown's selected value, derived from state: the engraved lens
 // overrides the per-part pref while it's on, and each staff profile is
 // its own option ('both' = "Notation + Tab"). In drum mode the choices
-// are the grid vs the percussion staff (the drum-mode flag stays on
-// under the lens, so lensOn is the only extra bit). Pure — node-testable.
-export function _viewSwitchValuePure(prefMode, tabLensOn, staff, drumMode) {
-    if (drumMode) return tabLensOn ? 'drum-notation' : 'drum-grid';
+// are the kit grid, the same grid at GM-roll density (the drum piano
+// roll), and the percussion staff — the drum-mode flag stays on under
+// the lens, so the lens bit wins. Pure — node-testable.
+export function _viewSwitchValuePure(prefMode, tabLensOn, staff, drumMode, drumDensity) {
+    if (drumMode) {
+        if (tabLensOn) return 'drum-notation';
+        return drumDensity === 'midi' ? 'drum-piano' : 'drum-grid';
+    }
     if (!tabLensOn) return prefMode === 'piano' ? 'piano' : 'string';
     if (staff === 'notation') return 'notation';
     if (staff === 'both') return 'both';
@@ -109,7 +114,9 @@ export function _refreshViewSwitch() {
     const visible = !S.tempoMapMode && !S.partsViewMode
         && (drumMode || (fretted && !S.drumEditMode));
     const mode = arr ? viewFor(arr) : 'string';
-    const value = _viewSwitchValuePure(mode, !!S.tabViewMode, S.tabViewStaff, drumMode);
+    const value = _viewSwitchValuePure(
+        mode, !!S.tabViewMode, S.tabViewStaff, drumMode,
+        drumMode ? _drumDensityMode() : null);
     const sig = `${visible}|${isDrums}|${drumMode}|${value}`;
     if (sig === _viewSwitchState) return;
     _viewSwitchState = sig;
@@ -118,7 +125,8 @@ export function _refreshViewSwitch() {
     // else shows the five standard views (minus the engraved ones on a
     // drums ARRANGEMENT — the same refusal the lens itself makes).
     el.querySelectorAll('option').forEach(o => {
-        const isDrumOpt = o.value === 'drum-grid' || o.value === 'drum-notation';
+        const isDrumOpt = o.value === 'drum-grid' || o.value === 'drum-piano'
+            || o.value === 'drum-notation';
         const hide = isDrumOpt ? !drumMode
             : drumMode || (isDrums && o.value !== 'string' && o.value !== 'piano');
         o.disabled = hide;
@@ -137,8 +145,13 @@ export const editorSetViewMode = (mode) => {
         _refreshViewSwitch();
         return;
     }
-    if (mode === 'drum-grid') {
+    if (mode === 'drum-grid' || mode === 'drum-piano') {
+        // Both are the SAME grid at different row densities — leave the
+        // engraved lens first, then set the density. Returning to the grid
+        // restores the last kit-ordered density (Full or Compact), so a
+        // Compact user isn't silently reset by a trip through the roll.
         if (S.tabViewMode) editorToggleTabView(false);
+        _editorSetDrumDensity(mode === 'drum-piano' ? 'midi' : _drumKitDensityBack());
         _refreshViewSwitch();
         return;
     }

@@ -224,9 +224,13 @@ gets the view that fits it automatically:
   tablature or a standard-notation staff (both at once via **View ▸ Score
   staff**). Click a beat to select its notes and seek; editing stays in
   String view / the roll, and the engraving follows every edit.
-- **Drum grid** — piece lanes, for drum tracks. The same dropdown offers
-  **Notation** there too: the drum tab engraved on a percussion staff,
-  click-to-select included; editing stays in the grid.
+- **Drum grid** — piece lanes, for drum tracks. Drums get the same three-view
+  set from the dropdown: **Drum grid**, **Piano roll** (the grid laid out on
+  General-MIDI percussion notes, pitch-ordered like a DAW drum roll), and
+  **Notation** (the tab engraved on a percussion staff, click-to-select
+  included; editing stays in the grid). The **Rows** button additionally
+  switches the grid between *Full* and *Compact* piece rows — and returning
+  from Piano roll puts you back on whichever you were using.
 
 Switch with the **view dropdown** top-right — String view, Piano roll, Tab,
 Notation, or **Notation + Tab** together — or cycle views with the keyboard

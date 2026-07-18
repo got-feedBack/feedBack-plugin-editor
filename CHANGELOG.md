@@ -50,7 +50,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drummer coming from a DAW already knows. Same grid, same piece-ids,
   same editing and colors in every mode (the view-modality one-data-path
   rule): only row order and labels change. The preference persists like
-  the other density modes.
+  the other density modes. It is also the dropdown's **Piano roll** entry for
+  drum tracks (below), so drums advertise their layouts in the same place
+  fretted tracks do.
+- **Drums reach view parity: Drum grid · Piano roll · Notation.** With the
+  GM roll and the view dropdown both in place, the drum editor's dropdown
+  now lists all three layouts — `Piano roll` selects GM-roll density, so the
+  drum piano roll is discoverable where users look for views instead of only
+  behind the Rows button. Full/Compact stay on Rows (they're densities of the
+  kit-ordered grid; GM roll is the pitch axis), and returning to `Drum grid`
+  restores the density you came from rather than resetting to Full. Both
+  controls route through one setter, so they can't drift apart. Drums now
+  match fretted tracks' vocabulary: instrument geometry → pitch-ordered →
+  engraved.
 - **Tab and Notation join the view switcher — now a dropdown.** The live
   engraved score existed but was reachable only through the view-cycle
   shortcut and the View menu — the top-right switcher showed just
