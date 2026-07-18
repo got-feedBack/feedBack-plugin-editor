@@ -71,6 +71,30 @@ t('String exits the lens', () => {
     assert.strictEqual(S.tabViewMode, false, 'lens dropped on return to timeline');
 });
 
+t('drum mode: value derives from the lens bit alone', () => {
+    assert.strictEqual(_viewSwitchValuePure('string', false, 'tab', true), 'drum-grid');
+    assert.strictEqual(_viewSwitchValuePure('piano', true, 'both', true), 'drum-notation');
+});
+
+t("drum parity: 'drum-notation' engraves WITHOUT leaving the drum editor", () => {
+    Object.assign(S, {
+        filename: 'switch-test.sloppak',
+        arrangements: [{ name: 'Lead', tuning: [0, 0, 0, 0, 0, 0], notes: [], chords: [] }],
+        currentArr: 0, sel: new Set(), drag: null,
+        tabViewMode: false, tabViewStaff: 'tab',
+        drumEditMode: true, drumTab: { version: 1, name: 'Drums', kit: [], hits: [] },
+        drumSel: new Set(),
+        tempoMapMode: false, partsViewMode: false,
+    });
+    editorSetViewMode('drum-notation');
+    assert.strictEqual(S.tabViewMode, true, 'lens on');
+    assert.strictEqual(S.drumEditMode, true, 'drum mode kept under the lens');
+    editorSetViewMode('drum-grid');
+    assert.strictEqual(S.tabViewMode, false, 'back to the grid');
+    assert.strictEqual(S.drumEditMode, true, 'still in the drum editor');
+    S.drumEditMode = false; S.drumTab = null;
+});
+
 t('lens refuses keys/drums tracks through the dropdown too', () => {
     S.arrangements = [{ name: 'Keys', tuning: [0, 0, 0, 0, 0, 0], notes: [], chords: [] }];
     S.currentArr = 0; S.tabViewMode = false;

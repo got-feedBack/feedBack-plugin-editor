@@ -82,8 +82,11 @@ export const editorDetectKey = () => {
 
 // The dropdown's selected value, derived from state: the engraved lens
 // overrides the per-part pref while it's on, and each staff profile is
-// its own option ('both' = "Notation + Tab"). Pure — testable in node.
-export function _viewSwitchValuePure(prefMode, tabLensOn, staff) {
+// its own option ('both' = "Notation + Tab"). In drum mode the choices
+// are the grid vs the percussion staff (the drum-mode flag stays on
+// under the lens, so lensOn is the only extra bit). Pure — node-testable.
+export function _viewSwitchValuePure(prefMode, tabLensOn, staff, drumMode) {
+    if (drumMode) return tabLensOn ? 'drum-notation' : 'drum-grid';
     if (!tabLensOn) return prefMode === 'piano' ? 'piano' : 'string';
     if (staff === 'notation') return 'notation';
     if (staff === 'both') return 'both';
@@ -97,30 +100,48 @@ export function _refreshViewSwitch() {
     const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
     const fretted = !!arr && !KEYS_PATTERN.test(arr.name || '');
     const isDrums = !!arr && /^drums/i.test(arr.name || '');
-    // Only fretted parts get a choice (keys are piano-locked), and only
-    // when a focus editor is showing (not drum/tempo/parts modes). The
-    // engraved lens keeps the dropdown visible — it IS one of the views.
-    const visible = fretted && !S.drumEditMode && !S.tempoMapMode && !S.partsViewMode;
+    // The DRUM editor gets its own two options (grid / percussion staff) —
+    // its mode flag stays on under the drum lens, so it is the one signal.
+    const drumMode = !!S.drumEditMode && !!S.drumTab;
+    // Fretted parts get the full choice (keys are piano-locked), drum mode
+    // gets its pair, and the tempo/parts lenses hide the dropdown. The
+    // engraved lens keeps it visible — it IS one of the views.
+    const visible = !S.tempoMapMode && !S.partsViewMode
+        && (drumMode || (fretted && !S.drumEditMode));
     const mode = arr ? viewFor(arr) : 'string';
-    const value = _viewSwitchValuePure(mode, !!S.tabViewMode, S.tabViewStaff);
-    const sig = `${visible}|${isDrums}|${value}`;
+    const value = _viewSwitchValuePure(mode, !!S.tabViewMode, S.tabViewStaff, drumMode);
+    const sig = `${visible}|${isDrums}|${drumMode}|${value}`;
     if (sig === _viewSwitchState) return;
     _viewSwitchState = sig;
     el.classList.toggle('hidden', !visible);
-    if (el.value !== value) el.value = value;
-    // Drums have no tab/notation (same refusal the lens itself makes) —
-    // drop those options instead of offering choices that only refuse.
+    // Option sets are mode-exclusive: drum mode shows its pair, everything
+    // else shows the five standard views (minus the engraved ones on a
+    // drums ARRANGEMENT — the same refusal the lens itself makes).
     el.querySelectorAll('option').forEach(o => {
-        if (o.value !== 'string' && o.value !== 'piano') {
-            o.disabled = isDrums;
-            o.hidden = isDrums;
-        }
+        const isDrumOpt = o.value === 'drum-grid' || o.value === 'drum-notation';
+        const hide = isDrumOpt ? !drumMode
+            : drumMode || (isDrums && o.value !== 'string' && o.value !== 'piano');
+        o.disabled = hide;
+        o.hidden = hide;
     });
+    if (el.value !== value) el.value = value;
     const pill = document.getElementById('editor-roll-lock-pill');
-    if (pill) pill.classList.toggle('hidden', !(visible && !S.tabViewMode && mode === 'piano'));
+    if (pill) pill.classList.toggle('hidden', !(visible && !drumMode && !S.tabViewMode && mode === 'piano'));
 }
 
 export const editorSetViewMode = (mode) => {
+    // Drum-mode pair: the lens toggle carries the drum source itself (the
+    // drum-editor flag stays on underneath either way).
+    if (mode === 'drum-notation') {
+        editorToggleTabView(true);
+        _refreshViewSwitch();
+        return;
+    }
+    if (mode === 'drum-grid') {
+        if (S.tabViewMode) editorToggleTabView(false);
+        _refreshViewSwitch();
+        return;
+    }
     // Tab / Notation / Notation+Tab are the engraved lens with the matching
     // staff profile — with a dropdown every profile is an explicit option,
     // so the choice maps straight onto the reading preference.

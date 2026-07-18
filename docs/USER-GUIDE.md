@@ -224,7 +224,9 @@ gets the view that fits it automatically:
   tablature or a standard-notation staff (both at once via **View ▸ Score
   staff**). Click a beat to select its notes and seek; editing stays in
   String view / the roll, and the engraving follows every edit.
-- **Drum grid** — piece lanes, for drum tracks.
+- **Drum grid** — piece lanes, for drum tracks. The same dropdown offers
+  **Notation** there too: the drum tab engraved on a percussion staff,
+  click-to-select included; editing stays in the grid.
 
 Switch with the **view dropdown** top-right — String view, Piano roll, Tab,
 Notation, or **Notation + Tab** together — or cycle views with the keyboard

@@ -61,6 +61,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   engraved options vanish for drum tracks (which have no tab), keys stay
   piano-locked, and returning to String/Piano roll drops the lens
   cleanly. The User Guide's view list documents all five.
+- **Drum-editor parity: Notation for drums.** In the drum editor the same
+  dropdown offers **Drum grid / Notation** — the live lens engraves the
+  drum tab on a percussion staff (alphaTex `\instrument "percussion"`,
+  articulation ids per piece; kick-and-hat chords group, hits on pieces
+  with no notation symbol are skipped and counted, never silently
+  dropped). Clicking an engraved beat selects its hits in the drum grid
+  and seeks. The drum-editor mode stays on underneath the lens, so
+  switching back to Drum grid restores it with all its state.
 - **The master mix can be muted (and soloed, and faded) from the Tracks
   pane.** The master row used to carry no inline strip — its controls lived
   only in the mixer drawer. The pane now mirrors the drawer: same M/S/fader,
