@@ -21,8 +21,10 @@ globalThis.window = globalThis.window || globalThis;
 
 const { S } = await import('../src/state.js');
 const { _newTrackPlanPure } = await import('../src/new-track.js');
-const { _uniqueTrackNamePure, editorAddEmptyFretted } = await import('../src/import.js');
+const { _uniqueTrackNamePure, editorAddEmptyFretted, editorAddEmptyKeys } =
+    await import('../src/import.js');
 const { editorAddEmptyDrums } = await import('../src/arrangement.js');
+const { _trackSessionNewTrackVisiblePure } = await import('../src/track-session.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -76,6 +78,12 @@ t('planner: blocked states — no session, wrong format, second drum tab, junk',
     assert.strictEqual(_newTrackPlanPure(sel, null).action, 'blocked');
 });
 
+t('Tracks-column New Track entry is visible only in editable Sloppak sessions', () => {
+    assert.strictEqual(_trackSessionNewTrackVisiblePure('session-1', 'sloppak'), true);
+    assert.strictEqual(_trackSessionNewTrackVisiblePure('session-1', 'archive'), false);
+    assert.strictEqual(_trackSessionNewTrackVisiblePure(null, 'sloppak'), false);
+});
+
 t('unique names: base survives as prefix, numbering never renames the kind', () => {
     assert.strictEqual(_uniqueTrackNamePure('Lead', []), 'Lead');
     assert.strictEqual(_uniqueTrackNamePure('Lead', ['Lead']), 'Lead 2');
@@ -124,6 +132,21 @@ await ta('editorAddEmptyFretted: backend error rejects without touching state', 
     assert.strictEqual(ok, false);
     assert.strictEqual(S.arrangements.length, 1, 'no arrangement appended on failure');
     assert.strictEqual(S.currentArr, 0);
+});
+
+await ta('empty Keys failure reports in the calling New Track dialog', async () => {
+    Object.assign(S, {
+        format: 'sloppak', sessionId: 'test-session', currentArr: 0,
+        arrangements: [{ name: 'Lead', tuning: [0, 0, 0, 0, 0, 0], notes: [], chords: [] }],
+        sel: new Set(),
+    });
+    const visibleStatus = { textContent: '' };
+    document.getElementById = (id) => id === 'editor-new-track-status' ? visibleStatus : null;
+    globalThis.fetch = async () => ({ ok: false, status: 500, json: async () => ({ error: 'nope' }) });
+    const ok = await editorAddEmptyKeys('editor-new-track-status');
+    assert.strictEqual(ok, false);
+    assert.match(visibleStatus.textContent, /nope/);
+    assert.strictEqual(S.arrangements.length, 1, 'failed Keys registration leaves state untouched');
 });
 
 t('editorAddEmptyDrums: creates the create-flow blank shape once, refuses twice', () => {

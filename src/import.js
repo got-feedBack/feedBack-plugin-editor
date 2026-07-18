@@ -607,7 +607,7 @@ async function _addEmptyArrangement(arrangement, statusElId, okStatus) {
     }
 }
 
-export async function editorAddEmptyKeys() {
+export async function editorAddEmptyKeys(statusElId = 'editor-add-keys-status') {
     const ok = await _addEmptyArrangement({
         name: _uniqueKeysName(),
         tuning: [0, 0, 0, 0, 0, 0],
@@ -615,7 +615,7 @@ export async function editorAddEmptyKeys() {
         notes: [],
         chords: [],
         chord_templates: [],
-    }, 'editor-add-keys-status',
+    }, statusElId,
     'Added empty Keys arrangement. Double-click the chart to add notes; save to commit.');
     if (ok) editorHideAddKeysModal();
     return ok;

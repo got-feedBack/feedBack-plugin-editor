@@ -147,8 +147,8 @@ export async function editorNewTrackCreate() {
             editorShowAddDrumsModal();
             return;
         case 'empty-keys': {
-            const ok = await editorAddEmptyKeys();
-            if (ok !== false) editorHideNewTrackModal();
+            const ok = await editorAddEmptyKeys('editor-new-track-status');
+            if (ok) editorHideNewTrackModal();
             return;
         }
         case 'empty-drums':
