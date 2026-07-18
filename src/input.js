@@ -1032,6 +1032,12 @@ export function _tempoAnalysisRequestStillCurrentPure(request, trackSession, sou
         && (Number(source.offset) || 0) === request.offset);
 }
 
+export function _tempoBootstrapFallbackSourcePure(route, sources) {
+    if (!(route && route.bootstrap)) return null;
+    return (Array.isArray(sources) ? sources : [])
+        .find(source => source && source.id === 'master' && source.url) || null;
+}
+
 // Anchor + engine opts for a G fit. The FOCUSED marker always wins — locked
 // or not — so a stale multi-selection can never send analysis back toward
 // the beginning; the selection is only an anchor fallback when nothing has
@@ -1058,7 +1064,7 @@ async function _editorTempoSuggestFit() {
         setStatus('Enter Tempo Map (T) first — Suggest fits the barlines to the recording.');
         return true;
     }
-    const route = _tempoAnalysisRoutePure(S.trackSession,
+    let route = _tempoAnalysisRoutePure(S.trackSession,
         _trackSessionSourcesPure(S.audioUrl, S.stems));
     let metronome = !!(route && route.metronome);
     let fromLabel = metronome ? ' from the metronome guide' : '';
@@ -1082,6 +1088,8 @@ async function _editorTempoSuggestFit() {
             if (!S.tempoMapMode
                 || !_tempoAnalysisRequestStillCurrentPure(request, S.trackSession,
                     _trackSessionSourcesPure(S.audioUrl, S.stems))) return true;
+            route = _tempoAnalysisRoutePure(S.trackSession,
+                _trackSessionSourcesPure(S.audioUrl, S.stems));
             if (analyzed && analyzed.length) {
                 onsets = analyzed;
                 fromLabel = route.bootstrap
@@ -1090,13 +1098,36 @@ async function _editorTempoSuggestFit() {
             } else if (!route.bootstrap) {
                 setStatus('The tempo guide’s audio could not be analyzed — check the stem, or unlock the guide.');
                 return true;
+            } else {
+                // A click bootstrap is only a preference. If it cannot be
+                // decoded, analyze the master explicitly; the active source
+                // may be another stem (or the failed click itself).
+                const fallbackSources = _trackSessionSourcesPure(S.audioUrl, S.stems);
+                const masterSource = _tempoBootstrapFallbackSourcePure(route, fallbackSources);
+                if (!masterSource) {
+                    setStatus('Suggest needs the recording’s onset analysis — load audio first.');
+                    return true;
+                }
+                const masterUrl = masterSource.url;
+                const fallback = await ensureGuideOnsetsShifted(masterSource.id, masterUrl, 0);
+                const currentSources = _trackSessionSourcesPure(S.audioUrl, S.stems);
+                const currentMaster = _tempoBootstrapFallbackSourcePure(route, currentSources);
+                if (!S.tempoMapMode
+                    || !_tempoAnalysisRequestStillCurrentPure(request, S.trackSession, currentSources)
+                    || !currentMaster || currentMaster.url !== masterUrl) return true;
+                if (!fallback || !fallback.length) {
+                    setStatus('Suggest needs the recording’s onset analysis — load audio first.');
+                    return true;
+                }
+                onsets = fallback;
+                metronome = false;
+                fromLabel = '';
             }
         }
     }
     if (!onsets) {
-        // The un-routed default — and the bootstrap's fallback when the
-        // detected click stem is missing/undecodable: the session recording,
-        // plain audio analysis (the mix is never a metronome).
+        // The un-routed default: the session recording, plain audio analysis
+        // (the mix is never a metronome).
         metronome = !!(route && !route.bootstrap && route.metronome);
         fromLabel = metronome ? ' from the metronome guide' : '';
         onsets = _ensureOnsetsShifted();

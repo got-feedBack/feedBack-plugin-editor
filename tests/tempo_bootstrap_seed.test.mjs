@@ -22,7 +22,10 @@
 import assert from 'node:assert';
 
 const { _clickSourcePure, _trackSessionIsDefaultPure } = await import('../src/track-session.js');
-const { _tempoAnalysisRoutePure, _tempoAnalysisRequestStillCurrentPure } = await import('../src/input.js');
+const {
+    _tempoAnalysisRoutePure, _tempoAnalysisRequestStillCurrentPure,
+    _tempoBootstrapFallbackSourcePure,
+} = await import('../src/input.js');
 const { _filenameBpmPure, _sessionBpmHintPure } = await import('../src/song-fit.js');
 
 let pass = 0, fail = 0;
@@ -74,6 +77,18 @@ t('the bootstrap persists nothing — the default track session stays default', 
     assert.ok(route && route.bootstrap);
     assert.strictEqual(_trackSessionIsDefaultPure(unlockedTree, sources, [{ name: 'Lead' }], null), true,
         'routing through the click never dirties or persists the tree');
+});
+
+t('an undecodable click bootstrap falls back to the master, not the active stem', () => {
+    const route = _tempoAnalysisRoutePure(unlockedTree,
+        [master(), src('guitar', 'Guitar'), src('click', 'Click')]);
+    const fallback = _tempoBootstrapFallbackSourcePure(route,
+        [master(), src('guitar', 'Guitar'), src('click', 'Click')]);
+    assert.strictEqual(fallback.id, 'master');
+    assert.strictEqual(fallback.url, '/full.ogg');
+    assert.strictEqual(_tempoBootstrapFallbackSourcePure(
+        _tempoAnalysisRoutePure(lockedTree('guitar'), [master(), src('guitar', 'Guitar')]),
+        [master(), src('guitar', 'Guitar')]), null, 'locked guides never use bootstrap fallback');
 });
 
 // ── Post-await revalidation ──────────────────────────────────────────
