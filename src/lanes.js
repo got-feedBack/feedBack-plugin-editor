@@ -19,7 +19,11 @@ export const MAX_LANES = 8;
 export const LC = {
     active: false,   // was _lanesCacheActive
     value: 6,        // was _lanesCacheValue
-    labels: null,    // was _laneLabelsCacheValue
+    labels: null,    // was _laneLabelsCacheValue — DISPLAY labels (tuning-aware)
+    // NOMINAL labels (standard layout, tuning ignored). Cached separately
+    // because colorForLane runs per-note per-frame and must key off the
+    // string's position, not its retuned note — see colorForLane.
+    nominalLabels: null,
 };
 
 // Highway colours, keyed by pitch *label* (the same labels `laneLabels()`
@@ -41,13 +45,19 @@ const STRING_LABEL_COLORS = {
 };
 
 export function colorForLane(l) {
-    // `laneLabels()` is low → high (string-index order); strToLane
-    // converts string index → lane. During draw() the cache is hot
-    // (set once per frame), so per-note colorForLane reads a single
-    // index rather than re-running the label computation.
-    const labels = LC.active && LC.labels
-        ? LC.labels
-        : laneLabels();
+    // Colour keys off the NOMINAL label (the string's position in the
+    // instrument's standard layout), never the displayed one. Displayed
+    // labels follow the tuning — a Drop-D 6th string reads "D" — but the
+    // 6th string must stay RED, because these colours are the string's
+    // identity and they match the highway. Looking colour up by the
+    // displayed label would recolour every down-tuned chart and drop
+    // unmatched labels (e.g. "A#") to the grey fallback.
+    //
+    // Same hot-cache discipline as before (this runs per note, per frame):
+    // read the seeded array when the cache is hot, recompute when cold.
+    const labels = LC.active && LC.nominalLabels
+        ? LC.nominalLabels
+        : nominalLaneLabels();
     const lbl = labels[laneToStr(l)];
     return STRING_LABEL_COLORS[lbl] || '#888';
 }
@@ -151,9 +161,12 @@ export function lanes() {
 // instruments add strings at the low end (7-string guitar adds low B below
 // low E; 5-string bass adds low B below low E), and 6-string bass adds high
 // C on top. The arrow notation marks those non-standard strings.
-export function laneLabels() {
-    const L = lanes();
-    if (isBassArr()) {
+// The NOMINAL labels — the instrument's standard layout, ignoring any
+// tuning offsets. This is the string's positional identity: it drives the
+// lane colours and is the display label whenever the chart is in standard
+// tuning. Pure so both are testable without S.
+export function _nominalLaneLabelsPure(L, isBass) {
+    if (isBass) {
         // 4-string standard: E A D G
         // 5-string: B↓ E A D G  (low B added)
         // 6-string: B↓ E A D G C (low B + high C added)
@@ -167,6 +180,57 @@ export function laneLabels() {
     if (L <= 6) return ['E', 'A', 'D', 'G', 'B', 'e'].slice(0, L);
     if (L === 7) return ['B↓', 'E', 'A', 'D', 'G', 'B', 'e'];
     return ['F#↓', 'B↓', 'E', 'A', 'D', 'G', 'B', 'e'].slice(0, L);
+}
+
+// Note letters for a retuned string. Sharps, matching the roll's naming.
+const _LANE_NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+// Display labels for the lane gutter, in RS string-index order (low → high).
+//
+// These follow the TUNING. A whole-step-down 6-string bass sounds
+// A D G C F A#, and labelling those lanes B↓ E A D G C↑ (the nominal
+// layout) tells a player the wrong note on every string — reported by a
+// bassist whose chart read a whole step sharp on all six. Standard tuning
+// is byte-identical to the nominal labels, so only retuned charts change.
+//
+// The capo is deliberately NOT folded in: this is the instrument's tuning
+// (what the Strings modal edits, and what a tab header prints), and the
+// capo is surfaced separately. `_soundingPitchPure` remains the one place
+// that adds it.
+export function _tunedLaneLabelsPure(L, isBass, openMidi, tuning) {
+    const nominal = _nominalLaneLabelsPure(L, isBass);
+    const offs = Array.isArray(tuning) ? tuning : [];
+    const shifted = (s) => Number(offs[s]) || 0;
+    // Standard tuning (or no tuning data) keeps today's labels exactly —
+    // including the lowercase high 'e' and the ↓/↑ extension markers.
+    if (!Array.isArray(openMidi) || nominal.every((_, s) => shifted(s) === 0)) {
+        return nominal;
+    }
+    return nominal.map((lbl, s) => {
+        const off = shifted(s);
+        if (off === 0 || openMidi[s] === undefined) return lbl;
+        const name = _LANE_NOTE_NAMES[(((openMidi[s] + off) % 12) + 12) % 12];
+        // Keep the ↓/↑ extension marker: it identifies WHICH string this
+        // is (the added low B / high C), which the note name alone can't.
+        const mark = lbl.endsWith('↓') ? '↓' : lbl.endsWith('↑') ? '↑' : '';
+        // Preserve the high-e lowercase convention when it still reads E.
+        if (lbl === 'e' && name === 'E') return 'e';
+        return name + mark;
+    });
+}
+
+// The active arrangement's NOMINAL labels — what colorForLane keys off,
+// and what main.js seeds into LC.nominalLabels once per frame.
+export function nominalLaneLabels() {
+    return _nominalLaneLabelsPure(lanes(), isBassArr());
+}
+
+export function laneLabels() {
+    const L = lanes();
+    const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
+    const isBass = isBassArr();
+    if (!arr) return _nominalLaneLabelsPure(L, isBass);
+    return _tunedLaneLabelsPure(L, isBass, _openMidiForArr(arr, L), arr.tuning);
 }
 
 export function strToLane(s) { return (lanes() - 1) - s; }
