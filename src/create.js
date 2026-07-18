@@ -805,8 +805,11 @@ export { _createAudioPayloadPure, _createGuideIdPure, _createTrackRowsPure };
 // document root before choosing an importer; declarations, DOCTYPEs, comments,
 // namespaces, and whitespace before the root are all tolerated.
 export function _xmlImportKindPure(text) {
-    const source = String(text || '');
-    if (/<(?:[A-Za-z_][\w.-]*:)?score-(?:partwise|timewise)\b/i.test(source)) {
+    // Strip comments before locating the first element so example markup such
+    // as `<!-- <score-partwise> -->` cannot misroute an arrangement document.
+    const source = String(text || '').replace(/<!--[\s\S]*?-->/g, '');
+    const root = /<(?![!?/])(?:[A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)\b/i.exec(source);
+    if (root && /^score-(?:partwise|timewise)$/i.test(root[1])) {
         return 'musicxml';
     }
     if (/<(?:[A-Za-z_][\w.-]*:)?track\b/i.test(source)

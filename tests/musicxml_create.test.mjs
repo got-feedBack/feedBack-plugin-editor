@@ -21,9 +21,11 @@ assert.strictEqual(_xmlImportKindPure('<m:score-partwise xmlns:m="urn:test"/>'),
     'namespaced MusicXML roots are recognized');
 assert.strictEqual(_xmlImportKindPure('<track><sync>0#0</sync></track>'), 'goplayalong');
 assert.strictEqual(_xmlImportKindPure('<song><arrangement>Lead</arrangement></song>'), 'arrangement');
+assert.strictEqual(_xmlImportKindPure('<!-- <score-partwise/> --><song/>'), 'arrangement',
+    'MusicXML-looking example markup in a comment is not the document root');
 
 const screen = fs.readFileSync(new URL('../screen.html', import.meta.url), 'utf8');
 assert.match(screen, /accept="[^"]*\.musicxml[^"]*\.mxl[^"]*"/,
     'Content Import exposes MusicXML and compressed MusicXML extensions');
 
-console.log('musicxml create routing: 5 passed');
+console.log('musicxml create routing: 6 passed');
