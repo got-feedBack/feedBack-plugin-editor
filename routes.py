@@ -713,6 +713,49 @@ def _safe_wafont_name(name):
     return name if _WAFONT_NAME_RE.match(name) else None
 
 
+def _gp_sync_points_to_warp_payload(sync_points):
+    """GP8 `SyncPoint` objects → the dict shape the warp builder consumes.
+
+    Used for EMBEDDED audio, where the points come out of the GP file
+    itself rather than off the wire, so there is nothing to validate for
+    hostility — but a malformed/partial set is still unusable, and a warp
+    built from half a set would misplace the chart. Any bad entry
+    therefore discards the whole set and the caller falls back to
+    offset-only alignment.
+    """
+    out = []
+    for p in sync_points or []:
+        try:
+            out.append({
+                "bar": int(p.bar),
+                "time_secs": float(p.time_secs),
+                "modified_bpm": float(p.modified_tempo),
+                "original_bpm": float(p.original_tempo),
+            })
+        except (AttributeError, TypeError, ValueError):
+            return []
+    return out
+
+
+def _warp_applies(audio_mode, warp_points, from_gp):
+    """Whether the per-bar warp runs, rather than offset-only alignment.
+
+    Embedded mode was excluded outright, which silently dropped the GP's
+    own sync points — the chart then ran at a constant tempo against a
+    recording that changes tempo. (Reported: audio dropping 137 → 98.7 BPM
+    at bar 193 left the chart ~5.5s early by bar 224.)
+
+    The exclusion still holds for CLIENT-supplied points: those are
+    computed against a separate, user-staged recording and cannot describe
+    the embedded track. Points read out of the GP describe exactly it.
+    """
+    if not warp_points or len(warp_points) < 2:
+        return False
+    if audio_mode == "embedded":
+        return bool(from_gp)
+    return True
+
+
 def _parse_sync_points_payload(raw):
     """Validate a client sync_points payload (the JSON shape autosync-gp
     returns). Returns (points, error): `points` is a list of coerced
@@ -6832,6 +6875,12 @@ def setup(app, context):
         # stays as the fallback when the warp can't be applied.
         _sync_points_payload = data.get("sync_points") or []
         _warp_points = None
+        # Whether the points were read out of the GP itself (embedded mode)
+        # rather than supplied by the client. The warp gate below needs the
+        # distinction: client points are computed against a user-staged
+        # recording and cannot describe the embedded track, while the GP's own
+        # points describe exactly it.
+        _warp_from_gp = False
         if _sync_points_payload:
             _warp_points, _sync_err = _parse_sync_points_payload(_sync_points_payload)
             if _sync_err:
@@ -6895,6 +6944,30 @@ def setup(app, context):
                         # Apply the embedded sync offset (GP8 FramePadding) so the
                         # chart lines up with the backing track — unless the client
                         # explicitly supplied its own offset.
+                        # The GP's OWN sync points describe this exact embedded
+                        # track, so embedded mode is where they are most
+                        # trustworthy — but they were being discarded, leaving
+                        # the chart at a constant tempo against a recording that
+                        # slows down. (Reported: a chart whose audio drops
+                        # 137 -> 98.7 BPM at bar 193 ran ~5.5s early by bar 224.)
+                        # Client-supplied points stay excluded below: those are
+                        # computed against a DIFFERENT, user-staged file.
+                        try:
+                            _emb_sync = extract_sync(gp_path)
+                            _emb_points = list(getattr(_emb_sync, "sync_points", None) or [])
+                            _emb_payload = _gp_sync_points_to_warp_payload(_emb_points)
+                            if len(_emb_payload) >= 2:
+                                # GP-derived points WIN in embedded mode, even
+                                # over anything the client sent: only these
+                                # describe the track actually being used.
+                                _warp_from_gp = True
+                                _warp_points = _emb_payload
+                        except Exception as _psexc:
+                            import logging as _elog
+                            _elog.getLogger("slopsmith.plugin.editor").debug(
+                                "embedded sync-point extraction failed for %s: %s",
+                                gp_path, _psexc,
+                            )  # offset-only alignment still applies below
                         if not _client_sent_offset:
                             try:
                                 _sync = extract_sync(gp_path)
@@ -6950,8 +7023,12 @@ def setup(app, context):
             # scalar offset is baked in during conversion as before.
             _warp_anchors = None
             _warp_skip = None  # why the warp was skipped, for the response
-            if (_warp_points and len(_warp_points) >= 2
-                    and _audio_mode != "embedded"):
+            # Embedded mode used to be excluded outright. The exclusion exists
+            # because CLIENT-supplied points are computed against a separate,
+            # user-staged recording and cannot describe the embedded track —
+            # but the GP's own points (loaded above) describe exactly it, so
+            # they warp correctly.
+            if _warp_applies(_audio_mode, _warp_points, _warp_from_gp):
                 try:
                     from lib.gp_autosync import (
                         bar_start_times, build_warp_anchors,
