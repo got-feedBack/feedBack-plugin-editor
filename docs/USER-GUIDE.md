@@ -65,9 +65,12 @@ rest from MusicBrainz. Then hit **Create & Open in Editor**.
 A few sources arrive through their own doors, any time after creation:
 
 - **File ▸ Import** — bring another GP / MIDI / XML chart into the open project.
-- **Add ▸ Track** — add **Drums** (from a chart or by hand) or **Record
-  MIDI** (play a take on a connected device; it becomes a keys track).
-- **Add Keys ▸ MusicXML** — a MusicXML score imports as a keys track and
+- **＋ Track (New Track)** — add any track to the open project: an **audio**
+  track (a recording — stem or full mix), or a **MIDI/transcription**
+  instrument (Lead, Rhythm, Bass, Keys, Drums) started **empty** or imported
+  **from a file** (§5). **Record MIDI** still captures a live take from a
+  connected device into a keys track.
+- **Keys from MusicXML** — a MusicXML score imports as a keys track and
   keeps the score's own **left/right hand** assignments (§5).
 - **Studio stems** — after creating, load per-instrument stems (vocals,
   bass, drums…) through the stem manager (§5) for isolated listening and
@@ -218,6 +221,14 @@ gets the view that fits it automatically:
 - **Piano roll** — for keys tracks (and available for fretted tracks as a
   read-only reference, with resolver-assisted authoring).
 - **Drum grid** — piece lanes, for drum tracks.
+
+**Adding a track** is one button: **＋ Track** in the toolbar, the **＋** at the
+top of the Tracks column, or **Track ▸ New Track…** — all open the same New
+Track dialog. Pick **Audio** (choose files; each becomes a studio track you can
+mix and pair) or **MIDI / Transcription** (pick the instrument, then **Start
+empty** to chart from scratch — no source file needed — or **Import from a
+file** for Guitar Pro / MIDI / MusicXML). An empty track lands selected and
+ready: double-click the chart to add notes, and save to commit.
 
 The **Tracks column** down the left side lists every track — the master mix,
 any studio stems, and each transcription part — beside a matching timeline lane.

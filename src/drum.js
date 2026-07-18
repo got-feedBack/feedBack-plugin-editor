@@ -1114,7 +1114,9 @@ export function _drumEditorToggleArticulation(kind) {
 function _ensureDrumEditButton() {
     let btn = document.getElementById('editor-drum-edit-btn');
     if (!btn) {
-        const drumsBtn = document.getElementById('editor-add-drums-btn');
+        // Anchor beside the "＋ Track" button (the consolidated New Track
+        // entry that replaced the old +Drums toolbar button).
+        const drumsBtn = document.getElementById('editor-new-track-btn');
         if (!drumsBtn) return null;
         btn = document.createElement('button');
         btn.id = 'editor-drum-edit-btn';

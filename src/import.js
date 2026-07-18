@@ -549,21 +549,29 @@ async function _editorAppendKeysArrangement(arrangement, statusEl, opts = {}) {
     }
 }
 
-let _addingEmptyKeys = false;
+let _addingEmptyArr = false;
 
-export async function editorAddEmptyKeys() {
-    if (S.format !== 'sloppak' || !S.sessionId) return;
-    if (_addingEmptyKeys) return;
-    _addingEmptyKeys = true;
-    const statusEl = document.getElementById('editor-add-keys-status');
-    const arrangement = {
-        name: _uniqueKeysName(),
-        tuning: [0, 0, 0, 0, 0, 0],
-        capo: 0,
-        notes: [],
-        chords: [],
-        chord_templates: [],
-    };
+// Next free display name for a new track of `base` kind ("Lead" → "Lead",
+// "Lead 2", …). Kind inference is NAME-driven, so the base must survive as
+// the name's prefix — numbering, never renaming. Pure: names in, name out.
+export function _uniqueTrackNamePure(base, names) {
+    const taken = new Set((names || []).map(n => String(n || '').trim().toLowerCase()));
+    if (!taken.has(base.toLowerCase())) return base;
+    const limit = taken.size + 2;
+    for (let i = 2; i <= limit; i++) {
+        if (!taken.has(`${base.toLowerCase()} ${i}`)) return `${base} ${i}`;
+    }
+    return `${base} ${Date.now()}`;
+}
+
+// Register a blank arrangement with the session and adopt it as the active
+// part — the shared body of the empty-Keys and empty-fretted starts. The
+// backend registration is sloppak-only (save ships the full snapshot).
+async function _addEmptyArrangement(arrangement, statusElId, okStatus) {
+    if (S.format !== 'sloppak' || !S.sessionId) return false;
+    if (_addingEmptyArr) return false;
+    _addingEmptyArr = true;
+    const statusEl = document.getElementById(statusElId);
     try {
         const resp = await fetch('/api/plugins/editor/add-arrangement', {
             method: 'POST',
@@ -572,8 +580,8 @@ export async function editorAddEmptyKeys() {
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok || data.error) {
-            statusEl.textContent = 'Error registering arrangement: ' + (data.error || resp.status);
-            return;
+            if (statusEl) statusEl.textContent = 'Error registering arrangement: ' + (data.error || resp.status);
+            return false;
         }
 
         S.arrangements.push(arrangement);
@@ -583,18 +591,51 @@ export async function editorAddEmptyKeys() {
         if (sel) sel.value = S.currentArr;
 
         flattenChords();
-        if (typeof updatePianoRange === 'function') updatePianoRange();
+        if (KEYS_PATTERN.test(arrangement.name || '') && typeof updatePianoRange === 'function') {
+            updatePianoRange();
+        }
         host.updateArrangementSelector();
         host.updateStatus();
         host.draw();
-
-        editorHideAddKeysModal();
-        setStatus('Added empty Keys arrangement. Double-click the chart to add notes; save to commit.');
+        setStatus(okStatus);
+        return true;
     } catch (e) {
-        statusEl.textContent = 'Failed: ' + e.message;
+        if (statusEl) statusEl.textContent = 'Failed: ' + e.message;
+        return false;
     } finally {
-        _addingEmptyKeys = false;
+        _addingEmptyArr = false;
     }
+}
+
+export async function editorAddEmptyKeys() {
+    const ok = await _addEmptyArrangement({
+        name: _uniqueKeysName(),
+        tuning: [0, 0, 0, 0, 0, 0],
+        capo: 0,
+        notes: [],
+        chords: [],
+        chord_templates: [],
+    }, 'editor-add-keys-status',
+    'Added empty Keys arrangement. Double-click the chart to add notes; save to commit.');
+    if (ok) editorHideAddKeysModal();
+    return ok;
+}
+
+// Blank fretted start (New Track ▸ Transcription ▸ Lead/Rhythm/Bass ▸
+// empty). Role names mirror the create flow's roster: Lead/Rhythm seed a
+// 6-string guitar, Bass a 4-string bass — the canvas −/+ or the Strings
+// modal extend the range afterwards.
+export async function editorAddEmptyFretted(role) {
+    const base = role === 'Bass' ? 'Bass' : role === 'Rhythm' ? 'Rhythm' : 'Lead';
+    return _addEmptyArrangement({
+        name: _uniqueTrackNamePure(base, S.arrangements.map(a => a && a.name)),
+        tuning: base === 'Bass' ? [0, 0, 0, 0] : [0, 0, 0, 0, 0, 0],
+        capo: 0,
+        notes: [],
+        chords: [],
+        chord_templates: [],
+    }, 'editor-new-track-status',
+    `Added empty ${base} track. Double-click the chart to add notes; save to commit.`);
 }
 
 // ════════════════════════════════════════════════════════════════════

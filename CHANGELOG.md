@@ -22,7 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hands, canvas appearance, stems).
 
 ### Added
-- **Map-health worklist: H / Shift+H walk the drifting bars.** In Tempo Map
+- **New Track — one front door for adding tracks, including from scratch.**
+  Testers couldn't add an instrument track without importing a GP file (the
+  only blank start was buried inside the Add-Keys modal). The three toolbar
+  buttons (+ Drums / + Keys / + Guitar-Bass) consolidate into a single
+  **＋ Track** entry — toolbar, a **＋** atop the Tracks column, and
+  **Track ▸ New Track…** — opening one DAW-style dialog: pick **Audio** (files
+  become studio tracks via the stem manager) or **MIDI / Transcription**
+  (Lead / Rhythm / Bass / Keys / Drums), started **empty** or imported **from
+  a file** (the old per-kind modals live on as the file flows). New blank
+  starts: fretted arrangements (Lead/Rhythm 6-string, Bass 4-string, named
+  uniquely, registered with the session, adopted as the active part) and an
+  empty Drums tab (the create-flow shape; refuses a second drum tab). The
+  User Guide's Tracks section documents the flow. In Tempo Map
   mode, H jumps to the next amber/red bar from the playhead (Shift+H goes
   back), wrapping at the ends — each landing arrives the same way the grid
   pill does: Tempo Map open, the bar scrolled into view, Suggest anchored on

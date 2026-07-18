@@ -103,6 +103,11 @@ import {
     editorSetStringTuning, editorShowStringsModal
 } from './strings.js';
 import {
+    editorHideNewTrackModal, editorNewTrackButtonRefresh, editorNewTrackCreate,
+    editorNewTrackSetInstrument, editorNewTrackSetSource, editorNewTrackSetType,
+    editorShowNewTrackModal
+} from './new-track.js';
+import {
     _editorTogglePartsView, _partsViewDraw, _partsViewOnDblClick,
     _partsViewOnMouseDown, _refreshPartsViewButton
 } from './parts-view.js';
@@ -616,6 +621,14 @@ window.editorDrumsFileSelected = editorDrumsFileSelected;
 window.editorDrumsGPSelected = editorDrumsGPSelected;
 window.editorDoAddDrums = editorDoAddDrums;
 
+// New Track dialog (new-track.js) — the single add-track front door.
+window.editorShowNewTrackModal = editorShowNewTrackModal;
+window.editorHideNewTrackModal = editorHideNewTrackModal;
+window.editorNewTrackSetType = editorNewTrackSetType;
+window.editorNewTrackSetInstrument = editorNewTrackSetInstrument;
+window.editorNewTrackSetSource = editorNewTrackSetSource;
+window.editorNewTrackCreate = editorNewTrackCreate;
+
 // Save-format modal (file-ops.js owns the logic; HTML calls these by name).
 window.editorHideSaveFormatModal = editorHideSaveFormatModal;
 window.editorSaveAsSloppakConfirm = editorSaveAsSloppakConfirm;
@@ -992,48 +1005,11 @@ function updateArrangementSelector() {
         sel.value = String(idx);
     }
 
-    // "+ Drums" button: shown on any active session — the modal lets the
-    // user add OR replace a drum tab. The old gate ("hide when a drums
-    // ARRANGEMENT exists") is obsolete now that drums live in their own
-    // `drum_tab.json` payload rather than the arrangements list. Legacy
-    // sloppaks that still carry a guitar-encoded "drums" arrangement also
-    // keep the button visible so the user can upgrade them to the new
-    // format.
-    const drumsBtn = document.getElementById('editor-add-drums-btn');
-    if (drumsBtn) {
-        // Gate to sloppak sessions only — drum_tab.json is a sloppak-spec
-        // artefact and _save_archive silently ignores the drum_tab payload,
-        // so showing the button on archive would mislead users into thinking
-        // drums will persist after save. Mirrors the +Keys button pattern.
-        drumsBtn.classList.toggle('hidden', !S.sessionId || S.format !== 'sloppak');
-        if (S.drumTab) {
-            const hitCount = (S.drumTab.hits || []).length;
-            const kitCount = (S.drumTab.kit || []).length;
-            drumsBtn.textContent = `⟳ Drums (${hitCount})`;
-            drumsBtn.title = `Drum tab present: ${hitCount} hits across ${kitCount} pieces — click to replace`;
-            drumsBtn.classList.remove('bg-red-900', 'hover:bg-red-800');
-            drumsBtn.classList.add('bg-green-900', 'hover:bg-green-800');
-        } else {
-            drumsBtn.textContent = '+ Drums';
-            drumsBtn.title = 'Import a drum tab from a Guitar Pro or MIDI file';
-            drumsBtn.classList.add('bg-red-900', 'hover:bg-red-800');
-            drumsBtn.classList.remove('bg-green-900', 'hover:bg-green-800');
-        }
-    }
-
-    // Show "+ Keys" button on sloppak sessions; multiple Keys arrangements are allowed.
-    const keysBtn = document.getElementById('editor-add-keys-btn');
-    if (keysBtn) {
-        keysBtn.classList.toggle('hidden', !S.sessionId || S.format !== 'sloppak');
-    }
-
-    // Show "+ Guitar/Bass" (GP guitar/bass import → add or replace) on sloppak
-    // sessions only — same gate as +Keys (add-arrangement / chart swap persist
-    // only through the sloppak save path).
-    const importGuitarBtn = document.getElementById('editor-import-guitar-btn');
-    if (importGuitarBtn) {
-        importGuitarBtn.classList.toggle('hidden', !S.sessionId || S.format !== 'sloppak');
-    }
+    // "＋ Track" — the single New Track entry (the old + Drums / + Keys /
+    // + Guitar-Bass trio consolidated). Sloppak sessions only: the
+    // add-arrangement and drum_tab payloads persist only through the
+    // sloppak save path, so showing it on archive would mislead.
+    editorNewTrackButtonRefresh();
 
     // Show "⋮ Strings" tuning editor whenever a guitar/bass arrangement is
     // active (not Keys-mode — piano-roll arrangements have no string concept).
@@ -2273,7 +2249,7 @@ window.editorSetStringTuning = editorSetStringTuning;
 // button shows/hides alongside +Drums whenever the editor re-renders
 // its controls.
 const _checkBtnInterval = setInterval(() => {
-    if (document.getElementById('editor-add-drums-btn')) {
+    if (document.getElementById('editor-new-track-btn')) {
         _refreshDrumEditButton();
         clearInterval(_checkBtnInterval);
     }

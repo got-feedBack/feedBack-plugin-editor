@@ -148,6 +148,7 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'cyclePickDirection' },
     ] },
     { title: 'Track', items: [
+        { label: 'New Track…', fn: 'editorShowNewTrackModal' },
         { cmd: 'renamePart' },
         { cmd: 'movePartEarlier' },
         { cmd: 'movePartLater' },

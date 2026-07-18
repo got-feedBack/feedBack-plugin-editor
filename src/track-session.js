@@ -672,7 +672,7 @@ function render() {
     const restore = removedSources.length
         ? `<select data-track-action="restore-source" aria-label="Restore removed audio track"><option value="">Restore track…</option>${removedSources.map(source => `<option value="${_editorEscHtml(source.id)}">${_editorEscHtml(source.name)}</option>`).join('')}</select>`
         : '';
-    el.innerHTML = `<div class="editor-track-session-head"><strong>Tracks</strong><button data-track-action="folder" title="Create optional folder">+ Folder</button>${restore}<span class="editor-track-guide-label">Guide</span><button class="editor-track-guide-source" data-track-action="guide-cycle" title="Cycle tempo guide">${_editorEscHtml(guideName + guideMode)}</button><button data-track-action="guide-lock" aria-pressed="${model.tempoGuideLocked}" title="Lock tempo guide — assisted mapping (G) analyzes the locked guide">${model.tempoGuideLocked ? '🔒' : '🔓'}</button><button data-track-action="zoom-out" title="Reduce all track heights">−</button><button data-track-action="zoom-in" title="Increase all track heights">+</button></div><div class="editor-track-session-list">${rows.map(row => {
+    el.innerHTML = `<div class="editor-track-session-head"><strong>Tracks</strong><button data-track-action="new-track" title="New Track… — add an audio or MIDI/transcription track">＋</button><button data-track-action="folder" title="Create optional folder">+ Folder</button>${restore}<span class="editor-track-guide-label">Guide</span><button class="editor-track-guide-source" data-track-action="guide-cycle" title="Cycle tempo guide">${_editorEscHtml(guideName + guideMode)}</button><button data-track-action="guide-lock" aria-pressed="${model.tempoGuideLocked}" title="Lock tempo guide — assisted mapping (G) analyzes the locked guide">${model.tempoGuideLocked ? '🔒' : '🔓'}</button><button data-track-action="zoom-out" title="Reduce all track heights">−</button><button data-track-action="zoom-in" title="Increase all track heights">+</button></div><div class="editor-track-session-list">${rows.map(row => {
         const trackId = _editorEscHtml(row.id); const name = _editorEscHtml(row.name); const indent = Math.min(5, row.depth) * 14;
         const height = fittedHeights[row.id];
         const style = `--track-indent:${indent}px;--track-row-height:${height}px`;
@@ -1029,7 +1029,11 @@ export function initTrackSession() {
             }
             return;
         }
-        if (action === 'folder') {
+        if (action === 'new-track') {
+            // Through the window surface, not an import — new-track.js pulls
+            // in stem-tracks.js, which imports this module (cycle otherwise).
+            if (typeof window.editorShowNewTrackModal === 'function') window.editorShowNewTrackModal();
+        } else if (action === 'folder') {
             commit(_trackSessionCreateFolderPure(S.trackSession, _liveSources(), S.arrangements, S.drumTab, ''), 'Folder added — drag tracks to arrange the session.');
         } else if (action === 'zoom-in' || action === 'zoom-out') {
             const delta = action === 'zoom-in' ? 8 : -8;
