@@ -15,6 +15,38 @@ from xml.etree import ElementTree as ET
 from xml.dom import minidom
 
 
+def _filename_bpm(text):
+    """Opportunistic tempo prior from an audio file name (TEMPO-ASSIST B).
+
+    "Song-147bpm.mp3", "147 BPM click.wav", "bpm=98 take2" → the number;
+    anything absent, glued to a longer digit run (a hash/id, not a tempo),
+    or outside the 40–300 sanity window → None. A hint, never a gate.
+    """
+    s = str(text or "")
+    m = (re.search(r"(?i)(?:^|[^0-9a-z])(\d{2,3}(?:\.\d{1,2})?)\s*[-_ ]?bpm(?![0-9a-z])", s)
+         or re.search(r"(?i)(?:^|[^a-z])bpm\s*[-_ =:]?\s*(\d{2,3}(?:\.\d{1,2})?)(?![0-9])", s))
+    if not m:
+        return None
+    bpm = float(m.group(1))
+    return bpm if 40.0 <= bpm <= 300.0 else None
+
+
+def _create_seed_beats(bpm=None):
+    """The create-flow starter grid: one 4/4 measure (downbeat + three
+    sub-beats + the next downbeat = 5 beats), spaced at ``bpm`` when a file
+    name carried one (see _filename_bpm), else 120. The Tempo Map editor
+    bails when beats.length < 2, so a single downbeat would lock the user
+    out of the very UI they'd use to fix the grid. 6-decimal rounding —
+    the timeline derives per-bar BPM from beat spans, which amplifies
+    coarser rounding into visible drift.
+    """
+    beat = 60.0 / (bpm if bpm else 120.0)
+    return [
+        {"time": round(i * beat, 6), "measure": {0: 1, 4: 2}.get(i, -1)}
+        for i in range(5)
+    ]
+
+
 def _coerce_create_audio_tracks(value):
     """Normalize the create modal's ordered audio-source list.
 
@@ -5486,19 +5518,22 @@ def setup(app, context):
                 if _role == "Keys":
                     _arr["type"] = "piano"
                 arrangements_data.append(_arr)
-            # Seed a minimal one-measure 4/4 @ 120 BPM grid (downbeat +
-            # three sub-beats + next downbeat = 5 beats). The Tempo Map
-            # editor bails when beats.length < 2 ("No beat grid…"), so
-            # a single downbeat would lock the user out of the very UI
-            # they'd use to fix the grid. The user runs Sync or drags
-            # poles in Tempo Map mode to fit this to the audio.
-            beats = [
-                {"time": 0.0, "measure": 1},
-                {"time": 0.5, "measure": -1},
-                {"time": 1.0, "measure": -1},
-                {"time": 1.5, "measure": -1},
-                {"time": 2.0, "measure": 2},
-            ]
+            # Seed the starter grid (see _create_seed_beats), at a BPM
+            # opportunistically parsed from an audio file name when one is
+            # there — the uploaded file first, then the create modal's
+            # track rows (master/guide row first), then the pre-uploaded
+            # audio_url's basename. No hint → the 120 default; either way
+            # the user runs Sync or drags poles in Tempo Map mode to fit
+            # this to the audio.
+            seed_bpm = _filename_bpm(
+                audio.filename if audio is not None else None)
+            for _row in create_audio_tracks:
+                if seed_bpm:
+                    break
+                seed_bpm = _filename_bpm(_row.get("name"))
+            if not seed_bpm and audio_url:
+                seed_bpm = _filename_bpm(Path(audio_url).name)
+            beats = _create_seed_beats(seed_bpm)
             sections: list = []
             # Same type-guard rule as title/artist/initial_arrangement —
             # writing a non-string/non-scalar into manifest.yaml would

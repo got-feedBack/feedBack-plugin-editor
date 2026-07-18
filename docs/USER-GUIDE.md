@@ -309,6 +309,9 @@ Three ways to set the tempo, from coarse to fine:
 1. **Sync tempo to audio** (Tempo/Grid menu) — detects the recording's BPM and scales
    the whole grid to match in one step. A good first pass on a steady take.
 2. **Set a constant BPM** — type into the BPM box for a song at one tempo.
+   When an audio file's name carries the tempo (like `-147bpm`), Song Fit's
+   *Set constant tempo* dialog pre-fills it for you — and a song created from
+   such a file starts its grid at that BPM already.
 3. **Tempo Map mode** (`T`) — the precise tool. The bottom strip shows every
    **barline**; drag one onto its downbeat in the waveform and the surrounding
    bars re-space to fit. In this mode:
@@ -327,7 +330,10 @@ Three ways to set the tempo, from coarse to fine:
      open **Audio tracks** (the stem manager) and click the **♩** on that row
      to lock it as the tempo guide. `G` then analyzes the click instead of
      the mix — each click is one beat, so tempo changes in the click are
-     followed directly. Click ♩ again to unlock.
+     followed directly. Click ♩ again to unlock. A stem *named* like a click
+     track ("Click", "Metronome") gets this treatment automatically when no
+     guide is locked — the status bar says so; lock ♩ to pin the choice, or
+     lock any other source (the mix included) to override it.
    - **`Shift+B` — Tap tempo**: tap along and the selected barline takes your
      tempo.
    - **`B` — Set BPM** for the selected barline; **`M` — metric modulation**

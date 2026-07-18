@@ -71,6 +71,18 @@ export function _trackSessionSourcesPure(audioUrl, stems, masterName) {
     return out;
 }
 
+// The click/metronome detector (TEMPO-ASSIST A, the name-based easy win):
+// the first stem whose name or id reads as a click track. Name-only on
+// purpose — content analysis belongs to the suggest engine — and the master
+// recording is never a click candidate. Word-bounded so "Clickbait" or a
+// song title containing "met" can't false-positive.
+const CLICK_NAME = /\bclicks?\b|\bmetronome?\b/i;
+export function _clickSourcePure(sources) {
+    return (Array.isArray(sources) ? sources : []).find(source => source
+        && source.id !== MASTER_ID
+        && (CLICK_NAME.test(String(source.name || '')) || CLICK_NAME.test(String(source.id || '')))) || null;
+}
+
 // The transcription targets: every arrangement plus the drum tab. targetId
 // is the durable chart-track key (shared with stemLinks); mixKey is the
 // session address partMix / band mode speak ('arr:<idx>' / 'drums').
