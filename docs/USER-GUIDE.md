@@ -262,6 +262,18 @@ away first, keeping each track's name and type visible. Removing an audio
 track is non-destructive — the media stays in the pack and can come back.
 `Shift+A` jumps to this Tracks view.
 
+### Strings on fretted tracks
+
+Guitar tracks support 6–8 strings, bass 4–6. The **− / +** buttons under the
+lowest string's label change the count in one click: `+` adds the next string
+the layout supports (guitar: low B, then low F#; bass: low B, then a high C),
+and existing notes keep their lanes and fret numbers — so converting a
+4-string chart to use a real 5th string is `+`, then `Ctrl+A`, then `↓`. `−`
+peels the last-added string back; if notes still live on it, the editor asks
+first and removes the string *and* those notes as one undoable step.
+Per-string tuning offsets — drop, open, re-entrant — live in **Track ▸
+Strings / tuning…**.
+
 ### Hands on keyboard tracks
 
 Keys notes can carry a **left/right hand** assignment — a MusicXML import

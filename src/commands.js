@@ -1201,6 +1201,26 @@ export class RemoveStringCmd {
     }
 }
 
+// Remove a string AND every note living on it, as ONE undo step — the
+// canvas −-button's confirmed path (the Strings modal keeps its hard
+// "move them first" block). Composes the two existing commands so each
+// half keeps its own tested exec/rollback: the notes are deleted FIRST
+// (their indices are pre-shift, and RemoveStringCmd's blanket string-=1
+// would otherwise push a low-string note to -1), then the string is
+// peeled. Rollback runs in exact reverse order. The caller confirms with
+// the user BEFORE exec — this command deletes without asking. Note it
+// only covers `arr.notes`: the active arrangement is always chord-
+// flattened (flattenChords on load/switch), and callers must route a
+// non-flattened arrangement to the modal instead.
+export class RemoveStringWithNotesCmd {
+    constructor(arrIdx, position, noteIndices) {
+        this.deleteCmd = new DeleteNotesCmd(noteIndices);
+        this.removeCmd = new RemoveStringCmd(arrIdx, position);
+    }
+    exec() { this.deleteCmd.exec(); this.removeCmd.exec(); }
+    rollback() { this.removeCmd.rollback(); this.deleteCmd.rollback(); }
+}
+
 /* @pure:replace-chart:start */
 // The chart fields ReplaceArrangementChartCmd swaps out — everything tied to
 // the note content of an arrangement. Song-level timing (beats/sections/audio)

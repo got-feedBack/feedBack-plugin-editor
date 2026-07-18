@@ -99,8 +99,9 @@ import {
 } from './input.js';
 import { editorCloseCommandPalette, initCommandPalette } from './command-palette.js';
 import {
-    editorAddString, editorHideStringsModal, editorRemoveString,
-    editorSetStringTuning, editorShowStringsModal
+    editorAddString, editorCanvasStringAdd, editorCanvasStringRemove,
+    editorHideStringsModal, editorRemoveString, editorSetStringTuning,
+    editorShowStringsModal, editorStringButtonsRefresh
 } from './strings.js';
 import {
     editorHideNewTrackModal, editorNewTrackButtonRefresh, editorNewTrackCreate,
@@ -246,6 +247,10 @@ function drawNow() {
     updateBPMDisplay();
     updateTempoSigDisplay();
     _tempoListRender();   // identity-keyed on S.tempoMarks — no-op unless marks changed
+    // Canvas −/+ string buttons: key-guarded, so per-flush is cheap. Runs
+    // before the mode forks below so every lens (drum/tempo/parts/tab)
+    // hides the buttons on its first frame.
+    editorStringButtonsRefresh();
     // Live Tab view: the engraved score OWNS the timeline area — ping the
     // module (it shows the mount + re-renders on real changes) and skip the
     // canvas chain. The else-branch hides the mount the moment any mode
@@ -2243,6 +2248,8 @@ window.editorHideStringsModal = editorHideStringsModal;
 window.editorAddString = editorAddString;
 window.editorRemoveString = editorRemoveString;
 window.editorSetStringTuning = editorSetStringTuning;
+window.editorCanvasStringAdd = editorCanvasStringAdd;
+window.editorCanvasStringRemove = editorCanvasStringRemove;
 
 
 // Hook into the existing updateArrangementSelector toolbar pass so the

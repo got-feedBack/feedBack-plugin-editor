@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hands, canvas appearance, stems).
 
 ### Added
+- **Canvas − / + string-count buttons.** A button pair under the lowest
+  string's label grows/shrinks the track's string count in one click — the
+  Strings modal's add/remove, promoted to the canvas (tester ask: "just move
+  the chart over one string" on a 5-string bass without opening a modal).
+  `+` adds the next string the pitch model supports (guitar: low B, then low
+  F#; bass: low B, then high C); notes keep their lanes and fret numbers.
+  `−` peels the last-added string; when notes still live on it, a confirm
+  offers to remove the string AND delete them as ONE undoable step
+  (`RemoveStringWithNotesCmd`) — the modal keeps its hard "move them first"
+  block. Buttons show only in the fretted String view and disable with a
+  reason at each range limit (guitar 6–8, bass 4–6).
 - **New Track — one front door for adding tracks, including from scratch.**
   Testers couldn't add an instrument track without importing a GP file (the
   only blank start was buried inside the Add-Keys modal). The three toolbar

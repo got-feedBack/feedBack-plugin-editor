@@ -214,6 +214,25 @@
     border-color: var(--ed-accent, #0ea5e9);
     background: rgba(14, 165, 233, 0.15);
 }
+/* ── Canvas string-count buttons (under the lowest string label) ──── */
+#plugin-editor .editor-string-btns {
+    position: absolute; left: 2px; width: 48px;   /* inside the 52px label gutter */
+    display: flex; gap: 2px; z-index: 20;
+}
+/* The base rule sets display at id+class specificity, so the bare .hidden
+   utility loses — the explicit override is load-bearing (the lint-popover
+   lesson: without it the buttons could never hide). */
+#plugin-editor .editor-string-btns.hidden { display: none; }
+#plugin-editor .editor-string-btn {
+    flex: 1 1 0; height: 20px; padding: 0; line-height: 1;
+    border: 1px solid var(--ed-border, #334155); border-radius: 5px;
+    background: rgba(30, 41, 59, 0.85); color: var(--ed-text, #cbd5e1);
+    font-size: 14px; font-weight: 700; cursor: pointer;
+}
+#plugin-editor .editor-string-btn:hover:not(:disabled) {
+    background: var(--ed-accent, #0ea5e9); color: var(--ed-on-accent, #082f49);
+}
+#plugin-editor .editor-string-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* ── Drum-pad companion strip ─────────────────────────────────────── */
 /* Kit legend / cursor input / GM MIDI monitor (src/drum-pad-strip.js).
