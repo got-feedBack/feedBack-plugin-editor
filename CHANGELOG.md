@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *analyze* follows the click.
 
 ### Fixed
+- **Create New now recognizes MusicXML stored in `.xml` files.** Content
+  Import sniffs the document root instead of sending every `.xml` to the
+  community-arrangement importer, validates the score before creating a song,
+  and stages `.xml`, `.musicxml`, and `.mxl` scores as keys tracks with their
+  title, composer, and authored notation preserved. Requires the MusicXML
+  import plugin's `parse-arrangement` endpoint (PR #8).
 - **A Guitar Pro import whose first track is empty no longer loses the beat
   grid.** The create flow read the song timeline (beats/sections/length)
   blindly from the first converted track's XML — and a lyrics-only GP vocal

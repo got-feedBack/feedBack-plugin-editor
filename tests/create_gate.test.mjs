@@ -18,6 +18,12 @@ function t(name, fn) {
 }
 const inp = (o = {}) => ({ hasTitle: false, hasArtist: false, hasAudio: false, ...o });
 
+t('a validated MusicXML score is sufficient', () => {
+    assert.strictEqual(_createGateOpen({ musicXmlFile: {}, musicXmlData: { arrangement: {} } }, inp()), true);
+    assert.strictEqual(_createGateOpen({ musicXmlFile: {}, musicXmlData: null }, inp()), false,
+        'a failed/unvalidated MusicXML stage does not create a placeholder song');
+});
+
 t('from-scratch: title is the only gate; the removed roster UI cannot block creation', () => {
     assert.strictEqual(_createGateOpen({}, inp({ hasTitle: true })), true);
     assert.strictEqual(_createGateOpen({}, inp()), false);

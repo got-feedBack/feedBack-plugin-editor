@@ -40,7 +40,8 @@ project — and it takes almost anything as a starting point:
   AAC, WEM**) or paste a **YouTube URL**. You get a timeline over the
   waveform: set the grid (§6) and chart from scratch.
 - **An existing chart** — **Guitar Pro (GP3–GP8)**, **MIDI** (its tempo map
-  comes along), community **arrangement XML**, or an existing
+  comes along), **MusicXML** (imported as keys), community **arrangement XML**,
+  or an existing
   **`.feedpak`/archive**. Every format normalizes into one internal model, so
   editing works the same wherever the chart came from.
 - **Both at once** — the recommended start. Add one audio file *and* a chart
@@ -70,7 +71,8 @@ A few sources arrive through their own doors, any time after creation:
   instrument (Lead, Rhythm, Bass, Keys, Drums) started **empty** or imported
   **from a file** (§5). **Record MIDI** still captures a live take from a
   connected device into a keys track.
-- **Keys from MusicXML** — a MusicXML score imports as a keys track and
+- **MusicXML** — add it directly in Create New's **Content Import**, or use
+  **Keys from MusicXML** in an open song. It imports as a keys track and
   keeps the score's own **left/right hand** assignments (§5).
 - **Studio stems** — after creating, load per-instrument stems (vocals,
   bass, drums…) through the stem manager (§5) for isolated listening and

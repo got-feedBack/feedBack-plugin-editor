@@ -117,62 +117,23 @@ export async function _editorKeysHandleFile(file) {
     // MusicXML is delegated to the musicxml_import plugin's parse-arrangement
     // endpoint, which returns a ready editor arrangement (with authored
     // notation stashed) — no per-track pick, so append it straight away.
-    if (lower.endsWith('.xml') || lower.endsWith('.musicxml')) {
+    if (lower.endsWith('.xml') || lower.endsWith('.musicxml') || lower.endsWith('.mxl')) {
         _addKeysSourceFormat = 'musicxml';
         try {
-            const b64 = await _editorFileToBase64(file);
-            const resp = await fetch('/api/plugins/musicxml_import/parse-arrangement', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filename: file.name, data: b64 }),
-            });
-            if (resp.status === 404) {
-                statusEl.textContent = 'MusicXML import needs the "Import MusicXML" plugin installed.';
-                return;
-            }
-            const data = await resp.json().catch(() => ({}));
+            const data = await parseMusicXmlFile(file);
             // A newer file was selected while this parse was in flight — drop it.
             if (reqSeq !== _addKeysReqSeq) return;
-            if (!resp.ok || data.error) {
-                statusEl.textContent = 'Error: ' + (data.error || resp.status);
-                return;
-            }
             const arr = data.arrangement;
-            if (!arr || !(arr.notes || []).length) {
-                statusEl.textContent = 'No notes found in this MusicXML file.';
-                return;
-            }
-            // Align to the session's audio offset, matching the GP/MIDI import
-            // paths (which pass audio_offset server-side). MusicXML times come
-            // back at score-time (offset 0), so shift them client-side.
-            const offset = host.effectiveAudioOffset();
-            if (offset) {
-                for (const n of arr.notes) n.time = (Number(n.time) || 0) + offset;
-                // The endpoint currently returns no chords, but shift them too
-                // (and their nested tones) so flattenChords() stays aligned if
-                // it ever does.
-                for (const ch of (arr.chords || [])) {
-                    if (ch.time != null) ch.time = (Number(ch.time) || 0) + offset;
-                    for (const cn of (ch.notes || [])) {
-                        if (cn.time != null) cn.time = (Number(cn.time) || 0) + offset;
-                    }
-                }
-                // The authored notation stash must shift with the notes it
-                // describes (measure and beat times are absolute seconds) —
-                // add-arrangement fingerprints the payload against the
-                // shifted notes, so an unshifted payload would be born stale.
-                _shiftNotationTimes(arr.notation, offset);
-            }
             // The authored notation (grand-staff hand splits the heuristic
             // lift can't re-derive) stays on the arrangement:
             // _editorAppendKeysArrangement sends it to add-arrangement,
             // which stamps provenance + note-fingerprint and returns it for
             // the save rail to prefer over the lift (see routes.py).
-            await _editorAppendKeysArrangement(arr, statusEl, {
+            await importMusicXmlArrangementIntoSession(arr, statusEl, {
                 isStale: () => reqSeq !== _addKeysReqSeq,
             });
         } catch (e) {
-            statusEl.textContent = 'Failed: ' + e.message;
+            statusEl.textContent = 'Error: ' + e.message;
         }
         return;
     }
@@ -480,6 +441,47 @@ function _editorFileToBase64(file) {
         reader.onerror = () => reject(reader.error || new Error('read failed'));
         reader.readAsDataURL(file);
     });
+}
+
+export async function parseMusicXmlFile(file) {
+    const b64 = await _editorFileToBase64(file);
+    const resp = await fetch('/api/plugins/musicxml_import/parse-arrangement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, data: b64 }),
+    });
+    if (resp.status === 404) {
+        throw new Error('MusicXML import needs the "Import MusicXML" plugin installed.');
+    }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || data.error) throw new Error(data.error || String(resp.status));
+    if (!data.arrangement || !(data.arrangement.notes || []).length) {
+        throw new Error('No notes found in this MusicXML file.');
+    }
+    return data;
+}
+
+// Append an already-parsed MusicXML arrangement. Create-New validates and
+// shows metadata while its modal is open, then installs this exact result once
+// the backend session exists. Add-Keys uses the same seam after parsing.
+export async function importMusicXmlArrangementIntoSession(arr, statusEl, opts = {}) {
+    if (!arr) return false;
+    const offset = host.effectiveAudioOffset();
+    if (offset) {
+        for (const n of (arr.notes || [])) n.time = (Number(n.time) || 0) + offset;
+        for (const ch of (arr.chords || [])) {
+            if (ch.time != null) ch.time = (Number(ch.time) || 0) + offset;
+            for (const cn of (ch.notes || [])) {
+                if (cn.time != null) cn.time = (Number(cn.time) || 0) + offset;
+            }
+        }
+        _shiftNotationTimes(arr.notation, offset);
+    }
+    const added = await _editorAppendKeysArrangement(arr, statusEl, opts);
+    // Create-New marks its blank arrangement with existing, session-scoped
+    // seed provenance. Add-Keys has no flag, so this is a no-op there.
+    if (added) await _maybeRemoveMidiSeed();
+    return added;
 }
 
 // Register an imported Keys arrangement with the session, append it in-memory,

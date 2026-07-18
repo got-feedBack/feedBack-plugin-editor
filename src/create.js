@@ -37,7 +37,9 @@ import { seedSurfacePreset, surfacePersistFor } from './toolbars.js';
 import { trackSessionSavePayload } from './track-session.js';
 import { _editorMaybeStartTour } from './tour.js';
 import { _editorEscHtml, _installModalKeyboard, setStatus } from './ui.js';
-import { importMidiTracksIntoSession } from './import.js';
+import {
+    importMidiTracksIntoSession, importMusicXmlArrangementIntoSession, parseMusicXmlFile,
+} from './import.js';
 
 
 // ════════════════════════════════════════════════════════════════════
@@ -141,6 +143,7 @@ export function editorShowCreateModal() {
         roster: ['Lead'],
         gpPath: null, tracks: null, gpName: null, gpHasEmbedded: false, gpSyncCount: 0,
         eofFiles: null, eofName: null,
+        musicXmlFile: null, musicXmlData: null, musicXmlName: null,
         audioUrl: null, audioName: null, audioDuration: null, audioFile: null,
         audioTracks: [], guideTrackId: '', youtubeSelected: true,
         midiInfo: null, midiFiles: null, midiPath: null, midiTracks: [],
@@ -500,6 +503,7 @@ async function _stageGpFile(file) {
         createState.mode = 'gp';
         // Chart slot is exclusive — a GP replaces any EOF pick. Audio untouched.
         createState.eofFiles = null;
+        createState.musicXmlFile = null; createState.musicXmlData = null; createState.musicXmlName = null;
 
         document.getElementById('editor-create-tracks')?.classList.remove('hidden');
         renderStaged();
@@ -658,6 +662,7 @@ export function _createGateOpen(state, flags) {
     if (state.gpPath) return !state.tracks || state.tracks.some(
         track => track.selected !== false && Number(track.notes) > 0);
     if (state.eofFiles && state.eofFiles.length) return true;
+    if (state.musicXmlFile && state.musicXmlData) return true;
     // A staged MIDI alone creates a project (like a GP file — the title is
     // defaulted from the filename at stage time, so the blank path can run).
     if (state.midiFiles && state.midiFiles.length) return !state.midiTracks
@@ -762,6 +767,12 @@ function _createTrackRowsPure(state, youtubeUrl) {
             kind: 'xml', selected: true,
             selectable: false, guideEligible: false });
     }
+    if (state && state.musicXmlFile) {
+        const notes = Number(state.musicXmlData?.arrangement?.notes?.length) || 0;
+        rows.push({ id: 'musicxml:0', name: String(state.musicXmlName
+            || state.musicXmlFile.name || 'MusicXML'), kind: 'musicxml',
+        selected: notes > 0, selectable: false, guideEligible: false });
+    }
     if (state && state.goplayalongFile) {
         rows.push({ id: 'sync:goplayalong', name: String(state.goplayalongFile.name || 'Sync XML'),
             kind: 'sync', selected: true,
@@ -790,6 +801,19 @@ function _createAudioPayloadPure(audioTracks, guideId) {
 /* @pure:create-track-table:end */
 export { _createAudioPayloadPure, _createGuideIdPure, _createTrackRowsPure };
 
+// Community arrangement XML and MusicXML share the .xml extension. Sniff the
+// document root before choosing an importer; declarations, DOCTYPEs, comments,
+// namespaces, and whitespace before the root are all tolerated.
+export function _xmlImportKindPure(text) {
+    const source = String(text || '');
+    if (/<(?:[A-Za-z_][\w.-]*:)?score-(?:partwise|timewise)\b/i.test(source)) {
+        return 'musicxml';
+    }
+    if (/<(?:[A-Za-z_][\w.-]*:)?track\b/i.test(source)
+            && /<(?:[A-Za-z_][\w.-]*:)?sync\b/i.test(source)) return 'goplayalong';
+    return 'arrangement';
+}
+
 function _syncCreateGuide() {
     const yt = ((document.getElementById('editor-create-yt-url')?.value) || '').trim();
     const rows = _createTrackRowsPure(createState, yt);
@@ -811,20 +835,23 @@ export async function editorContentImportSelected(input) {
     const audioFiles = files.filter((f) => _IMPORT_AUDIO.includes(_extOf(f)));
     const gpFiles = files.filter((f) => _IMPORT_GP.includes(_extOf(f)));
     const xmlFiles = files.filter((f) => _extOf(f) === '.xml');
+    const musicXmls = files.filter((f) => ['.musicxml', '.mxl'].includes(_extOf(f)));
     const midiFiles = files.filter((f) => ['.mid', '.midi'].includes(_extOf(f)));
-    const unknown = files.filter((f) => ![..._IMPORT_AUDIO, ..._IMPORT_GP, '.xml', '.mid', '.midi'].includes(_extOf(f)));
+    const unknown = files.filter((f) => ![..._IMPORT_AUDIO, ..._IMPORT_GP,
+        '.xml', '.musicxml', '.mxl', '.mid', '.midi'].includes(_extOf(f)));
 
-    // A .xml is either a GoPlayAlong sync sidecar (a <track> carrying <sync> —
-    // it aligns a separately-added Guitar Pro chart to audio) or an EOF/RS
-    // arrangement (the chart itself). Sniff the content so the two aren't
-    // confused — handing a GoPlayAlong file to the arrangement loader is exactly
-    // the "not a recognised EOF arrangement XML" failure this avoids.
+    // A .xml may be a GoPlayAlong sync sidecar, a MusicXML score, or an EOF/RS
+    // arrangement. Sniff the content so each reaches its own importer instead
+    // of failing with the arrangement loader's unrecognized-XML error.
     const gpaXmls = [];
     const eofXmls = [];
     for (const f of xmlFiles) {
         let t = '';
         try { t = await f.text(); } catch (_) { /* unreadable — treat as EOF below */ }
-        if (/<track\b/i.test(t) && /<sync\b/i.test(t)) gpaXmls.push(f); else eofXmls.push(f);
+        const kind = _xmlImportKindPure(t);
+        if (kind === 'goplayalong') gpaXmls.push(f);
+        else if (kind === 'musicxml') musicXmls.push(f);
+        else eofXmls.push(f);
     }
     if (gpaXmls.length) await _stageGoplayalong(gpaXmls[0]);
 
@@ -832,7 +859,12 @@ export async function editorContentImportSelected(input) {
     // added together. Stage the chart BEFORE the audio so the coupling sees it.
     if (gpFiles.length) {
         await _stageGpFile(gpFiles[0]);
-        if (eofXmls.length && status) status.textContent += ' (RS XML ignored — one chart source per song.)';
+        if ((eofXmls.length || musicXmls.length) && status) {
+            status.textContent += ' (Other XML ignored — one chart source per song.)';
+        }
+    } else if (musicXmls.length) {
+        await _stageMusicXmlFile(musicXmls[musicXmls.length - 1]);
+        if (eofXmls.length && status) status.textContent += ' (Arrangement XML ignored — one chart source per song.)';
     } else if (eofXmls.length) {
         _stageEofFiles(eofXmls);
     }
@@ -842,7 +874,7 @@ export async function editorContentImportSelected(input) {
     if (midiFiles.length) await _stageMidi(midiFiles);
     if (unknown.length && status) {
         status.textContent = 'Skipped unsupported: ' + unknown.map((f) => f.name).join(', ')
-            + ' (PowerTab & MusicXML are coming).';
+            + ' (PowerTab is not supported yet).';
     }
     // The staged list is now the source of truth — clear the input so re-adding
     // the same file fires a fresh change and the input never "shows" one file.
@@ -864,6 +896,35 @@ async function _uploadAudioTrack(file, sequence) {
         duration: Number(data.duration) > 0 ? Number(data.duration) : null,
         file,
     };
+}
+
+async function _stageMusicXmlFile(file) {
+    const iStatus = document.getElementById('editor-create-import-status');
+    if (iStatus) iStatus.textContent = 'Parsing ' + file.name + '…';
+    try {
+        const data = await parseMusicXmlFile(file);
+        createState.musicXmlFile = file;
+        createState.musicXmlData = data;
+        createState.musicXmlName = data.arrangement?.name || file.name;
+        createState.mode = 'musicxml';
+        createState.gpPath = null; createState.tracks = null; createState.gpName = null;
+        createState.eofFiles = null; createState.eofName = null;
+        createState.lastSync = null; createState.autoSyncAudioUrl = null;
+        _refreshGpAudioUI();
+        const title = document.getElementById('editor-create-title');
+        const artist = document.getElementById('editor-create-artist');
+        if (title && !title.value.trim()) title.value = data.title || file.name.replace(/\.[^.]+$/, '');
+        if (artist && !artist.value.trim()) artist.value = data.composer || '';
+        if (iStatus) {
+            const count = data.arrangement?.notes?.length || 0;
+            iStatus.textContent = `${file.name} added as MusicXML (${count} notes).`;
+        }
+    } catch (error) {
+        createState.musicXmlFile = null;
+        createState.musicXmlData = null;
+        createState.musicXmlName = null;
+        if (iStatus) iStatus.textContent = 'MusicXML read failed: ' + error.message;
+    }
 }
 
 // Upload every selected audio source concurrently. The first added source is
@@ -899,6 +960,7 @@ function _stageEofFiles(xmls) {
     createState.mode = 'eof';
     // Chart slot is exclusive — EOF replaces GP. Audio untouched.
     createState.gpPath = null; createState.tracks = null; createState.gpName = null;
+    createState.musicXmlFile = null; createState.musicXmlData = null; createState.musicXmlName = null;
     document.getElementById('editor-create-tracks')?.classList.add('hidden');
     _refreshGpAudioUI();       // no gpPath → hides GP audio UI
     const iStatus = document.getElementById('editor-create-import-status');
@@ -1017,7 +1079,8 @@ async function _stageMidi(files) {
 function _trackTypeLabel(kind) {
     return kind === 'audio' ? 'Audio' : kind === 'youtube' ? 'YouTube'
         : kind === 'guitar-pro' ? 'Guitar Pro' : kind === 'midi' ? 'MIDI'
-            : kind === 'xml' ? 'XML' : kind === 'sync' ? 'Sync' : kind;
+            : kind === 'musicxml' ? 'MusicXML' : kind === 'xml' ? 'XML'
+                : kind === 'sync' ? 'Sync' : kind;
 }
 
 // One honest table for imported audio sources and transcription tracks.
@@ -1032,7 +1095,7 @@ function renderStaged() {
     } else {
         const firstGp = rows.find(row => row.kind === 'guitar-pro');
         const firstMidi = rows.find(row => row.kind === 'midi');
-        const firstXml = rows.find(row => row.kind === 'xml');
+        const firstXml = rows.find(row => row.kind === 'xml' || row.kind === 'musicxml');
         wrap.innerHTML = rows.map(row => {
             const id = _editorEscHtml(row.id);
             const name = _editorEscHtml(row.name);
@@ -1077,6 +1140,7 @@ export function editorStagedRemove(role) {
     } else if (role === 'chart') {
         createState.gpPath = null; createState.tracks = null; createState.eofFiles = null;
         createState.gpName = null; createState.eofName = null; createState.gpHasEmbedded = false;
+        createState.musicXmlFile = null; createState.musicXmlData = null; createState.musicXmlName = null;
         createState.lastSync = null; createState.autoSyncAudioUrl = null;
         document.getElementById('editor-create-tracks')?.classList.add('hidden');
         _refreshGpAudioUI();        // no gpPath → hides GP audio UI
@@ -1913,13 +1977,27 @@ async function _editorDoMidiCreate() {
     }
 }
 
+async function _editorDoMusicXmlCreate() {
+    const seedPlan = _midiSeedRosterPure(createState.roster, false);
+    createState.roster = seedPlan.roster;
+    const data = createState.musicXmlData;
+    await _editorDoBlankCreate();
+    if (!S.sessionId || !S.arrangements.length || !data?.arrangement) return;
+    if (seedPlan.seeded) { S._midiSeedArrIdx = 0; S._midiSeedSession = S.sessionId; }
+    await importMusicXmlArrangementIntoSession(
+        data.arrangement, document.getElementById('editor-create-status'),
+        { label: 'MusicXML' });
+}
+
 export async function editorDoCreate() {
-    // One menu, no mode toggle — route on what was provided: a Guitar Pro file
-    // wins, then EOF XML arrangement(s), else a from-scratch (draft) create
-    // (only a title is required; audio + artist are optional).
+    // One menu, no mode toggle — route on what was provided: Guitar Pro wins,
+    // then arrangement XML, MusicXML, MIDI, or a from-scratch draft (only a
+    // title is required; audio + artist are optional).
     if (!createState.gpPath) {
         if (createState.eofFiles && createState.eofFiles.length) {
             await _editorDoEofCreate();
+        } else if (createState.musicXmlFile && createState.musicXmlData) {
+            await _editorDoMusicXmlCreate();
         } else if (createState.midiFiles && createState.midiFiles.length) {
             await _editorDoMidiCreate();
         } else {
