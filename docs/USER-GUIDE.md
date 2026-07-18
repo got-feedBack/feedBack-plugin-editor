@@ -331,8 +331,11 @@ few milliseconds early or late. It moves every track together and is undoable.
 
 Drum tracks use a **piece-lane grid**: rows are kit pieces (kick, snare, hats…),
 columns are grid positions. Click to place a hit; the **drum pad strip** maps a
-MIDI e-kit or your keyboard for monitoring. Row **density** (Full / Compact) is
-in the **Track** menu. The **drum limb lint** flags hits that would need three
+MIDI e-kit or your keyboard for monitoring. Row **density** (the Rows button,
+also in the **Track** menu) cycles **Full / Compact / GM roll** — GM roll lays
+the pieces out on their General-MIDI percussion notes, pitch-ordered like a
+piano roll, with each row labeled by its GM note number (the familiar DAW
+drum-roll layout). The **drum limb lint** flags hits that would need three
 hands — advisory only.
 
 ---

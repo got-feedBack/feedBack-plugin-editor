@@ -57,17 +57,50 @@ export const DRUM_COMPACT_LANES = [
     { pieces: ['kick'],                                           label: 'Kick', canonical: 'kick' },
 ];
 
-// The lane table for a density mode: [{pieces, label, canonical}], one
-// entry per visual row. Full = one row per piece (today's grid, label
-// null → per-piece meta label). Unknown densities fall back to full so a
-// corrupted pref can never blank the grid.
+// Canonical General-MIDI percussion note per chart piece — the PRIMARY
+// note only (35/40/41/47/59-style aliases stay in the pad strip's full
+// GM_DRUM_MAP; a lane needs exactly one row number). `stack` has no GM
+// note — it rows below kick in the GM roll, unlabeled.
+export const DRUM_PIECE_GM = {
+    kick: 36, snare_xstick: 37, snare: 38, hh_closed: 42, tom_floor: 43,
+    hh_pedal: 44, tom_low: 45, hh_open: 46, tom_mid: 48, crash_l: 49,
+    tom_hi: 50, ride: 51, china: 52, ride_bell: 53, splash: 55, bell: 56,
+    crash_r: 57, stack: null,
+};
+
+// The lane table for a density mode: [{pieces, label, canonical, gm?}],
+// one entry per visual row. Full = one row per piece (today's grid, label
+// null → per-piece meta label). Midi = the GM roll: one row per piece on
+// its General-MIDI percussion note, pitch-DESCENDING top→bottom (the
+// piano-roll convention — high notes up); pieces with no GM note sink to
+// the bottom in kit order. Same grid, same piece-ids, same editing —
+// V6's one-data-path rule holds; only row order + labels change.
+// Unknown densities fall back to full so a corrupted pref can never
+// blank the grid.
 export function _drumLaneTablePure(density, fullOrder, compactLanes) {
+    if (density === 'midi') {
+        const gmOf = p => DRUM_PIECE_GM[p];
+        const withGm = fullOrder.filter(p => Number.isInteger(gmOf(p)))
+            .sort((a, b) => gmOf(b) - gmOf(a));
+        const without = fullOrder.filter(p => !Number.isInteger(gmOf(p)));
+        return [...withGm, ...without].map(p => ({
+            pieces: [p], label: null, canonical: p,
+            gm: Number.isInteger(gmOf(p)) ? gmOf(p) : null,
+        }));
+    }
     if (density !== 'compact') {
         return fullOrder.map(p => ({ pieces: [p], label: null, canonical: p }));
     }
     return compactLanes.map(l => ({
         pieces: l.pieces.slice(), label: l.label, canonical: l.canonical,
     }));
+}
+
+// The density the toggle button cycles to next: Full → Compact → GM roll.
+export function _drumDensityNextPure(cur) {
+    if (cur === 'full') return 'compact';
+    if (cur === 'compact') return 'midi';
+    return 'full';
 }
 
 // Which visual row a piece-id lives on (-1 for unknown pieces — the
@@ -187,8 +220,8 @@ let _drumDensityCache = null;
 export function _drumDensityMode() {
     if (_drumDensityCache === null) {
         try {
-            _drumDensityCache = localStorage.getItem('editorDrumDensity') === 'compact'
-                ? 'compact' : 'full';
+            const v = localStorage.getItem('editorDrumDensity');
+            _drumDensityCache = (v === 'compact' || v === 'midi') ? v : 'full';
         } catch (_) { _drumDensityCache = 'full'; }
     }
     return _drumDensityCache;
@@ -208,16 +241,18 @@ export function _drumLaneIdxForPiece(pieceId) {
 }
 
 export function _editorToggleDrumDensity() {
-    const next = _drumDensityMode() === 'compact' ? 'full' : 'compact';
+    const next = _drumDensityNextPure(_drumDensityMode());
     _drumDensityCache = next;
     try { localStorage.setItem('editorDrumDensity', next); } catch (_) {}
-    // Row count changed — drop selection (indices keep meaning, but the
-    // user's visual anchor doesn't) and repaint.
+    // Row count/order changed — drop selection (indices keep meaning, but
+    // the user's visual anchor doesn't) and repaint.
     S.drumSel = new Set();
     host.draw();
     setStatus(next === 'compact'
         ? 'Compact rows — families share a row (colors keep each piece distinct); adding writes the family’s main piece'
-        : 'Full rows — one row per drum piece');
+        : next === 'midi'
+            ? 'GM roll — one row per piece on its General-MIDI percussion note, pitch-ordered like a piano roll'
+            : 'Full rows — one row per drum piece');
     return true;
 }
 
@@ -315,12 +350,14 @@ export function _drumEditorDraw(w, h) {
         ctx.lineTo(w, y + DRUM_LANE_H);
         ctx.stroke();
         // Lane label (left margin): family label in Compact, per-piece
-        // label in Full. Hits keep their own piece colors either way.
+        // label in Full, "GM-note piece" in the GM roll. Hits keep their
+        // own piece colors either way.
         ctx.fillStyle = meta.color;
         ctx.font = '10px sans-serif';
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
-        ctx.fillText(lane.label || meta.label, LABEL_W - 4, y + DRUM_LANE_H / 2);
+        const gmPrefix = Number.isInteger(lane.gm) ? `${lane.gm} ` : '';
+        ctx.fillText(lane.label || (gmPrefix + meta.label), LABEL_W - 4, y + DRUM_LANE_H / 2);
     }
 
     // ── Beat grid (reuse the existing helper geometry) ────────────────
@@ -1191,9 +1228,10 @@ function _ensureDrumDensityButton() {
         btn.className = 'px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden';
         btn.title = 'Row density: Full = one row per drum piece; Compact = family rows '
             + '(crash / hi-hat / ride / toms / floor toms / snare / kick — the community '
-            + '7-row shape). Hits keep their real pieces and colors either way; adding in '
-            + 'a Compact row writes the family’s main piece, and dragging onto another '
-            + 'row does too.';
+            + '7-row shape); GM roll = one row per piece on its General-MIDI percussion '
+            + 'note, pitch-ordered like a piano roll. Hits keep their real pieces and '
+            + 'colors in every mode; adding in a Compact row writes the family’s main '
+            + 'piece, and dragging onto another row does too.';
         btn.onclick = () => _editorToggleDrumDensity();
         editBtn.insertAdjacentElement('afterend', btn);
     }
@@ -1206,5 +1244,6 @@ export function _refreshDrumDensityButton() {
     if (sig === _drumDensityBtnState) return;
     _drumDensityBtnState = sig;
     btn.classList.toggle('hidden', !S.drumEditMode);
-    btn.textContent = _drumDensityMode() === 'compact' ? 'Rows: Compact' : 'Rows: Full';
+    const dm = _drumDensityMode();
+    btn.textContent = dm === 'compact' ? 'Rows: Compact' : dm === 'midi' ? 'Rows: GM roll' : 'Rows: Full';
 }

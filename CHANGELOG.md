@@ -40,6 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pill does: Tempo Map open, the bar scrolled into view, Suggest anchored on
   its downbeat. Fix a bar, press H, land on the next: map refinement becomes
   a triage loop instead of a full-song scrub.
+- **GM roll — a piano-roll layout for the drum editor.** Tester ask ("no
+  piano roll for drum MIDI"): the Rows toggle gains a third mode after
+  Full and Compact. GM roll lays one row per piece on its General-MIDI
+  percussion note, pitch-descending top→bottom like a piano roll (57
+  Crash R at the top, 36 Kick near the bottom; the no-GM stack sinks
+  last), each label prefixed with its GM note number — the layout a
+  drummer coming from a DAW already knows. Same grid, same piece-ids,
+  same editing and colors in every mode (the view-modality one-data-path
+  rule): only row order and labels change. The preference persists like
+  the other density modes.
 - **The master mix can be muted (and soloed, and faded) from the Tracks
   pane.** The master row used to carry no inline strip — its controls lived
   only in the mixer drawer. The pane now mirrors the drawer: same M/S/fader,
