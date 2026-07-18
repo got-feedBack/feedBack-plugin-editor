@@ -16,12 +16,19 @@
         <div class="flex-1"></div>
         <!-- Per-part view switcher: fretted parts choose String or Piano
              roll (keys parts are piano-locked). Editor pref, never pack. -->
-        <div id="editor-view-switch" class="hidden items-center rounded overflow-hidden border border-gray-700 bg-dark-700/90 mr-1">
-            <button data-view="string" onclick="editorSetViewMode('string')" class="px-2 py-1 text-xs text-gray-400 hover:text-white" title="String view — the fretted lane editor" aria-pressed="false">String</button>
-            <button data-view="piano" onclick="editorSetViewMode('piano')" class="px-2 py-1 text-xs text-gray-400 hover:text-white border-l border-gray-700" title="Piano roll — notes at sounding pitch (tuning + capo); read-only for fretted parts until suggest-position lands" aria-pressed="false">Piano roll</button>
-            <button data-view="tab" onclick="editorSetViewMode('tab')" class="px-2 py-1 text-xs text-gray-400 hover:text-white border-l border-gray-700" title="Tab — live engraved tablature of this track; click a beat to select its notes (edits happen in String view / the roll)" aria-pressed="false">Tab</button>
-            <button data-view="notation" onclick="editorSetViewMode('notation')" class="px-2 py-1 text-xs text-gray-400 hover:text-white border-l border-gray-700" title="Notation — standard-notation staff of this track (View ▸ Score staff shows notation + tab together)" aria-pressed="false">Notation</button>
-        </div>
+        <!-- Per-track view dropdown (Christian's call: a dropdown, not a pill
+             toggle). The engraved options drive the live lens; "Notation +
+             Tab" is the 'both' staff profile as an explicit choice. -->
+        <select id="editor-view-switch" onchange="editorSetViewMode(this.value)"
+            class="hidden bg-dark-700 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none mr-1"
+            title="Editing view for this track — String / Piano roll edit; Tab / Notation are the live engraved score (click a beat to select)"
+            aria-label="Editing view for this track">
+            <option value="string">String view</option>
+            <option value="piano">Piano roll</option>
+            <option value="tab">Tab</option>
+            <option value="notation">Notation</option>
+            <option value="both">Notation + Tab</option>
+        </select>
         <!-- Arrangement selector -->
         <select id="editor-arrangement" class="bg-dark-700 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none" onchange="editorSelectArrangement(this.value)" style="display:none">
         </select>

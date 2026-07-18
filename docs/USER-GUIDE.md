@@ -226,8 +226,9 @@ gets the view that fits it automatically:
   String view / the roll, and the engraving follows every edit.
 - **Drum grid** — piece lanes, for drum tracks.
 
-Switch with the **String · Piano roll · Tab · Notation** buttons top-right
-(or cycle views with the keyboard shortcut).
+Switch with the **view dropdown** top-right — String view, Piano roll, Tab,
+Notation, or **Notation + Tab** together — or cycle views with the keyboard
+shortcut.
 
 **Adding a track** is one button: **＋ Track** in the toolbar, the **＋** at the
 top of the Tracks column, or **Track ▸ New Track…** — all open the same New

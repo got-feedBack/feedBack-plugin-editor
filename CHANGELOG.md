@@ -51,17 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same editing and colors in every mode (the view-modality one-data-path
   rule): only row order and labels change. The preference persists like
   the other density modes.
-- **Tab and Notation join the view switcher.** The live engraved score
-  existed but was reachable only through the view-cycle shortcut and the
-  View menu — the top-right switcher showed just String | Piano roll and
-  didn't even light up while the lens was on. It's now
-  **String · Piano roll · Tab · Notation**: Tab opens the engraved
-  tablature, Notation the standard-notation staff, and a user whose
-  Score-staff preference is "notation + tab" keeps it (both buttons light
-  together; clicking either never clobbers the preference). The buttons
-  hide for drum tracks (which have no tab), keys stay piano-locked, and
-  returning to String/Piano roll drops the lens cleanly. The User Guide's
-  view list now documents all four.
+- **Tab and Notation join the view switcher — now a dropdown.** The live
+  engraved score existed but was reachable only through the view-cycle
+  shortcut and the View menu — the top-right switcher showed just
+  String | Piano roll and didn't even update while the lens was on. It's
+  now a per-track **view dropdown**: String view · Piano roll · Tab ·
+  Notation · **Notation + Tab** (every staff profile an explicit option,
+  so the selected value always tells the truth, lens included). The
+  engraved options vanish for drum tracks (which have no tab), keys stay
+  piano-locked, and returning to String/Piano roll drops the lens
+  cleanly. The User Guide's view list documents all five.
 - **The master mix can be muted (and soloed, and faded) from the Tracks
   pane.** The master row used to carry no inline strip — its controls lived
   only in the mixer drawer. The pane now mirrors the drawer: same M/S/fader,

@@ -1,10 +1,11 @@
 /*
- * Tests for the lens-aware view switcher (src/key-view.js): Tab and
- * Notation join String / Piano roll as first-class switcher stops.
+ * Tests for the per-track view DROPDOWN (src/key-view.js): Tab, Notation,
+ * and Notation + Tab join String / Piano roll as explicit options
+ * (Christian's call: a dropdown, not a pill toggle).
  *
- * Fails on main: the pure helpers don't exist, editorSetViewMode rejects
- * 'tab'/'notation', and the switcher's active state ignores the engraved
- * lens entirely.
+ * Fails on main: the value-derivation pure doesn't exist,
+ * editorSetViewMode rejects 'tab'/'notation'/'both', and the switcher
+ * ignores the engraved lens entirely.
  *
  * Run: node tests/view_switch_lens.test.mjs
  */
@@ -20,7 +21,7 @@ globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setI
 globalThis.window = globalThis.window || globalThis;
 
 const { S } = await import('../src/state.js');
-const { _tabStaffForClickPure, _viewSwitchActivePure, editorSetViewMode } = await import('../src/key-view.js');
+const { _viewSwitchValuePure, editorSetViewMode } = await import('../src/key-view.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -28,25 +29,17 @@ function t(name, fn) {
     catch (e) { fail++; console.error('  FAIL ' + name + ': ' + e.message); }
 }
 
-t('active set: pref mode rules while the lens is off', () => {
-    assert.deepStrictEqual(_viewSwitchActivePure('string', false, 'tab'), ['string']);
-    assert.deepStrictEqual(_viewSwitchActivePure('piano', false, 'both'), ['piano']);
+t('value: pref mode rules while the lens is off', () => {
+    assert.strictEqual(_viewSwitchValuePure('string', false, 'tab'), 'string');
+    assert.strictEqual(_viewSwitchValuePure('piano', false, 'both'), 'piano');
 });
 
-t('active set: the lens overrides the pref; both lights Tab AND Notation', () => {
-    assert.deepStrictEqual(_viewSwitchActivePure('string', true, 'tab'), ['tab']);
-    assert.deepStrictEqual(_viewSwitchActivePure('piano', true, 'notation'), ['notation']);
-    assert.deepStrictEqual(_viewSwitchActivePure('string', true, 'both'), ['tab', 'notation']);
+t('value: the lens overrides the pref; every staff profile is its own option', () => {
+    assert.strictEqual(_viewSwitchValuePure('string', true, 'tab'), 'tab');
+    assert.strictEqual(_viewSwitchValuePure('piano', true, 'notation'), 'notation');
+    assert.strictEqual(_viewSwitchValuePure('string', true, 'both'), 'both');
     // Junk staff degrades to tab, mirroring _scoreStaffProfilePure.
-    assert.deepStrictEqual(_viewSwitchActivePure('string', true, 'wat'), ['tab']);
-});
-
-t("staff-for-click preserves the user's 'both' reading preference", () => {
-    assert.strictEqual(_tabStaffForClickPure('tab', 'tab'), 'tab');
-    assert.strictEqual(_tabStaffForClickPure('tab', 'notation'), 'notation');
-    assert.strictEqual(_tabStaffForClickPure('notation', 'tab'), 'tab');
-    assert.strictEqual(_tabStaffForClickPure('both', 'tab'), 'both');
-    assert.strictEqual(_tabStaffForClickPure('both', 'notation'), 'both');
+    assert.strictEqual(_viewSwitchValuePure('string', true, 'wat'), 'tab');
 });
 
 t("editorSetViewMode('tab') enters the lens on a fretted track", () => {
@@ -62,15 +55,23 @@ t("editorSetViewMode('tab') enters the lens on a fretted track", () => {
     assert.strictEqual(S.tabViewStaff, 'tab');
 });
 
-t("editorSetViewMode('notation') sets the staff; String exits the lens", () => {
+t("'notation' and 'both' set the matching staff profile", () => {
     editorSetViewMode('notation');
     assert.strictEqual(S.tabViewMode, true);
     assert.strictEqual(S.tabViewStaff, 'notation');
+    editorSetViewMode('both');
+    assert.strictEqual(S.tabViewMode, true);
+    assert.strictEqual(S.tabViewStaff, 'both', 'Notation + Tab is an explicit option');
+    assert.strictEqual(_viewSwitchValuePure('string', S.tabViewMode, S.tabViewStaff), 'both',
+        'the dropdown reads back the both state');
+});
+
+t('String exits the lens', () => {
     editorSetViewMode('string');
     assert.strictEqual(S.tabViewMode, false, 'lens dropped on return to timeline');
 });
 
-t('lens refuses keys/drums tracks through the switcher too', () => {
+t('lens refuses keys/drums tracks through the dropdown too', () => {
     S.arrangements = [{ name: 'Keys', tuning: [0, 0, 0, 0, 0, 0], notes: [], chords: [] }];
     S.currentArr = 0; S.tabViewMode = false;
     editorSetViewMode('tab');
