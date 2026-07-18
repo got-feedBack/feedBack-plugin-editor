@@ -220,7 +220,14 @@ gets the view that fits it automatically:
 - **String view** — lanes per string, for guitar/bass.
 - **Piano roll** — for keys tracks (and available for fretted tracks as a
   read-only reference, with resolver-assisted authoring).
+- **Tab / Notation** — the live engraved score of a fretted track, as
+  tablature or a standard-notation staff (both at once via **View ▸ Score
+  staff**). Click a beat to select its notes and seek; editing stays in
+  String view / the roll, and the engraving follows every edit.
 - **Drum grid** — piece lanes, for drum tracks.
+
+Switch with the **String · Piano roll · Tab · Notation** buttons top-right
+(or cycle views with the keyboard shortcut).
 
 **Adding a track** is one button: **＋ Track** in the toolbar, the **＋** at the
 top of the Tracks column, or **Track ▸ New Track…** — all open the same New

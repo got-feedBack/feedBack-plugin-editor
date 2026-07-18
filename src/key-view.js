@@ -11,6 +11,7 @@ import { notes } from './notes.js';
 import { S } from './state.js';
 import { PIANO_NOTE_NAMES, SCALE_INTERVALS, SCALE_LABELS, _detectKeyPure, _noteNamesForKeyPure } from './theory.js';
 import { setStatus } from './ui.js';
+import { editorSetTabViewStaff, editorToggleTabView } from './tab-view-live.js';
 import { host } from './host.js';
 import { revealToolbar } from './toolbars.js';
 
@@ -76,34 +77,75 @@ export const editorDetectKey = () => {
     setStatus(`Detected key: ${_noteNamesForKeyPure(res)[res.tonic]} ${label} — adjust in the picker if it's off`);
 };
 
-// ── Per-part view switcher (String · Piano roll) ─────────────────────
+// ── Per-part view switcher (String · Piano roll · Tab · Notation) ────
+
+// Which switcher buttons read ACTIVE. The engraved lens overrides the
+// per-part pref while it's on; the 'both' staff profile lights Tab AND
+// Notation together (it genuinely shows both). Pure — testable in node.
+export function _viewSwitchActivePure(prefMode, tabLensOn, staff) {
+    if (!tabLensOn) return [prefMode === 'piano' ? 'piano' : 'string'];
+    if (staff === 'notation') return ['notation'];
+    if (staff === 'both') return ['tab', 'notation'];
+    return ['tab'];
+}
+
+// The staff profile a Tab/Notation button click should apply: honor the
+// user's persisted 'both' preference (clicking Tab while reading both
+// still shows tab — don't clobber the pref), only flip when the current
+// profile doesn't include the requested staff.
+export function _tabStaffForClickPure(current, want) {
+    if (want === 'notation') return current === 'both' ? 'both' : 'notation';
+    return current === 'both' ? 'both' : 'tab';
+}
+
 let _viewSwitchState = '';
 export function _refreshViewSwitch() {
     const el = document.getElementById('editor-view-switch');
     if (!el) return;
     const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
     const fretted = !!arr && !KEYS_PATTERN.test(arr.name || '');
+    const isDrums = !!arr && /^drums/i.test(arr.name || '');
     // Only fretted parts get a choice (keys are piano-locked), and only
-    // when a focus editor is showing (not drum/tempo/parts modes).
+    // when a focus editor is showing (not drum/tempo/parts modes). The
+    // engraved lens keeps the switcher visible — it IS one of the views.
     const visible = fretted && !S.drumEditMode && !S.tempoMapMode && !S.partsViewMode;
     const mode = arr ? viewFor(arr) : 'string';
-    const sig = `${visible}|${mode}`;
+    const active = _viewSwitchActivePure(mode, !!S.tabViewMode, S.tabViewStaff);
+    const sig = `${visible}|${isDrums}|${active.join(',')}`;
     if (sig === _viewSwitchState) return;
     _viewSwitchState = sig;
     el.classList.toggle('hidden', !visible);
     el.classList.toggle('flex', visible);
     el.querySelectorAll('button[data-view]').forEach(b => {
-        const active = b.dataset.view === mode;
-        b.classList.toggle('bg-accent', active);
-        b.classList.toggle('text-white', active);
-        b.classList.toggle('text-gray-400', !active);
-        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+        const on = active.includes(b.dataset.view);
+        b.classList.toggle('bg-accent', on);
+        b.classList.toggle('text-white', on);
+        b.classList.toggle('text-gray-400', !on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        // Drums have no tab/notation (same refusal the lens itself makes) —
+        // hide those stops instead of offering a button that only refuses.
+        if (b.dataset.view === 'tab' || b.dataset.view === 'notation') {
+            b.classList.toggle('hidden', isDrums);
+        }
     });
     const pill = document.getElementById('editor-roll-lock-pill');
-    if (pill) pill.classList.toggle('hidden', !(visible && mode === 'piano'));
+    if (pill) pill.classList.toggle('hidden', !(visible && !S.tabViewMode && mode === 'piano'));
 }
 
 export const editorSetViewMode = (mode) => {
+    // Tab / Notation are the engraved lens with the matching staff profile
+    // (View ▸ Score staff still owns the 'both' reading preference).
+    if (mode === 'tab' || mode === 'notation') {
+        editorSetTabViewStaff(_tabStaffForClickPure(S.tabViewStaff, mode));
+        editorToggleTabView(true);
+        _refreshViewSwitch();
+        return;
+    }
+    // Leaving the lens for a timeline view: drop the flag first so the
+    // pref write below lands on a visible editor (mirrors the cycle).
+    if (S.tabViewMode && (mode === 'string' || mode === 'piano')) {
+        editorToggleTabView(false);
+    }
     if (mode !== 'string' && mode !== 'piano') return;
     const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
     if (!arr) return;
