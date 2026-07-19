@@ -14,7 +14,7 @@
  * in main.js.
  */
 
-import { FOLLOW_CENTER_FRAC, _followPinXPure, _scrollInPlayActive } from './audio.js';
+import { FOLLOW_CENTER_FRAC, _followPinXPure, _scrollInPlayActive, editorFollowEnabled } from './audio.js';
 import { ctx } from './canvas.js';
 import { host } from './host.js';
 import {
@@ -989,7 +989,7 @@ export function drawCursor(w, h) {
     // target uses, so it can never point where the scroll doesn't actually
     // hold — and near the song start/end (before the playhead reaches centre,
     // or past where it can stay) it shows where the music is heading.
-    if (S.playing && _scrollInPlayActive()) {
+    if (S.playing && editorFollowEnabled() && _scrollInPlayActive()) {
         const px = _followPinXPure(w, FOLLOW_CENTER_FRAC);
         if (px >= LABEL_W && px <= w) {
             ctx.strokeStyle = 'rgba(120,220,232,0.30)';

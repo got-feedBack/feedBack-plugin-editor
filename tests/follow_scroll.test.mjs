@@ -151,6 +151,7 @@ test('a restart just inside the gutter is off-screen and recenters', () => {
 // ── Wiring guards (source-text, the part a pure fn can't prove) ───────
 
 const src = fs.readFileSync(new URL('../src/audio.js', import.meta.url), 'utf8');
+const drawSrc = fs.readFileSync(new URL('../src/draw.js', import.meta.url), 'utf8');
 
 test('the follow block branches on scroll-in-play', () => {
     // The tick must choose the continuous target when Scroll in Play is active,
@@ -158,6 +159,13 @@ test('the follow block branches on scroll-in-play', () => {
     assert.ok(/_scrollInPlayActive\(\)\s*\n?\s*\?\s*_scrollInPlayTargetPure/.test(src)
         || src.includes('_scrollInPlayActive()') && src.includes('_scrollInPlayTargetPure(S.cursorTime'),
         'the forward follow block must branch to _scrollInPlayTargetPure');
+});
+
+test('the Scroll in Play pin is hidden while Follow is off', () => {
+    assert.ok(
+        /S\.playing\s*&&\s*editorFollowEnabled\(\)\s*&&\s*_scrollInPlayActive\(\)/.test(drawSrc),
+        'the visual pin must require playback, Follow, and the effective continuous manner',
+    );
 });
 
 test('playbackTick applies the wrap scroll before every wrap return', () => {
