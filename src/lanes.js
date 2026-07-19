@@ -200,7 +200,13 @@ const _LANE_NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 
 export function _tunedLaneLabelsPure(L, isBass, openMidi, tuning) {
     const nominal = _nominalLaneLabelsPure(L, isBass);
     const offs = Array.isArray(tuning) ? tuning : [];
-    const shifted = (s) => Number(offs[s]) || 0;
+    const shifted = (s) => {
+        const value = Number(offs[s]);
+        // Tuning offsets are whole semitones. Treat malformed, non-finite,
+        // or fractional values as an absent offset; otherwise modulo below
+        // can index the note-name table with NaN and paint "undefined".
+        return Number.isInteger(value) ? value : 0;
+    };
     // Standard tuning (or no tuning data) keeps today's labels exactly —
     // including the lowercase high 'e' and the ↓/↑ extension markers.
     if (!Array.isArray(openMidi) || nominal.every((_, s) => shifted(s) === 0)) {

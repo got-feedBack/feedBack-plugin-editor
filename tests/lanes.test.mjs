@@ -231,6 +231,8 @@ t('degradations: junk tuning and a missing arrangement fall back to nominal', ()
     assert.deepStrictEqual(laneLabels(), ['E', 'A', 'D', 'G', 'B', 'e']);
     setArr(tuned(guitar(6), ['x', undefined, null, 0, 0, 0]));
     assert.deepStrictEqual(laneLabels(), ['E', 'A', 'D', 'G', 'B', 'e']);
+    setArr(tuned(guitar(6), [Infinity, -Infinity, NaN, 1.5, 0, 0]));
+    assert.deepStrictEqual(laneLabels(), ['E', 'A', 'D', 'G', 'B', 'e']);
     setArr(null);
     assert.strictEqual(laneLabels().length, 6);
 });
