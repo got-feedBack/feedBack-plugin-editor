@@ -2164,9 +2164,8 @@ function init() {
     // transition that never happened.
     let wasActive = !!(screen && screen.classList.contains('active'));
     const obs = new MutationObserver(() => {
-        const el = document.getElementById('plugin-editor');
-        if (!el) return;
-        const active = el.classList.contains('active');
+        if (!screen) return;
+        const active = screen.classList.contains('active');
         // The filter is `class`, not one specific class, so ignore unrelated
         // class churn — this must only act on a real show/hide transition.
         if (active === wasActive) return;
