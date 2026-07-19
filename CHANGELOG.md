@@ -50,6 +50,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its user guide. Drag the thumb, or click the rail to jump. When the grid
   already fits, nothing changes: no bar, and the wheel keeps panning the
   timeline exactly as before.
+- **Leaving the Song Editor stops its playback.** Playback that was running
+  when you navigated away just kept going — leave the editor mid-play, start
+  an actual song, and you got two mixes on top of each other. The editor did
+  have a teardown that stops audio, but it only ran at the top of a *new*
+  injection, so it fired when you came *back*, never when you left. The
+  screen-visibility observer now handles the hide as well as the show. An
+  in-flight MIDI take is finalized rather than discarded (held notes capped,
+  device session released), and this is deliberately not the full teardown —
+  the host can re-show the same injection without re-running the module, so
+  the editor stays intact and resumable.
 
 ### Changed
 
