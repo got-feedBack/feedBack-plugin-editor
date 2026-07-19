@@ -71,14 +71,18 @@ initTrackSession();
 
 let rowEl;
 const faderTarget = {
-    closest: (sel) => (sel === 'input,select,textarea' ? faderTarget
+    closest: (sel) => (sel === 'input,select,textarea,button' ? faderTarget
         : sel === '[data-track-id]' ? rowEl : null),
 };
 const labelTarget = { closest: (sel) => (sel === '[data-track-id]' ? rowEl : null) };
+const buttonTarget = {
+    closest: (sel) => (sel === 'input,select,textarea,button' ? buttonTarget
+        : sel === '[data-track-id]' ? rowEl : null),
+};
 // The rename input is a form control too, so the same pointerdown path covers
 // it — which is what makes removing its (never-firing) dragstart guard safe.
 const renameTarget = {
-    closest: (sel) => (sel === 'input,select,textarea' ? renameTarget
+    closest: (sel) => (sel === 'input,select,textarea,button' ? renameTarget
         : sel === '[data-track-rename-input]' ? renameTarget
         : sel === '[data-track-id]' ? rowEl : null),
 };
@@ -125,6 +129,16 @@ t('the rename input is covered by the same pointerdown path', () => {
     assert.strictEqual(rowEl.draggable, true);
 });
 
+// Mute, solo, open-editor, guide and collapse are buttons inside draggable
+// rows. They need the same protection as faders and selects: a slightly
+// moving click must remain a button gesture, not turn into row reorder.
+t('pressing a row button takes its row out of the reorder drag', () => {
+    freshRow();
+    panelEl.dispatch('pointerdown', { target: buttonTarget, preventDefault() {}, stopPropagation() {} });
+    assert.strictEqual(rowEl.draggable, false, 'row buttons must keep their gesture');
+    window.dispatch('pointerup');
+    assert.strictEqual(rowEl.draggable, true);
+});
 t('pressing the row body leaves reorder armed', () => {
     freshRow();
     panelEl.dispatch('pointerdown', { target: labelTarget, preventDefault() {}, stopPropagation() {} });

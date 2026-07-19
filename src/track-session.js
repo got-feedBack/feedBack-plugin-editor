@@ -1174,7 +1174,7 @@ export function initTrackSession() {
         // the two are indistinguishable there. Instead take the row out of the
         // drag entirely for the span of a gesture that began on a control, and
         // put it back on release.
-        const control = event.target && event.target.closest ? event.target.closest('input,select,textarea') : null;
+        const control = event.target && event.target.closest ? event.target.closest('input,select,textarea,button') : null;
         const controlRow = control && control.closest ? control.closest('[data-track-id]') : null;
         if (controlRow) {
             controlRow.draggable = false;
