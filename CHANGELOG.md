@@ -45,6 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A row that owns a control now drops out of the drag for the span of a gesture
   that started on that control, and rejoins on release. Dragging a row by its
   body still reorders exactly as before.
+- **Shift+wheel pans the multi-track canvas, like it already did everywhere
+  else.** Ctrl+wheel zoomed on the tempo map, the transcription track view and
+  the multi-track canvas alike, but Shift+wheel panned only the first two — on
+  the multi-track canvas it did nothing. The Tracks-area lane-scroll hijack
+  exempted `ctrlKey` but not `shiftKey`, and Shift+wheel arrives deltaY-dominant,
+  so it matched the hijack's axis test and was consumed as a lane scroll before
+  it could reach the pan. The wheel modifiers now mean the same thing in every
+  canvas view: Ctrl zooms, Shift pans. A plain vertical wheel still scrolls the
+  lane stack — that is what the multi-track view is for — and every other wheel
+  gesture is untouched.
 - **Keyboard seeks scroll the view again on a HiDPI display.** `canvas.width`
   is DEVICE pixels (main.js sets it to `cssWidth * DPR`), but `_editorSeekToTime`
   mixed it straight into `LABEL_W` and `S.zoom`, which are CSS-pixel units. On a

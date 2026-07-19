@@ -789,7 +789,16 @@ export function onWheel(e) {
     // Tracks area: a vertical-dominant wheel scrolls the shared lane stack
     // (header column + canvas lanes together); a horizontal-dominant swipe
     // still pans the timeline.
-    if (S.partsViewMode && !e.ctrlKey && Math.abs(e.deltaY) >= Math.abs(e.deltaX || 0)) {
+    //
+    // Shift is exempted alongside Ctrl so the wheel modifiers mean the same
+    // thing in EVERY canvas view — Ctrl zooms, Shift pans the timeline — rather
+    // than Shift silently degrading to a lane scroll here. Browsers disagree
+    // about whether Shift+wheel arrives as deltaX or as deltaY with shiftKey
+    // set; on the deltaY form this guard's axis test matched and swallowed the
+    // pan, which is why Shift+wheel panned the tempo map and the transcription
+    // view but did nothing on the multi-track canvas. The pan branch below
+    // already picks the dominant axis, so both forms work once they reach it.
+    if (S.partsViewMode && !e.ctrlKey && !e.shiftKey && Math.abs(e.deltaY) >= Math.abs(e.deltaX || 0)) {
         host.scrollTrackArea(e.deltaY);
         return;
     }
