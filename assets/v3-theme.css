@@ -189,6 +189,32 @@
     flex-shrink: 0; font-size: 10px; font-weight: 700; color: #fbbf24;
 }
 #plugin-editor .editor-lint-row:hover .editor-lint-rule { color: #fef3c7; }
+/* ── New Track dialog (type tiles + instrument chips) ─────────────── */
+#plugin-editor .editor-ntt-tile {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    flex: 1 1 0; max-width: 210px; padding: 12px 10px;
+    border: 1px solid var(--ed-border, #334155); border-radius: 10px;
+    background: var(--ed-panel, #1e293b); color: var(--ed-text, #cbd5e1); cursor: pointer;
+}
+#plugin-editor .editor-ntt-tile:hover { border-color: var(--ed-accent, #0ea5e9); }
+#plugin-editor .editor-ntt-tile.editor-ntt-active {
+    border-color: var(--ed-accent, #0ea5e9);
+    background: rgba(14, 165, 233, 0.12);
+}
+#plugin-editor .editor-ntt-icon { font-size: 22px; line-height: 1.2; }
+#plugin-editor .editor-ntt-name { font-size: 12px; font-weight: 700; }
+#plugin-editor .editor-ntt-sub { font-size: 10px; color: var(--ed-text-faint, #64748b); text-align: center; }
+#plugin-editor .editor-nti-chip {
+    padding: 4px 12px; border: 1px solid var(--ed-border, #334155); border-radius: 999px;
+    background: transparent; color: var(--ed-text, #cbd5e1); cursor: pointer;
+    font-size: 12px; font-weight: 600;
+}
+#plugin-editor .editor-nti-chip:hover { border-color: var(--ed-accent, #0ea5e9); }
+#plugin-editor .editor-nti-chip.editor-nti-active {
+    border-color: var(--ed-accent, #0ea5e9);
+    background: rgba(14, 165, 233, 0.15);
+}
+
 /* ── Drum-pad companion strip ─────────────────────────────────────── */
 /* Kit legend / cursor input / GM MIDI monitor (src/drum-pad-strip.js).
    Pads are buttons: lit = selection contains that piece; flash = a MIDI

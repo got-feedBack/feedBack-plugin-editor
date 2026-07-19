@@ -236,6 +236,29 @@ export function editorHideAddDrumsModal() {
     document.getElementById('editor-add-drums-modal').classList.add('hidden');
 }
 
+// Blank Drums start (New Track ▸ Transcription ▸ Drums ▸ empty). The drum
+// tab is pure client state until save (S.drumTab + S.drumTabDirty — the
+// same stash the GP/MIDI import path uses), and the create flow's
+// init_drums seeds the identical empty shape, so no backend call is
+// needed. Refuses when a drum tab already exists: replacing goes through
+// the import modal, which warns.
+export function editorAddEmptyDrums() {
+    if (!S.sessionId || S.format !== 'sloppak') return false;
+    if (S.drumTab) {
+        setStatus('This song already has a Drums track — open it with 🥁 Edit Drums, or import to replace it.');
+        return false;
+    }
+    S.drumTab = { version: 1, name: 'Drums', kit: [], hits: [] };
+    S.drumTabDirty = true;
+    S.drumSel = new Set();
+    markSessionDirty();
+    host.updateArrangementSelector();
+    host.updateStatus();
+    host.draw();
+    setStatus('Added empty Drums track — 🥁 Edit Drums to add hits; save to commit.');
+    return true;
+}
+
 // File-kind dispatcher — GP path lists tracks via /import-gp, MIDI path
 // via /import-drums-midi-list. Both eventually populate the same picker.
 export async function editorDrumsFileSelected(input) {
