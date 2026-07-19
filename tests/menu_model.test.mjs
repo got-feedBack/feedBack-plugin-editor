@@ -153,5 +153,38 @@ t('no menu renders empty, and separators never lead or trail', () => {
     }
 });
 
+// Scroll in Play checkbox (the sip item kind): checked from ctx.scrollInPlay,
+// DIMMED (null dispatch) while follow is off — the continuous manner only means
+// anything while following.
+const findSip = (ctx) => _menuModelPure(EDITOR_MENUS, rows, ctx)
+    .flatMap((m) => m.items).find((i) => /Scroll in Play/.test(i.label || ''));
+
+t('Scroll in Play is unchecked + enabled when follow on, pref off', () => {
+    const it = findSip({ ...CTX, followOn: true, scrollInPlay: false });
+    assert.ok(it, 'the Scroll in Play item must render');
+    assert.ok(it.label.startsWith('  '), 'unchecked shows the two-space pad');
+    assert.deepStrictEqual(it.dispatch, { cmd: 'toggleScrollInPlay' });
+    assert.strictEqual(it.disabled, false);
+});
+
+t('Scroll in Play shows a checkmark when the pref is on', () => {
+    const it = findSip({ ...CTX, followOn: true, scrollInPlay: true });
+    assert.ok(it.label.startsWith('✓ '), 'checked shows the tick');
+});
+
+t('Scroll in Play is dimmed and inert while follow is off', () => {
+    const it = findSip({ ...CTX, followOn: false, scrollInPlay: true });
+    assert.strictEqual(it.disabled, true, 'must be greyed when follow is off');
+    assert.strictEqual(it.dispatch, null, 'must not dispatch while follow is off');
+});
+
+t('Scroll in Play degrades to unchecked+enabled for a ctx without the keys', () => {
+    // Older callers pass no followOn/scrollInPlay — same graceful degradation
+    // the scoreStaff/loopSnap rows use.
+    const it = findSip(CTX);
+    assert.ok(it.label.startsWith('  '));
+    assert.strictEqual(it.disabled, false);
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

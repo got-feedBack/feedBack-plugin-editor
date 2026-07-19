@@ -127,7 +127,10 @@ defaults** puts everything back.
 ## 3. Play and navigate
 
 - **Space** plays/stops from the playhead.
-- **Follow playhead** (`Shift+L`) keeps the view scrolling with playback.
+- **Follow playhead** (`Shift+L`) keeps the view with the playhead during
+  playback. By default the view jumps ahead a page when the playhead reaches
+  the edge; turn on **View ▸ Scroll in Play** to pin the playhead and glide the
+  timeline under it instead (Logic's continuous-scroll manner).
 - **Loop A/B** (`Alt+B`) compares the recording against your guide so you can
   hear whether the chart matches the take.
 - **Count-in** adds a bar of clicks before playback so you can catch the entry.

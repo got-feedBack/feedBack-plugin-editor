@@ -87,6 +87,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   container, so it re-fits whatever caused the change.
 
 ### Changed
+- **Scroll in Play — a continuous follow manner (View menu).** Follow now has
+  two manners, matching Logic. The default is unchanged: the view jumps ahead a
+  page when the playhead reaches the edge. **View ▸ Scroll in Play** switches to
+  the continuous manner — the playhead pins in the middle and the timeline
+  glides under it. It's a checkbox, dimmed while Follow is off (it only applies
+  while following), and it honours your system's reduced-motion setting by
+  falling back to the page jump. Ableton and Pro Tools offer the same two-way
+  choice and nothing more, so this is the whole customization worth having.
+
+### Fixed
+
+- **Follow now respects the canvas edge at every resolution.** The page-jump
+  math measured its trigger and landing against the full canvas width but read
+  the playhead position including the 52px label gutter — so the playhead
+  landed a little too far right, and by an amount that drifted with the window
+  size (52px is a bigger slice of a narrow canvas than a wide one). Both the
+  forward follow and the loop-wrap recentre now measure against the *usable*
+  timeline (the width right of the gutter), so the playhead lands at the same
+  spot on screen no matter the resolution. The label-gutter edge is now drawn
+  as a faint divider in the chart, so the "usable timeline" reads as a bounded
+  region — and any future gutter-math slip is visible on sight.
 
 - **You can finally zoom out far enough to see a whole song.** The timeline
   zoom floor was 20px/s, which capped the widest possible view at about 50

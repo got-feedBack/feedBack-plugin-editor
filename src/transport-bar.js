@@ -49,7 +49,8 @@ import { S } from './state.js';
 import { host } from './host.js';
 import { setStatus } from './ui.js';
 import {
-    _editorToggleFollow, _trainerActive, editorAuditionRate, editorCountInBars, editorFollowEnabled, editorSetCountIn,
+    _editorToggleFollow, _trainerActive, editorAuditionRate, editorCountInBars, editorFollowEnabled,
+    editorScrollInPlayEnabled, editorSetCountIn,
     stopPlayback,
 } from './audio.js';
 import { PIANO_NOTE_NAMES, SCALE_LABELS } from './theory.js';
@@ -651,6 +652,18 @@ export function _transportBarTick(force) {
         if (el) { const v = onState ? 'true' : 'false'; if (el.getAttribute('aria-pressed') !== v) el.setAttribute('aria-pressed', v); }
     };
     press('editor-tp-follow', editorFollowEnabled());
+    // The Follow button's MANNER (page vs continuous) lives in a View-menu
+    // checkbox, not on the button — so the button's tooltip is the one place
+    // a hovering user learns which they'll get. Swap it with the pref.
+    {
+        const fb = document.getElementById('editor-tp-follow');
+        if (fb) {
+            const tip = editorScrollInPlayEnabled()
+                ? 'Follow the playhead during playback — the playhead stays pinned and the view scrolls under it. (Shift+L)'
+                : 'Follow the playhead during playback — the view jumps ahead a page when it reaches the edge. (Shift+L)';
+            if (fb.getAttribute('title') !== tip) fb.setAttribute('title', tip);
+        }
+    }
     press('editor-tp-parts', !!S.partsViewMode);
     press('editor-tp-count', bars > 0);
     // The trainer rides the loop: it reads OFF the moment the loop does, and a
