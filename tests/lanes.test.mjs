@@ -12,8 +12,8 @@
 import assert from 'node:assert';
 import { S } from '../src/state.js';
 import {
-    LC, MAX_LANES, _openMidiForArr, _soundingPitchPure, colorForLane, laneLabels,
-    laneToStr, lanes, strToLane,
+    LC, MAX_LANES, _nominalLaneLabelsPure, _openMidiForArr, _soundingPitchPure,
+    _tunedLaneLabelsPure, colorForLane, laneLabels, laneToStr, lanes, strToLane,
 } from '../src/lanes.js';
 
 let pass = 0, fail = 0;
@@ -28,6 +28,7 @@ function setArr(arr) {
     S.currentArr = 0;
     LC.active = false;
     LC.labels = null;
+    LC.nominalLabels = null;
 }
 const guitar = (n) => ({ name: 'Lead', tuning: new Array(n).fill(0), notes: [], chords: [] });
 const bass = (n) => ({ name: 'Bass', tuning: new Array(n).fill(0), notes: [], chords: [] });
@@ -109,14 +110,18 @@ t('LC.active short-circuits lanes() to LC.value', () => {
     assert.strictEqual(lanes(), 6, 'a cold cache recomputes from S');
 });
 
-t('colorForLane uses LC.labels only while the cache is hot', () => {
+t('colorForLane uses LC.nominalLabels only while the cache is hot', () => {
+    // Colour keys off the NOMINAL cache, not the display one: display
+    // labels follow the tuning, and a retuned string must keep its colour.
     setArr(guitar(6));
     LC.active = true;
     LC.value = 6;
-    LC.labels = ['E', 'E', 'E', 'E', 'E', 'E'];   // every lane forced red
+    LC.nominalLabels = ['E', 'E', 'E', 'E', 'E', 'E'];   // every lane forced red
+    LC.labels = ['A#', 'A#', 'A#', 'A#', 'A#', 'A#'];    // display: ignored here
     assert.strictEqual(colorForLane(0), '#FC3A51');
     LC.active = false;
     LC.labels = null;
+    LC.nominalLabels = null;
     assert.strictEqual(colorForLane(0), '#C473FF', 'cold cache recomputes labels');
 });
 
@@ -153,6 +158,85 @@ t('_soundingPitchPure adds the capo exactly once', () => {
     assert.strictEqual(_soundingPitchPure(g, std, 2, 0, 0), 42, 'capo 2 → F#');
     assert.strictEqual(_soundingPitchPure(g, std, 0, 9, 0), null, 'no such string');
 });
+
+
+
+// ── Tuning-aware lane labels ─────────────────────────────────────────
+// Reported by a 6-string bassist: a chart tuned a whole step down
+// (A0 D1 G1 C2 F2 A#2) rendered its lanes B↓ E A D G C↑ — the NOMINAL
+// layout — so every string label was a whole step sharp and the fret
+// positions read as wrong notes. Labels must follow the tuning.
+
+const tuned = (arr, offsets) => ({ ...arr, tuning: offsets });
+
+t('standard tuning is byte-identical to the nominal labels (no churn)', () => {
+    for (const n of [4, 5]) {
+        setArr(bass(n));
+        assert.deepStrictEqual(laneLabels(), _nominalLaneLabelsPure(lanes(), true), `bass ${n}`);
+    }
+    // A genuine 6-string bass needs a note up there — a len-6 bass tuning
+    // alone is RS padding and stays 4 strings (see the label test above).
+    setArr({ ...bass(6), notes: [{ string: 5 }] });
+    assert.deepStrictEqual(laneLabels(), _nominalLaneLabelsPure(6, true), 'bass 6');
+    for (const n of [6, 7, 8]) {
+        setArr(guitar(n));
+        assert.deepStrictEqual(laneLabels(), _nominalLaneLabelsPure(lanes(), false), `guitar ${n}`);
+    }
+});
+
+t('the reported chart: 6-string bass a whole step down reads A D G C F A#', () => {
+    // Genuine 6-string (a note on string 5), tuned a whole step down.
+    setArr({ ...tuned(bass(6), [-2, -2, -2, -2, -2, -2]), notes: [{ string: 5 }] });
+    assert.strictEqual(lanes(), 6);
+    assert.deepStrictEqual(laneLabels(), ['A↓', 'D', 'G', 'C', 'F', 'A#↑']);
+});
+
+t('Drop D guitar relabels ONLY the dropped string', () => {
+    setArr(tuned(guitar(6), [-2, 0, 0, 0, 0, 0]));
+    assert.deepStrictEqual(laneLabels(), ['D', 'A', 'D', 'G', 'B', 'e']);
+});
+
+t('a retuned string keeps its POSITIONAL colour (Drop D low string stays red)', () => {
+    setArr(tuned(guitar(6), [-2, 0, 0, 0, 0, 0]));
+    // lane for string 0 (the low string) — red, not D-blue.
+    assert.strictEqual(colorForLane(strToLane(0)), '#FC3A51');
+    // And no lane falls through to the grey fallback on a retuned chart.
+    for (let l = 0; l < lanes(); l++) {
+        assert.notStrictEqual(colorForLane(l), '#888', `lane ${l} lost its colour`);
+    }
+});
+
+t('every lane keeps a colour on the reported bass chart too', () => {
+    setArr({ ...tuned(bass(6), [-2, -2, -2, -2, -2, -2]), notes: [{ string: 5 }] });
+    for (let l = 0; l < lanes(); l++) {
+        assert.notStrictEqual(colorForLane(l), '#888', `lane ${l} lost its colour`);
+    }
+});
+
+t('the ↓/↑ extension markers survive retuning (which string is still legible)', () => {
+    const labels = _tunedLaneLabelsPure(6, true, [23, 28, 33, 38, 43, 48], [-2, -2, -2, -2, -2, -2]);
+    assert.ok(labels[0].endsWith('↓'), labels[0]);
+    assert.ok(labels[5].endsWith('↑'), labels[5]);
+});
+
+t('the capo is NOT folded into the labels (it is the instrument tuning)', () => {
+    const arr = tuned(guitar(6), [0, 0, 0, 0, 0, 0]);
+    arr.capo = 3;
+    setArr(arr);
+    assert.deepStrictEqual(laneLabels(), ['E', 'A', 'D', 'G', 'B', 'e']);
+});
+
+t('degradations: junk tuning and a missing arrangement fall back to nominal', () => {
+    setArr(tuned(guitar(6), null));
+    assert.deepStrictEqual(laneLabels(), ['E', 'A', 'D', 'G', 'B', 'e']);
+    setArr(tuned(guitar(6), ['x', undefined, null, 0, 0, 0]));
+    assert.deepStrictEqual(laneLabels(), ['E', 'A', 'D', 'G', 'B', 'e']);
+    setArr(tuned(guitar(6), [Infinity, -Infinity, NaN, 1.5, 0, 0]));
+    assert.deepStrictEqual(laneLabels(), ['E', 'A', 'D', 'G', 'B', 'e']);
+    setArr(null);
+    assert.strictEqual(laneLabels().length, 6);
+});
+
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

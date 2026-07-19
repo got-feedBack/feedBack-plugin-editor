@@ -21,6 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matching what shipped (track sessions + mixer console, click tools, keys
   hands, canvas appearance, stems).
 
+### Fixed
+- **String labels follow the tuning.** A 6-string bass tuned a whole step
+  down (A D G C F A#) rendered its lanes with the STANDARD layout
+  (B↓ E A D G C↑), so every string label was a whole step sharp and the
+  fret positions read as the wrong notes — reported by a bassist whose
+  chart was unusable because of it. Labels are now derived from the
+  arrangement's actual tuning, on every fretted view and in the Strings
+  modal; a Drop D guitar's 6th string finally reads "D". Standard tuning
+  is byte-identical to before, so nothing changes for charts that were
+  already right. String COLOURS deliberately do not move: they key off the
+  string's position, not its retuned note, so the low string stays red and
+  keeps matching the highway. The capo is not folded in — that stays a
+  separate, visible property.
+
 ### Added
 - **G bootstraps off a shipped metronome stem automatically.** With no tempo
   guide locked, Suggest (`G`) now detects a stem *named* like a click track

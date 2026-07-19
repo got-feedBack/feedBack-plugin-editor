@@ -179,6 +179,7 @@ import { S, editGen } from './state.js';
 import {
     LC,
     laneLabels,
+    nominalLaneLabels,
     lanes
     } from './lanes.js';
 import {
@@ -301,6 +302,10 @@ function drawNow() {
     LC.value = lanes();
     LC.active = true;
     LC.labels = laneLabels();
+    // Colours key off the NOMINAL labels (string position), not the
+    // tuning-aware display ones — seeded here so the per-note
+    // colorForLane stays a single array read.
+    LC.nominalLabels = nominalLaneLabels();
     try {
         drawWaveform(w);
         drawMinimap(w);
