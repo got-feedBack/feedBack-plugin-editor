@@ -184,7 +184,7 @@ import {
     } from './lanes.js';
 import {
     LABEL_W, TIMELINE_TOP, clampZoom, setLaneMetrics } from './geometry.js';
-import { applyLaneScrollBounds } from './lane-scroll.js';
+import { _laneClipActive, applyLaneScrollBounds, drawLaneScrollbar, laneBandTop } from './lane-scroll.js';
 import {
     KEYS_PATTERN, _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
@@ -307,11 +307,23 @@ function drawNow() {
     // tuning-aware display ones — seeded here so the per-note
     // colorForLane stays a single array read.
     LC.nominalLabels = nominalLaneLabels();
+    // The piano roll scrolls vertically, so everything below the waveform is
+    // clipped to the lane viewport — without it a scrolled roll paints up over
+    // the waveform and ruler. Only pushed when the view actually scrolls, so
+    // the string view's pixels are untouched (it has no vertical scroll, and
+    // clipping it would be a silent behaviour change for the common case).
+    const rollClip = _laneClipActive(h);
     try {
         drawWaveform(w);
         drawMinimap(w);
         drawRuler(w);
         drawToneLane(w);
+        if (rollClip) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(0, laneBandTop(), w, Math.max(0, h - laneBandTop()));
+            ctx.clip();
+        }
         drawLanes(w);
         drawGrid(w);
         drawSections(w);
@@ -330,9 +342,14 @@ function drawNow() {
         drawCursor(w, h);
         drawLabels(w);
     } finally {
+        // In the finally, not after drawLabels: a throw between the clip and
+        // here would otherwise leave the context one save deep, and the outer
+        // restore below would pop the wrong level.
+        if (rollClip) ctx.restore();
         LC.active = false;
         LC.labels = null;
     }
+    drawLaneScrollbar(w, h);
 
     ctx.restore();
 }

@@ -9,7 +9,7 @@ import { _handshapesAreDirty, _normalizeHandshape, flattenChords, reconstructCho
 import { _normalizeTuningToLanes } from './commands.js';
 import { editorBuild } from './create.js';
 import { EditHistory } from './history.js';
-import { isKeysMode, updatePianoRange } from './keys.js';
+import { isKeysMode, rollResetLaneH, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning, _stringCountFor } from './lanes.js';
 import { _updateLoopRegionControls } from './loop.js';
 import { _marksSanitizePure } from './tempo-marks.js';
@@ -297,6 +297,12 @@ export async function loadCDLC(filename, options = {}) {
         // Re-attach persisted suggested marks onto the rebuilt note objects so
         // the machine's unreviewed guesses stay honest across a reload.
         _restoreSuggestedMarks();
+        // A stretch/compact override and a scroll offset are both view state
+        // belonging to the song you just left — the next song's pitch range
+        // makes them meaningless. Reset BEFORE updatePianoRange so it derives
+        // the auto-fit height instead of honouring a stale override.
+        rollResetLaneH();
+        S.laneScrollY = 0;
         if (isKeysMode()) updatePianoRange();
 
         // Update UI

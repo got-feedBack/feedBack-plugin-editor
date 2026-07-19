@@ -13,7 +13,7 @@
  * container like lanes.js's `LC`.
  */
 
-import { TIMELINE_TOP, WAVEFORM_H } from './geometry.js';
+import { TIMELINE_TOP, WAVEFORM_H, laneScrollY } from './geometry.js';
 import { setStatus } from './ui.js';
 import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js';
 import { notes } from './notes.js';
@@ -176,11 +176,69 @@ export function noteToMidi(string, fret) { return string * 24 + fret; }
 export function midiToString(midi) { return Math.floor(midi / 24); }
 export function midiToFret(midi) { return midi % 24; }
 
-// Piano roll Y: higher MIDI = higher on screen (lower Y)
-export function midiToY(midi) { return (TIMELINE_TOP + WAVEFORM_H) + (pianoRange.hi - midi) * PIANO_LANE_H; }
+// Piano roll Y: higher MIDI = higher on screen (lower Y).
+// This pair is the roll's vertical-scroll funnel, the counterpart of the drum
+// grid's _drumLaneIdxToY/_drumYToLaneIdx. Every painter and hit-test reaches
+// pitch geometry through it, so the offset belongs here and nowhere else —
+// see src/lane-scroll.js.
+export function midiToY(midi) { return (TIMELINE_TOP + WAVEFORM_H) - laneScrollY() + (pianoRange.hi - midi) * PIANO_LANE_H; }
 export function yToMidi(y) {
-    const m = pianoRange.hi - Math.floor((y - (TIMELINE_TOP + WAVEFORM_H)) / PIANO_LANE_H);
+    const m = pianoRange.hi - Math.floor((y - (TIMELINE_TOP + WAVEFORM_H) + laneScrollY()) / PIANO_LANE_H);
     return Math.max(pianoRange.lo, Math.min(pianoRange.hi, m));
+}
+
+// ─── Vertical zoom (stretch / compact) ──────────────────────────────
+// The roll used to DERIVE its lane height and nothing could touch it:
+// `max(4, min(14, 350 / range))`. That packs any range into ~350px, so a wide
+// one collapsed to a 4px lane — passable for reading, useless for editing, and
+// with no way out. That derived value is now just the DEFAULT; `S.rollLaneH`
+// is a user override that wins when set, and the vertical scrolling added
+// alongside is what makes a taller-than-viewport roll usable.
+//
+// Live's idiom: Alt/Option + scroll inside the editor changes the key-track
+// zoom level (Live 12 manual p.153 and p.240). Logic exposes the same thing as
+// a Vertical Zoom slider in the Tracks area menu bar (Logic Pro guide, p.297).
+export const ROLL_LANE_H_MIN = 3;
+export const ROLL_LANE_H_MAX = 40;
+
+// The auto-fit height — today's behaviour, preserved exactly.
+export function _rollAutoLaneHPure(laneCount) {
+    const n = Number(laneCount);
+    if (!Number.isFinite(n) || n <= 0) return 4;
+    return Math.max(4, Math.min(14, 350 / n));
+}
+
+export function _rollLaneHPure(override, laneCount) {
+    const o = Number(override);
+    if (Number.isFinite(o) && o > 0) {
+        return Math.max(ROLL_LANE_H_MIN, Math.min(ROLL_LANE_H_MAX, o));
+    }
+    return _rollAutoLaneHPure(laneCount);
+}
+
+// Re-derive PIANO_LANE_H from the current range + override. Together with
+// updatePianoRange these are its only writers, which is why both live here.
+export function _applyRollLaneH() {
+    PIANO_LANE_H = _rollLaneHPure(S.rollLaneH, pianoRange.hi - pianoRange.lo + 1);
+}
+
+// Stretch (factor > 1) or compact (factor < 1) the roll's lanes. Returns the
+// applied height. Clamping at either end is silent — the gesture simply
+// stops, which is what a zoom limit should feel like.
+export function rollZoomVertical(factor) {
+    const f = Number(factor);
+    if (!Number.isFinite(f) || f <= 0) return PIANO_LANE_H;
+    S.rollLaneH = Math.max(ROLL_LANE_H_MIN, Math.min(ROLL_LANE_H_MAX, PIANO_LANE_H * f));
+    _applyRollLaneH();
+    return PIANO_LANE_H;
+}
+
+// Back to auto-fit. Called on song load too — an override chosen for one
+// arrangement's range means nothing for the next one's.
+export function rollResetLaneH() {
+    S.rollLaneH = 0;
+    _applyRollLaneH();
+    return PIANO_LANE_H;
 }
 
 // expandOnly=true preserves any wider current range (used during in-place
@@ -206,7 +264,7 @@ export function updatePianoRange(expandOnly = false) {
         // viewport within ~352px — once a note is added the range snaps to
         // the actual note range and lanes return to normal height.
         pianoRange = { lo: 21, hi: 108, _fromEmpty: true };
-        PIANO_LANE_H = 4;
+        _applyRollLaneH();
         return;
     }
     // Expand to octave boundaries with padding; ceiling matches drag-clamp max of 143.
@@ -217,10 +275,11 @@ export function updatePianoRange(expandOnly = false) {
         nhi = Math.max(nhi, pianoRange.hi);
     }
     pianoRange = { lo: nlo, hi: nhi };
-    // Adjust lane height to fill available space nicely. Allow down to 4px
-    // so wide note ranges (many octaves) remain visible without overflowing
-    // the canvas wrapper.
-    PIANO_LANE_H = Math.max(4, Math.min(14, 350 / (nhi - nlo + 1)));
+    // Lane height: the auto-fit above, unless the user has stretched or
+    // compacted the roll — see _applyRollLaneH. The roll scrolls now, so an
+    // override taller than the viewport is a legitimate state rather than
+    // something that has to be squashed back into view.
+    _applyRollLaneH();
 }
 
 // A free "Keys" / "Keys 2" / … name for a new keys arrangement. Lives here

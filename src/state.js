@@ -93,6 +93,10 @@ export const S = {
     // src/lane-scroll.js owns every write; geometry.js's laneScrollY() is the
     // read the two geometry funnels use. Stays 0 for views that don't scroll.
     laneScrollY: 0,
+    // Piano-roll lane height override in px (stretch/compact). 0 = auto-fit,
+    // which is what every song starts at. src/keys.js owns the clamp and the
+    // derivation into PIANO_LANE_H.
+    rollLaneH: 0,
     zoom: 120,     // px per second
     snapIdx: 3,    // default 1/4 (index 3 after the 1/3T insert)
     snapEnabled: true,

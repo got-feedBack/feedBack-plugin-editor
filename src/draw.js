@@ -24,6 +24,7 @@ import {
     NOTE_PAD,
     TIMELINE_TOP,
     WAVEFORM_H,
+    laneScrollY,
     laneToY,
     strToY,
     timeToX,
@@ -315,8 +316,12 @@ export function drawSections(w) {
 // `_anchorLaneTopY`, the grid and section painters all call through here so
 // they can't drift as new strips are added.
 export function _beatBarTopY() {
+    // The roll scrolls vertically now, so the lanes pinned BELOW it (anchor,
+    // handshape, beat bar) ride with the note content — they annotate the
+    // chart, so they belong to the same scrollable body. The string view has
+    // no vertical scroll, where laneScrollY() is 0 and this is unchanged.
     return TIMELINE_TOP + (isKeysMode()
-        ? WAVEFORM_H + pianoLaneCount() * PIANO_LANE_H
+        ? WAVEFORM_H - laneScrollY() + pianoLaneCount() * PIANO_LANE_H
         : WAVEFORM_H + lanes() * LANE_H);
 }
 

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The piano roll stretches, compacts and scrolls.** Its lane height used to be
+  derived and untouchable — the whole pitch range packed into about 350px — so a
+  wide range collapsed to four pixels per semitone: passable for reading, useless
+  for editing, and with no way out. **Alt+scroll** now stretches or compacts the
+  lanes, and the roll scrolls vertically when it no longer fits, with the same
+  auto-hiding scrollbar the drum grid uses. Nothing changes until you reach for
+  the gesture: the derived height is still the default, and a roll that fits
+  still shows no scrollbar and still pans horizontally on a plain wheel. Alt is
+  Live's binding for key-track zoom (Live 12 manual p.153, p.240); Logic exposes
+  the same thing as a Vertical Zoom slider (Logic Pro guide, p.297). Loading a
+  song returns the roll to its automatic height — a stretch chosen for one
+  arrangement's range means nothing for the next one's.
+
 ### Fixed
 
 - **The Create-New wizard offers to remap incompatible drum notes.** Importing
