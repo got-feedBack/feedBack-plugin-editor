@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hands, canvas appearance, stems).
 
 ### Added
+- **G bootstraps off a shipped metronome stem automatically.** With no tempo
+  guide locked, Suggest (`G`) now detects a stem *named* like a click track
+  ("Click", "Metronome") and analyzes it with the metronome engine — each
+  click is one beat — instead of the mix, announcing what it chose in the
+  status bar. A locked guide stays supreme (locking the master as plain
+  audio is the opt-out), nothing is persisted, and an undecodable click
+  falls back to ordinary mix analysis.
+- **BPM in an audio file's name seeds the tempo.** Names like
+  `Song-147bpm.mp3` are parsed as an opportunistic prior (40–300 sanity
+  window, standalone values only): the create flow's starter grid is spaced
+  at that BPM instead of the 120 default, and Song Fit's *Set constant
+  tempo* dialog pre-fills it. No BPM in any name → no behavior change.
 - **Canvas − / + string-count buttons.** A button pair under the lowest
   string's label grows/shrinks the track's string count in one click — the
   Strings modal's add/remove, promoted to the canvas (tester ask: "just move

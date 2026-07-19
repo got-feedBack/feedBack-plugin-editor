@@ -9,7 +9,45 @@
 // audio never moves in any of them — only the chart. The bracketed "consequence
 // badge" copy is the single source for what each op does to audio / grid / notes.
 import { S } from './state.js';
+import { _liveSources } from './track-session.js';
 import { _editorPromptChoice, _editorPromptText, _installModalKeyboard, setStatus } from './ui.js';
+
+// ── Filename tempo priors (TEMPO-ASSIST B) ───────────────────────────
+// Opportunistic, never required: audio files often carry their tempo in the
+// name ("Song-147bpm.mp3", "147 BPM click.wav", "bpm=98 take2"). Parse it as
+// a soft pre-fill only — no BPM in any name means no behavior change. The
+// value must sit in a 40–300 sanity window and read as a standalone number
+// (a longer digit run like "2147bpm" is a hash/id, not a tempo).
+export function _filenameBpmPure(text) {
+    const s = String(text || '');
+    const m = /(?:^|[^0-9a-z])(\d{2,3}(?:\.\d{1,2})?)\s*[-_ ]?bpm(?![0-9a-z])/i.exec(s)
+        || /(?:^|[^a-z])bpm\s*[-_ =:]?\s*(\d{2,3}(?:\.\d{1,2})?)(?![0-9])/i.exec(s);
+    if (!m) return null;
+    const bpm = parseFloat(m[1]);
+    return Number.isFinite(bpm) && bpm >= 40 && bpm <= 300 ? bpm : null;
+}
+
+// The session's best filename BPM hint: sources in track order (master mix
+// first, then stems); name, then id, then the URL's basename — the first hit
+// wins. The URL matters in practice: a built pack collapses display names
+// (master → song title, stem → bare id), but a live create/import session
+// still serves audio from its upload cache, whose path keeps the original
+// file name ("editor_audio_Test_Song-147bpm.wav").
+export function _sessionBpmHintPure(sources) {
+    for (const source of (Array.isArray(sources) ? sources : [])) {
+        if (!source) continue;
+        const bpm = _filenameBpmPure(source.name) ?? _filenameBpmPure(source.id)
+            ?? _filenameBpmPure(_urlBasenamePure(source.url));
+        if (bpm) return bpm;
+    }
+    return null;
+}
+
+function _urlBasenamePure(url) {
+    const s = String(url || '').split(/[?#]/)[0];
+    const base = s.slice(s.lastIndexOf('/') + 1);
+    try { return decodeURIComponent(base); } catch { return base; }
+}
 
 // The shared "consequence badge": one plain-English line per operation stating
 // what it does to the three domains — audio / grid / notes. One source so the
@@ -96,10 +134,15 @@ function _songFitResync() {
 // inspector button can reach it (the inline BPM box only offers flatten outside
 // Tempo Map mode).
 async function _songFitSetConstant(sessionBefore = S.sessionId) {
+    // Pre-fill from a BPM in an audio file's name when one is there —
+    // editable, so a wrong hint costs one keystroke, not a wrong grid.
+    const hint = _sessionBpmHintPure(_liveSources());
     const raw = await _editorPromptText({
         title: 'Set constant tempo',
-        label: 'One steady tempo for the whole song (BPM):',
-        value: '',
+        label: hint
+            ? 'One steady tempo for the whole song (BPM — pre-filled from the audio’s file name):'
+            : 'One steady tempo for the whole song (BPM):',
+        value: hint ? String(hint) : '',
         placeholder: 'e.g. 120',
     });
     if (raw === null) return;
