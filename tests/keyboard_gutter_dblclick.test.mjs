@@ -39,9 +39,15 @@ const LABEL_W = 52, WAVEFORM_H = 70, PIANO_LANE_H = 10;
 const pianoRange = { lo: 36, hi: 96 };
 
 // Build an onDblClick with every free global injected. showAddNote is a spy.
-function makeDblClick(keysMode) {
-    const calls = { showAddNote: 0, lockNotice: 0 };
+function makeDblClick(keysMode, opts = {}) {
+    const calls = { showAddNote: 0, lockNotice: 0, rulerDbl: 0 };
     const deps = {
+        // The minimap scrollbar's zoom-to-fit is routed ahead of every mode
+        // guard, so it is a free global here now. `minimapEats` simulates the
+        // pointer landing on the strip.
+        rulerOnDblClick: () => { calls.rulerDbl++; return !!opts.minimapEats; },
+        canvas: { width: 1200 },
+        DPR: 1,
         S: { partsViewMode: false, drumEditMode: false, tempoMapMode: false },
         // onDblClick now reaches showAddNote / partsViewOnDblClick through host.
         host: { partsViewOnDblClick: () => {}, showAddNote: () => { calls.showAddNote++; } },
@@ -90,6 +96,17 @@ t('double-click in the note area (x >= LABEL_W) still opens Add Note', () => {
     const { fn, calls } = makeDblClick(true);
     fn({ x: LABEL_W + 20, y: yInLanes, clientX: LABEL_W + 20, clientY: yInLanes });
     assert.strictEqual(calls.showAddNote, 1, 'note-area double-click still authors');
+});
+
+// The minimap scrollbar is chrome in every canvas mode, so its double-click
+// must be consulted BEFORE the parts/drum/tempo guards and before any
+// note-authoring path. Fails on pre-scrollbar src/mouse.js, where onDblClick
+// never consults the ruler at all.
+t('a minimap double-click is routed to the ruler and authors nothing', () => {
+    const { fn, calls } = makeDblClick(true, { minimapEats: true });
+    fn({ x: LABEL_W + 20, y: yInLanes, clientX: LABEL_W + 20, clientY: yInLanes });
+    assert.strictEqual(calls.rulerDbl, 1, 'onDblClick must consult the minimap first');
+    assert.strictEqual(calls.showAddNote, 0, 'a consumed minimap double-click must not author');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

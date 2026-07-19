@@ -35,7 +35,7 @@ import { _ensureOnsets, _ensureOnsetsShifted, startPlayback, stopPlayback } from
 import { ctx } from './canvas.js';
 import { _mapHealthProblemsPure, _mapHealthPure, _mapHealthStepProblemPure, MAP_HEALTH_COLORS } from './map-health.js';
 import {
-    LABEL_W, MINIMAP_H, RULER_H, TIMELINE_TOP, timeToX, xToTime,
+    LABEL_W, MINIMAP_H, RULER_H, TIMELINE_TOP, ZOOM_MAX, ZOOM_MIN, timeToX, xToTime,
 } from './geometry.js';
 import { host } from './host.js';
 import {
@@ -159,6 +159,86 @@ export function _minimapTimePure(x, dur, labelW, w) {
     return Math.max(0, Math.min(1, (x - labelW) / span)) * dur;
 }
 
+// ─── The minimap as a scrollbar (Ableton's Arrangement Overview idiom) ──
+// The painted viewport window is the scrollbar THUMB: drag its body to
+// scroll, drag either edge to zoom, double-click the strip to fit the
+// whole song. Live manual §"Arrangement Overview" (Live 12, p.151): "click
+// and drag horizontally to scroll left or right, or click and drag
+// vertically to zoom in or out. To zoom out to the full Arrangement,
+// double-click anywhere within" — and the Clip View Selector (p.210) does
+// the same with a resizable outline. Logic reaches the same place with a
+// separate horizontal scroll bar plus a Horizontal Zoom slider (Logic Pro
+// user guide, p.297); one strip that does both is the tighter fit for a
+// canvas that only has 14px of chrome to spend.
+
+// A very short thumb still has to be grabbable, so it floors at this width
+// and slides back inside the strip rather than overhanging the right edge.
+export const MINIMAP_THUMB_MIN_W = 12;
+// Half-width of each edge grip. Capped at a third of the thumb so a
+// floored thumb keeps a draggable body between its two grips.
+export const MINIMAP_GRIP_W = 4;
+
+// The thumb's x-extent. drawMinimap paints exactly this, and the hit test
+// reads exactly this, so what you see is always what you can grab.
+export function _minimapThumbPure(scrollX, viewDur, dur, labelW, w) {
+    const span = Math.max(1, w - labelW);
+    const minW = Math.min(MINIMAP_THUMB_MIN_W, span);
+    const a = _minimapXPure(scrollX, dur, labelW, w);
+    const b = _minimapXPure(scrollX + (Number(viewDur) > 0 ? Number(viewDur) : 0), dur, labelW, w);
+    let x0 = Math.min(a, b);
+    let x1 = Math.max(a, b);
+    if (x1 - x0 < minW) {
+        x1 = x0 + minW;
+        if (x1 > labelW + span) { x1 = labelW + span; x0 = x1 - minW; }
+    }
+    return { x0, x1 };
+}
+
+// Which part of the scrollbar an x lands on. Grips win over the body so a
+// pointer in the overlap resizes (the more precise intent), matching how
+// rulerOnMouseDown already lets loop-edge grips beat the loop lane.
+export function _minimapHitPure(x, x0, x1, gripW) {
+    if (!Number.isFinite(x) || !Number.isFinite(x0) || !Number.isFinite(x1)) return 'track';
+    const g = Math.max(1, Math.min(Number(gripW) || 0, (x1 - x0) / 3));
+    if (x >= x0 - g && x <= x0 + g) return 'grip-start';
+    if (x >= x1 - g && x <= x1 + g) return 'grip-end';
+    if (x > x0 && x < x1) return 'thumb';
+    return 'track';
+}
+
+// Dragging a grip re-times the viewport, which IS a zoom: the opposite edge
+// stays anchored and the zoom follows from the new span. When the zoom
+// clamps, the span is recomputed from the clamped zoom so the anchored edge
+// still doesn't move. Returns null when the drag would invert the window.
+export function _minimapResizeZoomPure(
+    edge, t, scrollX, viewDur, viewportPx, minZoom, maxZoom, grabDT = 0) {
+    const px = Number(viewportPx);
+    const offset = Number(grabDT);
+    const time = Number(t) + (Number.isFinite(offset) ? offset : 0);
+    if (!Number.isFinite(px) || px <= 0 || !Number.isFinite(time)) return null;
+    const lo = Number(minZoom) > 0 ? Number(minZoom) : 20;
+    const hi = Number(maxZoom) > 0 ? Number(maxZoom) : 2000;
+    const left = Number.isFinite(Number(scrollX)) ? Number(scrollX) : 0;
+    const right = left + (Number(viewDur) > 0 ? Number(viewDur) : 0);
+    const anchorLeft = edge !== 'grip-start';
+    const dur = anchorLeft ? time - left : right - time;
+    if (!(dur > 0)) return null;
+    const zoom = Math.max(lo, Math.min(hi, px / zoomSafeDur(dur)));
+    const finalDur = px / zoom;
+    return { zoom, scrollX: anchorLeft ? left : Math.max(0, right - finalDur) };
+}
+
+function zoomSafeDur(dur) { return dur > 1e-6 ? dur : 1e-6; }
+
+// Double-click the strip → the whole song fits the viewport (Live p.151).
+export function _minimapFitZoomPure(dur, viewportPx, minZoom, maxZoom) {
+    const d = Number(dur), px = Number(viewportPx);
+    if (!(d > 0) || !(px > 0)) return null;
+    const lo = Number(minZoom) > 0 ? Number(minZoom) : 20;
+    const hi = Number(maxZoom) > 0 ? Number(maxZoom) : 2000;
+    return Math.max(lo, Math.min(hi, px / d));
+}
+
 // Label every Nth measure so numbers never collide: N=1 while a bar gets
 // ≥ 34px, then the next power-of-two-ish step that clears the width.
 // P2-6: at bar widths where per-beat ticks are dropped (pxPerBeat < 6) but
@@ -199,6 +279,8 @@ export function _rulerLoopEdgeHitPure(x, x0, x1, tol = 5) {
 
 // The whole-song extent the minimap maps over: the audio (or A3's
 // compose-mode grid length), stretched to cover any charted tail.
+export function _minimapSongDur() { return songDur(); }
+
 function songDur() {
     let dur = S.duration > 0 ? S.duration : 0;
     const beats = S.beats;
@@ -237,14 +319,23 @@ export function drawMinimap(w) {
         ctx.fillRect(x0, 1, Math.max(2, x1 - x0), MINIMAP_H - 2);
     }
 
-    // Viewport window — the slice of song the chart currently shows.
+    // Viewport window — the slice of song the chart currently shows, and the
+    // scrollbar thumb you drag to move it. Painted as a filled block with two
+    // edge grips (not the old hairline outline) so it reads as something you
+    // can grab: the outline tested as invisible chrome nobody tried to drag.
     const viewDur = _editorViewportDuration();
     if (viewDur > 0) {
-        const x0 = _minimapXPure(S.scrollX, dur, LABEL_W, w);
-        const x1 = _minimapXPure(S.scrollX + viewDur, dur, LABEL_W, w);
-        ctx.strokeStyle = 'rgba(220,230,255,0.75)';
+        const { x0, x1 } = _minimapThumbPure(S.scrollX, viewDur, dur, LABEL_W, w);
+        const grabbed = !!S.drag && (S.drag.type === 'minimap' || S.drag.type === 'minimap-zoom');
+        ctx.fillStyle = grabbed ? 'rgba(120,220,232,0.30)' : 'rgba(220,230,255,0.18)';
+        ctx.fillRect(x0, 1, x1 - x0, MINIMAP_H - 2);
+        ctx.strokeStyle = grabbed ? 'rgba(120,220,232,0.95)' : 'rgba(220,230,255,0.75)';
         ctx.lineWidth = 1;
-        ctx.strokeRect(x0 + 0.5, 0.5, Math.max(2, x1 - x0) - 1, MINIMAP_H - 1);
+        ctx.strokeRect(x0 + 0.5, 0.5, (x1 - x0) - 1, MINIMAP_H - 1);
+        // Edge grips — the zoom handles.
+        ctx.fillStyle = grabbed ? 'rgba(120,220,232,0.95)' : 'rgba(220,230,255,0.75)';
+        ctx.fillRect(x0, 0, 2, MINIMAP_H);
+        ctx.fillRect(x1 - 2, 0, 2, MINIMAP_H);
     }
 
     // Playhead tick.
@@ -449,13 +540,49 @@ function scrubTo(x) {
     host.draw();
 }
 
-function minimapPan(x, w) {
+// Scroll so the time under `x` sits `grabDT` seconds into the viewport.
+// Grabbing the thumb records the offset where you took hold of it, so the
+// view tracks the pointer instead of jumping — the difference between a
+// scrollbar and a jump-to-here strip.
+function minimapScrollTo(x, w, grabDT) {
     const dur = songDur();
     if (dur <= 0) return;
     const t = _minimapTimePure(x, dur, LABEL_W, w);
-    const viewDur = _editorViewportDuration();
-    S.scrollX = _editorClampScrollX(t - viewDur / 2);
+    S.scrollX = _editorClampScrollX(t - (Number.isFinite(grabDT) ? grabDT : 0));
     host.draw();
+}
+
+function minimapPan(x, w) {
+    minimapScrollTo(x, w, _editorViewportDuration() / 2);
+}
+
+// Drag a thumb edge → zoom, with the opposite edge anchored.
+function minimapResize(x, w, edge, grabDT) {
+    const dur = songDur();
+    if (dur <= 0) return;
+    const next = _minimapResizeZoomPure(
+        edge, _minimapTimePure(x, dur, LABEL_W, w), S.scrollX,
+        _editorViewportDuration(), Math.max(1, w - LABEL_W), ZOOM_MIN, ZOOM_MAX,
+        grabDT);
+    if (!next) return;
+    S.zoom = next.zoom;
+    S.scrollX = _editorClampScrollX(next.scrollX);
+    host.updateZoomDisplay();
+    host.draw();
+}
+
+// Double-click anywhere on the strip → fit the whole song. Works in every
+// canvas mode, so it is routed before the mode guards in onDblClick.
+export function rulerOnDblClick(y, w) {
+    if (!Number.isFinite(y) || y >= MINIMAP_H) return false;
+    const dur = songDur();
+    const zoom = _minimapFitZoomPure(dur, Math.max(1, w - LABEL_W), ZOOM_MIN, ZOOM_MAX);
+    if (!zoom) return true;
+    S.zoom = zoom;
+    S.scrollX = _editorClampScrollX(0);
+    host.updateZoomDisplay();
+    host.draw();
+    return true;
 }
 
 // Returns true when the event was consumed (every y < TIMELINE_TOP is —
@@ -533,8 +660,36 @@ export function rulerOnMouseDown(e, x, y, w) {
     if (!zone) return false;
     if (e.button !== 0) return true;
     if (zone === 'minimap') {
-        S.drag = { type: 'minimap' };
-        minimapPan(x, w);
+        const dur = songDur();
+        if (dur <= 0) return true;
+        const viewDur = _editorViewportDuration();
+        const { x0, x1 } = _minimapThumbPure(S.scrollX, viewDur, dur, LABEL_W, w);
+        const hit = _minimapHitPure(x, x0, x1, MINIMAP_GRIP_W);
+        if (hit === 'grip-start' || hit === 'grip-end') {
+            // A very narrow real viewport paints as a minimum-width thumb,
+            // so its visible grip may not sit at the true viewport time.
+            // Preserve that difference: without it the first move jumps the
+            // zoom from the true edge to the painted, expanded edge.
+            const pointerTime = _minimapTimePure(x, dur, LABEL_W, w);
+            const edgeTime = hit === 'grip-start' ? S.scrollX : S.scrollX + viewDur;
+            S.drag = {
+                type: 'minimap-zoom', edge: hit, grabDT: edgeTime - pointerTime,
+            };
+            host.draw();
+            return true;
+        }
+        // On the thumb: grab it where you clicked. On the empty track:
+        // centre the view here first (the long-standing behaviour), then
+        // keep tracking from the middle.
+        let grabDT;
+        if (hit === 'thumb') {
+            grabDT = _minimapTimePure(x, dur, LABEL_W, w) - S.scrollX;
+        } else {
+            grabDT = viewDur / 2;
+            minimapPan(x, w);
+        }
+        S.drag = { type: 'minimap', grabDT };
+        host.draw();
         return true;
     }
     // Loop-edge grips win over both halves — resizing is the more precise
@@ -573,7 +728,11 @@ export function rulerOnMouseDown(e, x, y, w) {
 
 export function rulerOnMouseMove(e, x, w) {
     if (!S.drag) return false;
-    if (S.drag.type === 'minimap') { minimapPan(x, w); return true; }
+    if (S.drag.type === 'minimap') { minimapScrollTo(x, w, S.drag.grabDT); return true; }
+    if (S.drag.type === 'minimap-zoom') {
+        minimapResize(x, w, S.drag.edge, S.drag.grabDT);
+        return true;
+    }
     // Alt is live per move (like Shift on the loop drags): press/release it
     // mid-scrub and snapping follows, instead of freezing at the mouse-down state.
     if (S.drag.type === 'scrub') { S.drag.bypassSnap = e.altKey; scrubTo(x); return true; }
@@ -592,7 +751,7 @@ export function rulerOnMouseMove(e, x, w) {
 export function rulerOnMouseUp() {
     if (!S.drag) return false;
     const type = S.drag.type;
-    if (type !== 'minimap' && type !== 'scrub' && type !== 'loopedge') return false;
+    if (type !== 'minimap' && type !== 'minimap-zoom' && type !== 'scrub' && type !== 'loopedge') return false;
     const resume = type === 'scrub' && S.drag.resume;
     S.drag = null;
     if (type === 'loopedge') host.updateLoopIn3DBtn();

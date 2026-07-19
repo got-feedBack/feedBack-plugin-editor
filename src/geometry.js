@@ -60,6 +60,25 @@ export function setLaneMetrics(canvasHeightPx) {
     LANE_H = Math.max(30, Math.floor((h - TIMELINE_TOP - WAVEFORM_H - ANCHOR_LANE_H - HS_LANE_H) / lanes()));
 }
 
+// ── Zoom bounds (px per second) ─────────────────────────────────────
+// Shared by every zoom writer — the wheel, the zoom buttons, and the
+// minimap scrollbar's edge-drag and zoom-to-fit.
+//
+// The floor used to be 20px/s, inlined at each call site. That capped the
+// widest possible view at ~50 seconds on a 1000px canvas, so "see the whole
+// arrangement" — the thing Live's overview double-click and Logic's zoom-out
+// both exist to do — was unreachable for any song longer than a jingle.
+// 2px/s fits ~8 minutes, which covers the repertoire. The painters already
+// degrade gracefully down there: bar labels thin out via
+// _rulerBarLabelSkipPure and note bodies hold at MIN_NOTE_W.
+export const ZOOM_MIN = 2;
+export const ZOOM_MAX = 2000;
+export function clampZoom(z) {
+    const v = Number(z);
+    if (!Number.isFinite(v) || v <= 0) return ZOOM_MIN;
+    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v));
+}
+
 // ── time ⇄ x ────────────────────────────────────────────────────────
 export function timeToX(t)  { return LABEL_W + (t - S.scrollX) * S.zoom; }
 export function xToTime(x)  { return (x - LABEL_W) / S.zoom + S.scrollX; }
