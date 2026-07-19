@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Create-New wizard offers to remap incompatible drum notes.** Importing
+  drums through the new-song wizard silently discarded any percussion outside
+  the 18-piece vocabulary, while adding drums to an *existing* pack popped up
+  the manual-mapping dialog for exactly the same notes. Reported by =Scr4tch=
+  and confirmed across 10+ builds — and their "I only see it on the 2nd import,
+  never the 1st" is the same fact from the other side: the first import is the
+  wizard, later ones take the add-drums route. The wizard's converter dropped
+  unmappable notes with a bare `continue`; it now reports them in the same
+  shape the add-drums route uses, so both feed the one dialog. Even when nothing
+  maps automatically, the wizard keeps an empty drum track as the mapper's
+  destination instead of making those notes unrecoverable.
+
 ### Changed
 
 - **Docs refresh — the guide walks the whole journey.** The User Guide
