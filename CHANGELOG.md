@@ -20,8 +20,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shape the add-drums route uses, so both feed the one dialog. Even when nothing
   maps automatically, the wizard keeps an empty drum track as the mapper's
   destination instead of making those notes unrecoverable.
+### Added
+
+- **The overview strip is now a real horizontal scrollbar.** The viewport
+  window painted in the minimap is a thumb you can actually use: grab its
+  body and the view tracks your pointer 1:1 instead of leaping so the window
+  re-centres on the click, drag either edge to zoom with the opposite edge
+  anchored, and double-click anywhere on the strip to fit the whole song.
+  Clicking the empty track still jumps the view there, as before. The thumb
+  paints as a filled block with edge grips (it used to be a one-pixel
+  outline that read as decoration — nobody tried to drag it), the cursor
+  spells out which gesture you'll get (`grab` on the body, `ew-resize` on a
+  grip), and a very short thumb floors at a grabbable width instead of
+  becoming a hairline. Follows Ableton Live's Arrangement Overview (Live 12
+  manual p.151) and its resizable Clip View Selector (p.210); Logic Pro
+  reaches the same place with a separate scroll bar plus a Horizontal Zoom
+  slider (Logic Pro user guide, p.297).
 
 ### Changed
+
+- **You can finally zoom out far enough to see a whole song.** The timeline
+  zoom floor was 20px/s, which capped the widest possible view at about 50
+  seconds — so "show me the whole arrangement" was unreachable for anything
+  longer than a jingle, and the new fit-to-song gesture would have been a
+  lie. The floor is now 2px/s (roughly 8 minutes on a typical canvas). The
+  bound also stopped being a magic number copy-pasted at each zoom writer:
+  `ZOOM_MIN` / `ZOOM_MAX` / `clampZoom()` live in `src/geometry.js` and the
+  wheel, the zoom buttons and the scrollbar all share them.
 
 - **Docs refresh — the guide walks the whole journey.** The User Guide
   (Help ▸ User Guide) opens with a six-step journey map, and §1 now showcases

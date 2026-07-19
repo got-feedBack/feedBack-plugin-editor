@@ -11,14 +11,14 @@ import { AddNoteCmd, DeleteNotesCmd, MoveNoteCmd, ResizeSustainGroupCmd, SplitNo
 import { hideContextMenu } from './context-menu.js';
 import { _beatBarTopY } from './draw.js';
 import { _drumEditorOnDragEnd, _drumEditorOnDragMove, _drumEditorOnMouseDown, _drumEditorOnSelectEnd, _drumEditorOnVelocityDragEnd, _drumEditorOnVelocityDragMove } from './drum.js';
-import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, MINIMAP_H, TIMELINE_TOP, TONE_LANE_H, WAVEFORM_H, strToY, timeToX, xToTime, yToStr } from './geometry.js';
+import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, MINIMAP_H, TIMELINE_TOP, TONE_LANE_H, WAVEFORM_H, clampZoom, strToY, timeToX, xToTime, yToStr } from './geometry.js';
 import { hitNote, hitNoteEdge } from './hit-test.js';
 import { PIANO_LANE_H, _inKeyboardGutterPure, _rollLockNotice, _rollMidiForNote, _rollPitchCtx, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, midiToY, noteToMidi, pianoLaneCount, yToMidi } from './keys.js';
 import { LC, laneToStr, lanes, strToLane } from './lanes.js';
-import { _downbeatTimes, _editorClampScrollX, _groupTimeDeltaPure, _loopLiveMode, _loopRegionForDragPure, _setBarSel, magneticSnapTime, snapTime } from './loop.js';
+import { _downbeatTimes, _editorClampScrollX, _editorViewportDuration, _groupTimeDeltaPure, _loopLiveMode, _loopRegionForDragPure, _setBarSel, magneticSnapTime, snapTime } from './loop.js';
 import { _recState } from './midi-record.js';
 import { _resizeSustainsForDeltaPure, _resizeTargetIndicesPure, notes } from './notes.js';
-import { _rulerZonePure, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp } from './ruler.js';
+import { MINIMAP_GRIP_W, _minimapHitPure, _minimapSongDur, _minimapThumbPure, _rulerZonePure, rulerOnDblClick, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp } from './ruler.js';
 import { _editorChordGrabsStrumPure, _editorEffectiveChordSelectBehaviorPure, editorChordSelectBehavior, editorShortcutProfile } from './shortcuts.js';
 import { S } from './state.js';
 import { _tempoBeatOnDragMove, _tempoMapOnDragEnd, _tempoMapOnDragMove, _tempoMapOnMouseDown, _tempoMarqueeOnEnd, _tempoPoleGrabTolerancePure, _tempoSyncAtX } from './tempo.js';
@@ -435,7 +435,18 @@ function _onMouseMoveBody(e, x, y, L) {
         // minimap and scrub half seek/pan (pointer).
         if (canvas && y < TIMELINE_TOP) {
             const zone = _rulerZonePure(y, MINIMAP_H, TIMELINE_TOP);
-            canvas.style.cursor = zone === 'loop' ? 'col-resize' : 'pointer';
+            if (zone === 'minimap') {
+                // Spell out the scrollbar: grips resize (zoom), the thumb
+                // body grabs, the empty track jumps.
+                const dur = _minimapSongDur();
+                const cw = canvas.width / DPR;
+                const { x0, x1 } = _minimapThumbPure(S.scrollX, _editorViewportDuration(), dur, LABEL_W, cw);
+                const hit = dur > 0 ? _minimapHitPure(x, x0, x1, MINIMAP_GRIP_W) : 'track';
+                canvas.style.cursor = hit === 'grip-start' || hit === 'grip-end' ? 'ew-resize'
+                    : hit === 'thumb' ? 'grab' : 'pointer';
+            } else {
+                canvas.style.cursor = zone === 'loop' ? 'col-resize' : 'pointer';
+            }
         } else if (canvas && y >= TIMELINE_TOP + WAVEFORM_H && y < _beatBarTopY()) {
             // The note area runs from the waveform strip down to the beat bar in
             // BOTH views — `_beatBarTopY()` already accounts for the roll's
@@ -742,6 +753,10 @@ export function onMouseUp(e) {
 }
 
 export function onDblClick(e) {
+    // The minimap scrollbar is chrome in EVERY mode, so its zoom-to-fit is
+    // routed before the mode guards below — otherwise parts/drum/tempo views
+    // would swallow it.
+    if (rulerOnDblClick(getMousePos(e).y, canvas ? canvas.width / DPR : 0)) return;
     // Parts view: double-click opens the lane's focus editor.
     if (S.partsViewMode) { host.partsViewOnDblClick(e); return; }
     if (S.drumEditMode || S.tempoMapMode) return;  // those modes own canvas interaction
@@ -807,7 +822,7 @@ export function onWheel(e) {
         const { x } = getMousePos(e);
         const timeBefore = xToTime(x);
         const factor = e.deltaY < 0 ? 1.15 : 0.87;
-        S.zoom = Math.max(20, Math.min(2000, S.zoom * factor));
+        S.zoom = clampZoom(S.zoom * factor);
         // Keep the time under cursor stable
         S.scrollX = timeBefore - (x - LABEL_W) / S.zoom;
         S.scrollX = _editorClampScrollX(S.scrollX);

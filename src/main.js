@@ -183,7 +183,7 @@ import {
     lanes
     } from './lanes.js';
 import {
-    LABEL_W, TIMELINE_TOP, setLaneMetrics } from './geometry.js';
+    LABEL_W, TIMELINE_TOP, clampZoom, setLaneMetrics } from './geometry.js';
 import {
     KEYS_PATTERN, _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
@@ -1468,7 +1468,7 @@ window.editorTogglePlay = () => {
 };
 window.editorZoom = (dir) => {
     const factor = dir > 0 ? 1.3 : 0.77;
-    S.zoom = Math.max(20, Math.min(2000, S.zoom * factor));
+    S.zoom = clampZoom(S.zoom * factor);
     _editorApplyScrollBounds();
     updateZoomDisplay();
     draw();
