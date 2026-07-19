@@ -36,6 +36,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manual p.151) and its resizable Clip View Selector (p.210); Logic Pro
   reaches the same place with a separate scroll bar plus a Horizontal Zoom
   slider (Logic Pro user guide, p.297).
+- **The drum grid scrolls vertically — the kick and snare are reachable
+  again.** `DRUM_LANE_H` is a fixed 22px and the grid's lane geometry had no
+  scroll term, so a full 18-piece kit (396px) simply ran off the bottom of a
+  short canvas with no way to reach what fell off. Because the lane order
+  ends `snare, snare_xstick, kick`, the two most-used pieces on the kit were
+  the first to disappear. Measured in a browser at a 1600x660 window: a 449px
+  canvas with 356px of lane band, losing the bottom two rows outright.
+
+  A vertical wheel now scrolls the grid when (and only when) it overflows,
+  with a scrollbar on the right edge that appears only when there is
+  something to scroll — the Tracks-area behaviour Logic describes at p.297 of
+  its user guide. Drag the thumb, or click the rail to jump. When the grid
+  already fits, nothing changes: no bar, and the wheel keeps panning the
+  timeline exactly as before.
 
 ### Changed
 

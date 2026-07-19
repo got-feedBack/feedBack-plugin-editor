@@ -88,6 +88,11 @@ export const S = {
 
     // View
     scrollX: 0,   // seconds
+    // Vertical lane scroll for the drum grid + piano roll, in PIXELS (a lane
+    // stack has no natural unit the way the timeline has seconds).
+    // src/lane-scroll.js owns every write; geometry.js's laneScrollY() is the
+    // read the two geometry funnels use. Stays 0 for views that don't scroll.
+    laneScrollY: 0,
     zoom: 120,     // px per second
     snapIdx: 3,    // default 1/4 (index 3 after the 1/3T insert)
     snapEnabled: true,

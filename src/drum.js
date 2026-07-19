@@ -24,7 +24,8 @@
 import { CP } from './canvas-appearance.js';
 import { ctx } from './canvas.js';
 import { drawSelectionRect } from './draw.js';
-import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime } from './geometry.js';
+import { drawLaneScrollbar } from './lane-scroll.js';
+import { LABEL_W, TIMELINE_TOP, WAVEFORM_H, timeToX, xToTime, laneScrollY} from './geometry.js';
 import { host } from './host.js';
 import { S, editGen } from './state.js';
 import { setStatus } from './ui.js';
@@ -259,8 +260,11 @@ export function _editorSetDrumDensity(mode) {
     _drumDensityCache = next;
     try { localStorage.setItem('editorDrumDensity', next); } catch (_) {}
     // Row count/order changed — drop selection (indices keep meaning, but
-    // the user's visual anchor doesn't) and repaint.
+    // the user's visual anchor doesn't) and repaint. The row count also
+    // changes the grid's height, so the vertical scroll has to be re-clamped:
+    // Full (18 rows) → Compact (7) can otherwise leave it scrolled past the end.
     S.drumSel = new Set();
+    S.laneScrollY = 0;
     host.draw();
     setStatus(next === 'compact'
         ? 'Compact rows — families share a row (colors keep each piece distinct); adding writes the family’s main piece'
@@ -305,9 +309,13 @@ export const DRUM_HIT_RADIUS = 8;
 // Y" answers with the row's CANONICAL piece — the add-target; hit lookup
 // matches any member of the row (see _drumHitAtPoint).
 export function _drumPieceCount()        { return _drumLanes().length; }
-export function _drumLaneIdxToY(idx)     { return (TIMELINE_TOP + WAVEFORM_H) + idx * DRUM_LANE_H; }
+// The vertical-scroll funnel for the drum grid. Every painter and hit-test
+// reaches lane geometry through this pair, so the offset belongs here and
+// nowhere else — see src/lane-scroll.js for why the grid needed it at all
+// (the kick lane was unreachable on a short canvas).
+export function _drumLaneIdxToY(idx)     { return (TIMELINE_TOP + WAVEFORM_H) - laneScrollY() + idx * DRUM_LANE_H; }
 export function _drumYToLaneIdx(y) {
-    const idx = Math.floor((y - (TIMELINE_TOP + WAVEFORM_H)) / DRUM_LANE_H);
+    const idx = Math.floor((y - (TIMELINE_TOP + WAVEFORM_H) + laneScrollY()) / DRUM_LANE_H);
     if (idx < 0 || idx >= _drumPieceCount()) return -1;
     return idx;
 }
@@ -352,6 +360,18 @@ export function _drumEditorDraw(w, h) {
     host.drawTimelineHeader(w);
     host.drawWaveform(w);
 
+    // Everything below the waveform scrolls vertically, so it is clipped to
+    // the lane viewport — without this a scrolled grid paints straight up
+    // over the waveform and ruler. Restored before the HUD, which is chrome
+    // and must stay put. The band bottom is the CONTENT's end or the canvas
+    // edge, whichever comes first.
+    const bandTop = TIMELINE_TOP + WAVEFORM_H;
+    const bandBottom = Math.min(h, _drumLaneIdxToY(_drumPieceCount()));
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, bandTop, w, Math.max(0, h - bandTop));
+    ctx.clip();
+
     // ── Lane grid ─────────────────────────────────────────────────────
     const laneTable = _drumLanes();
     for (let i = 0; i < laneTable.length; i++) {
@@ -392,8 +412,8 @@ export function _drumEditorDraw(w, h) {
         ctx.strokeStyle = meas ? CP('gridMeasure') : CP('gridBeat');
         ctx.lineWidth = meas ? 1.5 : 1;
         ctx.beginPath();
-        ctx.moveTo(x, (TIMELINE_TOP + WAVEFORM_H));
-        ctx.lineTo(x, (TIMELINE_TOP + WAVEFORM_H) + _drumPieceCount() * DRUM_LANE_H);
+        ctx.moveTo(x, bandTop);
+        ctx.lineTo(x, bandBottom);
         ctx.stroke();
     }
 
@@ -535,13 +555,16 @@ export function _drumEditorDraw(w, h) {
         ctx.strokeStyle = 'rgba(255,255,255,0.5)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(timeToX(S.cursorTime), (TIMELINE_TOP + WAVEFORM_H));
-        ctx.lineTo(timeToX(S.cursorTime), (TIMELINE_TOP + WAVEFORM_H) + _drumPieceCount() * DRUM_LANE_H);
+        ctx.moveTo(timeToX(S.cursorTime), bandTop);
+        ctx.lineTo(timeToX(S.cursorTime), bandBottom);
         ctx.stroke();
     }
 
     // ── Marquee rubber-band selection rect ────────────────────────────
     drawSelectionRect();
+
+    ctx.restore();   // end lane-viewport clip
+    drawLaneScrollbar(w, h);
 
     // ── HUD ───────────────────────────────────────────────────────────
     ctx.fillStyle = '#94a3b8';
@@ -549,7 +572,9 @@ export function _drumEditorDraw(w, h) {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     const hud = `Drum editor — ${hits.length} hits, ${S.drumSel.size} selected. Click empty: add. Drag empty: select box. Click hit: select. Del: remove. G/F/K: ghost/flam/choke. A/N: accent/normal. Alt+drag or Shift+↑/↓: velocity.`;
-    const hudY = (TIMELINE_TOP + WAVEFORM_H) + _drumPieceCount() * DRUM_LANE_H + 6;
+    // Sits under the grid normally; pinned above the canvas edge once the
+    // grid is taller than the view, so the hints never scroll out of reach.
+    const hudY = Math.min(h - 32, bandBottom + 6);
     ctx.fillText(hud, LABEL_W + 6, hudY);
     // Advisory playability count on its own line — amber, non-blocking. Wording
     // stays gentle (these are hints for the human, not errors).

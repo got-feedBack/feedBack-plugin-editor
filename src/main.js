@@ -184,6 +184,7 @@ import {
     } from './lanes.js';
 import {
     LABEL_W, TIMELINE_TOP, clampZoom, setLaneMetrics } from './geometry.js';
+import { applyLaneScrollBounds } from './lane-scroll.js';
 import {
     KEYS_PATTERN, _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
@@ -1411,6 +1412,9 @@ function resizeCanvas() {
     // The max scroll depends on the (now-changed) canvas width — re-clamp so a
     // widen doesn't leave the timeline scrolled past the new max with blank tail.
     _editorApplyScrollBounds();
+    // Same story vertically: growing the window shrinks (or removes) the lane
+    // overflow, and a stale offset would leave the grid scrolled past its end.
+    applyLaneScrollBounds(h);
     draw();
 }
 
