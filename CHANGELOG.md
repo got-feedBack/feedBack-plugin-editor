@@ -125,6 +125,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *analyze* follows the click.
 
 ### Fixed
+- **A GP8's own sync points now survive its embedded audio.** A Guitar Pro
+  file can carry both a backing track and the sync points that map the
+  score onto it. Using that embedded track, the editor applied only the
+  scalar lead-in offset and **discarded the sync points** — so a chart
+  stayed at a constant tempo against a recording that changes tempo. On
+  the reported file (audio dropping 137 → 98.7 BPM at bar 193) the chart
+  ran about 5.5 s early by bar 224. Embedded mode now warps per-bar from
+  the GP's own points, which describe exactly the track being used.
+  Client-supplied points stay excluded there on purpose: those are
+  computed against a separate, user-staged recording and cannot describe
+  the embedded audio. Fewer than two usable points, or a malformed set,
+  still falls back to offset-only alignment.
 - **Create New now recognizes MusicXML stored in `.xml` files.** Content
   Import sniffs the document root instead of sending every `.xml` to the
   community-arrangement importer, validates the score before creating a song,
