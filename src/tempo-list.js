@@ -11,6 +11,7 @@
 
 import { S } from './state.js';
 import { host } from './host.js';
+import { _editorClampScrollX } from './loop.js';
 import { setStatus } from './ui.js';
 
 const $panel = () => document.getElementById('editor-tempo-list');
@@ -54,7 +55,9 @@ export function _tempoListRender() {
         : '<tr><td colspan="4" class="px-2 py-2 text-gray-500">No authored marks yet — right-click a barline in Tempo Map.</td></tr>';
 }
 
-function _gotoMark(idx) {
+// Exported for the scroll-clamp suite: the jump is the module's one view-moving
+// side effect, and driving it directly beats reconstructing a table-row click.
+export function _gotoMark(idx) {
     const mark = (S.tempoMarks || [])[idx];
     if (!mark) return;
     if (!S.tempoMapMode && typeof window.editorRunShortcutCommand === 'function') {
@@ -67,7 +70,13 @@ function _gotoMark(idx) {
     if (beatIdx < 0) { setStatus(`Bar ${mark.measure} is not on the current grid.`); return; }
     S.tempoSel = beatIdx;
     if (S.tempoSelMulti) S.tempoSelMulti.clear();
-    S.scrollX = Math.max(0, t - 0.5);
+    // Every other non-zero scrollX writer in the editor goes through the clamp;
+    // this one only floored at 0, so jumping to a bar near the end of the song
+    // parked the view past maxScroll — showing dead timeline past the last bar
+    // until some unrelated resize/zoom happened to call _editorApplyScrollBounds
+    // and snap it back. The clamp floors at 0 itself, so it subsumes the old
+    // Math.max; the 0.5s lead-in is unchanged.
+    S.scrollX = _editorClampScrollX(t - 0.5);
     host.draw();
     host.updateStatus();
 }
