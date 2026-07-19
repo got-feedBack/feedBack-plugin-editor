@@ -34,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starts: fretted arrangements (Lead/Rhythm 6-string, Bass 4-string, named
   uniquely, registered with the session, adopted as the active part) and an
   empty Drums tab (the create-flow shape; refuses a second drum tab). The
-  User Guide's Tracks section documents the flow. In Tempo Map
+  User Guide's Tracks section documents the flow.
+- **Map-health worklist: H / Shift+H walk the drifting bars.** In Tempo Map
   mode, H jumps to the next amber/red bar from the playhead (Shift+H goes
   back), wrapping at the ends — each landing arrives the same way the grid
   pill does: Tempo Map open, the bar scrolled into view, Suggest anchored on
