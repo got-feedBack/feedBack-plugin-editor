@@ -1163,6 +1163,29 @@ export function initTrackSession() {
         // Any click outside the context menu dismisses it.
         const menu = document.getElementById('editor-track-context-menu');
         if (menu && !(event.target && menu.contains(event.target))) menu.remove();
+        // Track rows carry draggable="true" for reorder, and a native drag
+        // starting anywhere inside one steals the gesture from controls that
+        // own their own — the fader worst of all: a click lands (no movement,
+        // no drag) but click-and-drag hands the pointer to the row reorder the
+        // moment it passes the browser's drag threshold.
+        //
+        // This CANNOT be guarded at dragstart: the drag source is the row, so
+        // dragstart.target is the ROW, not the control under the pointer, and
+        // the two are indistinguishable there. Instead take the row out of the
+        // drag entirely for the span of a gesture that began on a control, and
+        // put it back on release.
+        const control = event.target && event.target.closest ? event.target.closest('input,select,textarea,button') : null;
+        const controlRow = control && control.closest ? control.closest('[data-track-id]') : null;
+        if (controlRow) {
+            controlRow.draggable = false;
+            const restore = () => {
+                controlRow.draggable = true;
+                window.removeEventListener('pointerup', restore, true);
+                window.removeEventListener('pointercancel', restore, true);
+            };
+            window.addEventListener('pointerup', restore, true);
+            window.addEventListener('pointercancel', restore, true);
+        }
         const renameInput = event.target && event.target.closest ? event.target.closest('[data-track-rename-input]') : null;
         if (renameInput) {
             // A track row is draggable. Keep text-selection gestures inside
@@ -1200,11 +1223,11 @@ export function initTrackSession() {
         return { row, id: row.getAttribute('data-track-id') || '', placement: _trackSessionDropPlacementPure(event.clientY, rect.top, rect.height, track && track.type === 'folder') };
     };
     el.addEventListener('dragstart', event => {
-        const renameInput = event.target && event.target.closest ? event.target.closest('[data-track-rename-input]') : null;
-        if (renameInput) {
-            event.preventDefault(); event.stopPropagation(); draggedId = '';
-            return;
-        }
+        // No control exemption here: the drag source is the ROW, so
+        // event.target is always the row and never the control under the
+        // pointer — a check like closest('[data-track-rename-input]') could
+        // never match and never fired. Controls are kept out of the drag at
+        // pointerdown instead, by taking their row out of the drag entirely.
         const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null;
         draggedId = row ? row.getAttribute('data-track-id') || '' : '';
     });

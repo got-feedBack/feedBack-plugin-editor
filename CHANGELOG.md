@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hands, canvas appearance, stems).
 
 ### Fixed
+- **Tracks-pane faders can be dragged again.** Reported twice: you could only
+  click a fader to jump it to a new spot, and if you tried to drag, "you have
+  like a split second to move before it goes into drag-the-track mode". Track
+  rows carry `draggable="true"` for reorder, so once the pointer passed the
+  browser's drag threshold the native row drag began and took the gesture — a
+  plain click looked fine only because it never moved far enough to trigger it.
+  A row that owns a control now drops out of the drag for the span of a gesture
+  that started on that control, and rejoins on release. Dragging a row by its
+  body still reorders exactly as before.
 - **Keyboard seeks scroll the view again on a HiDPI display.** `canvas.width`
   is DEVICE pixels (main.js sets it to `cssWidth * DPR`), but `_editorSeekToTime`
   mixed it straight into `LABEL_W` and `S.zoom`, which are CSS-pixel units. On a
