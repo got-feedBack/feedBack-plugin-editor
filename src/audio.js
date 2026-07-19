@@ -895,9 +895,11 @@ export function playbackTick() {
         // measured against the CURRENT scrollX, so it has to run before the
         // clamp writes a new one.
         {
-            const target = _loopWrapScrollTargetPure(
-                loopRestart, timeToX(loopRestart), canvas ? canvas.width / DPR : 800,
-                S.zoom, editorFollowEnabled());
+            const viewW = canvas ? canvas.width / DPR : 800;
+            const target = _scrollInPlayActive()
+                ? _scrollInPlayTargetPure(loopRestart, viewW, S.zoom, editorFollowEnabled())
+                : _loopWrapScrollTargetPure(
+                    loopRestart, timeToX(loopRestart), viewW, S.zoom, editorFollowEnabled());
             if (target !== null) S.scrollX = host.editorClampScrollX(target);
         }
         if (_trainerWrapWantsCountIn()) {
@@ -945,8 +947,9 @@ export function playbackTick() {
     {
         const cx = timeToX(S.cursorTime);
         const w = canvas ? canvas.width / DPR : 800;
-        const target = _followScrollTargetPure(
-            S.cursorTime, cx, w, S.zoom, editorFollowEnabled());
+        const target = _scrollInPlayActive()
+            ? _scrollInPlayTargetPure(S.cursorTime, w, S.zoom, editorFollowEnabled())
+            : _followScrollTargetPure(S.cursorTime, cx, w, S.zoom, editorFollowEnabled());
         if (target !== null) S.scrollX = host.editorClampScrollX(target);
     }
 
@@ -956,13 +959,53 @@ export function playbackTick() {
 }
 
 /* @pure:follow-scroll:start */
-// Follow-playhead scroll policy: once the cursor crosses 80% of the view,
-// jump the window so the cursor sits at 30% — but only when follow is on.
+// Every follow fraction is measured against the USABLE timeline width — the
+// canvas minus the fixed LABEL_W label gutter — NOT the full canvas width.
+// The old math compared a gutter-inclusive cursor x (timeToX adds LABEL_W)
+// against a fraction of the full width and landed without subtracting the
+// gutter, so the trigger and landing drifted with canvas width: 52px is a
+// bigger slice of a narrow canvas than a wide one, which read as "follow
+// doesn't respect the edge at different resolutions". (The DPR axis is fine —
+// both cursorX and viewW are already CSS px; do NOT add a DPR term here.)
+export const FOLLOW_TRIGGER_FRAC = 0.8;   // page when the cursor passes this…
+export const FOLLOW_LAND_FRAC = 0.3;      // …and land it here (read-ahead room)
+export const FOLLOW_CENTER_FRAC = 0.5;    // continuous mode pins here (Logic)
+
+export function _followUsableWPure(viewW) {
+    const w = Number(viewW) - LABEL_W;
+    return w > 0 ? w : 0;
+}
+
+// Page-catch policy: once the cursor crosses TRIGGER of the USABLE width, jump
+// the window so the cursor lands at LAND — but only when follow is on. Returns
+// the UNCLAMPED scrollX target, or null for "don't move".
+export function _followScrollTargetPure(cursorTime, cursorX, viewW, zoom, followOn) {
+    if (!followOn || !(zoom > 0)) return null;
+    const usableW = _followUsableWPure(viewW);
+    if (usableW <= 0) return null;
+    if (!((cursorX - LABEL_W) > usableW * FOLLOW_TRIGGER_FRAC)) return null;
+    return cursorTime - (usableW * FOLLOW_LAND_FRAC) / zoom;
+}
+
+// Continuous "Scroll in Play" (Logic's View ▸ Scroll in Play): pin the cursor
+// at CENTER of the usable width and slide the timeline under it every tick —
+// no trigger. The scrollX clamp does the rest: near the start/end the target
+// pins to 0 / max, so the cursor travels TOWARD centre over the first half-view
+// and away over the last, which is exactly Logic's centred-scroll wording
+// ("after the playhead reaches the centre… it stays centred") for free.
 // Returns the UNCLAMPED scrollX target, or null for "don't move".
-function _followScrollTargetPure(cursorTime, cursorX, viewW, zoom, followOn) {
-    if (!followOn) return null;
-    if (!(cursorX > viewW * 0.8)) return null;
-    return cursorTime - (viewW * 0.3) / zoom;
+export function _scrollInPlayTargetPure(cursorTime, viewW, zoom, followOn) {
+    if (!followOn || !(zoom > 0)) return null;
+    const usableW = _followUsableWPure(viewW);
+    if (usableW <= 0) return null;
+    return cursorTime - (usableW * FOLLOW_CENTER_FRAC) / zoom;
+}
+
+// The canvas x (CSS px) where the active policy parks the cursor. The painted
+// pin reads THIS, and the scroll targets above derive from the same fraction,
+// so the pin can never point somewhere the scroll doesn't actually hold.
+export function _followPinXPure(viewW, frac) {
+    return LABEL_W + _followUsableWPure(viewW) * frac;
 }
 /* @pure:follow-scroll:end */
 
@@ -976,10 +1019,15 @@ function _followScrollTargetPure(cursorTime, cursorX, viewW, zoom, followOn) {
 // timeline. Recenters only when the restart point is NOT comfortably on screen,
 // so a loop that already fits the window never twitches on every pass.
 // Returns the UNCLAMPED scrollX target, or null for "don't move".
-function _loopWrapScrollTargetPure(restartTime, restartX, viewW, zoom, followOn) {
-    if (!followOn) return null;
-    if (restartX >= LABEL_W && restartX <= viewW * 0.8) return null;
-    return restartTime - (viewW * 0.3) / zoom;
+export function _loopWrapScrollTargetPure(restartTime, restartX, viewW, zoom, followOn) {
+    if (!followOn || !(zoom > 0)) return null;
+    const usableW = _followUsableWPure(viewW);
+    if (usableW <= 0) return null;
+    // Same gutter-aware band as the forward policy: the left guard was already
+    // correct; the right bound now uses the usable width so the "already on
+    // screen, don't twitch" window matches the trigger the forward pass uses.
+    if (restartX >= LABEL_W && restartX <= LABEL_W + usableW * FOLLOW_TRIGGER_FRAC) return null;
+    return restartTime - (usableW * FOLLOW_LAND_FRAC) / zoom;
 }
 /* @pure:loop-wrap-scroll:end */
 
@@ -990,12 +1038,55 @@ export function editorFollowEnabled() {
     catch (_) { return true; }
 }
 
+// Scroll in Play: the continuous-centred manner of following (Logic's term).
+// Default OFF — page-jump is today's behavior and the less-motion default,
+// same as Logic/Ableton, which both ship page and make continuous opt-in.
+export function editorScrollInPlayEnabled() {
+    try { return localStorage.getItem('editorScrollInPlay') === '1'; }
+    catch (_) { return false; }
+}
+
+// Does the OS ask for reduced motion? Continuous scroll is constant horizontal
+// motion; under prefers-reduced-motion we honour the pref's INTENT (still
+// "follow") but fall back to the page-jump manner, which moves far less.
+function _prefersReducedMotion() {
+    try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+    catch (_) { return false; }
+}
+
+// The EFFECTIVE manner used by playbackTick + the pin: scroll-in-play only
+// when the user asked for it AND the OS isn't asking for reduced motion.
+export function _scrollInPlayActive() {
+    return editorScrollInPlayEnabled() && !_prefersReducedMotion();
+}
+
 export function _editorToggleFollow() {
     const next = !editorFollowEnabled();
     try { localStorage.setItem('editorFollow', next ? '1' : '0'); } catch (_) {}
-    setStatus(next
-        ? 'Follow on — the view tracks the playhead during playback (Shift+L)'
-        : 'Follow off — the view stays put while the song plays (Shift+L)');
+    if (!next) {
+        setStatus('Follow off — the view stays put while the song plays (Shift+L)');
+    } else if (_scrollInPlayActive()) {
+        setStatus('Follow on — the playhead stays pinned and the view scrolls under it (Shift+L)');
+    } else {
+        setStatus('Follow on — the view jumps ahead to keep the playhead in sight (Shift+L)');
+    }
+    return true;
+}
+
+export function _editorToggleScrollInPlay() {
+    const next = !editorScrollInPlayEnabled();
+    try { localStorage.setItem('editorScrollInPlay', next ? '1' : '0'); } catch (_) {}
+    if (!next) {
+        setStatus('Scroll in Play off — the view jumps ahead a page to catch the playhead');
+    } else if (!editorFollowEnabled()) {
+        // Reachable via the command palette even while the menu item is dimmed —
+        // say plainly that it's inert until Follow is on.
+        setStatus('Scroll in Play on — takes effect when Follow is on (Shift+L)');
+    } else if (_prefersReducedMotion()) {
+        setStatus('Scroll in Play on — honouring your system’s reduced-motion setting, so the view still jumps rather than scrolling');
+    } else {
+        setStatus('Scroll in Play on — the playhead pins and the view scrolls under it during playback');
+    }
     return true;
 }
 

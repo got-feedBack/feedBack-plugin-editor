@@ -33,7 +33,7 @@
  * disclosure, no nested-popover machinery; B5 can graduate them.
  */
 
-import { _editorSetGuideVoiceMode, editorGuideVoiceMode } from './audio.js';
+import { _editorSetGuideVoiceMode, editorFollowEnabled, editorGuideVoiceMode, editorScrollInPlayEnabled } from './audio.js';
 import { GM_VOICE_CHOICES, _gmKindPure, editorGmVoiceFor, editorSetGmVoice } from './gm-guide.js';
 import { _editorRunEofCommand } from './input.js';
 import { _editorShortcutRowsPure, editorShortcutProfile } from './shortcuts.js';
@@ -169,6 +169,10 @@ export const EDITOR_MENUS = Object.freeze([
         { cmd: 'toggleKeyHighlight' },
         { label: 'Hand shading (keys)', fn: 'editorToggleHandShading' },
         { cmd: 'toggleFollow' },
+        // Scroll in Play (Logic's term): the CONTINUOUS manner of follow — the
+        // playhead pins and the view scrolls under it, instead of page-jumping.
+        // A checkbox, dimmed while Follow is off (it only means anything then).
+        { sip: true, label: 'Scroll in Play' },
         { cmd: 'toggleTabView' },
         { cmd: 'showTabPreview' },
         { sep: true },
@@ -320,6 +324,22 @@ export function _menuModelPure(menus, rows, ctx) {
                 });
                 continue;
             }
+            if (it.sip) {
+                // Scroll in Play checkbox. Checked from ctx.scrollInPlay;
+                // DISABLED (dimmed) when follow is off, since the continuous
+                // manner only applies while following. Absent ctx (older
+                // callers) -> unchecked + enabled.
+                const on = !!ctx.scrollInPlay;
+                const off = ctx.followOn === false;
+                items.push({
+                    label: (on ? '✓ ' : '  ') + it.label,
+                    key: '',
+                    dispatch: off ? null : { cmd: 'toggleScrollInPlay' },
+                    disabled: off,
+                    planned: false,
+                });
+                continue;
+            }
             if (it.scoreStaff) {
                 // Score-staff radio: ctx.scoreStaff is absent in older
                 // callers -> unchecked (same degradation as the loop trio).
@@ -452,6 +472,8 @@ function currentModel() {
             loopSnapMode: editorLoopSnapMode(),
             scoreStaff: editorTabViewStaff(),
             gmGuide: _gmGuideMenuCtx(),
+            followOn: editorFollowEnabled(),
+            scrollInPlay: editorScrollInPlayEnabled(),
         });
 }
 

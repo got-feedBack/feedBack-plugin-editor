@@ -49,7 +49,8 @@ import { S } from './state.js';
 import { host } from './host.js';
 import { setStatus } from './ui.js';
 import {
-    _editorToggleFollow, _trainerActive, editorAuditionRate, editorCountInBars, editorFollowEnabled, editorSetCountIn,
+    _editorToggleFollow, _scrollInPlayActive, _trainerActive, editorAuditionRate, editorCountInBars,
+    editorFollowEnabled, editorSetCountIn,
     stopPlayback,
 } from './audio.js';
 import { PIANO_NOTE_NAMES, SCALE_LABELS } from './theory.js';
@@ -573,6 +574,12 @@ function wireBar(bar) {
 // Called from updateTimeDisplay() (the transport tick) and updateStatus()
 // (selection changes) — never from draw(). All writes skip-if-unchanged; a
 // focused field is never clobbered mid-edit.
+export function _followTooltipPure(scrollInPlayActive) {
+    return scrollInPlayActive
+        ? 'Follow the playhead during playback — the playhead stays pinned and the view scrolls under it. (Shift+L)'
+        : 'Follow the playhead during playback — the view jumps ahead a page when it reaches the edge. (Shift+L)';
+}
+
 const _set = (el, v) => { if (el && el.textContent !== v) el.textContent = v; };
 const _setVal = (el, v) => {
     if (el && document.activeElement !== el && el.value !== v) el.value = v;
@@ -651,6 +658,16 @@ export function _transportBarTick(force) {
         if (el) { const v = onState ? 'true' : 'false'; if (el.getAttribute('aria-pressed') !== v) el.setAttribute('aria-pressed', v); }
     };
     press('editor-tp-follow', editorFollowEnabled());
+    // The Follow button's MANNER (page vs continuous) lives in a View-menu
+    // checkbox, not on the button — so the button's tooltip is the one place
+    // a hovering user learns which they'll get. Swap it with the pref.
+    {
+        const fb = document.getElementById('editor-tp-follow');
+        if (fb) {
+            const tip = _followTooltipPure(_scrollInPlayActive());
+            if (fb.getAttribute('title') !== tip) fb.setAttribute('title', tip);
+        }
+    }
     press('editor-tp-parts', !!S.partsViewMode);
     press('editor-tp-count', bars > 0);
     // The trainer rides the loop: it reads OFF the moment the loop does, and a

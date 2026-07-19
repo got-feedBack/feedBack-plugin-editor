@@ -14,6 +14,7 @@
  * in main.js.
  */
 
+import { FOLLOW_CENTER_FRAC, _followPinXPure, _scrollInPlayActive, editorFollowEnabled } from './audio.js';
 import { ctx } from './canvas.js';
 import { host } from './host.js';
 import {
@@ -969,6 +970,37 @@ export function _caretCellWidthPure(stepSec, zoom, minW) {
 }
 
 export function drawCursor(w, h) {
+    // The label-gutter edge: a faint divider at x = LABEL_W so the "usable
+    // timeline" reads as a bounded region rather than blending into the gutter.
+    // Follow lands relative to THIS edge (_followUsableWPure), so drawing it
+    // makes a gutter-math regression visible on sight — the playhead would sit
+    // in the gutter — instead of a subtle resolution-dependent drift. Painted
+    // every frame, independent of whether the cursor itself is on screen.
+    ctx.strokeStyle = 'rgba(148,163,184,0.16)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(LABEL_W + 0.5, MINIMAP_H);
+    ctx.lineTo(LABEL_W + 0.5, h);
+    ctx.stroke();
+
+    // Scroll-in-Play pin: the fixed x the playhead holds at while the view
+    // scrolls under it. A faint full-height guide, only in that mode during
+    // playback. It reads _followPinXPure with the SAME fraction the scroll
+    // target uses, so it can never point where the scroll doesn't actually
+    // hold — and near the song start/end (before the playhead reaches centre,
+    // or past where it can stay) it shows where the music is heading.
+    if (S.playing && editorFollowEnabled() && _scrollInPlayActive()) {
+        const px = _followPinXPure(w, FOLLOW_CENTER_FRAC);
+        if (px >= LABEL_W && px <= w) {
+            ctx.strokeStyle = 'rgba(120,220,232,0.30)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(px + 0.5, MINIMAP_H);
+            ctx.lineTo(px + 0.5, h);
+            ctx.stroke();
+        }
+    }
+
     // While playing, paint the playhead at the OUTPUT-latency-compensated time
     // (S.cursorDrawTime) so the line sits on the audio actually leaving the
     // speaker, not the buffered-ahead schedule — the marker matches what's heard
