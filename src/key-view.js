@@ -11,6 +11,8 @@ import { notes } from './notes.js';
 import { S } from './state.js';
 import { PIANO_NOTE_NAMES, SCALE_INTERVALS, SCALE_LABELS, _detectKeyPure, _noteNamesForKeyPure } from './theory.js';
 import { setStatus } from './ui.js';
+import { _drumDensityMode, _drumKitDensityBack, _editorSetDrumDensity } from './drum.js';
+import { editorSetTabViewStaff, editorToggleTabView } from './tab-view-live.js';
 import { host } from './host.js';
 import { revealToolbar } from './toolbars.js';
 
@@ -76,34 +78,97 @@ export const editorDetectKey = () => {
     setStatus(`Detected key: ${_noteNamesForKeyPure(res)[res.tonic]} ${label} — adjust in the picker if it's off`);
 };
 
-// ── Per-part view switcher (String · Piano roll) ─────────────────────
+// ── Per-part view dropdown (String · Piano roll · Tab · Notation ·
+//    Notation + Tab) ─────────────────────────────────────────────────
+
+// The dropdown's selected value, derived from state: the engraved lens
+// overrides the per-part pref while it's on, and each staff profile is
+// its own option ('both' = "Notation + Tab"). In drum mode the choices
+// are the kit grid, the same grid at GM-roll density (the drum piano
+// roll), and the percussion staff — the drum-mode flag stays on under
+// the lens, so the lens bit wins. Pure — node-testable.
+export function _viewSwitchValuePure(prefMode, tabLensOn, staff, drumMode, drumDensity) {
+    if (drumMode) {
+        if (tabLensOn) return 'drum-notation';
+        return drumDensity === 'midi' ? 'drum-piano' : 'drum-grid';
+    }
+    if (!tabLensOn) return prefMode === 'piano' ? 'piano' : 'string';
+    if (staff === 'notation') return 'notation';
+    if (staff === 'both') return 'both';
+    return 'tab';
+}
+
 let _viewSwitchState = '';
 export function _refreshViewSwitch() {
     const el = document.getElementById('editor-view-switch');
     if (!el) return;
     const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
     const fretted = !!arr && !KEYS_PATTERN.test(arr.name || '');
-    // Only fretted parts get a choice (keys are piano-locked), and only
-    // when a focus editor is showing (not drum/tempo/parts modes).
-    const visible = fretted && !S.drumEditMode && !S.tempoMapMode && !S.partsViewMode;
+    const isDrums = !!arr && /^drums/i.test(arr.name || '');
+    // The DRUM editor gets its own two options (grid / percussion staff) —
+    // its mode flag stays on under the drum lens, so it is the one signal.
+    const drumMode = !!S.drumEditMode && !!S.drumTab;
+    // Fretted parts get the full choice (keys are piano-locked), drum mode
+    // gets its pair, and the tempo/parts lenses hide the dropdown. The
+    // engraved lens keeps it visible — it IS one of the views.
+    const visible = !S.tempoMapMode && !S.partsViewMode
+        && (drumMode || (fretted && !S.drumEditMode));
     const mode = arr ? viewFor(arr) : 'string';
-    const sig = `${visible}|${mode}`;
+    const value = _viewSwitchValuePure(
+        mode, !!S.tabViewMode, S.tabViewStaff, drumMode,
+        drumMode ? _drumDensityMode() : null);
+    const sig = `${visible}|${isDrums}|${drumMode}|${value}`;
     if (sig === _viewSwitchState) return;
     _viewSwitchState = sig;
     el.classList.toggle('hidden', !visible);
-    el.classList.toggle('flex', visible);
-    el.querySelectorAll('button[data-view]').forEach(b => {
-        const active = b.dataset.view === mode;
-        b.classList.toggle('bg-accent', active);
-        b.classList.toggle('text-white', active);
-        b.classList.toggle('text-gray-400', !active);
-        b.setAttribute('aria-pressed', active ? 'true' : 'false');
+    // Option sets are mode-exclusive: drum mode shows its pair, everything
+    // else shows the five standard views (minus the engraved ones on a
+    // drums ARRANGEMENT — the same refusal the lens itself makes).
+    el.querySelectorAll('option').forEach(o => {
+        const isDrumOpt = o.value === 'drum-grid' || o.value === 'drum-piano'
+            || o.value === 'drum-notation';
+        const hide = isDrumOpt ? !drumMode
+            : drumMode || (isDrums && o.value !== 'string' && o.value !== 'piano');
+        o.disabled = hide;
+        o.hidden = hide;
     });
+    if (el.value !== value) el.value = value;
     const pill = document.getElementById('editor-roll-lock-pill');
-    if (pill) pill.classList.toggle('hidden', !(visible && mode === 'piano'));
+    if (pill) pill.classList.toggle('hidden', !(visible && !drumMode && !S.tabViewMode && mode === 'piano'));
 }
 
 export const editorSetViewMode = (mode) => {
+    // Drum-mode pair: the lens toggle carries the drum source itself (the
+    // drum-editor flag stays on underneath either way).
+    if (mode === 'drum-notation') {
+        editorToggleTabView(true);
+        _refreshViewSwitch();
+        return;
+    }
+    if (mode === 'drum-grid' || mode === 'drum-piano') {
+        // Both are the SAME grid at different row densities — leave the
+        // engraved lens first, then set the density. Returning to the grid
+        // restores the last kit-ordered density (Full or Compact), so a
+        // Compact user isn't silently reset by a trip through the roll.
+        if (S.tabViewMode) editorToggleTabView(false);
+        _editorSetDrumDensity(mode === 'drum-piano' ? 'midi' : _drumKitDensityBack());
+        _refreshViewSwitch();
+        return;
+    }
+    // Tab / Notation / Notation+Tab are the engraved lens with the matching
+    // staff profile — with a dropdown every profile is an explicit option,
+    // so the choice maps straight onto the reading preference.
+    if (mode === 'tab' || mode === 'notation' || mode === 'both') {
+        editorSetTabViewStaff(mode === 'both' ? 'both' : mode);
+        editorToggleTabView(true);
+        _refreshViewSwitch();
+        return;
+    }
+    // Leaving the lens for a timeline view: drop the flag first so the
+    // pref write below lands on a visible editor (mirrors the cycle).
+    if (S.tabViewMode && (mode === 'string' || mode === 'piano')) {
+        editorToggleTabView(false);
+    }
     if (mode !== 'string' && mode !== 'piano') return;
     const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
     if (!arr) return;

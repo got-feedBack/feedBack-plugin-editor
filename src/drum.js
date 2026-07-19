@@ -240,8 +240,22 @@ export function _drumLaneIdxForPiece(pieceId) {
     return _drumLaneIdxForPiecePure(pieceId, _drumLanes());
 }
 
-export function _editorToggleDrumDensity() {
-    const next = _drumDensityNextPure(_drumDensityMode());
+// The last KIT-ordered density (full/compact) the user was on, so leaving
+// the GM roll restores what they had instead of resetting to Full. Two
+// controls reach the density now — the Rows button and the view dropdown's
+// Drum grid / Piano roll pair — and both route through the setter below,
+// so they can never disagree.
+let _lastKitDensity = null;
+export function _drumKitDensityBack() {
+    return _lastKitDensity === 'compact' ? 'compact' : 'full';
+}
+
+export function _editorSetDrumDensity(mode) {
+    const next = (mode === 'compact' || mode === 'midi') ? mode : 'full';
+    const cur = _drumDensityMode();
+    if (next === cur) return true;
+    // Remember where to come back to BEFORE leaving a kit-ordered density.
+    if (cur !== 'midi') _lastKitDensity = cur;
     _drumDensityCache = next;
     try { localStorage.setItem('editorDrumDensity', next); } catch (_) {}
     // Row count/order changed — drop selection (indices keep meaning, but
@@ -254,6 +268,10 @@ export function _editorToggleDrumDensity() {
             ? 'GM roll — one row per piece on its General-MIDI percussion note, pitch-ordered like a piano roll'
             : 'Full rows — one row per drum piece');
     return true;
+}
+
+export function _editorToggleDrumDensity() {
+    return _editorSetDrumDensity(_drumDensityNextPure(_drumDensityMode()));
 }
 
 // Display colour + shape hint per piece-id — mirrors lib/drums.py::PIECES

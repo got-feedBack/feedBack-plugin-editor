@@ -76,18 +76,92 @@ function _restTokens(ticks) {
 // straight back to editor notes.
 export function _alphaTexFromNotesPure(opts) {
     const { notes, beats, beatOfFn, laneCount, openMidi, tuning, capo, title } = opts || {};
+    const header = [];
+    if (title) header.push(`\\title "${String(title).replace(/"/g, "'")}"`);
+    header.push(`\\tuning ${_alphaTexTuningPure(openMidi, tuning)}`);
+    if (Number(capo) > 0) header.push(`\\capo ${Number(capo)}`);
+    header.push('.');
+    return _alphaTexAssemblePure({
+        items: notes, timeOf: n => n.time, beats, beatOfFn, header,
+        groupParts: group => group
+            .slice().sort((a, c) => a.string - c.string)
+            .map(n => `${n.fret}.${laneCount - n.string}`),
+    });
+}
+
+// Percussion articulation id per drum piece. alphaTab's articulation
+// table (PercussionMapper) uses the GM percussion numbers for the whole
+// standard kit, so these read as GM — but they are ARTICULATION ids, fed
+// to a `\instrument "percussion"` staff, not a pitch. `stack` has no
+// articulation — its hits are skipped and counted, never silently
+// dropped (the engraving must stay honest about what it omits).
+export const DRUM_TEX_ARTICULATIONS = {
+    kick: 36, snare: 38, snare_xstick: 37,
+    hh_closed: 42, hh_open: 46, hh_pedal: 44,
+    tom_hi: 50, tom_mid: 48, tom_low: 45, tom_floor: 43,
+    crash_l: 49, crash_r: 57, splash: 55, china: 52,
+    ride: 51, ride_bell: 53, bell: 56, stack: null,
+};
+
+// The drum-tab flavor: same quantization contract, hits ({t, p}) instead
+// of fretted notes, engraved on a percussion staff. Returns the same
+// { tex, beatMap, bars, skipped } shape (+ skipped.unmapped for pieces
+// with no articulation).
+export function _alphaTexFromDrumHitsPure(opts) {
+    const { hits, beats, beatOfFn, title } = opts || {};
+    const mapped = [];
+    let unmapped = 0;
+    for (const h of (hits || [])) {
+        if (!h || !Number.isFinite(h.t)) continue;
+        if (Number.isInteger(DRUM_TEX_ARTICULATIONS[h.p])) mapped.push(h);
+        else unmapped++;
+    }
+    const header = [];
+    if (title) header.push(`\\title "${String(title).replace(/"/g, "'")}"`);
+    header.push('\\instrument "percussion"');
+    header.push('.');
+    const gen = _alphaTexAssemblePure({
+        items: mapped, timeOf: h => h.t, beats, beatOfFn, header,
+        // The percussion (neutral) clef is BAR metadata, not header — without
+        // it alphaTab engraves drums under a treble clef.
+        firstBarMeta: '\\clef neutral',
+        // A bare `36.4` lexes as the FLOAT 36.4, not articulation-36 with a
+        // quarter duration (fretted notes dodge this — `3.6.4` has two
+        // dots). Parenthesizing every beat keeps the duration suffix
+        // unambiguous: `(36).4`.
+        wrapSingles: true,
+        groupParts: group => {
+            // One articulation per tick slot — two simultaneous hits on the
+            // SAME piece engrave once (a flam isn't representable yet).
+            const seen = new Set();
+            const parts = [];
+            for (const h of group) {
+                const a = DRUM_TEX_ARTICULATIONS[h.p];
+                if (!seen.has(a)) { seen.add(a); parts.push(String(a)); }
+            }
+            return parts;
+        },
+    });
+    if (gen) gen.skipped.unmapped = unmapped;
+    return gen;
+}
+
+// The shared bar walker: bucket items onto the 16th grid, emit bars that
+// always sum exactly (rest-filled), and keep the emitted-beat → source
+// refs map for click handling. Header lines are the caller's.
+function _alphaTexAssemblePure({ items, timeOf, beats, beatOfFn, header, groupParts, wrapSingles, firstBarMeta }) {
     const dbs = [];
     for (let i = 0; i < (beats || []).length; i++) {
         if (beats[i] && beats[i].measure > 0) dbs.push(i);
     }
     if (dbs.length < 2) return null;
 
-    // Bucket notes by bar + tick, in one pass.
+    // Bucket items by bar + tick, in one pass.
     const skipped = { pickup: 0, tail: 0 };
     const perBar = dbs.slice(0, -1).map(() => new Map());
-    for (const n of (notes || [])) {
-        if (!n || !Number.isFinite(n.time)) continue;
-        const beta = beatOfFn(n.time);
+    for (const n of (items || [])) {
+        if (!n || !Number.isFinite(timeOf(n))) continue;
+        const beta = beatOfFn(timeOf(n));
         if (beta < dbs[0]) { skipped.pickup++; continue; }
         if (beta >= dbs[dbs.length - 1]) { skipped.tail++; continue; }
         // The containing bar: last downbeat index ≤ beta.
@@ -101,12 +175,6 @@ export function _alphaTexFromNotesPure(opts) {
         bucket.get(tick).push(n);
     }
 
-    const header = [];
-    if (title) header.push(`\\title "${String(title).replace(/"/g, "'")}"`);
-    header.push(`\\tuning ${_alphaTexTuningPure(openMidi, tuning)}`);
-    if (Number(capo) > 0) header.push(`\\capo ${Number(capo)}`);
-    header.push('.');
-
     const bars = [];
     const beatMap = [];
     let lastSig = '';
@@ -116,6 +184,7 @@ export function _alphaTexFromNotesPure(opts) {
         const barTicks = beatsInBar * _ticksPerBeat(den);
         const tokens = [];
         const map = [];
+        if (b === 0 && firstBarMeta) tokens.push(firstBarMeta);
         const sig = `${beatsInBar}/${den}`;
         if (sig !== lastSig) { tokens.push(`\\ts ${beatsInBar} ${den}`); lastSig = sig; }
 
@@ -132,10 +201,9 @@ export function _alphaTexFromNotesPure(opts) {
             // Largest plain duration that fits the gap; the remainder rests.
             let durTicks = 1, dur = 16;
             for (const [t, d] of ATEX_LADDER) { if (t <= gap) { durTicks = t; dur = d; break; } }
-            const parts = group
-                .slice().sort((a, c) => a.string - c.string)
-                .map(n => `${n.fret}.${laneCount - n.string}`);
-            tokens.push(group.length === 1 ? `${parts[0]}.${dur}` : `(${parts.join(' ')}).${dur}`);
+            const parts = groupParts(group);
+            tokens.push(parts.length === 1 && !wrapSingles
+                ? `${parts[0]}.${dur}` : `(${parts.join(' ')}).${dur}`);
             map.push(group.slice());
             cursor += durTicks;
             if (cursor < T + gap) {

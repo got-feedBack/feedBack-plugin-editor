@@ -50,7 +50,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drummer coming from a DAW already knows. Same grid, same piece-ids,
   same editing and colors in every mode (the view-modality one-data-path
   rule): only row order and labels change. The preference persists like
-  the other density modes.
+  the other density modes. It is also the dropdown's **Piano roll** entry for
+  drum tracks (below), so drums advertise their layouts in the same place
+  fretted tracks do.
+- **Drums reach view parity: Drum grid · Piano roll · Notation.** With the
+  GM roll and the view dropdown both in place, the drum editor's dropdown
+  now lists all three layouts — `Piano roll` selects GM-roll density, so the
+  drum piano roll is discoverable where users look for views instead of only
+  behind the Rows button. Full/Compact stay on Rows (they're densities of the
+  kit-ordered grid; GM roll is the pitch axis), and returning to `Drum grid`
+  restores the density you came from rather than resetting to Full. Both
+  controls route through one setter, so they can't drift apart. Drums now
+  match fretted tracks' vocabulary: instrument geometry → pitch-ordered →
+  engraved.
+- **Tab and Notation join the view switcher — now a dropdown.** The live
+  engraved score existed but was reachable only through the view-cycle
+  shortcut and the View menu — the top-right switcher showed just
+  String | Piano roll and didn't even update while the lens was on. It's
+  now a per-track **view dropdown**: String view · Piano roll · Tab ·
+  Notation · **Notation + Tab** (every staff profile an explicit option,
+  so the selected value always tells the truth, lens included). The
+  engraved options vanish for drum tracks (which have no tab), keys stay
+  piano-locked, and returning to String/Piano roll drops the lens
+  cleanly. The User Guide's view list documents all five.
+- **Drum-editor parity: Notation for drums.** In the drum editor the same
+  dropdown offers **Drum grid / Notation** — the live lens engraves the
+  drum tab on a percussion staff (alphaTex `\instrument "percussion"`,
+  articulation ids per piece; kick-and-hat chords group, hits on pieces
+  with no notation symbol are skipped and counted, never silently
+  dropped). Clicking an engraved beat selects its hits in the drum grid
+  and seeks. The drum-editor mode stays on underneath the lens, so
+  switching back to Drum grid restores it with all its state.
 - **The master mix can be muted (and soloed, and faded) from the Tracks
   pane.** The master row used to carry no inline strip — its controls lived
   only in the mixer drawer. The pane now mirrors the drawer: same M/S/fader,

@@ -22,8 +22,10 @@ globalThis.document = globalThis.document || {
 globalThis.localStorage = globalThis.localStorage || { getItem: () => null, setItem: () => {} };
 globalThis.window = globalThis.window || globalThis;
 
-const { _alphaTexFromNotesPure, _alphaTexNoteNamePure, _alphaTexTuningPure } =
-    await import('../src/alphatex.js');
+const {
+    DRUM_TEX_ARTICULATIONS, _alphaTexFromDrumHitsPure, _alphaTexFromNotesPure,
+    _alphaTexNoteNamePure, _alphaTexTuningPure,
+} = await import('../src/alphatex.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -193,6 +195,70 @@ t('4/4 output is bit-identical to the pre-denominator-aware markup (no regressio
     const r = gen([N(0, 0, 3), N(0.5, 1, 5), N(1.0, 2, 7), N(1.5, 0, 3)], grid(2));
     assert.strictEqual(r.tex,
         '\\tuning e5 b4 g4 d4 a3 e3\n.\n\\ts 4 4 3.6.4 5.5.4 7.4.4 3.6.4');
+});
+
+// ── Percussion flavor (the drum Notation view) ───────────────────────
+
+t('drums: percussion header, articulation ids, same walker contract', () => {
+    const hits = [
+        { t: 0, p: 'kick' }, { t: 0.5, p: 'snare' },
+        { t: 1.0, p: 'kick' }, { t: 1.5, p: 'snare' },
+    ];
+    const r = _alphaTexFromDrumHitsPure({
+        hits, beats: grid(2), beatOfFn: beatOfLinear, title: 'X — Drums',
+    });
+    assert.ok(r.tex.includes('\\instrument "percussion"'), 'percussion staff declared');
+    assert.ok(!r.tex.includes('\\tuning'), 'no string tuning on a drum staff');
+    // \clef neutral is BAR metadata and load-bearing: without it alphaTab
+    // engraves the kit under a TREBLE clef (verified in the browser).
+    assert.strictEqual(r.tex.split('\n').pop(),
+        '\\clef neutral \\ts 4 4 (36).4 (38).4 (36).4 (38).4',
+        'percussion clef + articulation ids on the beat grid');
+    // Every beat is parenthesized: a bare `36.4` lexes as the float 36.4,
+    // not articulation 36 with a quarter duration.
+    assert.ok(!/(^|\s)\d+\.\d+(\s|$)/.test(r.tex.split('\n').pop().replace('\\ts 4 4', '')),
+        'no bare number.duration token that could lex as a float');
+});
+
+t('drums: simultaneous hits chord together; same-piece doubles engrave once', () => {
+    const hits = [
+        { t: 0, p: 'kick' }, { t: 0, p: 'hh_closed' },
+        { t: 0.5, p: 'snare' }, { t: 0.5, p: 'snare' },   // a flam-ish double
+    ];
+    const r = _alphaTexFromDrumHitsPure({ hits, beats: grid(2), beatOfFn: beatOfLinear });
+    const bar = r.tex.split('\n').pop();
+    assert.ok(bar.includes('(36 42).4'), 'kick + closed hat chord: ' + bar);
+    assert.ok(/\(38\)\.\d/.test(bar) && !bar.includes('(38 38'), 'double snare engraves once: ' + bar);
+    // beatMap still carries BOTH source hits for the doubled slot.
+    const snareSlot = r.beatMap[0].find(g => g && g.length === 2 && g.every(h => h.p === 'snare'));
+    assert.ok(snareSlot, 'click map keeps both snare hits');
+});
+
+t('drums: pieces with no articulation are skipped and counted, never dropped silently', () => {
+    const hits = [{ t: 0, p: 'kick' }, { t: 0.5, p: 'stack' }, { t: 1.0, p: 'mystery_piece' }];
+    const r = _alphaTexFromDrumHitsPure({ hits, beats: grid(2), beatOfFn: beatOfLinear });
+    assert.strictEqual(r.skipped.unmapped, 2, 'stack + unknown counted');
+    assert.ok(!r.tex.includes('null') && !r.tex.includes('undefined'), r.tex);
+    assert.strictEqual(DRUM_TEX_ARTICULATIONS.stack, null, 'stack has no notation symbol');
+});
+
+t('drums: the clef rides bar 1 only — later bars never re-emit it', () => {
+    const r = _alphaTexFromDrumHitsPure({
+        hits: [{ t: 0, p: 'kick' }, { t: 2.0, p: 'snare' }],
+        beats: grid(3), beatOfFn: beatOfLinear,
+    });
+    const barsOut = r.tex.split('\n').pop().split(' | ');
+    assert.ok(barsOut[0].startsWith('\\clef neutral'), barsOut[0]);
+    assert.ok(!barsOut[1].includes('\\clef'), 'bar 2 inherits the clef: ' + barsOut[1]);
+});
+
+t('the fretted generator never emits a clef (its staff is not percussion)', () => {
+    const r = gen([N(0, 0, 3)], grid(2));
+    assert.ok(!r.tex.includes('\\clef'), r.tex);
+});
+
+t('drums: no grid → null, same as the fretted generator', () => {
+    assert.strictEqual(_alphaTexFromDrumHitsPure({ hits: [], beats: [], beatOfFn: beatOfLinear }), null);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

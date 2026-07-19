@@ -28,12 +28,17 @@ import { notes } from './notes.js';
 import { beatOf } from './beats.js';
 import { _openMidiForArr, _stringCountFor } from './lanes.js';
 import { KEYS_PATTERN } from './keys.js';
-import { _alphaTexFromNotesPure } from './alphatex.js';
+import { _alphaTexFromDrumHitsPure, _alphaTexFromNotesPure } from './alphatex.js';
 import { TAB_RENDERER_FONT_DIR, _tabPreviewLoadScript } from './tab-preview.js';
 
 let _api = null;
 let _apiMount = null;           // the DOM node the api was built on (re-injection guard)
 let _apiStaff = '';             // the staff profile the api was built with
+// What the lens engraves: 'chart' (the active fretted arrangement) or
+// 'drums' (S.drumTab on a percussion staff — entered from the drum
+// editor, whose mode flag stays ON so exiting restores the drum grid).
+let _texSource = 'chart';
+export function _tabViewSource() { return _texSource; }
 let _domHandler = null;         // the capture-phase mousedown fallback (removed on destroy)
 let _beatMap = null;
 let _renderedKey = '';          // editGen|arr|session — regen only on real change
@@ -58,7 +63,7 @@ export function _scoreStaffProfilePure(staff) {
 }
 
 function _keyNow() {
-    return `${editGen}|${S.currentArr}|${S.sessionId}`;
+    return `${editGen}|${S.currentArr}|${S.sessionId}|${_texSource}`;
 }
 
 function _destroyApi() {
@@ -81,7 +86,11 @@ function _destroyApi() {
 // the click-to-select: alphaTab reports the clicked beat's bar + in-bar index,
 // which is exactly how the generator's beatMap is keyed.
 export function _ensureApi(mount) {
-    if (_api && _apiMount === mount && _apiStaff === S.tabViewStaff) return _api;
+    // Percussion always engraves the notation staff — articulation ids on
+    // tab lines would be meaningless — so the staff key forces 'notation'
+    // for the drums source (and the source is part of the rebuild key).
+    const staffKey = _texSource === 'drums' ? 'drums:notation' : S.tabViewStaff;
+    if (_api && _apiMount === mount && _apiStaff === staffKey) return _api;
     _destroyApi();
     /* global alphaTab */
     _api = new alphaTab.AlphaTabApi(mount, {
@@ -91,7 +100,11 @@ export function _ensureApi(mount) {
         display: {
             layoutMode: alphaTab.LayoutMode.Page,
             scale: 0.85,
-            staveProfile: alphaTab.StaveProfile[_scoreStaffProfilePure(S.tabViewStaff)],
+            // Percussion takes Default so alphaTab picks the drum stave (X
+            // noteheads, no tab line); forcing Score would engrave it as a
+            // pitched staff. Fretted parts keep the reading preference.
+            staveProfile: alphaTab.StaveProfile[
+                _texSource === 'drums' ? 'Default' : _scoreStaffProfilePure(S.tabViewStaff)],
         },
         // The interaction layer (beat clicks + the bounds lookup behind them)
         // is gated on the player flag in this alphaTab line — enable it with
@@ -100,12 +113,22 @@ export function _ensureApi(mount) {
         player: { enablePlayer: true, enableCursor: false, enableUserInteraction: true },
     });
     _apiMount = mount;
-    _apiStaff = S.tabViewStaff;
+    _apiStaff = staffKey;
     const select = (beat) => {
         try {
             const barIdx = beat.voice.bar.index;
             const refs = _beatMap && _beatMap[barIdx] ? _beatMap[barIdx][beat.index] : null;
             if (!refs || !refs.length) return;   // a rest — nothing to select
+            if (_texSource === 'drums') {
+                // Drum refs are hits — select them in the drum editor's own
+                // selection set and seek, mirroring the fretted behavior.
+                const hits = (S.drumTab && S.drumTab.hits) || [];
+                S.drumSel = new Set(refs.map(r => hits.indexOf(r)).filter(i => i >= 0));
+                host.editorSeekToTime(refs[0].t);
+                host.updateStatus();
+                setStatus(`Selected ${refs.length} hit${refs.length === 1 ? '' : 's'} from the notation — edit in the drum grid.`);
+                return;
+            }
             const nn = notes();
             S.sel.clear();
             for (const r of refs) {
@@ -141,19 +164,29 @@ export function _ensureApi(mount) {
 function _render() {
     const mount = $mount();
     if (!mount || !S.tabViewMode) return;
-    const arr = S.arrangements && S.arrangements[S.currentArr];
-    if (!arr) return;
-    const laneCount = _stringCountFor(arr);
-    const gen = _alphaTexFromNotesPure({
-        notes: notes(),
-        beats: S.beats,
-        beatOfFn: (t) => beatOf(S.beats, t),
-        laneCount,
-        openMidi: _openMidiForArr(arr, laneCount),
-        tuning: (Array.isArray(arr.tuning) ? arr.tuning : []).slice(0, laneCount),
-        capo: Number(arr.capo) || 0,
-        title: `${S.title || ''} — ${arr.name || 'track'}`,
-    });
+    let gen;
+    if (_texSource === 'drums') {
+        gen = _alphaTexFromDrumHitsPure({
+            hits: (S.drumTab && S.drumTab.hits) || [],
+            beats: S.beats,
+            beatOfFn: (t) => beatOf(S.beats, t),
+            title: `${S.title || ''} — Drums`,
+        });
+    } else {
+        const arr = S.arrangements && S.arrangements[S.currentArr];
+        if (!arr) return;
+        const laneCount = _stringCountFor(arr);
+        gen = _alphaTexFromNotesPure({
+            notes: notes(),
+            beats: S.beats,
+            beatOfFn: (t) => beatOf(S.beats, t),
+            laneCount,
+            openMidi: _openMidiForArr(arr, laneCount),
+            tuning: (Array.isArray(arr.tuning) ? arr.tuning : []).slice(0, laneCount),
+            capo: Number(arr.capo) || 0,
+            title: `${S.title || ''} — ${arr.name || 'track'}`,
+        });
+    }
     if (!gen) {
         mount.innerHTML = '<div class="p-6 text-sm text-gray-400">No beat grid to engrave against — set up the tempo map first.</div>';
         _destroyApi();
@@ -165,8 +198,11 @@ function _render() {
     _beatMap = gen.beatMap;
     api.tex(gen.tex);
     _renderedKey = _keyNow();
-    if (gen.skipped.pickup || gen.skipped.tail) {
-        setStatus(`Tab view: ${gen.skipped.pickup + gen.skipped.tail} note(s) outside the barline span aren't engraved (they're still in the chart).`);
+    const missed = gen.skipped.pickup + gen.skipped.tail + (gen.skipped.unmapped || 0);
+    if (missed) {
+        setStatus(_texSource === 'drums'
+            ? `Notation: ${missed} hit(s) aren't engraved (outside the barline span or a piece with no notation symbol) — they're still in the drum grid.`
+            : `Tab view: ${missed} note(s) outside the barline span aren't engraved (they're still in the chart).`);
     }
 }
 
@@ -177,20 +213,31 @@ function _render() {
 export function _tabViewPing() {
     const mount = $mount();
     if (!mount) return;
-    // Track-switch guard: the entry toggle refuses keys/drums, but switching
-    // TO a non-fretted track while the lens is already on bypasses that guard
+    // Source-validity guard, enforced at the draw pass (the one place every
+    // mode change flows through). Drums source: the lens rides the drum
+    // editor — if that mode (or the tab itself) went away, drop the lens.
+    // Chart source: the entry toggle refuses keys/drums, but switching TO a
+    // non-fretted track while the lens is already on bypasses that guard
     // (editorSelectArrangement doesn't clear the flag), and the view-cycle's
     // own keys short-circuit returns before it can un-toggle either — leaving
     // the user stuck engraving `undefined.NaN.*` for a track that has no tab.
-    // The draw pass is the single enforcement point: drop the lens here so the
-    // track's normal view (the roll) takes over on the redraw.
-    const arr = S.arrangements && S.arrangements[S.currentArr];
-    if (!arr || KEYS_PATTERN.test(arr.name || '') || /^drums/i.test(arr.name || '')) {
-        S.tabViewMode = false;
-        _tabViewHideIfShown();
-        setStatus('Tab view is for fretted tracks — switched back to this track’s normal view.');
-        host.draw();
-        return;
+    if (_texSource === 'drums') {
+        if (!S.drumEditMode || !S.drumTab) {
+            S.tabViewMode = false;
+            _texSource = 'chart';
+            _tabViewHideIfShown();
+            host.draw();
+            return;
+        }
+    } else {
+        const arr = S.arrangements && S.arrangements[S.currentArr];
+        if (!arr || KEYS_PATTERN.test(arr.name || '') || /^drums/i.test(arr.name || '')) {
+            S.tabViewMode = false;
+            _tabViewHideIfShown();
+            setStatus('Tab view is for fretted tracks — switched back to this track’s normal view.');
+            host.draw();
+            return;
+        }
     }
     if (mount.classList.contains('hidden')) mount.classList.remove('hidden');
     if (_renderedKey === _keyNow()) return;
@@ -219,6 +266,23 @@ export function _tabViewHideIfShown() {
 export function editorToggleTabView(force) {
     const next = typeof force === 'boolean' ? force : !S.tabViewMode;
     if (next) {
+        // Drum-editor parity: entering the lens FROM the drum editor
+        // engraves the drum tab on a percussion staff. The drum mode flag
+        // deliberately stays ON — the lens paints over it (the draw pass
+        // checks tabViewMode first), so dropping the lens restores the
+        // drum grid with all its state intact.
+        if (S.drumEditMode && S.drumTab) {
+            S.tempoMapMode = false;
+            S.partsViewMode = false;
+            S.drag = null;
+            _texSource = 'drums';
+            S.tabViewMode = true;
+            _renderedKey = '';      // force a fresh render on entry
+            setStatus('Notation — engraved percussion of the drum track; click a beat to select its hits. Edits happen in the drum grid.');
+            host.draw();
+            host.updateStatus();
+            return true;
+        }
         const arr = S.arrangements && S.arrangements[S.currentArr];
         if (!arr) { setStatus('Load a song first.'); return true; }
         if (KEYS_PATTERN.test(arr.name || '') || /^drums/i.test(arr.name || '')) {
@@ -231,12 +295,15 @@ export function editorToggleTabView(force) {
         S.partsViewMode = false;
         S.sel.clear();
         S.drag = null;
+        _texSource = 'chart';
         S.tabViewMode = true;
         _renderedKey = '';          // force a fresh render on entry
         setStatus('Tab view — live engraving of this track; click a beat to select its notes. Edits happen in String view / the roll.');
     } else {
+        const wasDrums = _texSource === 'drums';
         S.tabViewMode = false;
-        setStatus('String view');
+        _texSource = 'chart';
+        setStatus(wasDrums ? 'Drum grid' : 'String view');
     }
     host.draw();
     host.updateStatus();
