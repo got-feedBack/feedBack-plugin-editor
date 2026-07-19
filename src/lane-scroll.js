@@ -39,6 +39,7 @@
 
 import { S } from './state.js';
 import { DRUM_LANE_H, _drumPieceCount } from './drum.js';
+import { PIANO_LANE_H, isKeysMode, pianoLaneCount } from './keys.js';
 import { TIMELINE_TOP, WAVEFORM_H, laneScrollY } from './geometry.js';
 import { ctx } from './canvas.js';
 
@@ -124,7 +125,20 @@ export function laneScrollMetrics(canvasH) {
     if (S.drumEditMode && S.drumTab) {
         return { top, viewH, contentH: _drumPieceCount() * DRUM_LANE_H };
     }
+    // The piano roll. Its lane height is user-controllable now (keys.js's
+    // stretch/compact), so its content height is genuinely variable rather
+    // than always squashed to ~350px.
+    if (isKeysMode()) {
+        return { top, viewH, contentH: pianoLaneCount() * PIANO_LANE_H };
+    }
     return null;
+}
+
+// True when the active view's lanes actually overflow — the signal to clip
+// the lane band while painting, and the reason the string view is untouched.
+export function _laneClipActive(canvasH) {
+    const m = laneScrollMetrics(canvasH);
+    return !!m && _laneScrollMaxPure(m.contentH, m.viewH) > 0;
 }
 
 // Re-clamp against the CURRENT metrics. Called after anything that changes

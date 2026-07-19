@@ -13,13 +13,13 @@ import { _beatBarTopY } from './draw.js';
 import { _drumEditorOnDragEnd, _drumEditorOnDragMove, _drumEditorOnMouseDown, _drumEditorOnSelectEnd, _drumEditorOnVelocityDragEnd, _drumEditorOnVelocityDragMove } from './drum.js';
 import { ANCHOR_LANE_H, HS_LANE_H, LABEL_W, LANE_H, MINIMAP_H, TIMELINE_TOP, TONE_LANE_H, WAVEFORM_H, clampZoom, strToY, timeToX, xToTime, yToStr } from './geometry.js';
 import { hitNote, hitNoteEdge } from './hit-test.js';
-import { PIANO_LANE_H, _inKeyboardGutterPure, _rollLockNotice, _rollMidiForNote, _rollPitchCtx, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, midiToY, noteToMidi, pianoLaneCount, yToMidi } from './keys.js';
+import { PIANO_LANE_H, _inKeyboardGutterPure, rollZoomVertical, _rollLockNotice, _rollMidiForNote, _rollPitchCtx, _rollReadOnly, isKeysArr, isKeysMode, midiToFret, midiToString, midiToY, noteToMidi, pianoLaneCount, yToMidi } from './keys.js';
 import { LC, laneToStr, lanes, strToLane } from './lanes.js';
 import { _downbeatTimes, _editorClampScrollX, _editorViewportDuration, _groupTimeDeltaPure, _loopLiveMode, _loopRegionForDragPure, _setBarSel, magneticSnapTime, snapTime } from './loop.js';
 import { _recState } from './midi-record.js';
 import { _resizeSustainsForDeltaPure, _resizeTargetIndicesPure, notes } from './notes.js';
 import { MINIMAP_GRIP_W, _minimapHitPure, _minimapSongDur, _minimapThumbPure, _rulerZonePure, rulerOnDblClick, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp } from './ruler.js';
-import { _laneScrollForThumbPure, laneBarHit, laneBarRect, laneScrollBy, setLaneScrollY } from './lane-scroll.js';
+import { _laneScrollForThumbPure, applyLaneScrollBounds, laneBarHit, laneBarRect, laneScrollBy, setLaneScrollY } from './lane-scroll.js';
 import { _editorChordGrabsStrumPure, _editorEffectiveChordSelectBehaviorPure, editorChordSelectBehavior, editorShortcutProfile } from './shortcuts.js';
 import { S } from './state.js';
 import { _tempoBeatOnDragMove, _tempoMapOnDragEnd, _tempoMapOnDragMove, _tempoMapOnMouseDown, _tempoMarqueeOnEnd, _tempoPoleGrabTolerancePure, _tempoSyncAtX } from './tempo.js';
@@ -861,6 +861,25 @@ export function onWheel(e) {
     // already picks the dominant axis, so both forms work once they reach it.
     if (S.partsViewMode && !e.ctrlKey && !e.shiftKey && Math.abs(e.deltaY) >= Math.abs(e.deltaX || 0)) {
         host.scrollTrackArea(e.deltaY);
+        return;
+    }
+    // Alt+wheel = VERTICAL zoom of the piano roll's lanes (stretch/compact).
+    // Live's binding: "hold the Alt (Win) / Option (Mac) modifier to change the
+    // key tracks zoom level" (Live 12 manual p.240; the Arrangement equivalent
+    // is p.153). Checked before Ctrl so Alt+Ctrl can't land on horizontal zoom
+    // while the user means vertical. Only the roll has a variable lane height,
+    // so anywhere else this falls through to the existing gestures untouched.
+    if (e.altKey && !e.ctrlKey && isKeysMode() && Math.abs(e.deltaY) >= Math.abs(e.deltaX || 0)) {
+        const before = PIANO_LANE_H;
+        const applied = rollZoomVertical(e.deltaY < 0 ? 1.15 : 0.87);
+        if (applied !== before) {
+            // Taller lanes mean more content than viewport — re-clamp so the
+            // roll can't be left scrolled past its own end after a compact.
+            applyLaneScrollBounds(canvas ? canvas.height / DPR : 0);
+            setStatus(`Roll lane height ${applied.toFixed(1)}px`
+                + ' — Alt+scroll to stretch/compact');
+        }
+        host.draw();
         return;
     }
     if (e.ctrlKey) {
