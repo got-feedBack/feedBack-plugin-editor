@@ -869,7 +869,7 @@ export function onWheel(e) {
     // is p.153). Checked before Ctrl so Alt+Ctrl can't land on horizontal zoom
     // while the user means vertical. Only the roll has a variable lane height,
     // so anywhere else this falls through to the existing gestures untouched.
-    if (e.altKey && !e.ctrlKey && isKeysMode() && Math.abs(e.deltaY) >= Math.abs(e.deltaX || 0)) {
+    if (e.altKey && isKeysMode() && Math.abs(e.deltaY) >= Math.abs(e.deltaX || 0)) {
         const before = PIANO_LANE_H;
         const applied = rollZoomVertical(e.deltaY < 0 ? 1.15 : 0.87);
         if (applied !== before) {

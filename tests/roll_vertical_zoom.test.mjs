@@ -17,6 +17,7 @@
  * Run: node --test tests/roll_vertical_zoom.test.mjs
  */
 import assert from 'node:assert';
+import fs from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -24,7 +25,8 @@ import {
     _applyRollLaneH, _rollAutoLaneHPure, _rollLaneHPure,
     midiToY, pianoLaneCount, pianoRange, rollResetLaneH, rollZoomVertical, updatePianoRange, yToMidi,
 } from '../src/keys.js';
-import { TIMELINE_TOP, WAVEFORM_H } from '../src/geometry.js';
+import { ANCHOR_LANE_H, HS_LANE_H, TIMELINE_TOP, WAVEFORM_H } from '../src/geometry.js';
+import { _laneScrollMaxPure, laneScrollMetrics } from '../src/lane-scroll.js';
 import { S } from '../src/state.js';
 
 const LANE_TOP = TIMELINE_TOP + WAVEFORM_H;
@@ -177,4 +179,31 @@ test('a stretched roll genuinely needs scrolling — the two halves connect', ()
     const contentH = pianoLaneCount() * PIANO_LANE_H;
     assert.ok(contentH > 700,
         `a fully stretched roll (${contentH.toFixed(0)}px) must exceed a typical canvas`);
+});
+
+test('max scroll brings the roll annotation lanes fully into view', () => {
+    reset();
+    S.arrangements = [{ name: 'Keys', notes: [] }];
+    updatePianoRange();
+    S.rollLaneH = ROLL_LANE_H_MAX;
+    _applyRollLaneH();
+    const canvasH = 700;
+    const metrics = laneScrollMetrics(canvasH);
+    const pianoH = pianoLaneCount() * PIANO_LANE_H;
+    assert.ok(metrics, 'a keys arrangement exposes roll scroll metrics');
+    assert.strictEqual(metrics.contentH, pianoH + ANCHOR_LANE_H + HS_LANE_H,
+        'scroll extent includes both authored lanes below the piano rows');
+    const max = _laneScrollMaxPure(metrics.contentH, metrics.viewH);
+    const handshapeBottom = LANE_TOP - max + pianoH + ANCHOR_LANE_H + HS_LANE_H;
+    assert.strictEqual(handshapeBottom, canvasH,
+        'at max scroll the final authored lane is flush with the viewport bottom');
+});
+
+test('Alt+Ctrl wheel remains vertical roll zoom, never horizontal zoom', () => {
+    const mouseSrc = fs.readFileSync(new URL('../src/mouse.js', import.meta.url), 'utf8');
+    const start = mouseSrc.indexOf('if (e.altKey && isKeysMode()');
+    const altBranch = mouseSrc.slice(start, mouseSrc.indexOf('if (e.ctrlKey)', start));
+    assert.ok(start >= 0, 'Alt branch exists without excluding Ctrl');
+    assert.ok(altBranch.includes('rollZoomVertical'), 'Alt branch performs vertical zoom');
+    assert.ok(!altBranch.includes('!e.ctrlKey'), 'Alt+Ctrl must stay in the Alt branch');
 });

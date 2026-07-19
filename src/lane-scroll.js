@@ -40,7 +40,7 @@
 import { S } from './state.js';
 import { DRUM_LANE_H, _drumPieceCount } from './drum.js';
 import { PIANO_LANE_H, isKeysMode, pianoLaneCount } from './keys.js';
-import { TIMELINE_TOP, WAVEFORM_H, laneScrollY } from './geometry.js';
+import { ANCHOR_LANE_H, HS_LANE_H, TIMELINE_TOP, WAVEFORM_H, laneScrollY } from './geometry.js';
 import { ctx } from './canvas.js';
 
 // Rail geometry. 10px reads as chrome rather than furniture at the edge of
@@ -129,7 +129,11 @@ export function laneScrollMetrics(canvasH) {
     // stretch/compact), so its content height is genuinely variable rather
     // than always squashed to ~350px.
     if (isKeysMode()) {
-        return { top, viewH, contentH: pianoLaneCount() * PIANO_LANE_H };
+        // The authored annotation lanes travel with the roll and must count
+        // toward its extent. Omitting them clamps max scroll when the final
+        // piano row reaches the viewport bottom, leaving both lanes below the
+        // clip and permanently unreachable.
+        return { top, viewH, contentH: pianoLaneCount() * PIANO_LANE_H + ANCHOR_LANE_H + HS_LANE_H };
     }
     return null;
 }
