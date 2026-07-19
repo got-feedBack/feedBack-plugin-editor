@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   taken in CSS pixels (`canvas.width / DPR`), matching the follow path in
   audio.js, which has always divided. Byte-identical at DPR 1, so nothing changes
   on a standard-density display.
+- **An A/B loop brings the view back with it.** When a loop wrapped, the view
+  stayed where the last pass had left it — so a loop longer than the viewport
+  played its opening bars off-screen, every pass, while you watched empty
+  timeline. Two gaps stacked: both wrap paths in `playbackTick` return before
+  the follow block at the end of the tick, so no scroll code ran on a wrap
+  frame at all; and the follow policy is forward-only (it fires past 80% of the
+  view and returns null for anything to the left), so it could not have
+  expressed the backward jump even if it had been reached. The wrap now
+  recenters the loop start — but only when it is not already comfortably on
+  screen, so a loop that fits the window never twitches. Follow off (Shift+L)
+  still wins, and a loop you can already see behaves exactly as before.
 - **String labels follow the tuning.** A 6-string bass tuned a whole step
   down (A D G C F A#) rendered its lanes with the STANDARD layout
   (B↓ E A D G C↑), so every string label was a whole step sharp and the
