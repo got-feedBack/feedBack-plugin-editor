@@ -414,6 +414,20 @@ function _onMouseMoveBody(e, x, y, L) {
 
     // Cursor hint when not dragging
     if (!S.drag) {
+        // The minimap is mode-independent chrome, just like its mousedown
+        // routing above. Give its scrollbar parts their real affordances
+        // before drum/tempo hover handling claims the rest of the canvas.
+        if (canvas && y < MINIMAP_H) {
+            const dur = _minimapSongDur();
+            const cw = canvas.width / DPR;
+            const { x0, x1 } = _minimapThumbPure(
+                S.scrollX, _editorViewportDuration(), dur, LABEL_W, cw);
+            const hit = dur > 0
+                ? _minimapHitPure(x, x0, x1, MINIMAP_GRIP_W) : 'track';
+            canvas.style.cursor = hit === 'grip-start' || hit === 'grip-end'
+                ? 'ew-resize' : hit === 'thumb' ? 'grab' : 'pointer';
+            return;
+        }
         // In drum-edit mode the guitar/keys hover logic (hitNoteEdge) is
         // irrelevant and shows misleading resize cursors over the drum grid.
         if (S.drumEditMode && S.drumTab) {
@@ -435,18 +449,7 @@ function _onMouseMoveBody(e, x, y, L) {
         // minimap and scrub half seek/pan (pointer).
         if (canvas && y < TIMELINE_TOP) {
             const zone = _rulerZonePure(y, MINIMAP_H, TIMELINE_TOP);
-            if (zone === 'minimap') {
-                // Spell out the scrollbar: grips resize (zoom), the thumb
-                // body grabs, the empty track jumps.
-                const dur = _minimapSongDur();
-                const cw = canvas.width / DPR;
-                const { x0, x1 } = _minimapThumbPure(S.scrollX, _editorViewportDuration(), dur, LABEL_W, cw);
-                const hit = dur > 0 ? _minimapHitPure(x, x0, x1, MINIMAP_GRIP_W) : 'track';
-                canvas.style.cursor = hit === 'grip-start' || hit === 'grip-end' ? 'ew-resize'
-                    : hit === 'thumb' ? 'grab' : 'pointer';
-            } else {
-                canvas.style.cursor = zone === 'loop' ? 'col-resize' : 'pointer';
-            }
+            canvas.style.cursor = zone === 'loop' ? 'col-resize' : 'pointer';
         } else if (canvas && y >= TIMELINE_TOP + WAVEFORM_H && y < _beatBarTopY()) {
             // The note area runs from the waveform strip down to the beat bar in
             // BOTH views — `_beatBarTopY()` already accounts for the roll's

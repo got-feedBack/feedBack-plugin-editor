@@ -21,6 +21,7 @@ import test from 'node:test';
 import {
     MINIMAP_GRIP_W, MINIMAP_THUMB_MIN_W,
     _minimapFitZoomPure, _minimapHitPure, _minimapResizeZoomPure, _minimapThumbPure,
+    _minimapTimePure,
 } from '../src/ruler.js';
 import { ZOOM_MAX, ZOOM_MIN } from '../src/geometry.js';
 
@@ -64,6 +65,23 @@ test('a floored thumb keeps a draggable body between its two grips', () => {
     const x0 = 200, x1 = 200 + MINIMAP_THUMB_MIN_W;
     const mid = (x0 + x1) / 2;
     assert.strictEqual(_minimapHitPure(mid, x0, x1, MINIMAP_GRIP_W), 'thumb');
+});
+
+test('a floored thumb grip stays aligned with the true viewport edge', () => {
+    // At maximum zoom the real half-second viewport paints as a 12px thumb.
+    // Its painted left grip therefore maps to an earlier song time than the
+    // true left edge. The grab offset must preserve the true edge on the first
+    // move instead of causing a dramatic zoom-out jump.
+    const scrollX = 999.5, viewDur = 0.5, songDur = 1000;
+    const { x0 } = _minimapThumbPure(scrollX, viewDur, songDur, LABEL_W, W);
+    const pointerTime = _minimapTimePure(x0, songDur, LABEL_W, W);
+    const grabDT = scrollX - pointerTime;
+    const r = _minimapResizeZoomPure(
+        'grip-start', pointerTime, scrollX, viewDur, SPAN,
+        ZOOM_MIN, ZOOM_MAX, grabDT);
+    assert.strictEqual(r.zoom, ZOOM_MAX, 'the first move keeps the current zoom');
+    assert.ok(Math.abs(r.scrollX - scrollX) < 1e-9,
+        'the painted grip still represents the true viewport edge');
 });
 
 test('dragging the end grip zooms with the left edge anchored', () => {

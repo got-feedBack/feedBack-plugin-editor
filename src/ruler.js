@@ -210,9 +210,11 @@ export function _minimapHitPure(x, x0, x1, gripW) {
 // stays anchored and the zoom follows from the new span. When the zoom
 // clamps, the span is recomputed from the clamped zoom so the anchored edge
 // still doesn't move. Returns null when the drag would invert the window.
-export function _minimapResizeZoomPure(edge, t, scrollX, viewDur, viewportPx, minZoom, maxZoom) {
+export function _minimapResizeZoomPure(
+    edge, t, scrollX, viewDur, viewportPx, minZoom, maxZoom, grabDT = 0) {
     const px = Number(viewportPx);
-    const time = Number(t);
+    const offset = Number(grabDT);
+    const time = Number(t) + (Number.isFinite(offset) ? offset : 0);
     if (!Number.isFinite(px) || px <= 0 || !Number.isFinite(time)) return null;
     const lo = Number(minZoom) > 0 ? Number(minZoom) : 20;
     const hi = Number(maxZoom) > 0 ? Number(maxZoom) : 2000;
@@ -555,12 +557,13 @@ function minimapPan(x, w) {
 }
 
 // Drag a thumb edge → zoom, with the opposite edge anchored.
-function minimapResize(x, w, edge) {
+function minimapResize(x, w, edge, grabDT) {
     const dur = songDur();
     if (dur <= 0) return;
     const next = _minimapResizeZoomPure(
         edge, _minimapTimePure(x, dur, LABEL_W, w), S.scrollX,
-        _editorViewportDuration(), Math.max(1, w - LABEL_W), ZOOM_MIN, ZOOM_MAX);
+        _editorViewportDuration(), Math.max(1, w - LABEL_W), ZOOM_MIN, ZOOM_MAX,
+        grabDT);
     if (!next) return;
     S.zoom = next.zoom;
     S.scrollX = _editorClampScrollX(next.scrollX);
@@ -663,7 +666,15 @@ export function rulerOnMouseDown(e, x, y, w) {
         const { x0, x1 } = _minimapThumbPure(S.scrollX, viewDur, dur, LABEL_W, w);
         const hit = _minimapHitPure(x, x0, x1, MINIMAP_GRIP_W);
         if (hit === 'grip-start' || hit === 'grip-end') {
-            S.drag = { type: 'minimap-zoom', edge: hit };
+            // A very narrow real viewport paints as a minimum-width thumb,
+            // so its visible grip may not sit at the true viewport time.
+            // Preserve that difference: without it the first move jumps the
+            // zoom from the true edge to the painted, expanded edge.
+            const pointerTime = _minimapTimePure(x, dur, LABEL_W, w);
+            const edgeTime = hit === 'grip-start' ? S.scrollX : S.scrollX + viewDur;
+            S.drag = {
+                type: 'minimap-zoom', edge: hit, grabDT: edgeTime - pointerTime,
+            };
             host.draw();
             return true;
         }
@@ -718,7 +729,10 @@ export function rulerOnMouseDown(e, x, y, w) {
 export function rulerOnMouseMove(e, x, w) {
     if (!S.drag) return false;
     if (S.drag.type === 'minimap') { minimapScrollTo(x, w, S.drag.grabDT); return true; }
-    if (S.drag.type === 'minimap-zoom') { minimapResize(x, w, S.drag.edge); return true; }
+    if (S.drag.type === 'minimap-zoom') {
+        minimapResize(x, w, S.drag.edge, S.drag.grabDT);
+        return true;
+    }
     // Alt is live per move (like Shift on the loop drags): press/release it
     // mid-scrub and snapping follows, instead of freezing at the mouse-down state.
     if (S.drag.type === 'scrub') { S.drag.bypassSnap = e.altKey; scrubTo(x); return true; }
