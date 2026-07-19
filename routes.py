@@ -7294,7 +7294,10 @@ def setup(app, context):
             _tab = _drum_arrs_to_drum_tab(
                 [_arrs[i] for i in sorted(_drum_idx)], out_unmapped=_unmapped,
             )
-            if _tab["hits"]:
+            # Keep an empty tab when every note needs manual mapping. The
+            # mapper writes its recovered hits into this object; omitting it
+            # would make the all-unmapped case unrecoverable.
+            if _tab["hits"] or _unmapped:
                 result["drum_tab"] = _tab
             if _unmapped:
                 result["drum_unmapped"] = [

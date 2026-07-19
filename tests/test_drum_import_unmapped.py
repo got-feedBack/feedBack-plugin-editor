@@ -112,6 +112,20 @@ def test_time_sample_list_is_bounded():
     assert len(unmapped[AGOGO]["times"]) == 64, "but the samples are capped"
 
 
+def test_all_unmapped_import_still_builds_a_writable_empty_tab():
+    """The wizard must retain a destination for the manual mapper even when
+    no source note maps automatically. Otherwise the exact case that needs
+    mapping most has nowhere to recover its notes."""
+    unmapped = {}
+    tab = _drum_arrs_to_drum_tab(
+        [arr([note(CONGA_HI), note(TIMBALE)])],
+        out_unmapped=unmapped,
+    )
+    assert tab["hits"] == []
+    assert tab["name"] == "Drums"
+    assert set(unmapped) == {CONGA_HI, TIMBALE}
+
+
 def test_out_unmapped_is_optional():
     """Callers that don't care must keep working — the parameter was added to
     an existing signature."""

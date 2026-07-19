@@ -2459,10 +2459,10 @@ export async function editorApplyCreateResult(data) {
     // "add drums to this pack" ever showed the mapper — which is exactly how
     // it was reported ("never the 1st time").
     //
-    // Gated on S.drumTab existing: the mapper writes into S.drumTab.hits, and
-    // the backend only emits a tab once something mapped. An import where
-    // EVERY note is unmappable therefore has nowhere to write — say so in the
-    // status line rather than opening a dialog that can't do anything.
+    // Gated on S.drumTab existing because the mapper writes into its hits.
+    // Current servers keep an empty tab when every note is unmappable; the
+    // fallback remains defensive for an older or malformed response that
+    // reports drops without providing a writable destination.
     const _drumUnmapped = Array.isArray(data.drum_unmapped) ? data.drum_unmapped : [];
     const _droppedCount = _drumUnmapped.reduce(
         (s, u) => s + Math.max(0, Number(u.count) || 0), 0);
@@ -2473,7 +2473,7 @@ export async function editorApplyCreateResult(data) {
     } else if (_droppedCount > 0) {
         setStatus(`Imported — ${_droppedCount} percussion note`
             + `${_droppedCount === 1 ? '' : 's'} outside the drum vocabulary were `
-            + 'dropped (nothing mapped, so there is no drum track to add them to)');
+            + 'dropped (the import response did not include a writable drum track)');
     } else {
         setStatus('Imported — edit notes then click Build feedpak');
     }

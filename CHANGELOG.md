@@ -17,9 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never the 1st" is the same fact from the other side: the first import is the
   wizard, later ones take the add-drums route. The wizard's converter dropped
   unmappable notes with a bare `continue`; it now reports them in the same
-  shape the add-drums route uses, so both feed the one dialog. When nothing at
-  all mapped there is no drum track to add them to, so that case says so in the
-  status line instead of opening a dialog with nowhere to write.
+  shape the add-drums route uses, so both feed the one dialog. Even when nothing
+  maps automatically, the wizard keeps an empty drum track as the mapper's
+  destination instead of making those notes unrecoverable.
 
 ### Changed
 
