@@ -845,6 +845,9 @@ window.__editorScreenTeardown = () => {
     // that survives re-injection — without this disconnect it (and its fit()
     // closure) would stack one per re-inject.
     try { if (_v3LayoutObs) { _v3LayoutObs.disconnect(); _v3LayoutObs = null; } } catch (_) {}
+    // The canvas-wrap ResizeObserver: without this it stacks one per re-inject,
+    // each holding a resizeCanvas closure over a replaced DOM.
+    try { if (_canvasWrapObs) { _canvasWrapObs.disconnect(); _canvasWrapObs = null; } } catch (_) {}
     // Stop the pre-canvas boot poller if it's still spinning.
     try { if (_bootPollInterval) { clearInterval(_bootPollInterval); _bootPollInterval = null; } } catch (_) {}
     // Release the drum strip's MIDI monitor tap + device session (no-op if it
@@ -1435,6 +1438,43 @@ function resizeCanvas() {
     // overflow, and a stale offset would leave the grid scrolled past its end.
     applyLaneScrollBounds(h);
     draw();
+}
+
+// The canvas fills #editor-canvas-wrap, but its pixel size is only re-derived
+// when resizeCanvas() runs — and that was driven by WINDOW resize alone.
+// Anything that changes the height of the chrome ABOVE the canvas resizes the
+// wrap without resizing the window, and the canvas was left at its old size.
+// Entering Drum edit mode adds a toolbar row, which shrank the wrap by 30px
+// while the canvas stayed 449px: it overhung the status bar and its bottom
+// rows stopped being clickable. Measured at 1600x660 — wrap 418.6, canvas
+// 449, bottom 665.4 against a 660px viewport.
+//
+// Worse than cosmetic: setLaneMetrics() derives every lane height from that
+// same stale value, so the lane geometry was sized for a canvas that no
+// longer existed.
+//
+// Observing the wrap catches every cause at once — mode toolbars, toolbar
+// wrapping at narrow widths, the inspector opening, the tracks pane resizing —
+// instead of hunting call sites one at a time. Held in _canvasWrapObs so the
+// teardown can disconnect it on re-injection.
+let _canvasWrapObs = null;
+function _observeCanvasWrap() {
+    const wrap = document.getElementById('editor-canvas-wrap');
+    if (!wrap || typeof ResizeObserver !== 'function') return;
+    try { if (_canvasWrapObs) _canvasWrapObs.disconnect(); } catch (_) { /* already gone */ }
+    // Guard against a feedback loop: resizeCanvas writes canvas.style.height,
+    // and the canvas is a child of the observed element. The wrap's height is
+    // decided by flex, not by its content, so this shouldn't re-fire — but
+    // comparing against the last size we applied makes that guarantee local
+    // instead of relying on the layout staying that way.
+    let lastW = -1, lastH = -1;
+    _canvasWrapObs = new ResizeObserver(() => {
+        const w = wrap.clientWidth, h = wrap.clientHeight;
+        if (w === lastW && h === lastH) return;
+        lastW = w; lastH = h;
+        resizeCanvas();
+    });
+    _canvasWrapObs.observe(wrap);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -2180,6 +2220,9 @@ function init() {
     });
     if (screen) obs.observe(screen, { attributes: true, attributeFilter: ['class'] });
     _editorScreenObs = obs;
+    // Keep the canvas fitted to its wrap whenever the chrome above it changes
+    // height, not just on window resize.
+    _observeCanvasWrap();
     // Also cover the case where the editor screen is already active at init().
     if (screen && screen.classList.contains('active')) {
         setTimeout(_editorMaybeShowStartLanding, 120);

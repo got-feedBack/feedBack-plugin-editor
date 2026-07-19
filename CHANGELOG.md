@@ -60,6 +60,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   device session released), and this is deliberately not the full teardown —
   the host can re-show the same injection without re-running the module, so
   the editor stays intact and resumable.
+- **The canvas re-fits when the toolbars change height.** The editor sized its
+  canvas — and every lane height derived from it — only when the *window*
+  resized. But plenty of things change the space available to the canvas
+  without touching the window: entering Drum edit mode adds a toolbar row,
+  toolbars wrap at narrow widths, the inspector opens, the tracks pane
+  resizes. In those cases the canvas kept its old size and overhung the status
+  bar, so its bottom rows were covered and stopped responding to clicks. On a
+  1600x660 window, entering Drum edit mode left a 449px canvas in a 419px slot
+  — 5px past the bottom of the screen. The canvas now watches its own
+  container, so it re-fits whatever caused the change.
 
 ### Changed
 
