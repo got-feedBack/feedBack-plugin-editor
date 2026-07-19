@@ -1223,11 +1223,11 @@ export function initTrackSession() {
         return { row, id: row.getAttribute('data-track-id') || '', placement: _trackSessionDropPlacementPure(event.clientY, rect.top, rect.height, track && track.type === 'folder') };
     };
     el.addEventListener('dragstart', event => {
-        const renameInput = event.target && event.target.closest ? event.target.closest('[data-track-rename-input]') : null;
-        if (renameInput) {
-            event.preventDefault(); event.stopPropagation(); draggedId = '';
-            return;
-        }
+        // No control exemption here: the drag source is the ROW, so
+        // event.target is always the row and never the control under the
+        // pointer — a check like closest('[data-track-rename-input]') could
+        // never match and never fired. Controls are kept out of the drag at
+        // pointerdown instead, by taking their row out of the drag entirely.
         const row = event.target && event.target.closest ? event.target.closest('[data-track-id]') : null;
         draggedId = row ? row.getAttribute('data-track-id') || '' : '';
     });

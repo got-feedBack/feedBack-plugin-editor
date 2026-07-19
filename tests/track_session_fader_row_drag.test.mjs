@@ -75,6 +75,13 @@ const faderTarget = {
         : sel === '[data-track-id]' ? rowEl : null),
 };
 const labelTarget = { closest: (sel) => (sel === '[data-track-id]' ? rowEl : null) };
+// The rename input is a form control too, so the same pointerdown path covers
+// it — which is what makes removing its (never-firing) dragstart guard safe.
+const renameTarget = {
+    closest: (sel) => (sel === 'input,select,textarea' ? renameTarget
+        : sel === '[data-track-rename-input]' ? renameTarget
+        : sel === '[data-track-id]' ? rowEl : null),
+};
 
 function freshRow() {
     rowEl = { draggable: true, getAttribute: (n) => (n === 'data-track-id' ? 'trk-1' : null) };
@@ -106,6 +113,15 @@ t('a cancelled pointer also restores the row', () => {
     freshRow();
     panelEl.dispatch('pointerdown', { target: faderTarget, preventDefault() {}, stopPropagation() {} });
     window.dispatch('pointercancel');
+    assert.strictEqual(rowEl.draggable, true);
+});
+
+t('the rename input is covered by the same pointerdown path', () => {
+    freshRow();
+    panelEl.dispatch('pointerdown', { target: renameTarget, preventDefault() {}, stopPropagation() {} });
+    assert.strictEqual(rowEl.draggable, false,
+        'renaming must not start a row drag either — this is what the removed dragstart guard was trying (and failing) to do');
+    window.dispatch('pointerup');
     assert.strictEqual(rowEl.draggable, true);
 });
 
