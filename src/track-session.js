@@ -34,12 +34,18 @@ import { host } from './host.js';
 import { _renameGuardPure } from './arrangement.js';
 import { _partViewKeyPure } from './keys.js';
 import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart } from './mixer-panel.js';
+import { _regionsAreDefaultPure, _trackRegionsNormalizePure } from './region.js';
 import { S, markSessionDirty } from './state.js';
 import { _editorEscHtml, setStatus } from './ui.js';
 
 const MASTER_ID = 'master';
 const DRUM_TARGET_ID = 'drums';
-const VERSION = 2;
+// v3 adds the optional per-track `regions[]` (a track's content as placeable
+// blocks). Purely additive: a v2 tree has no `regions` and resolves to one
+// default full-span region per track, so the bump gates nothing — it only
+// marks the schema that can now carry regions. The backend `_coerce_track_session`
+// stamps the same version.
+const VERSION = 3;
 const TRACK_LANE_DEFAULT = 56;
 const TRACK_LANE_MIN = 28;
 const TRACK_LANE_MAX = 160;
@@ -176,12 +182,16 @@ export function _trackSessionNormalizePure(raw, sources, arrangements, drumTab) 
             const sourceId = idOf(item.sourceId);
             if (!visibleSourceIds.has(sourceId) || sourceLeaves.has(sourceId)) continue;
             sourceLeaves.add(sourceId);
-            tracks.push({ id, type: 'audio', sourceId, name: String(item.name || '').slice(0, 120), parentId: idOf(item.parentId) });
+            const audioRegions = _trackRegionsNormalizePure(item.regions);
+            tracks.push({ id, type: 'audio', sourceId, name: String(item.name || '').slice(0, 120), parentId: idOf(item.parentId),
+                ...(audioRegions.length && !_regionsAreDefaultPure(audioRegions) ? { regions: audioRegions } : {}) });
         } else {
             const targetId = idOf(item.targetId);
             if (!knownTargets.has(targetId) || targetLeaves.has(targetId)) continue;
             targetLeaves.add(targetId);
-            tracks.push({ id, type: 'transcription', targetId, name: String(item.name || '').slice(0, 120), parentId: idOf(item.parentId) });
+            const partRegions = _trackRegionsNormalizePure(item.regions);
+            tracks.push({ id, type: 'transcription', targetId, name: String(item.name || '').slice(0, 120), parentId: idOf(item.parentId),
+                ...(partRegions.length && !_regionsAreDefaultPure(partRegions) ? { regions: partRegions } : {}) });
         }
         seen.add(id);
         allocated.add(id);
@@ -451,7 +461,7 @@ export function _trackSessionIsDefaultPure(session, sources, arrangements, drumT
     ];
     if (model.tracks.length !== canonical.length) return false;
     return model.tracks.every((track, index) =>
-        track.id === canonical[index] && track.type !== 'folder' && !track.name && !track.parentId);
+        track.id === canonical[index] && track.type !== 'folder' && !track.name && !track.parentId && !track.regions);
 }
 /* @pure:track-session:end */
 

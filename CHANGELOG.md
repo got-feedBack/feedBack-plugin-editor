@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Track regions — the data model (groundwork, no visible change yet).** A track
+  can now carry `regions[]`: its audio/MIDI content as placeable blocks on the
+  timeline, the foundation for importing a part into an existing project and for
+  moving/trimming a segment. This first step ships the model only — a new
+  `src/region.js` (the region shape, validation, the default full-span region,
+  and the beat-window membership predicate) plus the persistence wiring in
+  `track-session.js` and `routes.py`. Every existing song opens exactly as before:
+  a track with no authored regions resolves to a single full-span region, and a
+  default region is never written, so untouched packs stay byte-identical. The
+  `editor_track_session` schema is bumped to v3 (purely additive — v2 trees carry
+  no regions and need no migration). Rendering, playback, and build are unchanged
+  and land in later steps.
+
 - **The piano roll stretches, compacts and scrolls.** Its lane height used to be
   derived and untouchable — the whole pitch range packed into about 350px — so a
   wide range collapsed to four pixels per semitone: passable for reading, useless

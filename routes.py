@@ -553,6 +553,72 @@ def _track_session_id(value):
     return value
 
 
+def _region_num_pos(value):
+    """A positive float, else 0.0 (mirrors src/region.js `_nonNegNumPure`)."""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return n if math.isfinite(n) and n > 0 else 0.0
+
+
+def _region_num_or_none(value):
+    """A positive float, else None = 'to end' (mirrors `_posNumOrNullPure`)."""
+    if value is None:
+        return None
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return None
+    return n if math.isfinite(n) and n > 0 else None
+
+
+def _regions_are_default(regions):
+    """A normalized `regions[]` that is just the implicit default — empty, or a
+    lone full-span region with no trim/label/mute. Such a set persists as NO
+    `regions` key, so untouched packs stay byte-identical across saves."""
+    if not regions:
+        return True
+    if len(regions) != 1:
+        return False
+    r = regions[0]
+    return (r["startBeat"] == 0 and r["lenBeat"] is None
+            and r.get("srcIn") is None and r.get("srcOut") is None
+            and "name" not in r and "muted" not in r)
+
+
+def _coerce_track_regions(value):
+    """Sanitize a track's optional `regions[]` — its content as placeable blocks
+    on the timeline. Mirrors the frontend `src/region.js`: validate each region,
+    dedupe by id, sort by startBeat. Returns [] for a default set (the caller
+    then omits the key, keeping the pack byte-identical). See `_coerce_track_session`."""
+    if not isinstance(value, list):
+        return []
+    out, seen = [], set()
+    for raw in value[:200]:
+        if not isinstance(raw, dict):
+            continue
+        rid = _track_session_id(raw.get("id"))
+        if not rid or rid in seen:
+            continue
+        region = {"id": rid, "startBeat": _region_num_pos(raw.get("startBeat")),
+                  "lenBeat": _region_num_or_none(raw.get("lenBeat"))}
+        if raw.get("srcIn") is not None or raw.get("srcOut") is not None:
+            src_in = _region_num_pos(raw.get("srcIn"))
+            src_out = _region_num_or_none(raw.get("srcOut"))
+            region["srcIn"] = src_in
+            region["srcOut"] = src_out if (src_out is not None and src_out > src_in) else None
+        name = raw.get("name")
+        if isinstance(name, str) and name.strip():
+            region["name"] = name.strip()[:120]
+        if raw.get("muted") is True:
+            region["muted"] = True
+        seen.add(rid)
+        out.append(region)
+    out.sort(key=lambda r: (r["startBeat"], r["id"]))
+    return [] if _regions_are_default(out) else out
+
+
 def _coerce_track_session(value, invalid=_FIELD_ABSENT):
     """Sanitize the persistent track tree stored as `editor_track_session`.
 
@@ -581,16 +647,24 @@ def _coerce_track_session(value, invalid=_FIELD_ABSENT):
             source_id = _track_session_id(raw.get("sourceId"))
             if not source_id:
                 continue
-            out.append({"id": tid, "type": kind, "sourceId": source_id,
-                        "name": str(raw.get("name") or "")[:120],
-                        "parentId": parent_id})
+            track = {"id": tid, "type": kind, "sourceId": source_id,
+                     "name": str(raw.get("name") or "")[:120],
+                     "parentId": parent_id}
+            regions = _coerce_track_regions(raw.get("regions"))
+            if regions:
+                track["regions"] = regions
+            out.append(track)
         else:
             target_id = _track_session_id(raw.get("targetId"))
             if not target_id:
                 continue
-            out.append({"id": tid, "type": kind, "targetId": target_id,
-                        "name": str(raw.get("name") or "")[:120],
-                        "parentId": parent_id})
+            track = {"id": tid, "type": kind, "targetId": target_id,
+                     "name": str(raw.get("name") or "")[:120],
+                     "parentId": parent_id}
+            regions = _coerce_track_regions(raw.get("regions"))
+            if regions:
+                track["regions"] = regions
+            out.append(track)
         seen.add(tid)
     removed_sources = []
     seen_removed_sources = set()
@@ -604,7 +678,7 @@ def _coerce_track_session(value, invalid=_FIELD_ABSENT):
             removed_sources.append(source_id)
     guide = _track_session_id(value.get("tempoGuideSourceId"))
     guide_mode = "metronome" if value.get("tempoGuideMode") == "metronome" else "audio"
-    return {"version": 2, "tracks": out, "removedSourceIds": removed_sources,
+    return {"version": 3, "tracks": out, "removedSourceIds": removed_sources,
             "tempoGuideSourceId": guide, "tempoGuideLocked": bool(value.get("tempoGuideLocked")),
             "tempoGuideMode": guide_mode}
 
