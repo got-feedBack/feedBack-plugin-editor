@@ -49,8 +49,8 @@ import { S } from './state.js';
 import { host } from './host.js';
 import { setStatus } from './ui.js';
 import {
-    _editorToggleFollow, _trainerActive, editorAuditionRate, editorCountInBars, editorFollowEnabled,
-    editorScrollInPlayEnabled, editorSetCountIn,
+    _editorToggleFollow, _scrollInPlayActive, _trainerActive, editorAuditionRate, editorCountInBars,
+    editorFollowEnabled, editorSetCountIn,
     stopPlayback,
 } from './audio.js';
 import { PIANO_NOTE_NAMES, SCALE_LABELS } from './theory.js';
@@ -574,6 +574,12 @@ function wireBar(bar) {
 // Called from updateTimeDisplay() (the transport tick) and updateStatus()
 // (selection changes) — never from draw(). All writes skip-if-unchanged; a
 // focused field is never clobbered mid-edit.
+export function _followTooltipPure(scrollInPlayActive) {
+    return scrollInPlayActive
+        ? 'Follow the playhead during playback — the playhead stays pinned and the view scrolls under it. (Shift+L)'
+        : 'Follow the playhead during playback — the view jumps ahead a page when it reaches the edge. (Shift+L)';
+}
+
 const _set = (el, v) => { if (el && el.textContent !== v) el.textContent = v; };
 const _setVal = (el, v) => {
     if (el && document.activeElement !== el && el.value !== v) el.value = v;
@@ -658,9 +664,7 @@ export function _transportBarTick(force) {
     {
         const fb = document.getElementById('editor-tp-follow');
         if (fb) {
-            const tip = editorScrollInPlayEnabled()
-                ? 'Follow the playhead during playback — the playhead stays pinned and the view scrolls under it. (Shift+L)'
-                : 'Follow the playhead during playback — the view jumps ahead a page when it reaches the edge. (Shift+L)';
+            const tip = _followTooltipPure(_scrollInPlayActive());
             if (fb.getAttribute('title') !== tip) fb.setAttribute('title', tip);
         }
     }

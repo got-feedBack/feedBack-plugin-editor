@@ -26,7 +26,7 @@ const {
     LCD_TICKS_PER_BEAT,
     _lcdBBTPure, _lcdClockPure, _lcdKeyActionPure, _lcdMeterPure,
     _lcdParseBBTPure, _lcdParseClockPure, _lcdTempoPure,
-    _transportModePure, _transportPrefsPure,
+    _followTooltipPure, _transportModePure, _transportPrefsPure,
 } = await import('../src/transport-bar.js');
 const { timeOf } = await import('../src/beats.js');
 
@@ -48,6 +48,13 @@ function driftingGrid() {
     }
     return beats;
 }
+
+t('Follow tooltip describes the effective reduced-motion-aware manner', () => {
+    assert.match(_followTooltipPure(true), /stays pinned/);
+    assert.match(_followTooltipPure(false), /jumps ahead/);
+    assert.doesNotMatch(_followTooltipPure(false), /stays pinned/,
+        'reduced-motion fallback must not advertise continuous scrolling');
+});
 
 t('clock format: zero, sub-minute, minute+, clamp', () => {
     assert.strictEqual(_lcdClockPure(0), '0:00.000');
