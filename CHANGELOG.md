@@ -43,6 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recenters the loop start — but only when it is not already comfortably on
   screen, so a loop that fits the window never twitches. Follow off (Shift+L)
   still wins, and a loop you can already see behaves exactly as before.
+- **The Tempo List's bar jump respects the scroll bounds.** Clicking a row for a
+  mark near the end of the song scrolled the view PAST the end — dead timeline
+  past the last bar — and it stayed there until some unrelated resize or zoom
+  happened to re-apply the bounds and snap it back. `_gotoMark` was the one
+  non-zero `scrollX` writer in the editor that never went through
+  `_editorClampScrollX`; it only floored at 0. It clamps now. The 0.5s lead-in
+  and the floor are unchanged, so a mid-song jump lands exactly where it always
+  did.
 - **String labels follow the tuning.** A 6-string bass tuned a whole step
   down (A D G C F A#) rendered its lanes with the STANDARD layout
   (B↓ E A D G C↑), so every string label was a whole step sharp and the
