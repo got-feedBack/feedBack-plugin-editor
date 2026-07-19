@@ -2,10 +2,11 @@
 // and edit per-string tuning offsets, all undoable. The window.editor* entry
 // points are re-attached by main.js; repaint/status go through host.
 
-import { AddStringCmd, RemoveStringCmd } from './commands.js';
-import { KEYS_PATTERN } from './keys.js';
+import { AddStringCmd, RemoveStringCmd, RemoveStringWithNotesCmd } from './commands.js';
+import { LANE_H, TIMELINE_TOP, WAVEFORM_H } from './geometry.js';
+import { isKeysMode, KEYS_PATTERN } from './keys.js';
 import { _stringCountFor, laneLabels } from './lanes.js';
-import { S } from './state.js';
+import { S, editGen } from './state.js';
 import { host } from './host.js';
 
 
@@ -89,6 +90,45 @@ class SetStringTuningCmd {
     rollback() { this._set(this.oldOffset); }
 }
 /* @pure:string-tuning:end */
+
+// ── Canvas −/+ string-count buttons (outside the sliced block: these
+//    reference KEYS_PATTERN, which the legacy harness doesn't inject) ──
+
+// Whether the buttons apply at all: only the plain fretted String view.
+// Every lens that owns the timeline instead (piano roll, drum editor,
+// Tempo Map, Parts, Tab view) hides them, as do the non-fretted
+// arrangement kinds the Strings modal already refuses.
+export function _stringButtonsVisiblePure(arrName, flags) {
+    const f = flags || {};
+    if (f.keysMode || f.drumEdit || f.tempoMap || f.partsView || f.tabView) return false;
+    const name = arrName || '';
+    return !KEYS_PATTERN.test(name) && !/^drums/i.test(name);
+}
+
+// Tooltip copy for the buttons. Count-centric: they always grow/shrink
+// the string COUNT by one, but the END the model extends differs by role
+// (bass 5→6 adds a HIGH C), so each label names the string that will
+// appear or go.
+export function _stringAddLabelPure(isBass, cur) {
+    if (isBass) {
+        if (cur === 4) return 'Add a 5th string (low B)';
+        if (cur === 5) return 'Add a 6th string (high C)';
+        return 'A bass supports up to 6 strings';
+    }
+    if (cur === 6) return 'Add a 7th string (low B)';
+    if (cur === 7) return 'Add an 8th string (low F#)';
+    return 'A guitar supports up to 8 strings';
+}
+export function _stringRemoveLabelPure(isBass, cur) {
+    if (isBass) {
+        if (cur === 6) return 'Remove the high C (6th string)';
+        if (cur === 5) return 'Remove the low B (5th string)';
+        return 'A bass needs at least 4 strings';
+    }
+    if (cur === 8) return 'Remove the low F# (8th string)';
+    if (cur === 7) return 'Remove the low B (7th string)';
+    return 'A guitar needs at least 6 strings';
+}
 
 function _stringsRangeForActive() {
     const arr = S.arrangements[S.currentArr];
@@ -254,6 +294,95 @@ export const editorRemoveString = (pos) => {
     // undo/redo too); see editorAddString.
     S.history.exec(new RemoveStringCmd(S.currentArr, valid));
     _renderStringsModal();
+    host.draw();
+    host.updateStatus();
+};
+
+// ── Canvas button refresh + handlers ─────────────────────────────────
+
+// Rides the rAF draw-coalesce (called once per drawNow flush), so it must
+// stay cheap: everything it writes is derived from this key, and an
+// unchanged key bails before any DOM write.
+let _stringBtnsKey = '';
+let _stringBtnsGen = -1;
+let _stringBtnsArrIdx = -1;
+let _stringBtnsCur = 6;
+export function editorStringButtonsRefresh() {
+    const box = document.getElementById('editor-string-btns');
+    if (!box) return;
+    const arr = S.arrangements[S.currentArr];
+    const show = !!arr && _stringButtonsVisiblePure(arr.name, {
+        keysMode: isKeysMode(), drumEdit: !!S.drumEditMode, tempoMap: !!S.tempoMapMode,
+        partsView: !!S.partsViewMode, tabView: !!S.tabViewMode,
+    });
+    if (!show) {
+        if (_stringBtnsKey !== 'hidden') { box.classList.add('hidden'); _stringBtnsKey = 'hidden'; }
+        return;
+    }
+    const isBass = /bass/i.test(arr.name || '');
+    // _stringCountFor walks every note, so memo it on the edit generation
+    // (the repo's standard dirty key — in-place moves keep array identity)
+    // rather than paying O(notes) on every rAF flush.
+    const gen = typeof editGen === 'number' ? editGen : 0;
+    if (gen !== _stringBtnsGen || S.currentArr !== _stringBtnsArrIdx) {
+        _stringBtnsGen = gen;
+        _stringBtnsArrIdx = S.currentArr;
+        _stringBtnsCur = _stringCountFor(arr);
+    }
+    const cur = _stringBtnsCur;
+    // Bottom-anchored inside the LOWEST string's label cell (lanes draw
+    // high-to-low, so the band bottom is the low string). LANE_H is a live
+    // binding re-derived on resize; cur*LANE_H tracks add/remove.
+    const top = TIMELINE_TOP + WAVEFORM_H + cur * LANE_H - 21;
+    const key = `${top}|${cur}|${isBass}`;
+    if (key === _stringBtnsKey) return;
+    _stringBtnsKey = key;
+    box.classList.remove('hidden');
+    box.style.top = top + 'px';
+    const addBtn = document.getElementById('editor-string-btn-add');
+    const rmBtn = document.getElementById('editor-string-btn-remove');
+    if (addBtn) {
+        addBtn.disabled = !_addPositionPure(isBass, cur);
+        addBtn.title = _stringAddLabelPure(isBass, cur);
+    }
+    if (rmBtn) {
+        rmBtn.disabled = !_removePositionPure(isBass, cur);
+        rmBtn.title = _stringRemoveLabelPure(isBass, cur);
+    }
+}
+
+export const editorCanvasStringAdd = () => {
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return;
+    const pos = _addPositionPure(/bass/i.test(arr.name || ''), _stringCountFor(arr));
+    if (pos) editorAddString(pos);
+};
+
+export const editorCanvasStringRemove = () => {
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return;
+    const isBass = /bass/i.test(arr.name || '');
+    const cur = _stringCountFor(arr);
+    const pos = _removePositionPure(isBass, cur);
+    if (!pos) return;
+    const targetIdx = pos === 'low' ? 0 : cur - 1;
+    const blockers = _notesOnString(arr, targetIdx);
+    if (blockers === 0) { editorRemoveString(pos); return; }
+    // The active arrangement is always chord-flattened, so its content on
+    // the target string lives in arr.notes. If chord constituents somehow
+    // carry notes there anyway (an unflattened state this path can't
+    // delete safely), fall back to the modal, whose warning explains.
+    let chordNotes = 0;
+    for (const ch of arr.chords || []) {
+        for (const cn of ch.notes || []) if (cn.string === targetIdx) chordNotes += 1;
+    }
+    if (chordNotes > 0) { editorShowStringsModal(); return; }
+    const lbl = laneLabels()[targetIdx] || `string ${targetIdx}`;
+    if (!confirm(`${blockers} note${blockers === 1 ? '' : 's'} live on the ${pos === 'low' ? 'lowest' : 'highest'} string (${lbl}). Remove the string and delete ${blockers === 1 ? 'that note' : 'them'}? (Undoable.)`)) return;
+    const indices = [];
+    (arr.notes || []).forEach((n, i) => { if (n && n.string === targetIdx) indices.push(i); });
+    S.history.exec(new RemoveStringWithNotesCmd(S.currentArr, pos, indices));
+    _renderStringsModal();   // keep the modal honest if it's open behind
     host.draw();
     host.updateStatus();
 };

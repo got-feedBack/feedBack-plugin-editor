@@ -349,6 +349,15 @@
                  nudges the start edge (Alt+Shift: the end edge); snap mode +
                  Clear live under Transport ▸ Loop. -->
             <canvas id="editor-canvas" class="absolute inset-0"></canvas>
+            <!-- Canvas string-count buttons: −/+ pinned under the lowest
+                 string's label. + grows the count at the end the pitch model
+                 supports (guitar low B/F#, bass low B then high C); − peels
+                 it back, confirming first when notes live on that string.
+                 Positioned/refreshed by editorStringButtonsRefresh(). -->
+            <div id="editor-string-btns" class="hidden editor-string-btns">
+                <button id="editor-string-btn-remove" onclick="editorCanvasStringRemove()" class="editor-string-btn" aria-label="Remove a string">−</button>
+                <button id="editor-string-btn-add" onclick="editorCanvasStringAdd()" class="editor-string-btn" aria-label="Add a string">+</button>
+            </div>
             <!-- Read-only-roll notice: shown while a FRETTED part is in the
                  piano roll (V4 — no silent string/fret writes). -->
             <div id="editor-roll-lock-pill" class="hidden absolute top-12 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-full bg-dark-800/90 border border-amber-700/60 text-[11px] text-amber-200 pointer-events-none">
