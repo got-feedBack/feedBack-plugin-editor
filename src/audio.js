@@ -21,7 +21,7 @@
 // ════════════════════════════════════════════════════════════════════
 import { timeOf } from './beats.js';
 import { DPR, canvas } from './canvas.js';
-import { timeToX } from './geometry.js';
+import { LABEL_W, timeToX } from './geometry.js';
 import {
     DRUM_PIECE_GM_NOTE, _drumHitGainPure, _gmEventsInWindowPure, _gmGuideModePure,
     _gmKindPure, _gmSanitizeEventsPure, _gmVoiceDurationPure, editorGmVoiceFor,
@@ -889,6 +889,17 @@ export function playbackTick() {
         // there would burst a few ms of audio from beyond the loop.
         S.cursorTime = loopRestart;
         _trainerOnLoopWrap();
+        // Bring the view back with the cursor when the loop start is off-screen.
+        // BOTH wrap paths below return before the follow block at the end of the
+        // tick, so this is the only frame that can scroll — and the restart is
+        // measured against the CURRENT scrollX, so it has to run before the
+        // clamp writes a new one.
+        {
+            const target = _loopWrapScrollTargetPure(
+                loopRestart, timeToX(loopRestart), canvas ? canvas.width / DPR : 800,
+                S.zoom, editorFollowEnabled());
+            if (target !== null) S.scrollX = host.editorClampScrollX(target);
+        }
         if (_trainerWrapWantsCountIn()) {
             // Route the pass through the full start path so the armed
             // count-in pre-roll precedes it (at the slowed tempo — the
@@ -954,6 +965,23 @@ function _followScrollTargetPure(cursorTime, cursorX, viewW, zoom, followOn) {
     return cursorTime - (viewW * 0.3) / zoom;
 }
 /* @pure:follow-scroll:end */
+
+/* @pure:loop-wrap-scroll:start */
+// A/B loop wrap: the cursor jumps BACKWARD to the loop start, which the
+// forward-only policy above cannot express — it only fires past 80% of the view
+// and returns null for anything to the left. Combined with both wrap paths in
+// playbackTick returning before the follow block ever runs, a loop whose start
+// sat off the left edge (longer than the viewport, or scrolled away by the pass
+// that just played) looped on with the view stranded downstream, watching empty
+// timeline. Recenters only when the restart point is NOT comfortably on screen,
+// so a loop that already fits the window never twitches on every pass.
+// Returns the UNCLAMPED scrollX target, or null for "don't move".
+function _loopWrapScrollTargetPure(restartTime, restartX, viewW, zoom, followOn) {
+    if (!followOn) return null;
+    if (restartX >= LABEL_W && restartX <= viewW * 0.8) return null;
+    return restartTime - (viewW * 0.3) / zoom;
+}
+/* @pure:loop-wrap-scroll:end */
 
 export function editorFollowEnabled() {
     // Default ON — follow is today's behavior; the pref only records an
