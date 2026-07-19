@@ -38,6 +38,7 @@ import { trackSessionSavePayload } from './track-session.js';
 import { _editorMaybeStartTour } from './tour.js';
 import { _editorEscHtml, _installModalKeyboard, setStatus } from './ui.js';
 import {
+    _showDrumImportUnmappedModal,
     importMidiTracksIntoSession, importMusicXmlArrangementIntoSession, parseMusicXmlFile,
 } from './import.js';
 
@@ -2451,7 +2452,31 @@ export async function editorApplyCreateResult(data) {
 
     if (data.audio_url) await host.loadAudio(data.audio_url);
     host.draw();
-    setStatus('Imported — edit notes then click Build feedpak');
+
+    // Percussion the converter couldn't place gets the same manual-mapping
+    // dialog the add-drums route offers. Without this the wizard dropped those
+    // notes silently, so the first import of a kit lost them and only a LATER
+    // "add drums to this pack" ever showed the mapper — which is exactly how
+    // it was reported ("never the 1st time").
+    //
+    // Gated on S.drumTab existing: the mapper writes into S.drumTab.hits, and
+    // the backend only emits a tab once something mapped. An import where
+    // EVERY note is unmappable therefore has nowhere to write — say so in the
+    // status line rather than opening a dialog that can't do anything.
+    const _drumUnmapped = Array.isArray(data.drum_unmapped) ? data.drum_unmapped : [];
+    const _droppedCount = _drumUnmapped.reduce(
+        (s, u) => s + Math.max(0, Number(u.count) || 0), 0);
+    if (_droppedCount > 0 && S.drumTab) {
+        setStatus(`Imported (${_droppedCount} unmapped percussion — see dialog) `
+            + '— edit notes then click Build feedpak');
+        _showDrumImportUnmappedModal(_drumUnmapped);
+    } else if (_droppedCount > 0) {
+        setStatus(`Imported — ${_droppedCount} percussion note`
+            + `${_droppedCount === 1 ? '' : 's'} outside the drum vocabulary were `
+            + 'dropped (nothing mapped, so there is no drum track to add them to)');
+    } else {
+        setStatus('Imported — edit notes then click Build feedpak');
+    }
 }
 
 // EOF arrangement XML(s) selected — just record them. The shared "Import & Open"

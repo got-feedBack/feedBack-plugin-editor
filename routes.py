@@ -210,6 +210,58 @@ def _plugin_version() -> str:
 # sentinel string value and accidentally (or maliciously) trips the no-op path.
 _DRUM_TAB_ABSENT = object()
 
+
+def _drum_arrs_to_drum_tab(drum_arrs, out_unmapped=None):
+    """Fold drum arrangements into a drum_tab.
+
+    `out_unmapped` collects the percussion this drops, keyed by MIDI
+    value, in the same {count, times} shape the add-drums endpoint
+    builds — so both import routes can feed the one manual-mapping
+    dialog. Before this it dropped unmappable notes with a bare
+    `continue`, which is why the Create-New wizard silently discarded
+    percussion outside the 18-piece vocab while adding drums to an
+    existing pack offered to remap it.
+    """
+    from lib import drums as _drums
+    hits, kit_seen = [], {}
+
+    def _take(entry):
+        """One note/chord-note → a hit, or a recorded drop."""
+        try:
+            midi = int(entry["string"]) * 24 + int(entry["fret"])
+        except (KeyError, TypeError, ValueError):
+            return
+        t = round(float(entry.get("time", 0) or 0), 3)
+        piece = _drums.midi_to_piece(midi)
+        if piece is None:
+            if out_unmapped is not None:
+                rec = out_unmapped.setdefault(midi, {"count": 0, "times": []})
+                rec["count"] += 1
+                # Same 64-sample cap the add-drums path uses: enough to
+                # place the notes, bounded for a pathological import.
+                if len(rec["times"]) < 64:
+                    rec["times"].append(t)
+            return
+        hits.append({"t": t, "p": piece})
+        if piece not in kit_seen:
+            kit_seen[piece] = piece.replace("_", " ").title()
+
+    for arr in drum_arrs:
+        for n in arr.get("notes", []):
+            _take(n)
+        # Simultaneous hits land in chords — fold those in too.
+        for ch in arr.get("chords", []):
+            for cn in ch.get("notes", []):
+                _take(cn)
+    hits.sort(key=lambda h: h["t"])
+    return {
+        "version": getattr(_drums, "SCHEMA_VERSION", 1),
+        "name": "Drums",
+        "kit": [{"id": pid, "name": name} for pid, name in kit_seen.items()],
+        "hits": hits,
+    }
+
+
 # Generic "field absent from request" sentinel used by the save endpoint
 # to distinguish "client didn't send this field" from "client explicitly
 # sent an empty list / null". The empty-list case is meaningful for
@@ -7217,41 +7269,7 @@ def setup(app, context):
         # arrangement out, rebuild it as a drum_tab, and drop the same
         # entries from BOTH result["arrangements"] and the session's
         # xml_files so the two stay index-aligned for a later /build.
-        def _drum_arrs_to_drum_tab(drum_arrs):
-            from lib import drums as _drums
-            hits, kit_seen = [], {}
-            for arr in drum_arrs:
-                for n in arr.get("notes", []):
-                    try:
-                        midi = int(n["string"]) * 24 + int(n["fret"])
-                    except (KeyError, TypeError, ValueError):
-                        continue
-                    piece = _drums.midi_to_piece(midi)
-                    if piece is None:
-                        continue
-                    hits.append({"t": round(float(n.get("time", 0) or 0), 3), "p": piece})
-                    if piece not in kit_seen:
-                        kit_seen[piece] = piece.replace("_", " ").title()
-                # Simultaneous hits land in chords — fold those in too.
-                for ch in arr.get("chords", []):
-                    for cn in ch.get("notes", []):
-                        try:
-                            midi = int(cn["string"]) * 24 + int(cn["fret"])
-                        except (KeyError, TypeError, ValueError):
-                            continue
-                        piece = _drums.midi_to_piece(midi)
-                        if piece is None:
-                            continue
-                        hits.append({"t": round(float(cn.get("time", 0) or 0), 3), "p": piece})
-                        if piece not in kit_seen:
-                            kit_seen[piece] = piece.replace("_", " ").title()
-            hits.sort(key=lambda h: h["t"])
-            return {
-                "version": getattr(_drums, "SCHEMA_VERSION", 1),
-                "name": "Drums",
-                "kit": [{"id": pid, "name": name} for pid, name in kit_seen.items()],
-                "hits": hits,
-            }
+        # _drum_arrs_to_drum_tab is module-level so pytest can reach it.
 
         # Inject GP-sourced notation sidecars into keys arrangements so the
         # build step uses accurate GP voice/stave data instead of notation_lift.
@@ -7266,9 +7284,22 @@ def setup(app, context):
             if (a.get("name") or "").lower().startswith("drum")
         }
         if _drum_idx:
-            _tab = _drum_arrs_to_drum_tab([_arrs[i] for i in sorted(_drum_idx)])
+            # Percussion outside the 18-piece vocab is reported rather than
+            # silently dropped, so the wizard can offer the same manual-mapping
+            # dialog the add-drums route does. Named `drum_unmapped` (not the
+            # add route's bare `unmapped`) because this response also carries
+            # arrangements, tempo and track data — an unqualified key there
+            # would read as "unmapped WHAT?".
+            _unmapped: dict[int, dict] = {}
+            _tab = _drum_arrs_to_drum_tab(
+                [_arrs[i] for i in sorted(_drum_idx)], out_unmapped=_unmapped,
+            )
             if _tab["hits"]:
                 result["drum_tab"] = _tab
+            if _unmapped:
+                result["drum_unmapped"] = [
+                    _safe_unmapped_entry(m, rec) for m, rec in sorted(_unmapped.items())
+                ]
             result["arrangements"] = [
                 a for i, a in enumerate(_arrs) if i not in _drum_idx
             ]
