@@ -97,6 +97,10 @@ t('legato-jump: a pitched slide reaching past the window flags', () => {
     const slide = [N(1, 1, 3, 0.5, { slide_to: 12 })];
     assert.strictEqual(_lintLegatoJumpPure(slide, []).length, 1);
     assert.strictEqual(_lintLegatoJumpPure([N(1, 1, 3, 0.5, { slide_to: 6 })], []).length, 0);
+    // The -1 "no slide" sentinel every save/load round-trip stamps on
+    // techniques must NOT read as a slide to fret -1 — before the guard,
+    // every loaded note above fret 3 flagged (|-1 - fret| > window).
+    assert.strictEqual(_lintLegatoJumpPure([N(1, 1, 10, 0.5, { slide_to: -1 })], []).length, 0);
 });
 
 t('degradations: empty part, no anchors, junk input → no issues, no throw', () => {

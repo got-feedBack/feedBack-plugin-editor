@@ -125,6 +125,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *analyze* follows the click.
 
 ### Fixed
+- **The lint no longer spams "Legato jump: slide N→-1" on loaded charts.**
+  The legato-jump rule read the `-1` "no slide" sentinel (which every note
+  carries after a save/load round trip) as a real slide target, so every
+  loaded note above fret 3 was flagged as a position-shift-mid-legato — the
+  warning-chip noise in the same report. The rule now gates on
+  `slide_to >= 0`, matching how draw/commands/context-menu read the field.
+- **The playability-lint popover (the ⚠ chip's window) can be closed again.**
+  The popover's base style set `display: flex` at id+class specificity, which
+  outranked the bare `.hidden` utility every close path relies on — so
+  re-clicking the ⚠ chip, clicking away, Escape, and clicking an issue row
+  all "closed" it in the DOM while it stayed visible on screen, surviving
+  until a new chart or an app restart. A `.editor-lint-pop.hidden` override
+  now actually hides it (the same pattern the menu/transport/mixer popovers
+  already carry), and the popover header gains an explicit ✕ close button.
 - **A GP8's own sync points now survive its embedded audio.** A Guitar Pro
   file can carry both a backing track and the sync points that map the
   score onto it. Using that embedded track, the editor applied only the

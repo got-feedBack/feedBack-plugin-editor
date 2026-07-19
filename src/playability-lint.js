@@ -176,7 +176,9 @@ export function _lintLegatoJumpPure(nn, anchors) {
             const t = n.techniques || {};
             const win = windowAt(anchors, n.time);
             // Slide reach: the slide's own target is the hand's destination.
-            if (Number.isInteger(t.slide_to) && n.fret > 0
+            // slide_to < 0 is the "no slide" sentinel (the -1 every loaded
+            // note carries — commands.js/draw.js gate on >= 0 the same way).
+            if (Number.isInteger(t.slide_to) && t.slide_to >= 0 && n.fret > 0
                 && Math.abs(t.slide_to - n.fret) > win) {
                 issues.push({ rule: 'legato-jump', time: n.time, indices: [i],
                     detail: `slide ${n.fret}→${t.slide_to} spans ${Math.abs(t.slide_to - n.fret)} frets (window ${win})` });
@@ -311,7 +313,8 @@ function renderPopover() {
     if (!pop) return;
     const { issues } = _lintResults();
     _popIssues = issues.slice();
-    pop.innerHTML = `<div class="editor-lint-head">Playability — advisory, never blocking</div>`
+    pop.innerHTML = `<div class="editor-lint-head"><span>Playability — advisory, never blocking</span>`
+        + `<button class="editor-lint-close" aria-label="Close playability notes" title="Close">✕</button></div>`
         + issues.map((iss, k) =>
             `<button class="editor-lint-row" data-issue="${k}">`
             + `<span class="editor-lint-rule">${_editorEscHtml(RULE_LABELS[iss.rule] || iss.rule)}</span>`
@@ -340,6 +343,10 @@ export function initPlayabilityLint() {
     const pop = document.getElementById('editor-lint-pop');
     if (pop) {
         pop.addEventListener('click', (e) => {
+            if (e.target instanceof Element && e.target.closest('.editor-lint-close')) {
+                editorToggleLintPopover();   // close + focus back on the chip
+                return;
+            }
             const row = e.target instanceof Element ? e.target.closest('.editor-lint-row') : null;
             if (!row) return;
             const iss = _popIssues[Number(row.dataset.issue)];
