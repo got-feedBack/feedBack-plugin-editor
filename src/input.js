@@ -11,7 +11,7 @@ import { _suggestActive, _suggestCompute, _suggestDismiss, _suggestProposals } f
 import { _clickSourcePure, _trackSessionSourcesPure } from './track-session.js';
 import { _zonesDismiss } from './tempo-zones.js';
 import { editorToggleMixerPanel } from './mixer-panel.js';
-import { canvas } from './canvas.js';
+import { DPR, canvas } from './canvas.js';
 import { AddNoteCmd, ChangeFretCmd, ChangeFretGroupCmd, DeleteNotesCmd, MoveNoteCmd, ResizeSustainGroupCmd, SetPitchedSlideTargetsCmd, SetTeachingMarkCmd, SplitNotesCmd, ToggleTechniqueCmd, _execCyclePosition, _execMoveString, _execMoveStringSameFret, _rollAddByPitch, _splitViablePure, _withStableSelection } from './commands.js';
 import { hideContextMenu, promptBend, promptFret, promptSlide, promptSlideUnpitch, showContextMenu } from './context-menu.js';
 import { _drumEditorDeleteSelection, _drumEditorNudgeVelocity, _drumEditorSetVelocity, _drumEditorToggleArticulation, _editorToggleDrumDensity } from './drum.js';
@@ -273,9 +273,17 @@ export function _editorSnapStepSeconds() {
 
 export function _editorSeekToTime(t) {
     S.cursorTime = Math.max(0, Math.min(S.duration || Infinity, t));
-    const margin = 0.15 * (canvas ? canvas.width / S.zoom : 10);
+    // canvas.width is DEVICE pixels (main.js sets it to cssWidth * DPR), while
+    // LABEL_W and S.zoom are both CSS-pixel units — so it has to be divided by
+    // DPR before it can be mixed with them. Without that, on a 2x display the
+    // margin came out twice too wide and `right` landed a full viewport past
+    // the real edge, so the "cursor ran off the right" branch fired late or
+    // never and a keyboard seek stopped scrolling the view. The follow path in
+    // audio.js has always used canvas.width / DPR; this is the same viewport.
+    const viewW = canvas ? canvas.width / DPR : 800;
+    const margin = 0.15 * (viewW / S.zoom);
     if (S.cursorTime < S.scrollX) S.scrollX = _editorClampScrollX(S.cursorTime - margin);
-    const right = S.scrollX + ((canvas ? canvas.width : 800) - LABEL_W) / S.zoom;
+    const right = S.scrollX + (viewW - LABEL_W) / S.zoom;
     if (S.cursorTime > right) S.scrollX = _editorClampScrollX(S.cursorTime - margin);
     if (S.playing) { stopPlayback(); startPlayback(); }
     host.draw();

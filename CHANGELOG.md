@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hands, canvas appearance, stems).
 
 ### Fixed
+- **Keyboard seeks scroll the view again on a HiDPI display.** `canvas.width`
+  is DEVICE pixels (main.js sets it to `cssWidth * DPR`), but `_editorSeekToTime`
+  mixed it straight into `LABEL_W` and `S.zoom`, which are CSS-pixel units. On a
+  2x display that put the computed right edge a full viewport past the real one
+  — an 800px-CSS canvas measured 12.9s of timeline instead of 6.2s — so seeking
+  to a cursor that had visibly run off the right never triggered the scroll, and
+  the margin on the left-hand branch came out twice too wide. The viewport is now
+  taken in CSS pixels (`canvas.width / DPR`), matching the follow path in
+  audio.js, which has always divided. Byte-identical at DPR 1, so nothing changes
+  on a standard-density display.
 - **String labels follow the tuning.** A 6-string bass tuned a whole step
   down (A D G C F A#) rendered its lanes with the STANDARD layout
   (B↓ E A D G C↑), so every string label was a whole step sharp and the
