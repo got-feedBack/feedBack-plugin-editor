@@ -19,6 +19,7 @@ import { _downbeatTimes, _editorClampScrollX, _editorViewportDuration, _groupTim
 import { _recState } from './midi-record.js';
 import { _resizeSustainsForDeltaPure, _resizeTargetIndicesPure, notes } from './notes.js';
 import { MINIMAP_GRIP_W, _minimapHitPure, _minimapSongDur, _minimapThumbPure, _rulerZonePure, rulerOnDblClick, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp } from './ruler.js';
+import { _laneScrollForThumbPure, laneBarHit, laneBarRect, laneScrollBy, setLaneScrollY } from './lane-scroll.js';
 import { _editorChordGrabsStrumPure, _editorEffectiveChordSelectBehaviorPure, editorChordSelectBehavior, editorShortcutProfile } from './shortcuts.js';
 import { S } from './state.js';
 import { _tempoBeatOnDragMove, _tempoMapOnDragEnd, _tempoMapOnDragMove, _tempoMapOnMouseDown, _tempoMarqueeOnEnd, _tempoPoleGrabTolerancePure, _tempoSyncAtX } from './tempo.js';
@@ -52,6 +53,30 @@ export function onMouseDown(e) {
     // drags edges, lower half scrubs.
     if (y < TIMELINE_TOP) {
         if (rulerOnMouseDown(e, x, y, canvas ? canvas.width / DPR : 0)) return;
+    }
+
+    // The vertical lane scrollbar owns the right edge in the views that
+    // scroll, and wins over the note surface underneath it. It is only
+    // present when the lanes actually overflow (laneBarHit returns null
+    // otherwise), so it can never steal a click from a view that fits.
+    if (e.button === 0) {
+        const cw = canvas ? canvas.width / DPR : 0;
+        const ch = canvas ? canvas.height / DPR : 0;
+        const barHit = laneBarHit(x, y, cw, ch);
+        if (barHit) {
+            const r = laneBarRect(cw, ch);
+            if (barHit === 'track') {
+                // Jump so the thumb centres here, then keep tracking from
+                // its middle — the minimap's empty-track behaviour.
+                setLaneScrollY(
+                    _laneScrollForThumbPure(y, (r.thumb.y1 - r.thumb.y0) / 2,
+                        r.contentH, r.viewH, r.top, r.viewH), ch);
+            }
+            const rr = laneBarRect(cw, ch);
+            S.drag = { type: 'lane-scroll', grabDY: rr ? y - rr.thumb.y0 : 0 };
+            host.draw();
+            return;
+        }
     }
 
     // Drum-edit mode hijacks the left click so the lane-grid editor can
@@ -470,6 +495,17 @@ function _onMouseMoveBody(e, x, y, L) {
         return;
     }
 
+    if (S.drag.type === 'lane-scroll') {
+        const ch = canvas ? canvas.height / DPR : 0;
+        const r = laneBarRect(canvas ? canvas.width / DPR : 0, ch);
+        if (r) {
+            setLaneScrollY(
+                _laneScrollForThumbPure(y, S.drag.grabDY, r.contentH, r.viewH, r.top, r.viewH), ch);
+        }
+        host.draw();
+        return;
+    }
+
     // Drum-edit drag: move every selected hit in time and lane in lockstep.
     if (S.drag.type === 'drum-move') {
         _drumEditorOnDragMove(x, y);
@@ -618,6 +654,13 @@ export function onMouseUp(e) {
     if (!S.drag) return;
     if (rulerOnMouseUp()) return;
     const { y } = getMousePos(e);
+
+    // Vertical lane scrollbar — view state only, nothing to commit.
+    if (S.drag.type === 'lane-scroll') {
+        S.drag = null;
+        host.draw();
+        return;
+    }
 
     // Bar-range select finalise — refresh the Loop-in-3D button state.
     if (S.drag.type === 'barsel') {
@@ -832,6 +875,19 @@ export function onWheel(e) {
     } else {
         // Scroll = pan: a horizontal-dominant swipe pans by deltaX, a plain
         // vertical wheel keeps panning by deltaY (the long-standing gesture).
+        //
+        // …EXCEPT in the drum grid and piano roll when their lanes actually
+        // overflow: there, a vertical-dominant wheel scrolls the lanes, which
+        // is what the Tracks area already does above and what every DAW does.
+        // laneScrollBy returns false when there is nothing to scroll, so when
+        // the content fits — the common case — this falls straight through to
+        // the long-standing horizontal pan and today's behaviour is unchanged.
+        const verticalDominant = Math.abs(e.deltaY) >= Math.abs(e.deltaX || 0);
+        const canvasH = canvas ? canvas.height / DPR : 0;
+        if (verticalDominant && laneScrollBy(e.deltaY, canvasH)) {
+            host.draw();
+            return;
+        }
         const pan = Math.abs(e.deltaX || 0) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
         S.scrollX = _editorClampScrollX(S.scrollX + pan / S.zoom * 2);
     }

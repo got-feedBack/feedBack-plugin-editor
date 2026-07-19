@@ -79,6 +79,20 @@ export function clampZoom(z) {
     return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v));
 }
 
+// ── Vertical lane scroll offset ─────────────────────────────────────
+// Lives HERE rather than in lane-scroll.js purely to break a cycle: the
+// drum-grid and piano-roll geometry funnels have to read it, and
+// lane-scroll.js imports both of those modules to answer "which view is
+// showing". geometry.js is already a leaf both of them depend on.
+//
+// Pixels, unlike S.scrollX's seconds — lanes have no natural time unit.
+// Reads 0 for views that don't scroll vertically, so the funnels can read
+// it unconditionally. src/lane-scroll.js owns every WRITE.
+export function laneScrollY() {
+    const y = Number(S.laneScrollY);
+    return Number.isFinite(y) && y > 0 ? y : 0;
+}
+
 // ── time ⇄ x ────────────────────────────────────────────────────────
 export function timeToX(t)  { return LABEL_W + (t - S.scrollX) * S.zoom; }
 export function xToTime(x)  { return (x - LABEL_W) / S.zoom + S.scrollX; }
