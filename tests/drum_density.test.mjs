@@ -12,7 +12,8 @@
  */
 import assert from 'node:assert';
 import {
-    DRUM_COMPACT_LANES, DRUM_PIECE_ORDER, _drumLaneIdxForPiecePure, _drumLaneTablePure,
+    DRUM_COMPACT_LANES, DRUM_PIECE_GM, DRUM_PIECE_ORDER,
+    _drumDensityNextPure, _drumLaneIdxForPiecePure, _drumLaneTablePure,
 } from '../src/drum.js';
 
 let pass = 0, fail = 0;
@@ -61,6 +62,52 @@ t('compact canonicals are the family bread-and-butter voices', () => {
 t('unknown density falls back to full (a corrupt pref never blanks the grid)', () => {
     const table = _drumLaneTablePure('banana', DRUM_PIECE_ORDER, DRUM_COMPACT_LANES);
     assert.strictEqual(table.length, DRUM_PIECE_ORDER.length);
+});
+
+// ── The GM roll (density 'midi') — the drum piano-roll lens ──────────
+
+t('GM roll: every piece exactly once, one row each, real piece-ids kept', () => {
+    const table = _drumLaneTablePure('midi', DRUM_PIECE_ORDER, DRUM_COMPACT_LANES);
+    assert.strictEqual(table.length, DRUM_PIECE_ORDER.length, 'no piece falls off the grid');
+    const seen = new Set();
+    for (const lane of table) {
+        assert.strictEqual(lane.pieces.length, 1);
+        assert.strictEqual(lane.canonical, lane.pieces[0]);
+        seen.add(lane.pieces[0]);
+    }
+    for (const p of DRUM_PIECE_ORDER) assert.ok(seen.has(p), `missing ${p}`);
+});
+
+t('GM roll: rows sort pitch-descending (piano-roll convention), no-GM pieces sink', () => {
+    const table = _drumLaneTablePure('midi', DRUM_PIECE_ORDER, DRUM_COMPACT_LANES);
+    const gmRows = table.filter(l => Number.isInteger(l.gm));
+    for (let i = 1; i < gmRows.length; i++) {
+        assert.ok(gmRows[i - 1].gm > gmRows[i].gm,
+            `descending: ${gmRows[i - 1].gm} then ${gmRows[i].gm}`);
+    }
+    // High pitch on top, kick near the bottom, stack (no GM note) below it.
+    assert.strictEqual(table[0].canonical, 'crash_r', 'GM 57 tops the roll');
+    assert.strictEqual(gmRows[gmRows.length - 1].canonical, 'kick', 'GM 36 is the lowest note');
+    assert.strictEqual(table[table.length - 1].canonical, 'stack', 'no-GM piece sinks last');
+    assert.strictEqual(table[table.length - 1].gm, null);
+});
+
+t('GM roll: gm numbers agree with the canonical piece map', () => {
+    const table = _drumLaneTablePure('midi', DRUM_PIECE_ORDER, DRUM_COMPACT_LANES);
+    for (const lane of table) {
+        assert.strictEqual(lane.gm, DRUM_PIECE_GM[lane.canonical] ?? null, lane.canonical);
+    }
+    // Map hygiene: exactly the chart pieces, nothing extra.
+    assert.deepStrictEqual(
+        Object.keys(DRUM_PIECE_GM).sort(), [...DRUM_PIECE_ORDER].sort(),
+        'DRUM_PIECE_GM covers every piece exactly');
+});
+
+t('density cycle: Full → Compact → GM roll → Full; junk recovers to compact-first', () => {
+    assert.strictEqual(_drumDensityNextPure('full'), 'compact');
+    assert.strictEqual(_drumDensityNextPure('compact'), 'midi');
+    assert.strictEqual(_drumDensityNextPure('midi'), 'full');
+    assert.strictEqual(_drumDensityNextPure('banana'), 'full');
 });
 
 t('row lookup: members share a row in compact, unknown pieces stay -1', () => {
