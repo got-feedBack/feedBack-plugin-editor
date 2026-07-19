@@ -756,6 +756,11 @@ def _warp_applies(audio_mode, warp_points, from_gp):
     return True
 
 
+def _initial_convert_warp_state(client_points):
+    """Seed per-conversion warp state before embedded audio may replace it."""
+    return client_points, False
+
+
 def _parse_sync_points_payload(raw):
     """Validate a client sync_points payload (the JSON shape autosync-gp
     returns). Returns (points, error): `points` is a list of coerced
@@ -6914,6 +6919,13 @@ def setup(app, context):
 
         def _convert():
             nonlocal audio_url, _provided_offset  # assigned below
+            # Keep the request's validated client points as local conversion
+            # state. The embedded path may replace them with GP-authored
+            # points, but assigning the outer names here without nonlocal
+            # would make them uninitialized locals on every non-embedded
+            # conversion (and on embedded files with fewer than two points).
+            _convert_warp_points, _convert_warp_from_gp = (
+                _initial_convert_warp_state(_warp_points))
             tmp = tempfile.mkdtemp(prefix="slopsmith_editor_create_")
 
             # For GP8 embedded audio: extract the OGG and use it as the audio source
@@ -6960,8 +6972,8 @@ def setup(app, context):
                                 # GP-derived points WIN in embedded mode, even
                                 # over anything the client sent: only these
                                 # describe the track actually being used.
-                                _warp_from_gp = True
-                                _warp_points = _emb_payload
+                                _convert_warp_from_gp = True
+                                _convert_warp_points = _emb_payload
                         except Exception as _psexc:
                             import logging as _elog
                             _elog.getLogger("slopsmith.plugin.editor").debug(
@@ -7028,7 +7040,8 @@ def setup(app, context):
             # user-staged recording and cannot describe the embedded track —
             # but the GP's own points (loaded above) describe exactly it, so
             # they warp correctly.
-            if _warp_applies(_audio_mode, _warp_points, _warp_from_gp):
+            if _warp_applies(
+                    _audio_mode, _convert_warp_points, _convert_warp_from_gp):
                 try:
                     from lib.gp_autosync import (
                         bar_start_times, build_warp_anchors,
@@ -7050,7 +7063,7 @@ def setup(app, context):
                             [_WarpSP(bar=p["bar"], time_secs=p["time_secs"],
                                      modified_tempo=p["modified_bpm"],
                                      original_tempo=p["original_bpm"])
-                             for p in _warp_points],
+                             for p in _convert_warp_points],
                             bar_start_times(gp_path),
                         )
                         if len(_anchors) >= 2:
@@ -7149,7 +7162,7 @@ def setup(app, context):
             result = _song_to_dict(song, audio_url)
             # Derived at the read site so the flag can never drift from what
             # actually happened: anchors set => the warp above ran.
-            if _warp_points:
+            if _convert_warp_points:
                 result["sync_applied"] = "warp" if _warp_anchors else "offset"
                 if not _warp_anchors:
                     # 'repeats' | 'degenerate' | 'error' | 'unavailable' —

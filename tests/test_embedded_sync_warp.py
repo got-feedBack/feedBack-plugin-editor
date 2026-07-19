@@ -14,7 +14,11 @@ don't exist and the handler excluded embedded mode outright.
 
 import math
 
-from routes import _gp_sync_points_to_warp_payload, _warp_applies
+from routes import (
+    _gp_sync_points_to_warp_payload,
+    _initial_convert_warp_state,
+    _warp_applies,
+)
 
 
 class _SP:
@@ -74,6 +78,15 @@ def test_non_embedded_modes_are_unchanged():
     points = _gp_sync_points_to_warp_payload(REPORTED)
     for mode in ("autosync", "upload", None, ""):
         assert _warp_applies(mode, points, from_gp=False) is True
+
+
+def test_conversion_state_starts_with_client_points_for_non_embedded_audio():
+    """The worker must not shadow these closure values before reading them."""
+    points = _gp_sync_points_to_warp_payload(REPORTED)
+    local_points, from_gp = _initial_convert_warp_state(points)
+    assert local_points is points
+    assert from_gp is False
+    assert _warp_applies("upload", local_points, from_gp) is True
 
 
 def test_fewer_than_two_points_never_warps():
