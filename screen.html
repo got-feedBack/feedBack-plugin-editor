@@ -542,7 +542,7 @@
                 <label for="editor-create-import"
                     class="inline-block cursor-pointer px-2 py-1 rounded text-xs font-medium bg-dark-600 text-gray-300 hover:bg-dark-500">Add File</label>
                 <input type="file" id="editor-create-import" multiple class="hidden"
-                    accept=".mp3,.wav,.flac,.ogg,.m4a,.opus,.aac,.wem,.gp3,.gp4,.gp5,.gpx,.gp,.mid,.midi,.xml"
+                    accept=".mp3,.wav,.flac,.ogg,.m4a,.opus,.aac,.wem,.gp3,.gp4,.gp5,.gpx,.gp,.mid,.midi,.xml,.musicxml,.mxl"
                     onchange="editorContentImportSelected(this)">
                 <div class="flex items-center gap-2">
                     <span class="text-[11px] text-gray-600 shrink-0">or paste a YouTube URL</span>
@@ -965,7 +965,7 @@
         <div class="p-4 space-y-3">
             <div>
                 <label class="text-xs font-medium text-gray-400 mb-1 block">Source File (Guitar Pro, MIDI, or MusicXML)</label>
-                <input type="file" id="editor-add-keys-file" accept=".gp3,.gp4,.gp5,.gpx,.gp,.mid,.midi,.xml,.musicxml"
+                <input type="file" id="editor-add-keys-file" accept=".gp3,.gp4,.gp5,.gpx,.gp,.mid,.midi,.xml,.musicxml,.mxl"
                     onchange="editorKeysFileSelected(this)"
                     class="w-full text-xs text-gray-400 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-dark-600 file:text-gray-300 hover:file:bg-dark-500">
                 <p class="text-[11px] text-gray-600 mt-1">After import you can fine-tune note timing in the editor.</p>

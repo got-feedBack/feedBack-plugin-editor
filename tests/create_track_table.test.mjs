@@ -36,6 +36,16 @@ assert.deepStrictEqual(JSON.parse(JSON.stringify(rows.map(row => [row.id, row.ki
     ['midi:5', 'midi', true],
 ]);
 
+const musicXmlRows = context._createTrackRowsPure({
+    musicXmlFile: { name: 'Tea For Two.xml' },
+    musicXmlName: 'Keys — MusicXML Part',
+    musicXmlData: { arrangement: { notes: [{}, {}] } },
+}, '');
+assert.deepStrictEqual(JSON.parse(JSON.stringify(musicXmlRows)), [{
+    id: 'musicxml:0', name: 'Keys — MusicXML Part', kind: 'musicxml',
+    selected: true, selectable: false, guideEligible: false,
+}]);
+
 assert.strictEqual(context._createGuideIdPure(rows, 'audio:2'), 'audio:1', 'excluded audio cannot be guide');
 assert.strictEqual(context._createGuideIdPure(rows, 'gp:2'), 'audio:1', 'transcription cannot masquerade as audio guide');
 assert.strictEqual(context._createGuideIdPure(rows, 'missing'), 'audio:1');
@@ -51,4 +61,4 @@ assert.ok(source.includes('type="radio" name="editor-create-guide"'), 'Guide is 
 assert.ok(screen.includes('<span>Use</span><span>Track</span><span>Type</span><span>Guide</span>'));
 assert.ok(!screen.includes('<span>Details</span>'), 'empty Details column is removed');
 
-console.log('create track table: 7 passed');
+console.log('create track table: 8 passed');
