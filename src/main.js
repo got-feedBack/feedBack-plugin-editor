@@ -855,6 +855,25 @@ window.__editorScreenTeardown = () => {
     if (typeof _cancelPendingDraw === 'function') { try { _cancelPendingDraw(); } catch (_) {} }
 };
 
+// Leaving the Song Editor has to silence it. The Web Audio graph and the
+// rAF transport both outlive the screen's DOM, so playback that was running
+// when you navigated away just keeps going — testers hit this by starting
+// playback, leaving the editor, and then launching an actual song, ending up
+// with two mixes playing over each other.
+//
+// Deliberately NOT the full __editorScreenTeardown: the host hides a screen
+// by dropping its `active` class, and can re-show that SAME injection without
+// re-running this module. A full teardown would strip the global listeners
+// and leave a dead editor behind. Stopping is exactly what the Stop button
+// does, so the session stays intact and resumable.
+function _editorOnScreenHidden() {
+    // An in-flight MIDI take finalizes rather than vanishing — this caps held
+    // notes, stops playback and releases the MIDI session. No-op when idle.
+    try { editorStopRecordMidi(); } catch (_) { /* never block navigation */ }
+    // Catch-all: covers plain playback, and is idempotent after the above.
+    try { stopPlayback(); } catch (_) { /* never block navigation */ }
+}
+
 // Handle Enter key in add-note dialog
 _globalListeners.add(document, 'keydown', (e) => {
     if (e.key === 'Enter' && addNoteData) {
@@ -2137,17 +2156,28 @@ function init() {
     initToolbars();
     initMixerPanel();
 
-    // Observe screen visibility for resize + the entry landing. Held in
-    // _editorScreenObs so the teardown can disconnect it on re-injection.
+    // Observe screen visibility for resize + the entry landing, and — the
+    // other direction — to silence the editor when you navigate away. Held
+    // in _editorScreenObs so the teardown can disconnect it on re-injection.
+    const screen = document.getElementById('plugin-editor');
+    // Seeded from the CURRENT state so the first mutation can't read as a
+    // transition that never happened.
+    let wasActive = !!(screen && screen.classList.contains('active'));
     const obs = new MutationObserver(() => {
-        const screen = document.getElementById('plugin-editor');
-        if (screen && screen.classList.contains('active')) {
+        if (!screen) return;
+        const active = screen.classList.contains('active');
+        // The filter is `class`, not one specific class, so ignore unrelated
+        // class churn — this must only act on a real show/hide transition.
+        if (active === wasActive) return;
+        wasActive = active;
+        if (active) {
             setTimeout(resizeCanvas, 50);
             // Entering the Song Editor with nothing loaded → offer Load / Create.
             setTimeout(_editorMaybeShowStartLanding, 80);
+        } else {
+            _editorOnScreenHidden();
         }
     });
-    const screen = document.getElementById('plugin-editor');
     if (screen) obs.observe(screen, { attributes: true, attributeFilter: ['class'] });
     _editorScreenObs = obs;
     // Also cover the case where the editor screen is already active at init().
