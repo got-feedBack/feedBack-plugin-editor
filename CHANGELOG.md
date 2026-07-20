@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A track's instrument is now DATA, not a guess from its name.** The editor used
+  to infer whether a part was keys / bass / guitar from its *name*, in a dozen
+  places with two subtly disagreeing rules — the reason renaming a track could flip
+  its lane layout, and why the rename dialog has to refuse some names. The pack
+  format already records an authored instrument `type` per arrangement; the editor
+  now **reads it** (carrying it through load and save) and lets it drive the
+  keys/bass view and string-count decisions, falling back to the old name inference
+  only when a track is untyped. Existing songs open exactly as before — but a part
+  named against its instrument (a guitar called "Grand Piano") finally reads as
+  what it *is*. Foundation for first-class drum tracks, vocals, and freely
+  renaming a track without changing its instrument.
+
 - **The piano roll stretches, compacts and scrolls.** Its lane height used to be
   derived and untouchable — the whole pitch range packed into about 350px — so a
   wide range collapsed to four pixels per semitone: passable for reading, useless

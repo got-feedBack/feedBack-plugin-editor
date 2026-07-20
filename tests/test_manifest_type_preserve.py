@@ -119,3 +119,30 @@ def test_merge_does_not_mutate_inputs():
     out["name"] = "changed"
     assert old["type"] == "bass"
     assert rebuilt["name"] == "A"
+
+
+# ── editor-authored type round-trips (the save-carry contract) ────────────────
+# The save path now carries an editor-provided `type` into the rebuilt entry
+# (previously the rebuilt entry never had one, so a set/changed type could only
+# survive by accident of the merge preserving the OLD value). These pin that a
+# type SET in the editor persists and can override a stale on-disk value — the
+# contract drums-as-arrangements and a future "set instrument" action rely on.
+
+def test_a_newly_typed_arrangement_persists_its_type():
+    # No old entry (a freshly added arrangement): the editor-set type survives.
+    rebuilt = {"id": "drm", "name": "Kit", "file": "arrangements/drm.json",
+               "tuning": [0] * 6, "capo": 0, "type": "drums"}
+    out = _merge_manifest_entry(None, rebuilt)
+    assert out["type"] == "drums"
+
+
+def test_editor_set_type_overrides_a_stale_on_disk_type():
+    # The rebuilt (editor) type wins over the old entry's type — so changing an
+    # instrument in the editor actually re-types the entry, rather than the old
+    # value silently sticking.
+    old = {"id": "x", "name": "X", "type": "guitar", "centOffset": -3}
+    rebuilt = {"id": "x", "name": "X", "file": "arrangements/x.json",
+               "tuning": [0] * 6, "capo": 0, "type": "drums"}
+    out = _merge_manifest_entry(old, rebuilt)
+    assert out["type"] == "drums", "editor type wins"
+    assert out["centOffset"] == -3, "unrelated preserved keys still survive"
