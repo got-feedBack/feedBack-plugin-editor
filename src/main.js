@@ -602,6 +602,10 @@ setHostHooks({
         S.partsViewMode = false;
         S.tempoMapMode = false;
         S.tempoSel = -1;
+        // draw() checks tabViewMode first — drop the engraved-tab lens on any
+        // target switch (shared root cause with editorSwitcherSelect / the
+        // Edit-Drums button) or it paints the old part's tab over the new one.
+        S.tabViewMode = false;
         if (targetId === 'drums' && S.drumTab && S.format === 'sloppak') {
             S.drumEditMode = true;
             S.drumSel = new Set();
@@ -1814,11 +1818,19 @@ window.editorSwitcherSelect = (val) => {
         // arrangement only exists in a sloppak session that has a drum tab; guard
         // anyway so a drums index can NEVER fall through to editorSelectArrangement
         // (which would move currentArr onto the drums arrangement).
-        if (!(S.drumTab && S.format === 'sloppak')) return;
+        // Resync the <select> before bailing: the onchange already moved the
+        // DOM value onto "Drums", so a bare return would leave it showing
+        // Drums while nothing switched (openTrackSessionTarget always reaches
+        // updateArrangementSelector for the same reason).
+        if (!(S.drumTab && S.format === 'sloppak')) { updateArrangementSelector(); return; }
         _finalizeActiveDrag();
         S.partsViewMode = false;
         S.tempoMapMode = false;
         S.tempoSel = -1;
+        // draw() checks tabViewMode FIRST, so drop the engraved-tab lens on the
+        // switch (mirrors the Edit-Drums button) or it keeps painting the old
+        // part's tab over the drum grid.
+        S.tabViewMode = false;
         S.drumEditMode = true;
         S.drumSel = new Set();
         _refreshPartsViewButton();
@@ -1829,11 +1841,23 @@ window.editorSwitcherSelect = (val) => {
         updateStatus();
         return;
     }
-    // A pitched part (guaranteed non-drums): leave drum-edit mode and select it —
-    // editorSelectArrangement moves currentArr, which stays off the drums slot.
+    // A pitched part (guaranteed non-drums): leave EVERY mode-lens and select it.
+    // editorSelectArrangement moves currentArr (which stays off the drums slot)
+    // but clears none of the lens flags, and draw() renders whichever lens is
+    // still set instead of the arrangement (tabViewMode is even checked first).
+    // So drop them all here — parts/tempo included, not just drum/tab — mirroring
+    // the drums branch and openTrackSessionTarget; otherwise switching to a part
+    // while in Parts or Tempo Map view silently moves currentArr but keeps
+    // painting the old lens over it.
     S.drumEditMode = false;
+    S.tabViewMode = false;
+    S.partsViewMode = false;
+    S.tempoMapMode = false;
+    S.tempoSel = -1;
     window.editorSelectArrangement(String(idx));
     _refreshDrumEditButton();
+    _refreshPartsViewButton();
+    _refreshTempoMapButton();
     updateArrangementSelector();
 };
 window.editorToggleTech = (idx, tech) => {
