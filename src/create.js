@@ -801,8 +801,27 @@ function _createAudioPayloadPure(audioTracks, guideId) {
         })),
     };
 }
+// The drum payload the create-mode /build ships (feedpak 1.17.0 N drums).
+// The PRIMARY drum_tab is the FIRST drums arrangement's payload — NOT the
+// active `drumTab`, which tracks whichever part is open in the grid (the user
+// may be editing a secondary at build time). `drum_parts` (the extras) is only
+// present when drums are materialized as arrangements, so a legacy single-tab
+// compose build (no pitched part → no drums arrangement) stays byte-identical.
+function _drumBuildPayloadPure(arrangements, drumTab) {
+    const drumArrs = (Array.isArray(arrangements) ? arrangements : []).filter(isDrumArrangement);
+    const primaryTab = drumArrs.length ? drumArrs[0].drumTab : drumTab;
+    const out = { drum_tab: (primaryTab && Array.isArray(primaryTab.hits)) ? primaryTab : null };
+    if (drumArrs.length) {
+        out.drum_parts = drumArrs.slice(1).map(a => ({
+            id: String(a.id || ''),
+            name: String(a.name || 'Drums').slice(0, 120),
+            drum_tab: a.drumTab,
+        }));
+    }
+    return out;
+}
 /* @pure:create-track-table:end */
-export { _createAudioPayloadPure, _createGuideIdPure, _createTrackRowsPure };
+export { _createAudioPayloadPure, _createGuideIdPure, _createTrackRowsPure, _drumBuildPayloadPure };
 
 // Community arrangement XML and MusicXML share the .xml extension. Sniff the
 // document root before choosing an importer; declarations, DOCTYPEs, comments,
@@ -2667,9 +2686,12 @@ export async function editorBuild() {
                 // sloppak. editorDoCreate sets S.format='sloppak' when the GP
                 // import brought either; forward that as the build target so
                 // the server writes a sloppak (not a archive that silently drops
-                // them), and ship the imported drum_tab so it's persisted.
+                // them), and ship the drum parts so they're persisted.
                 target_format: S.format === 'sloppak' ? 'sloppak' : '',
-                drum_tab: (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab : null,
+                // The drum payload (primary tab + extras) — see
+                // _drumBuildPayloadPure: the primary is the FIRST drums
+                // arrangement's tab, NOT the active S.drumTab.
+                ..._drumBuildPayloadPure(S.arrangements, S.drumTab),
                 // Audio placement shift ("Shift Audio…") — persisted into the
                 // built pack's manifest (read back on load via data.audio_shift)
                 // so the alignment survives the first build, not just re-saves.

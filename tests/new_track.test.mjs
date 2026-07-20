@@ -171,23 +171,31 @@ t('editorAddEmptyDrums: blank shape once; a SECOND part in a saved sloppak sessi
     assert.strictEqual(S.drumTab.name, 'Drums 2', 'de-duplicated display name');
 });
 
-t('editorAddEmptyDrums: create mode keeps the one-part rule (refuses twice)', () => {
+t('editorAddEmptyDrums: create mode ADDS a second part too (its build persists N now)', () => {
+    // Parity with edit-mode: the create-mode /build path writes the extra
+    // drum parts, so create sessions add a 2nd part beside a pitched track.
     Object.assign(S, {
         format: 'sloppak', sessionId: 'test-session', createMode: true,
         drumTab: null, drumTabDirty: false,
         arrangements: [{ name: 'Lead', notes: [] }], drumSel: new Set(),
     });
     assert.strictEqual(editorAddEmptyDrums(), true);
-    S.drumTab.hits.push({ t: 1, piece: 'kick' });
-    assert.strictEqual(editorAddEmptyDrums(), false, 'create mode: one part max (its build persists one)');
-    assert.strictEqual(S.drumTab.hits.length, 1, 'existing tab untouched');
+    assert.strictEqual(S.arrangements.filter(a => a.type === 'drums').length, 1,
+        'primary materialized beside the pitched part');
+    const firstTab = S.drumTab;
+    firstTab.hits.push({ t: 1, piece: 'kick' });
+    assert.strictEqual(editorAddEmptyDrums(), true, 'a second part is allowed in create mode');
+    assert.strictEqual(S.arrangements.filter(a => a.type === 'drums').length, 2, 'two drum parts');
+    assert.notStrictEqual(S.drumTab, firstTab, 'the new part is the active grid target');
+    assert.strictEqual(firstTab.hits.length, 1, 'the first tab is untouched');
     Object.assign(S, { createMode: false });
 });
 
-t('editorAddEmptyDrums: a drums-only session keeps the tab OFF the arrangement list', () => {
+t('editorAddEmptyDrums: a drums-only session keeps the tab OFF the arrangement list, and can’t add a 2nd', () => {
     // No pitched part: materializing would put drums at index 0, where the
     // default currentArr lands — the tab must stay a legacy off-array
-    // singleton instead (the drum grid still edits it through the mode).
+    // singleton instead (the drum grid still edits it through the mode). And
+    // with no arrangement to sit beside, a second part can't be added.
     Object.assign(S, {
         format: 'sloppak', sessionId: 'test-session', createMode: false,
         drumTab: null, drumTabDirty: false, arrangements: [], drumSel: new Set(),
@@ -195,6 +203,9 @@ t('editorAddEmptyDrums: a drums-only session keeps the tab OFF the arrangement l
     assert.strictEqual(editorAddEmptyDrums(), true);
     assert.ok(S.drumTab, 'tab created');
     assert.strictEqual(S.arrangements.length, 0, 'no drums arrangement at index 0');
+    S.drumTab.hits.push({ t: 1, piece: 'kick' });
+    assert.strictEqual(editorAddEmptyDrums(), false, 'drums-only: no melodic track to sit beside, so one part max');
+    assert.strictEqual(S.drumTab.hits.length, 1, 'existing tab untouched');
 });
 
 t('editorAddEmptyDrums: refuses outside a sloppak session', () => {

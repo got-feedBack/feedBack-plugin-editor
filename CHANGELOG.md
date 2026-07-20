@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multiple drum parts now work when creating a new song too.** The several-
+  drum-parts feature previously covered only songs you re-open and Save; a
+  *create-mode* session (New Song from a Guitar Pro / MIDI import) was capped at
+  one drum chart. Now, once a melodic track exists, **＋ Track ▸ Drums** adds
+  another drum part in a create session just like an existing one, and Building
+  the song persists every part (the first as the song-level drum tab today's
+  game plays, the rest as `type: drums` arrangement entries per feedpak-spec
+  1.17.0). A drums-only draft still holds one part until you add a melodic
+  track (drums are never the primary chart). Packs stay backward-compatible.
+
 - **A song can hold several drum parts.** The payoff of the drums-as-arrangement
   arc below: with drums already present, **＋ Track ▸ Drums** adds *another* drum
   part (a second drummer, an aux-percussion layer), and a GP/MIDI drum import is
