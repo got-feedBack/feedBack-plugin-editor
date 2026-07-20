@@ -7,7 +7,7 @@
  */
 
 import { S } from './state.js';
-import { _arrTypeKind } from './instrument.js';
+import { _isBassArr } from './instrument.js';
 
 export const MAX_LANES = 8;
 
@@ -67,11 +67,7 @@ function isBassArr() {
     if (!S.arrangements.length) return false;
     const arr = S.arrangements[S.currentArr];
     if (!arr) return false;
-    // Authored `type` wins; else the legacy /bass/ name test (an untyped
-    // "Synth Bass" stays bass here, exactly as before — a typed keys part
-    // named that resolves to keys, its authored identity).
-    const k = _arrTypeKind(arr);
-    return k ? k === 'bass' : /bass/i.test(arr.name || '');
+    return _isBassArr(arr);
 }
 
 // Active arrangement string count. Mirrors lib/song.py:arrangement_string_count
@@ -101,9 +97,7 @@ function isBassArr() {
 export function _seedExtendedStringsFromTuning(arrangements, authoritativeLength) {
     for (const arr of arrangements || []) {
         if (typeof arr._extendedStrings === 'number') continue;  // already set
-        // Authored `type` wins for the 4-vs-6 baseline; else the legacy name test.
-        const k = _arrTypeKind(arr);
-        const isBass = k ? k === 'bass' : /bass/i.test(arr.name || '');
+        const isBass = _isBassArr(arr);   // type-authoritative; independent /bass/ fallback
         const baseline = isBass ? 4 : 6;
         const tuningLen = Array.isArray(arr.tuning) ? arr.tuning.length : baseline;
         if (tuningLen > 6) {
@@ -124,7 +118,7 @@ export function _seedExtendedStringsFromTuning(arrangements, authoritativeLength
 
 export function _stringCountFor(arr) {
     if (!arr) return 6;
-    const isBass = /bass/i.test(arr.name || '');
+    const isBass = _isBassArr(arr);
     const baseline = isBass ? 4 : 6;
     // User-added strings via the Strings modal — authoritative even
     // when tuning happens to be ambiguous length 6 (the standard RS-XML
@@ -264,7 +258,7 @@ const _BASS_OPEN_MIDI   = [28, 33, 38, 43];           // 4-string standard
 // extended/trimmed to `laneCount` strings. Extended-range strings
 // are prepended at the low end (matching how AddStringCmd works).
 export function _openMidiForArr(arr, laneCount) {
-    const isBass = /bass/i.test(arr.name || '');
+    const isBass = _isBassArr(arr);
     const base = isBass ? _BASS_OPEN_MIDI.slice() : _GUITAR_OPEN_MIDI.slice();
     // Extend low end: each additional low string is 5 semitones below
     // the current lowest (perfect 4th), matching standard guitar/bass

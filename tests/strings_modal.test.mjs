@@ -21,6 +21,7 @@ import { setHostHooks } from '../src/host.js';
 import { seedState, trackHooks } from './_history_env.mjs';
 import fs from 'node:fs';
 import { _stringCountFor } from '../src/lanes.js';
+import { _isBassArr } from '../src/instrument.js';
 
 const src = fs.readFileSync(new URL('../src/strings.js', import.meta.url), 'utf8');
 
@@ -80,7 +81,7 @@ function makeHandlerEnv(seed) {
     // editorAddString / editorRemoveString reach draw / updateStatus through host
     // now (they moved to src/strings.js), so inject a host stub for those two.
     const env = new Function(
-        'window', 'S', 'host', '_renderStringsModal', '_stringCountFor',
+        'window', 'S', 'host', '_renderStringsModal', '_stringCountFor', '_isBassArr',
         'AddStringCmd', 'RemoveStringCmd',
         '"use strict";'
         + tuningBlock + '\n' + notesOnStringSrc + '\n'
@@ -93,6 +94,7 @@ function makeHandlerEnv(seed) {
         { draw: () => {}, updateStatus: () => {} },   // host
         () => {},                 // _renderStringsModal (DOM-free)
         _stringCountFor,          // the REAL one, imported from src/lanes.js
+        _isBassArr,               // type-authoritative bass predicate (src/instrument.js)
         AddStringCmd, RemoveStringCmd,
     );
     S.history = new EditHistory();

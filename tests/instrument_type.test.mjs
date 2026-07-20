@@ -20,7 +20,8 @@ import assert from 'node:assert';
 
 import { _typeKind, _arrTypeKind, _arrKindFromName, arrKind } from '../src/instrument.js';
 import { isKeysArr, KEYS_PATTERN, _rollPitchCtxFor } from '../src/keys.js';
-import { _seedExtendedStringsFromTuning } from '../src/lanes.js';
+import { _seedExtendedStringsFromTuning, _stringCountFor } from '../src/lanes.js';
+import { _isBassArr } from '../src/instrument.js';
 import { _trackKindBadgePure } from '../src/track-session.js';
 import { seedState } from './_history_env.mjs';
 
@@ -135,6 +136,23 @@ t('_trackKindBadgePure: audio shows the layer, transcription shows the instrumen
     assert.deepStrictEqual(_trackKindBadgePure({ type: 'transcription', targetId: 'Piano', mixKey: 'arr:1' }, arrs), ['KEY', 'Keys']);
     assert.deepStrictEqual(_trackKindBadgePure({ type: 'transcription', targetId: 'Rhythm', mixKey: 'arr:2' }, arrs), ['BAS', 'Bass'], 'type wins over the non-bass name');
     assert.deepStrictEqual(_trackKindBadgePure({ type: 'transcription', targetId: 'Choir', mixKey: 'arr:3' }, arrs), ['VOX', 'Vocals']);
+});
+
+// ── _isBassArr keeps the INDEPENDENT /bass/ fallback (not arrKind===bass) ──
+t('_isBassArr: type wins; untyped keeps the independent /bass/ test ("Synth Bass" stays bass)', () => {
+    assert.strictEqual(_isBassArr({ name: 'Rhythm', type: 'bass' }), true, 'typed bass, non-bass name');
+    assert.strictEqual(_isBassArr({ name: 'Sub Bass', type: 'guitar' }), false, 'typed guitar wins');
+    assert.strictEqual(_isBassArr({ name: 'Synth Bass' }), true, 'untyped "Synth Bass" is bass (arrKind would say keys)');
+    assert.strictEqual(_isBassArr({ name: 'Lead' }), false);
+});
+
+// ── string count (the rename-safety-critical reader) honors type ──────
+t('_stringCountFor: type drives the 4-vs-6 baseline; untyped independent /bass/ fallback', () => {
+    const mk = (o) => ({ tuning: [], notes: [], chords: [], chord_templates: [], ...o });
+    assert.strictEqual(_stringCountFor(mk({ name: 'Rhythm', type: 'bass', tuning: [0, 0, 0, 0] })), 4, 'typed bass → 4');
+    assert.strictEqual(_stringCountFor(mk({ name: 'Sub Bass', type: 'guitar', tuning: [0, 0, 0, 0, 0, 0] })), 6, 'typed guitar → 6');
+    assert.strictEqual(_stringCountFor(mk({ name: 'Synth Bass', tuning: [0, 0, 0, 0] })), 4, 'untyped "Synth Bass" → 4 (unchanged)');
+    assert.strictEqual(_stringCountFor(mk({ name: 'Lead', tuning: [0, 0, 0, 0, 0, 0] })), 6);
 });
 
 // ── view routing honors type (a converted reader) ────────────────────

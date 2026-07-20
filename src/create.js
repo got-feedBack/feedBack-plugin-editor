@@ -26,7 +26,8 @@ import {
 import { _handshapesAreDirty, flattenChords, reconstructChords } from './chords.js';
 import { EditHistory } from './history.js';
 import { host } from './host.js';
-import { KEYS_PATTERN, isKeysMode, updatePianoRange } from './keys.js';
+import { isKeysMode, updatePianoRange } from './keys.js';
+import { arrKind } from './instrument.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
 import { S, markSessionDirty, markSessionSaved } from './state.js';
 import { _marksSanitizePure } from './tempo-marks.js';
@@ -2422,8 +2423,7 @@ export async function editorApplyCreateResult(data) {
     resetStemAudioCache();   // …nor stale stem buffers
     void syncStemAudio().finally(() => host.draw());   // decode stems, then repaint their lanes
     const _importHasDrums = !!(S.drumTab && (S.drumTab.hits || []).length);
-    const _importHasKeys = (S.arrangements || []).some(
-        a => KEYS_PATTERN.test(a.name || ''));
+    const _importHasKeys = (S.arrangements || []).some(a => arrKind(a) === 'keys');
     if (_importHasDrums || _importHasKeys) S.format = 'sloppak';
 
     // Reset offset UI so _effectiveAudioOffset() doesn't carry over a

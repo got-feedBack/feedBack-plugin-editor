@@ -4,7 +4,8 @@
 
 import { AddStringCmd, RemoveStringCmd, RemoveStringWithNotesCmd } from './commands.js';
 import { LANE_H, TIMELINE_TOP, WAVEFORM_H } from './geometry.js';
-import { isKeysMode, KEYS_PATTERN } from './keys.js';
+import { isKeysMode } from './keys.js';
+import { arrKind, _isBassArr } from './instrument.js';
 import { _stringCountFor, laneLabels } from './lanes.js';
 import { S, editGen } from './state.js';
 import { host } from './host.js';
@@ -98,11 +99,12 @@ class SetStringTuningCmd {
 // Every lens that owns the timeline instead (piano roll, drum editor,
 // Tempo Map, Parts, Tab view) hides them, as do the non-fretted
 // arrangement kinds the Strings modal already refuses.
-export function _stringButtonsVisiblePure(arrName, flags) {
+export function _stringButtonsVisiblePure(kind, flags) {
     const f = flags || {};
     if (f.keysMode || f.drumEdit || f.tempoMap || f.partsView || f.tabView) return false;
-    const name = arrName || '';
-    return !KEYS_PATTERN.test(name) && !/^drums/i.test(name);
+    // `kind` is the resolved instrument (arrKind — type-authoritative); the
+    // string controls are for fretted parts only, so keys/drums hide them.
+    return kind !== 'keys' && kind !== 'drums';
 }
 
 // Tooltip copy for the buttons. Count-centric: they always grow/shrink
@@ -132,7 +134,7 @@ export function _stringRemoveLabelPure(isBass, cur) {
 
 function _stringsRangeForActive() {
     const arr = S.arrangements[S.currentArr];
-    const isBass = arr && /bass/i.test(arr.name || '');
+    const isBass = arr && _isBassArr(arr);
     return _stringsRangePure(!!isBass);
 }
 
@@ -154,7 +156,7 @@ function _renderStringsModal() {
     const tuning = (arr.tuning || []).slice(0, labels.length);
     while (tuning.length < labels.length) tuning.push(0);
     const { min, max } = _stringsRangeForActive();
-    const isBass = /bass/i.test(arr.name || '');
+    const isBass = _isBassArr(arr);
 
     const summary = document.getElementById('editor-strings-summary');
     if (summary) {
@@ -244,7 +246,7 @@ function _renderStringsModal() {
 export const editorShowStringsModal = () => {
     const arr = S.arrangements[S.currentArr];
     if (!arr) return;
-    if (KEYS_PATTERN.test(arr.name || '') || /^drums/i.test(arr.name || '')) return;
+    if (arrKind(arr) === 'keys' || arrKind(arr) === 'drums') return;
     document.getElementById('editor-strings-modal').classList.remove('hidden');
     _renderStringsModal();
 };
@@ -256,7 +258,7 @@ export const editorHideStringsModal = () => {
 export const editorAddString = (pos) => {
     const arr = S.arrangements[S.currentArr];
     if (!arr) return;
-    const isBass = /bass/i.test(arr.name || '');
+    const isBass = _isBassArr(arr);
     // Compute the count directly from the active arrangement rather
     // than going through `lanes()` — the latter consults a per-draw
     // cache and our intent here is explicitly "what is this
@@ -279,7 +281,7 @@ export const editorAddString = (pos) => {
 export const editorRemoveString = (pos) => {
     const arr = S.arrangements[S.currentArr];
     if (!arr) return;
-    const isBass = /bass/i.test(arr.name || '');
+    const isBass = _isBassArr(arr);
     // Same reasoning as editorAddString — anchor on `arr` directly
     // rather than the cached `lanes()`.
     const cur = _stringCountFor(arr);
@@ -311,7 +313,7 @@ export function editorStringButtonsRefresh() {
     const box = document.getElementById('editor-string-btns');
     if (!box) return;
     const arr = S.arrangements[S.currentArr];
-    const show = !!arr && _stringButtonsVisiblePure(arr.name, {
+    const show = !!arr && _stringButtonsVisiblePure(arrKind(arr), {
         keysMode: isKeysMode(), drumEdit: !!S.drumEditMode, tempoMap: !!S.tempoMapMode,
         partsView: !!S.partsViewMode, tabView: !!S.tabViewMode,
     });
@@ -319,7 +321,7 @@ export function editorStringButtonsRefresh() {
         if (_stringBtnsKey !== 'hidden') { box.classList.add('hidden'); _stringBtnsKey = 'hidden'; }
         return;
     }
-    const isBass = /bass/i.test(arr.name || '');
+    const isBass = _isBassArr(arr);
     // _stringCountFor walks every note, so memo it on the edit generation
     // (the repo's standard dirty key — in-place moves keep array identity)
     // rather than paying O(notes) on every rAF flush.
@@ -354,14 +356,14 @@ export function editorStringButtonsRefresh() {
 export const editorCanvasStringAdd = () => {
     const arr = S.arrangements[S.currentArr];
     if (!arr) return;
-    const pos = _addPositionPure(/bass/i.test(arr.name || ''), _stringCountFor(arr));
+    const pos = _addPositionPure(_isBassArr(arr), _stringCountFor(arr));
     if (pos) editorAddString(pos);
 };
 
 export const editorCanvasStringRemove = () => {
     const arr = S.arrangements[S.currentArr];
     if (!arr) return;
-    const isBass = /bass/i.test(arr.name || '');
+    const isBass = _isBassArr(arr);
     const cur = _stringCountFor(arr);
     const pos = _removePositionPure(isBass, cur);
     if (!pos) return;

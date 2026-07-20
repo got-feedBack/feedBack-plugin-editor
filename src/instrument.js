@@ -72,3 +72,14 @@ export function _arrKindFromName(name) {
 export function arrKind(arr) {
     return _arrTypeKind(arr) || _arrKindFromName(arr && arr.name);
 }
+
+// Bass predicate — type-authoritative, but its NAME fallback stays the INDEPENDENT
+// `/bass/` test, NOT `arrKind === 'bass'`. Bass and keys are independent facets in
+// the legacy inference ("Synth Bass" is bass for string-count AND keys for the
+// view), so the single-kind `arrKind` (keys wins) would wrongly flip a "Synth
+// Bass" from a 4-string baseline to 6. Every string-count / open-tuning site that
+// used `/bass/i.test(arr.name)` must route through here to stay byte-identical.
+export function _isBassArr(arr) {
+    const k = _arrTypeKind(arr);
+    return k ? k === 'bass' : /bass/i.test((arr && arr.name) || '');
+}
