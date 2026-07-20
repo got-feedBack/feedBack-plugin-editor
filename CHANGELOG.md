@@ -23,6 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multiple drum parts now work when creating a new song too.** The several-
+  drum-parts feature previously covered only songs you re-open and Save; a
+  *create-mode* session (New Song from a Guitar Pro / MIDI import) was capped at
+  one drum chart. Now, once a melodic track exists, **＋ Track ▸ Drums** adds
+  another drum part in a create session just like an existing one, and Building
+  the song persists every part (the first as the song-level drum tab today's
+  game plays, the rest as `type: drums` arrangement entries per feedpak-spec
+  1.17.0). A drums-only draft still holds one part until you add a melodic
+  track (drums are never the primary chart). Packs stay backward-compatible.
+
 - **Track regions — drag a track's block to move its content.** In the Tracks
   view you can now grab a region block and slide it along the timeline; it snaps
   to bar lines (hold **Alt** for a free nudge), shows a dashed preview of where it

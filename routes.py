@@ -339,6 +339,55 @@ def _sanitize_extra_drum_tab(tab):
     return out
 
 
+def _create_build_drum_entries(staging, drum_tab, drum_parts):
+    """The `type: drums` manifest arrangement entries for a CREATE-MODE build
+    with multiple drum parts (feedpak 1.17.0 "drums as arrangements"), and the
+    side effect of writing each EXTRA part's `drum_tab_<id>.json` into
+    `staging`. The PRIMARY entry aliases the song-level `drum_tab.json` (already
+    written by the caller) — it contributes id/name only; each extra part gets
+    its own side file. Ids are sanitized to a safe filename charset and
+    de-collided. Returns the entries to append AFTER the pitched arrangements.
+
+    Twin of /save_song's inline drum-parts block; shares
+    `_sanitize_extra_drum_tab` so both wire the same on-disk shape. Extracted
+    to module scope (out of `_write_sloppak_pak`'s closure) so pytest can drive
+    the write directly. Pure of the core `lib` (like `_sanitize_extra_drum_tab`):
+    each part's tab is schema-validated at the request boundary
+    (`build_song_endpoint`), so here junk hits are merely sanitized away.
+    """
+    from pathlib import Path as _Path
+
+    staging = _Path(staging)
+    entries = [{
+        "id": "drums",
+        "name": str(drum_tab.get("name") or "Drums")[:120],
+        "type": "drums",
+        "drum_tab": "drum_tab.json",
+    }]
+    used_ids = {"drums"}
+    for part in (drum_parts or []):
+        if not isinstance(part, dict) or not isinstance(part.get("drum_tab"), dict):
+            continue
+        pid_raw = str(part.get("id") or "").strip().lower()
+        pid = re.sub(r"[^a-z0-9_-]+", "-", pid_raw).strip("-_") or "drums-2"
+        if pid in used_ids:
+            n = 2
+            while f"{pid}-{n}" in used_ids:
+                n += 1
+            pid = f"{pid}-{n}"
+        used_ids.add(pid)
+        name = str(part.get("name") or part["drum_tab"].get("name") or "Drums")[:120]
+        tab = _sanitize_extra_drum_tab(part["drum_tab"])
+        tab["name"] = name
+        (staging / f"drum_tab_{pid}.json").write_text(
+            json.dumps(tab, separators=(",", ":")), encoding="utf-8")
+        entries.append({
+            "id": pid, "name": name, "type": "drums",
+            "drum_tab": f"drum_tab_{pid}.json",
+        })
+    return entries
+
+
 # Generic "field absent from request" sentinel used by the save endpoint
 # to distinguish "client didn't send this field" from "client explicitly
 # sent an empty list / null". The empty-list case is meaningful for
@@ -8633,6 +8682,32 @@ def setup(app, context):
                     {"error": "drum_tab must be a JSON object with a 'hits' array"},
                     400,
                 )
+        # EXTRA drum parts (feedpak 1.17.0 "drums as arrangements"): the
+        # create-mode /build twin of /save_song's `drum_parts`. Absent → an
+        # old frontend, pack keeps just the song-level drum_tab (byte-
+        # identical). A list (possibly empty — the new editorBuild always
+        # ships one) → the authoritative extras, written beside the primary.
+        drum_parts = data.get("drum_parts")
+        if drum_parts is not None:
+            if not isinstance(drum_parts, list):
+                return JSONResponse({"error": "drum_parts must be a list"}, 400)
+            if drum_tab is None:
+                return JSONResponse(
+                    {"error": "drum_parts requires drum_tab in the same build"}, 400)
+            from lib.drums import validate_drum_tab as _validate_part_tab
+            for _pi, _part in enumerate(drum_parts):
+                if not isinstance(_part, dict) or not isinstance(_part.get("drum_tab"), dict):
+                    return JSONResponse(
+                        {"error": f"drum_parts[{_pi}] must be an object with a drum_tab object"},
+                        400,
+                    )
+                # Schema-validate at the boundary (like /save_song), so a bad
+                # tab fails fast with 400 rather than being sanitized to empty
+                # deeper in _create_build_drum_entries.
+                _p_ok, _p_reason = _validate_part_tab(_part["drum_tab"])
+                if not _p_ok:
+                    return JSONResponse(
+                        {"error": f"invalid drum_parts[{_pi}].drum_tab: {_p_reason}"}, 400)
 
         def _build_sloppak():
             """Build a `.sloppak` for the create-mode session.
@@ -8670,6 +8745,7 @@ def setup(app, context):
                 meta=meta,
                 output_path=output,
                 drum_tab=drum_tab if isinstance(drum_tab, dict) else None,
+                drum_parts=drum_parts,
                 audio_tracks=extra_audio_tracks,
                 audio_guide_name=(build_audio_tracks[0]["name"]
                                   if build_audio_tracks else ""),
@@ -8780,6 +8856,7 @@ def setup(app, context):
                           arrangements_data: list, beats: list, sections: list,
                           meta: dict, output_path: Path,
                           drum_tab: dict | None = None,
+                          drum_parts: list | None = None,
                           lyrics: list | None = None,
                           preview_path: str = "",
                           fail_if_exists: bool = False,
@@ -9069,6 +9146,20 @@ def setup(app, context):
                     encoding="utf-8",
                 )
                 manifest["drum_tab"] = "drum_tab.json"
+
+                # DRUM-PART entries (feedpak 1.17.0 "drums as arrangements"):
+                # a create-mode session can hold several drum charts. Written
+                # only when the client OPTED IN by shipping `drum_parts` (a
+                # list, possibly empty) — an old frontend omits it and the pack
+                # stays byte-identical with just the song-level key. The write
+                # lives in the module-level _create_build_drum_entries so pytest
+                # exercises it directly (this closure isn't reachable).
+                if drum_parts is not None:
+                    # Append after the pitched arrangements (drums are never
+                    # index 0 — that slot is the played chart).
+                    manifest["arrangements"] = (
+                        list(manifest.get("arrangements") or [])
+                        + _create_build_drum_entries(staging, drum_tab, drum_parts))
 
             # Vocals seed: an empty (or authored) lyrics track. feedpak §7.1
             # lyrics.json is a flat array of syllables — an empty array is a
