@@ -19,7 +19,7 @@
 import assert from 'node:assert';
 
 import { _typeKind, _arrTypeKind, _arrKindFromName, arrKind } from '../src/instrument.js';
-import { isKeysArr, KEYS_PATTERN } from '../src/keys.js';
+import { isKeysArr, KEYS_PATTERN, _rollPitchCtxFor } from '../src/keys.js';
 import { _seedExtendedStringsFromTuning } from '../src/lanes.js';
 import { _trackKindBadgePure } from '../src/track-session.js';
 import { seedState } from './_history_env.mjs';
@@ -135,6 +135,14 @@ t('_trackKindBadgePure: audio shows the layer, transcription shows the instrumen
     assert.deepStrictEqual(_trackKindBadgePure({ type: 'transcription', targetId: 'Piano', mixKey: 'arr:1' }, arrs), ['KEY', 'Keys']);
     assert.deepStrictEqual(_trackKindBadgePure({ type: 'transcription', targetId: 'Rhythm', mixKey: 'arr:2' }, arrs), ['BAS', 'Bass'], 'type wins over the non-bass name');
     assert.deepStrictEqual(_trackKindBadgePure({ type: 'transcription', targetId: 'Choir', mixKey: 'arr:3' }, arrs), ['VOX', 'Vocals']);
+});
+
+// ── view routing honors type (a converted reader) ────────────────────
+t('_rollPitchCtxFor: a typed-keys part has no fretted context regardless of name', () => {
+    assert.strictEqual(_rollPitchCtxFor({ name: 'Lead', type: 'keys' }), null, 'typed keys → null (no fretted ctx)');
+    assert.strictEqual(_rollPitchCtxFor({ name: 'Piano' }), null, 'untyped keys name → null (fallback, unchanged)');
+    const gtr = _rollPitchCtxFor({ name: 'Grand Piano', type: 'guitar', tuning: [40, 45, 50, 55, 59, 64], capo: 0 });
+    assert.notStrictEqual(gtr, null, 'typed guitar named "Piano" → a real fretted ctx (type wins)');
 });
 
 for (const [name, fn] of tests) {

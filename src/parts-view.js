@@ -9,7 +9,7 @@ import { ctx } from './canvas.js';
 import { hideContextMenu } from './context-menu.js';
 import { DRUM_PIECE_META, _refreshDrumEditButton } from './drum.js';
 import { LABEL_W, TIMELINE_TOP, timeToX, xToTime } from './geometry.js';
-import { KEYS_PATTERN } from './keys.js';
+import { arrKind } from './instrument.js';
 import { _stringCountFor } from './lanes.js';
 import { _downbeatTimes } from './loop.js';
 import { _recState } from './midi-record.js';
@@ -148,7 +148,7 @@ function _partsDrawSilhouette(part, y0, laneH, w) {
         }
     }
     if (!events.length) return;
-    if (KEYS_PATTERN.test(arr.name || '')) {
+    if (arrKind(arr) === 'keys') {
         // Keys: pitch-mapped mini roll, range auto-fit to the part.
         let lo = Infinity, hi = -Infinity;
         for (const n of events) {

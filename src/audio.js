@@ -31,6 +31,7 @@ import { host } from './host.js';
 import { _pickOnsetsPure, _spectralFluxOnsetsPlan, _spectralFluxStep } from './onsets.js';
 import { _tourNoteAction } from './tour.js';
 import { _rollMidiForNote, _rollPitchCtx, _rollPitchCtxFor, midiToFreq } from './keys.js';
+import { arrKind } from './instrument.js';
 import { _recState } from './midi-record.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
@@ -2155,7 +2156,7 @@ function _stemGainsReset() {
 // per arrangement) — drum parts return [] here; their hits clap instead.
 function _bandPartPitchedEvents(idx) {
     const arr = S.arrangements[idx];
-    if (!arr || /^drums/i.test(arr.name || '')) return [];
+    if (!arr || arrKind(arr) === 'drums') return [];
     const rctx = _rollPitchCtxFor(arr);
     return _gmSanitizeEventsPure((arr.notes || []).map(n => ({
         t: n.time,
@@ -2334,7 +2335,7 @@ function _guideTick() {
             // no pitch, so _bandPartPitchedEvents returns []) claps its rhythm
             // through this part's gain, else it voices neither GM nor clap and
             // goes silent (review #280 follow-up; GM percussion here is a follow-up).
-            if (arr && /^drums/i.test(arr.name || '')) {
+            if (arr && arrKind(arr) === 'drums') {
                 const times = _guideSanitizeTimesPure((arr.notes || []).map(n => n.time));
                 for (const t of _guideClapTimesInWindowPure(times, from, to)) {
                     const k = _bandFiredKeyPure(part.key, t);

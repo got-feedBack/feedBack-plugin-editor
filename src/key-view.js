@@ -6,7 +6,8 @@
 import { hideAddNote } from './add-note.js';
 import { hideContextMenu } from './context-menu.js';
 import { _loadEditorKeyIfNeeded, _persistEditorKey, editorKeyHighlightEnabled } from './draw.js';
-import { KEYS_PATTERN, _partViewKeyPure, _rollMidiForNote, _rollPitchCtx, _viewPrefs, _viewPrefsSave, updatePianoRange, viewFor } from './keys.js';
+import { _partViewKeyPure, _rollMidiForNote, _rollPitchCtx, _viewPrefs, _viewPrefsSave, updatePianoRange, viewFor } from './keys.js';
+import { arrKind } from './instrument.js';
 import { notes } from './notes.js';
 import { S } from './state.js';
 import { PIANO_NOTE_NAMES, SCALE_INTERVALS, SCALE_LABELS, _detectKeyPure, _noteNamesForKeyPure } from './theory.js';
@@ -103,8 +104,8 @@ export function _refreshViewSwitch() {
     const el = document.getElementById('editor-view-switch');
     if (!el) return;
     const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
-    const fretted = !!arr && !KEYS_PATTERN.test(arr.name || '');
-    const isDrums = !!arr && /^drums/i.test(arr.name || '');
+    const fretted = !!arr && arrKind(arr) !== 'keys';
+    const isDrums = !!arr && arrKind(arr) === 'drums';
     // The DRUM editor gets its own two options (grid / percussion staff) —
     // its mode flag stays on under the drum lens, so it is the one signal.
     const drumMode = !!S.drumEditMode && !!S.drumTab;
@@ -172,7 +173,7 @@ export const editorSetViewMode = (mode) => {
     if (mode !== 'string' && mode !== 'piano') return;
     const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
     if (!arr) return;
-    if (KEYS_PATTERN.test(arr.name || '')) {
+    if (arrKind(arr) === 'keys') {
         setStatus('Keys tracks always use the piano roll');
         return;
     }
@@ -203,7 +204,7 @@ export const editorSetViewMode = (mode) => {
 export function _editorCycleViewMode() {
     const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
     if (!arr) { setStatus('Load a song first'); return true; }
-    if (KEYS_PATTERN.test(arr.name || '')) {
+    if (arrKind(arr) === 'keys') {
         setStatus('Keys tracks always use the piano roll');
         return true;
     }
@@ -218,7 +219,7 @@ export function _editorCycleViewMode() {
         // Drums have no tab (same refusal as the lens's own guard) — the
         // toggle would refuse WITHOUT changing mode and the cycle would
         // stick on the roll. Skip the Tab stop and wrap to String view.
-        if (/^drums/i.test(arr.name || '')) {
+        if (arrKind(arr) === 'drums') {
             window.editorSetViewMode('string');
             return true;
         }

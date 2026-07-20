@@ -19,7 +19,7 @@ import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js
 import { notes } from './notes.js';
 import { S } from './state.js';
 import { PIANO_NOTE_NAMES, _noteNamesForKeyPure } from './theory.js';
-import { KEYS_PATTERN, _arrTypeKind } from './instrument.js';
+import { KEYS_PATTERN, _arrTypeKind, arrKind } from './instrument.js';
 // Re-export so the many sites that import KEYS_PATTERN from keys.js keep working;
 // its canonical definition now lives in the instrument-identity leaf.
 export { KEYS_PATTERN };
@@ -133,7 +133,7 @@ export function _rollPitchCtx() {
 // The per-arrangement form (multi-track MIDI playback schedules EVERY part,
 // not just the current one): same rules, arr injected.
 export function _rollPitchCtxFor(arr) {
-    if (!arr || KEYS_PATTERN.test(arr.name || '')) return null;
+    if (!arr || arrKind(arr) === 'keys') return null;
     const laneCount = _stringCountFor(arr);
     const tuning = (Array.isArray(arr.tuning) ? arr.tuning : []).slice(0, laneCount);
     while (tuning.length < laneCount) tuning.push(0);

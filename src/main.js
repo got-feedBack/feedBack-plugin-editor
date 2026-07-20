@@ -186,8 +186,9 @@ import {
     LABEL_W, TIMELINE_TOP, clampZoom, setLaneMetrics } from './geometry.js';
 import { _laneClipActive, applyLaneScrollBounds, drawLaneScrollbar, laneBandTop } from './lane-scroll.js';
 import {
-    KEYS_PATTERN, _rollLockNotice,
+    _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
+import { arrKind } from './instrument.js';
 import {
     _restoreSuggestedMarks,
     _saveSuggestedMarks, _suggestedCount, chords, notes
@@ -1068,9 +1069,8 @@ function updateArrangementSelector() {
     const stringsBtn = document.getElementById('editor-strings-btn');
     if (stringsBtn) {
         const active = S.arrangements[S.currentArr];
-        const stringsMode = !!active
-            && !KEYS_PATTERN.test(active.name || '')
-            && !/^drums/i.test(active.name || '');
+        const activeKind = active && arrKind(active);
+        const stringsMode = !!active && activeKind !== 'keys' && activeKind !== 'drums';
         stringsBtn.classList.toggle('hidden', !S.sessionId || !stringsMode);
     }
 
