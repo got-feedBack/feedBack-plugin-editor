@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them from silently re-laning notes). Foundation for first-class drum tracks and
   vocals.
 
+- **A per-track instrument-type control (next to the arrangement selector).**
+  Now that the editor honors an authored instrument `type` above the name for the
+  first time, an already-saved pack whose fretted (string+fret) chart has a keys
+  word *mid-name* — "Electric Piano", "Lead Synth" — can open **piano-locked**:
+  string buttons hidden, view stuck on the roll, with previously no way to
+  override it. The new **Guitar / Bass / Keys** dropdown sets the track's type
+  directly, which wins over the name everywhere — so a mis-named fretted part can
+  be corrected back to Guitar and reopens in string view immediately. The change
+  is undoable (Ctrl+Z) and persists with the pack on save; switching type rebuilds
+  the chart in place with no note loss.
+
 - **The piano roll stretches, compacts and scrolls.** Its lane height used to be
   derived and untouchable — the whole pitch range packed into about 350px — so a
   wide range collapsed to four pixels per semitone: passable for reading, useless
