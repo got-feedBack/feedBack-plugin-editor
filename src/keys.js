@@ -19,6 +19,7 @@ import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js
 import { notes } from './notes.js';
 import { S } from './state.js';
 import { PIANO_NOTE_NAMES, _noteNamesForKeyPure } from './theory.js';
+import { _arrTypeKind } from './instrument.js';
 
 // ── Piano roll constants ────────────────────────────────────────────
 export const PIANO_OCTAVE_COLORS = [
@@ -82,6 +83,10 @@ export function _viewPrefsSave() {
     } catch (_) { /* ignore */ }
 }
 export function viewFor(arr) {
+    // An authored keys `type` piano-locks the part regardless of its name;
+    // otherwise the legacy name test drives the piano-lock + stored preference.
+    const k = _arrTypeKind(arr);
+    if (k) return k === 'keys' ? 'piano' : (_viewPrefs()[_partViewKeyPure(arr)] === 'piano' ? 'piano' : 'string');
     return _viewForPure(arr && arr.name, _viewPrefs()[_partViewKeyPure(arr)]);
 }
 
@@ -92,7 +97,11 @@ export function viewFor(arr) {
 export function isKeysArr() {
     if (!S.arrangements.length) return false;
     const arr = S.arrangements[S.currentArr];
-    return !!(arr && KEYS_PATTERN.test(arr.name || ''));
+    if (!arr) return false;
+    // An authored `type` is authoritative (instrument identity is DATA); the
+    // legacy prefix name test is the fallback for untyped/legacy packs.
+    const k = _arrTypeKind(arr);
+    return k ? k === 'keys' : KEYS_PATTERN.test(arr.name || '');
 }
 
 // Piano SURFACE predicate: the piano-roll view is active for the current

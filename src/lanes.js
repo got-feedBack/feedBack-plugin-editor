@@ -7,6 +7,7 @@
  */
 
 import { S } from './state.js';
+import { _arrTypeKind } from './instrument.js';
 
 export const MAX_LANES = 8;
 
@@ -65,7 +66,12 @@ export function colorForLane(l) {
 function isBassArr() {
     if (!S.arrangements.length) return false;
     const arr = S.arrangements[S.currentArr];
-    return !!arr && /bass/i.test(arr.name || '');
+    if (!arr) return false;
+    // Authored `type` wins; else the legacy /bass/ name test (an untyped
+    // "Synth Bass" stays bass here, exactly as before — a typed keys part
+    // named that resolves to keys, its authored identity).
+    const k = _arrTypeKind(arr);
+    return k ? k === 'bass' : /bass/i.test(arr.name || '');
 }
 
 // Active arrangement string count. Mirrors lib/song.py:arrangement_string_count
@@ -95,7 +101,9 @@ function isBassArr() {
 export function _seedExtendedStringsFromTuning(arrangements, authoritativeLength) {
     for (const arr of arrangements || []) {
         if (typeof arr._extendedStrings === 'number') continue;  // already set
-        const isBass = /bass/i.test(arr.name || '');
+        // Authored `type` wins for the 4-vs-6 baseline; else the legacy name test.
+        const k = _arrTypeKind(arr);
+        const isBass = k ? k === 'bass' : /bass/i.test(arr.name || '');
         const baseline = isBass ? 4 : 6;
         const tuningLen = Array.isArray(arr.tuning) ? arr.tuning.length : baseline;
         if (tuningLen > 6) {
