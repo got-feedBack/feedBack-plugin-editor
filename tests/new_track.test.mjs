@@ -149,15 +149,52 @@ await ta('empty Keys failure reports in the calling New Track dialog', async () 
     assert.strictEqual(S.arrangements.length, 1, 'failed Keys registration leaves state untouched');
 });
 
-t('editorAddEmptyDrums: creates the create-flow blank shape once, refuses twice', () => {
-    Object.assign(S, { format: 'sloppak', sessionId: 'test-session', drumTab: null, drumTabDirty: false });
+t('editorAddEmptyDrums: blank shape once; a SECOND part in a saved sloppak session', () => {
+    Object.assign(S, {
+        format: 'sloppak', sessionId: 'test-session', createMode: false,
+        drumTab: null, drumTabDirty: false,
+        arrangements: [{ name: 'Lead', notes: [] }], drumSel: new Set(),
+    });
     assert.strictEqual(editorAddEmptyDrums(), true);
     assert.deepStrictEqual(S.drumTab, { version: 1, name: 'Drums', kit: [], hits: [] });
     assert.strictEqual(S.drumTabDirty, true, 'persists on next save');
-    // Second call must not clobber an existing tab.
+    assert.strictEqual(S.arrangements.filter(a => a.type === 'drums').length, 1,
+        'primary materialized beside the pitched part');
+    // A second call adds ANOTHER part (a song can hold several) — the new
+    // part becomes the grid target and the first tab is untouched.
     S.drumTab.hits.push({ t: 1, piece: 'kick' });
-    assert.strictEqual(editorAddEmptyDrums(), false);
+    const firstTab = S.drumTab;
+    assert.strictEqual(editorAddEmptyDrums(), true);
+    assert.strictEqual(S.arrangements.filter(a => a.type === 'drums').length, 2, 'two drum parts');
+    assert.notStrictEqual(S.drumTab, firstTab, 'the NEW part is the active grid target');
+    assert.strictEqual(firstTab.hits.length, 1, 'existing tab untouched');
+    assert.strictEqual(S.drumTab.name, 'Drums 2', 'de-duplicated display name');
+});
+
+t('editorAddEmptyDrums: create mode keeps the one-part rule (refuses twice)', () => {
+    Object.assign(S, {
+        format: 'sloppak', sessionId: 'test-session', createMode: true,
+        drumTab: null, drumTabDirty: false,
+        arrangements: [{ name: 'Lead', notes: [] }], drumSel: new Set(),
+    });
+    assert.strictEqual(editorAddEmptyDrums(), true);
+    S.drumTab.hits.push({ t: 1, piece: 'kick' });
+    assert.strictEqual(editorAddEmptyDrums(), false, 'create mode: one part max (its build persists one)');
     assert.strictEqual(S.drumTab.hits.length, 1, 'existing tab untouched');
+    Object.assign(S, { createMode: false });
+});
+
+t('editorAddEmptyDrums: a drums-only session keeps the tab OFF the arrangement list', () => {
+    // No pitched part: materializing would put drums at index 0, where the
+    // default currentArr lands — the tab must stay a legacy off-array
+    // singleton instead (the drum grid still edits it through the mode).
+    Object.assign(S, {
+        format: 'sloppak', sessionId: 'test-session', createMode: false,
+        drumTab: null, drumTabDirty: false, arrangements: [], drumSel: new Set(),
+    });
+    assert.strictEqual(editorAddEmptyDrums(), true);
+    assert.ok(S.drumTab, 'tab created');
+    assert.strictEqual(S.arrangements.length, 0, 'no drums arrangement at index 0');
 });
 
 t('editorAddEmptyDrums: refuses outside a sloppak session', () => {

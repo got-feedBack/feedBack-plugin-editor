@@ -31,7 +31,7 @@ import { host } from './host.js';
 import { _pickOnsetsPure, _spectralFluxOnsetsPlan, _spectralFluxStep } from './onsets.js';
 import { _tourNoteAction } from './tour.js';
 import { _rollMidiForNote, _rollPitchCtx, _rollPitchCtxFor, midiToFreq } from './keys.js';
-import { drumArrangementIndex, isDrumArrangement } from './drum-arrangement.js';
+import { isDrumArrangement } from './drum-arrangement.js';
 import { arrKind } from './instrument.js';
 import { _recState } from './midi-record.js';
 import { notes } from './notes.js';
@@ -1707,20 +1707,24 @@ function _guidePitchedEvents() {
 // the strips and the engine can never disagree about who is who.
 function _bandPartsPure(arrangements, drumTab) {
     const out = [];
+    let anyDrumArr = false;
     (arrangements || []).forEach((a, i) => {
-        // The drums arrangement is appended below with the drum tab as its
-        // payload (its own notes are empty) — skip the plain arr pass so it
-        // isn't added twice.
-        if (a && a.type === 'drums') return;
-        if (a) out.push({ key: 'arr:' + i, idx: i, name: a.name || ('Track ' + (i + 1)) });
+        if (!a) return;
+        if (a.type === 'drums') {
+            // A drum PART (a song can hold several): each plays ITS OWN tab's
+            // kit through its own `arr:<idx>` channel — the SAME key its mixer
+            // strip uses. An empty part (no hits yet) schedules nothing.
+            anyDrumArr = true;
+            if (!(a.drumTab && Array.isArray(a.drumTab.hits) && a.drumTab.hits.length)) return;
+            out.push({ key: 'arr:' + i, idx: i, name: a.name || 'Drums' });
+            return;
+        }
+        out.push({ key: 'arr:' + i, idx: i, name: a.name || ('Track ' + (i + 1)) });
     });
-    if (drumTab && Array.isArray(drumTab.hits) && drumTab.hits.length) {
-        // The drum part rides its arrangement's own `arr:<idx>` channel now
-        // (PR2b) — the SAME key the mixer strip uses, so the strip and the
-        // engine agree. `idx` points at the drums arrangement so the scheduler
-        // resolves it; fall back to the legacy key if it isn't materialized.
-        const di = drumArrangementIndex(arrangements);
-        out.push({ key: di >= 0 ? 'arr:' + di : 'drums', idx: di, name: 'Drums' });
+    if (!anyDrumArr && drumTab && Array.isArray(drumTab.hits) && drumTab.hits.length) {
+        // Legacy unmaterialized tab (create-mode compose): the old singleton
+        // band entry, keyed by the legacy 'drums' strip key.
+        out.push({ key: 'drums', idx: -1, name: 'Drums' });
     }
     return out;
 }
@@ -2175,21 +2179,24 @@ function _bandPartPitchedEvents(idx) {
     })));
 }
 
-// Voice the drum-tab hits in [from, to) as the GM KIT through `target`
+// Voice a drum tab's hits in [from, to) as the GM KIT through `target`
 // (null = the guide bus): each piece plays its one-shot (kick, snare, hats,
 // toms, cymbals — DRUM_PIECE_GM_NOTE), lazily loaded on first sight; a hit
 // whose sound isn't ready yet ticks instead (the never-silent rule). The
-// dedupe key is piece-scoped: kick + snare on the same millisecond BOTH
-// sound. Used by band mode (per-part gain target) and the drum-edit guide.
-function _drumKitVoicesInWindow(from, to, target, scale) {
-    const hits = (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab.hits : [];
+// dedupe key is piece-scoped AND part-scoped (`keyPrefix`): kick + snare on
+// the same millisecond BOTH sound, and TWO drum parts hitting the same piece
+// on the same millisecond both sound too. Used by band mode (per-part gain
+// target + each part's OWN tab) and the drum-edit guide (defaults: the
+// active tab, the legacy 'drums' prefix).
+function _drumKitVoicesInWindow(from, to, target, scale, tab = S.drumTab, keyPrefix = 'drums') {
+    const hits = (tab && Array.isArray(tab.hits)) ? tab.hits : [];
     if (!hits.length) return;
     const bus = _ensureMasterBus();
     const tgt = target || (bus && bus.guideGain);
     if (!tgt) return;
     for (const h of hits) {
         if (!h || !Number.isFinite(h.t) || h.t < from || h.t >= to) continue;
-        const key = _bandFiredKeyPure('drums:' + (h.p || ''), h.t);
+        const key = _bandFiredKeyPure(keyPrefix + ':' + (h.p || ''), h.t);
         if (_bandFiredKeys.has(key)) continue;
         _bandFiredKeys.add(key);
         const note = DRUM_PIECE_GM_NOTE[h.p];
@@ -2342,12 +2349,15 @@ function _guideTick() {
             if (!target) continue;
             const arr = part.idx >= 0 ? S.arrangements[part.idx] : null;
             // The drum-grid arrangement (type:"drums") voices real GM percussion
-            // from the drum tab through this part's gain (review #282). Its own
+            // from ITS OWN drum tab through this part's gain (review #282) —
+            // with several drum parts, each voices its own hits, part-scoped
+            // dedupe so two parts hitting the same piece both sound. Its own
             // notes are empty, so it must be caught BEFORE the clap-notes path
-            // below. `part.key === 'drums'` is the defensive fallback for an
-            // un-materialized tab (di < 0 in the roster).
+            // below. `part.key === 'drums'` is the legacy fallback for an
+            // un-materialized tab (create-mode compose; idx -1 in the roster).
             if (part.key === 'drums' || (arr && isDrumArrangement(arr))) {
-                _drumKitVoicesInWindow(from, to, target, 1);
+                _drumKitVoicesInWindow(from, to, target, 1,
+                    (arr && arr.drumTab) || S.drumTab, part.key);
                 continue;
             }
             // A drum-ENCODED pitched part (a legacy "Drums"-named arrangement with

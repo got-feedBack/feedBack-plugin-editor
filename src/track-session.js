@@ -32,7 +32,7 @@
 // ════════════════════════════════════════════════════════════════════
 import { host } from './host.js';
 import { _renameGuardPure } from './arrangement.js';
-import { drumArrangementIndex, isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
+import { drumArrangementIndex, findDrumArrangement, isDrumArrangement, pitchedArrangementCount, syncDrumArrangement } from './drum-arrangement.js';
 import { _partViewKeyPure } from './keys.js';
 import { arrKind, _arrTypeKind } from './instrument.js';
 import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart } from './mixer-panel.js';
@@ -103,20 +103,19 @@ export function _clickSourcePure(sources) {
         && (CLICK_NAME.test(String(source.name || '')) || CLICK_NAME.test(String(source.id || '')))) || null;
 }
 
-// The transcription targets: every arrangement plus the drum tab. targetId
-// is the durable chart-track key (shared with stemLinks); mixKey is the
-// session address partMix / band mode speak — always 'arr:<idx>' now, the
-// drums arrangement included (addressed by its own index).
+// The transcription targets: every arrangement — drums arrangements included,
+// each drum part its own row (a song can hold several). targetId is the
+// durable chart-track key (shared with stemLinks): a drums arrangement's id
+// ('drums' for the primary, 'drums-2'…) doubles as its target id, so the
+// primary's hooks are unchanged. mixKey is the session address partMix / band
+// mode speak — always 'arr:<idx>'. The one legacy case: a drum tab that was
+// never materialized as an arrangement (create-mode compose) still gets the
+// synthesized 'drums' row so its track doesn't vanish there.
 export function _trackSessionTargetsPure(arrangements, drumTab) {
     const out = [];
     const seen = new Set();
     (Array.isArray(arrangements) ? arrangements : []).forEach((arr, index) => {
         if (!arr) return;
-        // The drums arrangement is addressed through the legacy `'drums'` target
-        // below (appended from `drumTab`), not as an `arr:<idx>` target — skip it
-        // here so drums don't get a duplicate row. (Promoting drums to their own
-        // arr:<idx> target is the follow-up.)
-        if (isDrumArrangement(arr)) return;
         let id = idOf(_partViewKeyPure(arr)) || 'arr:' + index;
         // Duplicate part names collapse to one key — suffix the later ones so
         // every part keeps a row (same degradation stemLinks already has).
@@ -124,18 +123,8 @@ export function _trackSessionTargetsPure(arrangements, drumTab) {
         seen.add(id);
         out.push({ id, name: String(arr.name || ('Track ' + (index + 1))).slice(0, 120), mixKey: 'arr:' + index });
     });
-    if (drumTab && Array.isArray(drumTab.hits)) {
-        // The drums arrangement's mix channel is `arr:<idx>` like every other
-        // part (retiring the `'drums'` mix-key singleton) — but its durable
-        // TARGET id stays 'drums', so the tracks-row / stemLinks / delete /
-        // rename hooks that key on it are untouched. Fall back to 'drums' only
-        // if the arrangement hasn't been materialized (defensive; it always is).
-        const di = drumArrangementIndex(arrangements);
-        out.push({
-            id: DRUM_TARGET_ID,
-            name: String(drumTab.name || 'Drums').slice(0, 120),
-            mixKey: di >= 0 ? 'arr:' + di : 'drums',
-        });
+    if (drumTab && Array.isArray(drumTab.hits) && drumArrangementIndex(arrangements) < 0) {
+        out.push({ id: DRUM_TARGET_ID, name: String(drumTab.name || 'Drums').slice(0, 120), mixKey: 'drums' });
     }
     return out;
 }
@@ -781,7 +770,11 @@ function applyTrackRename(trackId, requested) {
     if (!requested || !requested.trim()) return false;
     const current = _rowsLive().rows.find(row => row.id === trackId);
     let clean = requested.trim().slice(0, 120);
-    if (current?.type === 'transcription' && current.targetId !== DRUM_TARGET_ID) {
+    if (current?.type === 'transcription') {
+        // Drum parts flow the same arrangement-name guard as pitched parts
+        // now (typed → the kind-change refusal is skipped, but empty /
+        // too-long / duplicate names still refuse). The legacy unmaterialized
+        // 'drums' row (create mode) has no index and skips the guard, as before.
         const target = _trackSessionTargetsPure(S.arrangements, S.drumTab)
             .find(item => item.id === current.targetId);
         const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
@@ -798,13 +791,26 @@ function applyTrackRename(trackId, requested) {
     let renamed = next.tracks.find(track => track.id === trackId);
     if (!renamed) return false;
     if (renamed.type === 'transcription') {
-        if (renamed.targetId === DRUM_TARGET_ID && S.drumTab) S.drumTab.name = clean;
         const targets = _trackSessionTargetsPure(S.arrangements, S.drumTab);
         const target = targets.find(item => item.id === renamed.targetId);
         const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
+        if (index < 0 && renamed.targetId === DRUM_TARGET_ID && S.drumTab) {
+            // Legacy unmaterialized drum tab (create mode): the tab's own name
+            // field is the persisted name.
+            S.drumTab.name = clean;
+            S.drumTabDirty = true;
+        }
         if (index >= 0 && S.arrangements[index]) {
             const oldTargetId = renamed.targetId;
             S.arrangements[index].name = clean;
+            if (isDrumArrangement(S.arrangements[index])) {
+                // A drum part's PERSISTED name lives inside its tab JSON —
+                // follow it (this part's own tab, NOT S.drumTab: the row being
+                // renamed need not be the part open in the drum grid).
+                const tab = S.arrangements[index].drumTab;
+                if (tab && typeof tab === 'object') tab.name = clean;
+                S.drumTabDirty = true;
+            }
             const newTargetId = idOf(_partViewKeyPure(S.arrangements[index])) || oldTargetId;
             if (newTargetId !== oldTargetId) {
                 next = _trackSessionRetargetPure(next, oldTargetId, newTargetId);
@@ -854,72 +860,107 @@ function selectTrack(trackId, openEditor = false) {
     return true;
 }
 
-// Deleting the drum transcription, as ONE undoable command. This used to
-// blank S.drumTab in place and RESET the whole undo stack — losing not just
-// the delete but every prior edit's undo (the shortcut for "commands in the
+// Deleting ONE drum part, as ONE undoable command. This used to blank
+// S.drumTab in place and RESET the whole undo stack — losing not just the
+// delete but every prior edit's undo (the shortcut for "commands in the
 // stack hold references into the tab"). As a command, stack ORDER gives the
 // same guarantee for free: no older drum edit can be undone until this
 // rollback has put the very same tab object back.
 //
+// `arrIndex` names the part (its position in S.arrangements); it defaults to
+// the PRIMARY so legacy single-part callers are unchanged, and -1 (no
+// materialized part — a create-mode tab) keeps the old singleton semantics.
+// Deleting the ACTIVE part hands the grid to the next remaining part, or
+// exits drum-edit mode when it was the last one; deleting the PRIMARY
+// promotes the next part (its tab ships as the song-level drum_tab on the
+// next save — the back-compat alias always names the first part).
+//
 // The capture set is everything the delete touches:
-//   - the tab REFERENCE (identity matters — older drum commands hold
-//     references into its hits; restoring the same object keeps them valid);
+//   - the ARRANGEMENT + tab REFERENCE (identity matters — older drum
+//     commands hold references into its hits; restoring the same objects
+//     keeps them valid) and its position (rollback re-inserts, not appends);
 //   - the drumTabDirty flag (a tab loaded from disk and deleted must return
 //     to clean on undo, so an unrelated later save doesn't re-serialize it);
-//   - the drums mixer strip (session mix state, dropped by the delete);
+//   - the WHOLE partMix map (the splice renumbers every higher arr:<n>
+//     strip — restoring the exact map is the only correct inverse);
+//   - drum-edit mode / active tab / currentArr (the splice may shift it);
 //   - the pairing map (replaced immutably by _trackLinksRetargetPure, so the
 //     captured reference IS the restore);
 //   - the tree (normalize drops the drum row on exec; committing the
 //     captured tree back restores its folder placement and display rename).
 export class DeleteDrumTabCmd {
-    constructor(rowName) {
+    constructor(rowName, arrIndex = drumArrangementIndex(S.arrangements)) {
         // Song-level data (like tempo-grid commands): the read-only-roll lock
         // must not block deleting/undeleting drums while a fretted part is
         // shown in the piano roll.
         this.songScope = true;
         this._name = rowName;
-        this._tab = S.drumTab;
+        this._index = Number.isInteger(arrIndex) ? arrIndex : -1;
+        this._arr = this._index >= 0 ? (S.arrangements[this._index] || null) : null;
+        this._targetId = this._arr ? String(this._arr.id || DRUM_TARGET_ID) : DRUM_TARGET_ID;
+        this._tab = this._arr ? this._arr.drumTab : S.drumTab;
+        this._wasActive = !!this._tab && S.drumTab === this._tab;
+        this._mode = !!S.drumEditMode;
+        this._currentArr = S.currentArr;
         this._dirty = !!S.drumTabDirty;
-        // The drums arrangement's mix strip is keyed `arr:<drumIdx>` now (PR2b).
-        // Capture the key at construct time — exec clears S.drumTab, which drops
-        // the arrangement and its index. Drums appends last, so on undo it
-        // re-materializes at the same slot (rollback re-derives the index).
-        this._mixKey = 'arr:' + drumArrangementIndex(S.arrangements);
-        this._hadMixStrip = !!(S.partMix && (this._mixKey in S.partMix));
-        this._mixStrip = S.partMix ? S.partMix[this._mixKey] : undefined;
+        this._partMix = (S.partMix && typeof S.partMix === 'object') ? { ...S.partMix } : S.partMix;
         this._links = S.stemLinks;
         this._tree = S.trackSession;
         this._selectedTrackId = S.selectedTrackId;
     }
     exec() {
-        S.drumTab = null;
-        syncDrumArrangement(S);   // remove the derived type:"drums" arrangement
-        // Dirty is what ships the explicit `drum_tab: null` removal on the
-        // next save (see _buildSaveBody) — without it the backend's
-        // absent→preserve path would resurrect drum_tab.json on reload.
+        if (this._arr) {
+            const at = S.arrangements.indexOf(this._arr);
+            if (at >= 0) {
+                S.arrangements.splice(at, 1);
+                // A splice below the current pitched part shifts its index.
+                if (at < S.currentArr) S.currentArr -= 1;
+                // Renumber the higher arr:<n> strips (drop this part's own).
+                S.partMix = _partMixDropArrangementPure(S.partMix, at);
+            }
+            if (this._wasActive) {
+                // The grid moves to the next remaining part, or closes.
+                const next = findDrumArrangement(S.arrangements);
+                S.drumTab = next ? next.drumTab : null;
+                S.drumSel = new Set();
+                if (!next) S.drumEditMode = false;
+            }
+        } else {
+            // Legacy unmaterialized tab (create-mode compose).
+            S.drumTab = null;
+            syncDrumArrangement(S);
+        }
+        // Dirty is what ships the removal on the next save (see
+        // _buildSaveBody: the primary as an explicit `drum_tab` null / a new
+        // promoted primary, the extras as the rebuilt `drum_parts` list) —
+        // without it the backend's absent→preserve path would resurrect the
+        // deleted part on reload.
         S.drumTabDirty = true;
-        if (S.partMix) delete S.partMix[this._mixKey];
-        S.stemLinks = _trackLinksRetargetPure(S.stemLinks, DRUM_TARGET_ID);
-        if (S.selectedTrackId === transcriptionTrackId(DRUM_TARGET_ID)) {
+        S.stemLinks = _trackLinksRetargetPure(S.stemLinks, this._targetId);
+        if (S.selectedTrackId === transcriptionTrackId(this._targetId)) {
             S.selectedTrackId = '';
         }
         commit(S.trackSession, `Deleted drum transcription “${this._name}”.`);
         host.partMixChanged();
     }
     rollback() {
-        S.drumTab = this._tab;
-        syncDrumArrangement(S);   // restore the derived type:"drums" arrangement
-        S.drumTabDirty = this._dirty;
-        if (this._hadMixStrip) {
-            if (!S.partMix) S.partMix = {};
-            // syncDrumArrangement (above) re-appended the drums arrangement;
-            // restore its strip under the CURRENT index (robust if the pitched
-            // count shifted while drums was deleted).
-            const di = drumArrangementIndex(S.arrangements);
-            S.partMix[di >= 0 ? 'arr:' + di : this._mixKey] = this._mixStrip;
+        if (this._arr) {
+            const at = Math.max(0, Math.min(this._index, S.arrangements.length));
+            S.arrangements.splice(at, 0, this._arr);
+            if (this._wasActive) {
+                S.drumTab = this._tab;
+                S.drumSel = new Set();
+            }
+            S.drumEditMode = this._mode;
+            S.currentArr = this._currentArr;
+        } else {
+            S.drumTab = this._tab;
+            syncDrumArrangement(S);   // restore the derived type:"drums" arrangement
         }
+        S.partMix = (this._partMix && typeof this._partMix === 'object') ? { ...this._partMix } : this._partMix;
+        S.drumTabDirty = this._dirty;
         S.stemLinks = this._links;
-        if (this._selectedTrackId === transcriptionTrackId(DRUM_TARGET_ID)
+        if (this._selectedTrackId === transcriptionTrackId(this._targetId)
                 && !S.selectedTrackId) {
             S.selectedTrackId = this._selectedTrackId;
         }
@@ -942,29 +983,33 @@ async function deleteTrack(trackId) {
             `Removed audio track “${row.name}” — the media stays inside the project.`);
         host.partMixChanged();
         host.audioSourcesChanged();
-    } else if (row.targetId === DRUM_TARGET_ID) {
-        if (!confirm(`Delete drum transcription “${row.name}”?`)) return false;
-        const cmd = new DeleteDrumTabCmd(row.name);
-        if (S.history) S.history.exec(cmd); else cmd.exec();
     } else {
         const targets = _trackSessionTargetsPure(S.arrangements, S.drumTab);
         const target = targets.find(item => item.id === row.targetId);
         const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
-        if (index < 0) return false;
-        if (S.arrangements.length <= 1) {
-            setStatus('A feedpak requires at least one transcription arrangement; add another before deleting this track.');
-            return false;
+        const arr = index >= 0 ? S.arrangements[index] : null;
+        if ((arr && isDrumArrangement(arr)) || (!arr && row.targetId === DRUM_TARGET_ID)) {
+            // A drum part (any of them), or the legacy unmaterialized tab.
+            if (!confirm(`Delete drum transcription “${row.name}”?`)) return false;
+            const cmd = new DeleteDrumTabCmd(row.name, arr ? index : -1);
+            if (S.history) S.history.exec(cmd); else cmd.exec();
+        } else {
+            if (index < 0) return false;
+            if (pitchedArrangementCount(S.arrangements) <= 1) {
+                setStatus('A feedpak requires at least one transcription arrangement; add another before deleting this track.');
+                return false;
+            }
+            S.currentArr = index;
+            const removed = await window.editorRemoveArrangement();
+            if (!removed) return false;
+            S.stemLinks = _trackLinksRetargetPure(S.stemLinks, row.targetId);
+            // Preserve every surviving strip's mute/solo/volume — the arrangement
+            // splice renumbers the higher indices, so shift the keys, don't wipe.
+            S.partMix = _partMixDropArrangementPure(S.partMix, index);
+            S.trackSession = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
+            lastRender = '';
+            refreshTrackSession();
         }
-        S.currentArr = index;
-        const removed = await window.editorRemoveArrangement();
-        if (!removed) return false;
-        S.stemLinks = _trackLinksRetargetPure(S.stemLinks, row.targetId);
-        // Preserve every surviving strip's mute/solo/volume — the arrangement
-        // splice renumbers the higher indices, so shift the keys, don't wipe.
-        S.partMix = _partMixDropArrangementPure(S.partMix, index);
-        S.trackSession = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
-        lastRender = '';
-        refreshTrackSession();
     }
     if (S.selectedTrackId === row.id) S.selectedTrackId = '';
     _mixerPanelRefresh();

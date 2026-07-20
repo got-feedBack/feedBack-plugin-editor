@@ -3769,6 +3769,14 @@ export function _stripBeatsFromSaveBody(body) {
     if (body.drum_tab && Array.isArray(body.drum_tab.hits)) {
         body.drum_tab = { ...body.drum_tab, hits: _stripBeatsList(body.drum_tab.hits) };
     }
+    // Extra drum parts (multiple drum charts) — same seconds-only wire rule
+    // as the primary drum_tab above.
+    if (Array.isArray(body.drum_parts)) {
+        body.drum_parts = body.drum_parts.map(p =>
+            (p && p.drum_tab && Array.isArray(p.drum_tab.hits))
+                ? { ...p, drum_tab: { ...p.drum_tab, hits: _stripBeatsList(p.drum_tab.hits) } }
+                : p);
+    }
     return body;
 }
 
