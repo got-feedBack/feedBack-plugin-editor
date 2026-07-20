@@ -1972,7 +1972,8 @@ export function _stemCatchupPure(playStartTime, playStartWall, currentTime, rate
 // playing node, drop its gain node, and — the one that bites — delete its
 // 'audio:<id>' entry from S.partMix. That entry is counted by the whole-map
 // solo rule, so a stale SOLO left behind by a removed stem would silence every
-// live track. Mirrors the drum-delete path (delete S.partMix.drums).
+// live track. Same hazard the arrangement-delete path guards against by
+// renumbering the arr:<idx> keys (see _partMixDropArrangementPure).
 export function _pruneStaleStems(liveIds) {
     for (const id of [...playingStemSources.keys()]) {
         if (liveIds.has(id)) continue;
