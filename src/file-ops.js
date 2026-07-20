@@ -222,7 +222,10 @@ export async function loadCDLC(filename, options = {}) {
         // Migrate the song-level drum tab into a `type:"drums"` arrangement
         // (S.arrangements comes from data.arrangements above; drums are appended
         // last so no arr:<idx> shifts). The arrangement's payload IS S.drumTab.
-        syncDrumArrangement(S);
+        // Pass the persisted primary id (the alias entry id) so a promoted,
+        // non-"drums" primary re-materializes under the same id its stem links
+        // / tree rows are keyed by; absent → the legacy "drums" default.
+        syncDrumArrangement(S, data.drum_tab_id);
         // EXTRA drum parts (a song can hold several): the backend reads them
         // from the manifest's `type:"drums"` arrangement entries (per-
         // arrangement `drum_tab` pointers, feedpak-spec 1.17.0) and ships
@@ -751,6 +754,12 @@ export function _buildSaveBody(forceFullSnapshot) {
         // Legacy unmaterialized tab (create-mode compose) has no drums
         // arrangement — its S.drumTab IS the primary, as before.
         body.drum_tab = parts.length ? (parts[0].drumTab ?? null) : S.drumTab;
+        // The primary's durable id (parts[0].id) — the backend persists the
+        // alias entry under it so a promoted primary (e.g. "drums-2" after the
+        // original "drums" was deleted) round-trips its identity and its stem
+        // links / tree rows survive reload. Blank for a legacy unmaterialized
+        // tab → the backend defaults to "drums".
+        body.drum_tab_id = parts.length ? String(parts[0].id || '') : '';
         body.drum_parts = parts.slice(1).map(a => ({
             id: String(a.id || ''),
             name: String(a.name || 'Drums').slice(0, 120),

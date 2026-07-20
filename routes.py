@@ -211,6 +211,27 @@ def _plugin_version() -> str:
 _DRUM_TAB_ABSENT = object()
 
 
+def _primary_drum_alias_id(raw):
+    """The id under which the PRIMARY drum part's song-level ``drum_tab``
+    alias entry is persisted.
+
+    The frontend sends the promoted primary's ACTUAL id (``parts[0].id``) as
+    ``drum_tab_id`` so that deleting the original primary and promoting a
+    survivor (e.g. ``drums-2``) round-trips the part's identity: the alias
+    entry keeps that id, so on reload the arrangement returns under the same
+    id its ``editor_stem_links`` / track-session tree rows are keyed by (they
+    would otherwise be dropped as orphans). Sanitized to the same filename-safe
+    charset as the extra parts; falls back to the legacy ``"drums"`` when the
+    field is absent/blank — a legacy single-drum pack (and an old client that
+    doesn't send the field) stays byte-identical, and old readers still find
+    the song-level ``drum_tab``.
+
+    Module-level so pytest can reach it.
+    """
+    pid = re.sub(r"[^a-z0-9_-]+", "-", str(raw or "").strip().lower()).strip("-_")
+    return pid or "drums"
+
+
 def _drum_arrs_to_drum_tab(drum_arrs, out_unmapped=None):
     """Fold drum arrangements into a drum_tab.
 
@@ -4545,6 +4566,7 @@ def setup(app, context):
             # above; never load it twice. A malformed part file is skipped,
             # never fatal (a reader must not crash on a bad side-file).
             _primary_rel = loaded.manifest.get("drum_tab")
+            _primary_id = ""
             _drum_parts = []
             _seen_part_rels: set = set()
             for _entry in (loaded.manifest.get("arrangements", []) or []):
@@ -4554,7 +4576,16 @@ def setup(app, context):
                 if not isinstance(_rel, str) or not _rel.strip():
                     continue
                 _rel = _rel.strip()
-                if _rel == _primary_rel or _rel in _seen_part_rels:
+                if _rel == _primary_rel:
+                    # The alias entry for the song-level drum_tab IS the
+                    # primary — never load it as an extra. Surface its id so
+                    # the frontend re-materializes the primary under the same
+                    # id (a promoted, non-"drums" primary keeps its stem
+                    # links / tree rows on reload).
+                    if not _primary_id:
+                        _primary_id = str(_entry.get("id") or "")
+                    continue
+                if _rel in _seen_part_rels:
                     continue
                 _seen_part_rels.add(_rel)
                 _src = Path(loaded.source_dir).resolve()
@@ -4578,6 +4609,13 @@ def setup(app, context):
                 })
             if _drum_parts:
                 result["drum_parts"] = _drum_parts
+            # The primary's persisted id (from its alias entry) so the
+            # frontend re-materializes it under the same id it saved — only
+            # when there IS a primary drum_tab and an explicit alias id. A
+            # legacy pack with no alias entry omits it → the frontend keeps
+            # the default "drums", byte-identical.
+            if _loaded_drum_tab is not None and _primary_id:
+                result["drum_tab_id"] = _primary_id
             # Carry the manifest-derived arrangement id list onto each
             # arrangement so the frontend can round-trip it back to us.
             # Use a single `used_ids` set when generating fallback ids so two
@@ -5236,10 +5274,14 @@ def setup(app, context):
                     # The primary's alias entry — same file the song-level
                     # `drum_tab:` key names, so a reader that predates the
                     # spec stays with one drum and a spec reader must not
-                    # load it twice.
-                    used_part_ids.add("drums")
+                    # load it twice. Its id FOLLOWS the incoming primary's id
+                    # (the frontend's `drum_tab_id`, = parts[0].id) so a
+                    # promoted primary round-trips its identity; legacy /
+                    # old-client saves fall back to "drums".
+                    _primary_id = _primary_drum_alias_id(data.get("drum_tab_id"))
+                    used_part_ids.add(_primary_id)
                     new_drum_entries.append({
-                        "id": "drums",
+                        "id": _primary_id,
                         "name": str(drum_tab_payload.get("name") or "Drums")[:120],
                         "type": "drums",
                         "drum_tab": "drum_tab.json",
