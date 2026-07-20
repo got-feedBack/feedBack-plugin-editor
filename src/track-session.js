@@ -33,6 +33,7 @@
 import { host } from './host.js';
 import { _renameGuardPure } from './arrangement.js';
 import { _partViewKeyPure } from './keys.js';
+import { arrKind } from './instrument.js';
 import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart } from './mixer-panel.js';
 import { S, markSessionDirty } from './state.js';
 import { _editorEscHtml, setStatus } from './ui.js';
@@ -41,6 +42,24 @@ const MASTER_ID = 'master';
 const DRUM_TARGET_ID = 'drums';
 const VERSION = 2;
 const TRACK_LANE_DEFAULT = 56;
+
+// The Tracks-view kind badge [abbr, tooltip]. An audio row shows its LAYER
+// (Mix / Audio); a transcription row shows its INSTRUMENT, read
+// type-authoritatively via `arrKind` (so a mis-named part badges by what it IS,
+// not its name) — the drum target is drums by identity. Pure: takes the row +
+// arrangements, so it unit-tests without the DOM.
+const _KIND_ABBR = {
+    guitar: ['GTR', 'Guitar'], bass: ['BAS', 'Bass'], keys: ['KEY', 'Keys'],
+    drums: ['DRM', 'Drums'], vocals: ['VOX', 'Vocals'],
+};
+export function _trackKindBadgePure(row, arrangements) {
+    if (!row) return ['', ''];
+    if (row.type === 'audio') return row.sourceKind === 'master' ? ['MIX', 'Master mix'] : ['AUD', 'Audio'];
+    if (row.targetId === DRUM_TARGET_ID) return _KIND_ABBR.drums;
+    const idx = (row.mixKey && row.mixKey.startsWith('arr:')) ? Number(row.mixKey.slice(4)) : -1;
+    const arr = (idx >= 0 && Array.isArray(arrangements)) ? arrangements[idx] : null;
+    return _KIND_ABBR[arrKind(arr)] || _KIND_ABBR.guitar;
+}
 const TRACK_LANE_MIN = 28;
 const TRACK_LANE_MAX = 160;
 const idOf = (value) => typeof value === 'string' && value.trim().length > 0 && value.length <= 160 ? value.trim() : '';
@@ -697,8 +716,10 @@ function render() {
         const style = `--track-indent:${indent}px;--track-row-height:${height}px`;
         const selected = row.id === S.selectedTrackId ? ' editor-track-selected' : '';
         if (row.type === 'folder') return `<div class="editor-track-row editor-track-folder${selected}" draggable="true" data-track-id="${trackId}" style="${style}"><button data-track-action="collapse" data-track-id="${trackId}">${row.collapsed ? '›' : '⌄'}</button>${trackName(row, `<span class="editor-track-name">${name}</span>`)}${resizeGrip(row)}</div>`;
-        if (row.type === 'audio') return `<div class="editor-track-row${selected}${row.sourceId === model.tempoGuideSourceId ? ' editor-track-guide' : ''}" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.sourceKind === 'master' ? 'MIX' : 'AUD'}</span>${trackName(row, `<span class="editor-track-name">${name}</span>`)}${mixControls(row)}<button data-track-action="guide-set" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use for tempo">${row.sourceId === model.tempoGuideSourceId ? '★' : '☆'}</button>${resizeGrip(row)}</div>`;
-        return `<div class="editor-track-row editor-track-transcription${selected}" draggable="true" data-track-id="${trackId}" style="${style}"><span class="editor-track-kind">${row.targetId === DRUM_TARGET_ID ? 'DRM' : 'MIDI'}</span>${trackName(row, `<button class="editor-track-name" data-track-action="select" data-target-id="${_editorEscHtml(row.targetId)}" title="Double-click to open editor">${name}</button>`)}${mixControls(row)}<select data-track-action="pair" data-track-id="${trackId}" data-target-id="${_editorEscHtml(row.targetId)}" aria-label="Audio reference for ${name}">${sourceOptions(row.pairedSourceId)}</select>${resizeGrip(row)}</div>`;
+        const [kindAbbr, kindTitle] = _trackKindBadgePure(row, S.arrangements);
+        const kindBadge = `<span class="editor-track-kind" title="${_editorEscHtml(kindTitle)}">${kindAbbr}</span>`;
+        if (row.type === 'audio') return `<div class="editor-track-row${selected}${row.sourceId === model.tempoGuideSourceId ? ' editor-track-guide' : ''}" draggable="true" data-track-id="${trackId}" style="${style}">${kindBadge}${trackName(row, `<span class="editor-track-name">${name}</span>`)}${mixControls(row)}<button data-track-action="guide-set" data-source-id="${_editorEscHtml(row.sourceId)}" title="Use for tempo">${row.sourceId === model.tempoGuideSourceId ? '★' : '☆'}</button>${resizeGrip(row)}</div>`;
+        return `<div class="editor-track-row editor-track-transcription${selected}" draggable="true" data-track-id="${trackId}" style="${style}">${kindBadge}${trackName(row, `<button class="editor-track-name" data-track-action="select" data-target-id="${_editorEscHtml(row.targetId)}" title="Double-click to open editor">${name}</button>`)}${mixControls(row)}<select data-track-action="pair" data-track-id="${trackId}" data-target-id="${_editorEscHtml(row.targetId)}" aria-label="Audio reference for ${name}">${sourceOptions(row.pairedSourceId)}</select>${resizeGrip(row)}</div>`;
     }).join('')}</div>`;
     const list = el.querySelector('.editor-track-session-list');
     if (list) list.scrollTop = Math.max(0, Number(S.trackScrollY) || 0);

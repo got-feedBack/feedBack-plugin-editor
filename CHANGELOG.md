@@ -18,8 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keys/bass view and string-count decisions, falling back to the old name inference
   only when a track is untyped. Existing songs open exactly as before — but a part
   named against its instrument (a guitar called "Grand Piano") finally reads as
-  what it *is*. Foundation for first-class drum tracks, vocals, and freely
-  renaming a track without changing its instrument.
+  what it *is*. **The Tracks list now badges each transcription track with its
+  instrument** (GTR / BAS / KEY / DRM / VOX) instead of a generic "MIDI", read
+  from that same authoritative identity. Foundation for first-class drum tracks,
+  vocals, and freely renaming a track without changing its instrument.
 
 - **The piano roll stretches, compacts and scrolls.** Its lane height used to be
   derived and untouchable — the whole pitch range packed into about 350px — so a

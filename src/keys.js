@@ -19,7 +19,10 @@ import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js
 import { notes } from './notes.js';
 import { S } from './state.js';
 import { PIANO_NOTE_NAMES, _noteNamesForKeyPure } from './theory.js';
-import { _arrTypeKind } from './instrument.js';
+import { KEYS_PATTERN, _arrTypeKind } from './instrument.js';
+// Re-export so the many sites that import KEYS_PATTERN from keys.js keep working;
+// its canonical definition now lives in the instrument-identity leaf.
+export { KEYS_PATTERN };
 
 // ── Piano roll constants ────────────────────────────────────────────
 export const PIANO_OCTAVE_COLORS = [
@@ -28,10 +31,6 @@ export const PIANO_OCTAVE_COLORS = [
 ];
 export let PIANO_LANE_H = 10;  // pixels per MIDI semitone
 export let pianoRange = { lo: 36, hi: 96 }; // MIDI range, updated per arrangement
-// Names that should open in keys (piano-roll) editor mode. Arrangements
-// named "Piano", "Keyboard", or "Synth" render as piano-roll charts rather
-// than 6-string guitar charts.
-export const KEYS_PATTERN = /^(keys|piano|keyboard|synth)/i;
 
 // Per-part editing-view choice (V2/V9 of EDITOR-VIEW-MODALITY-DESIGN):
 // 'string' (fretted lanes) or 'piano' (the roll). Keys-DATA arrangements

@@ -18,9 +18,10 @@
  */
 import assert from 'node:assert';
 
-import { _typeKind, _arrTypeKind } from '../src/instrument.js';
-import { isKeysArr } from '../src/keys.js';
+import { _typeKind, _arrTypeKind, _arrKindFromName, arrKind } from '../src/instrument.js';
+import { isKeysArr, KEYS_PATTERN } from '../src/keys.js';
 import { _seedExtendedStringsFromTuning } from '../src/lanes.js';
+import { _trackKindBadgePure } from '../src/track-session.js';
 import { seedState } from './_history_env.mjs';
 
 let pass = 0; let fail = 0;
@@ -95,6 +96,45 @@ t('_seedExtendedStringsFromTuning: untyped falls back to the /bass/ name test (b
     const gtr = [{ name: 'Rhythm', tuning: [0, 0, 0, 0, 0] }];       // len 5, non-bass → baseline 6, unset
     _seedExtendedStringsFromTuning(gtr, true);
     assert.strictEqual(gtr[0]._extendedStrings, undefined, 'untyped non-bass, len 5 → baseline 6, unset');
+});
+
+// ── _arrKindFromName + arrKind (the canonical resolver) ───────────────
+t('KEYS_PATTERN is re-exported from keys.js (its home is now the leaf)', () => {
+    assert.strictEqual(KEYS_PATTERN.test('Piano'), true);
+    assert.strictEqual(KEYS_PATTERN.test('Electric Piano'), false, 'prefix-anchored, unchanged');
+});
+
+t('_arrKindFromName mirrors the legacy runtime inference (keys before bass)', () => {
+    assert.strictEqual(_arrKindFromName('Piano'), 'keys');
+    assert.strictEqual(_arrKindFromName('Synth Lead'), 'keys');
+    assert.strictEqual(_arrKindFromName('Drums'), 'drums');
+    assert.strictEqual(_arrKindFromName('Drums 2'), 'drums');
+    assert.strictEqual(_arrKindFromName('Drumkit'), 'guitar', 'prefix is /^drums/ — "Drumkit" is not "drums"');
+    assert.strictEqual(_arrKindFromName('Synth Bass'), 'keys', 'keys wins over bass');
+    assert.strictEqual(_arrKindFromName('Bass'), 'bass');
+    assert.strictEqual(_arrKindFromName('Lead'), 'guitar');
+    assert.strictEqual(_arrKindFromName(''), 'guitar');
+});
+
+t('arrKind: authored type wins, name inference is the fallback', () => {
+    assert.strictEqual(arrKind({ name: 'Lead', type: 'drums' }), 'drums', 'type wins');
+    assert.strictEqual(arrKind({ name: 'Grand Piano', type: 'guitar' }), 'guitar', 'type wins over keys name');
+    assert.strictEqual(arrKind({ name: 'Piano' }), 'keys', 'untyped → name inference');
+    assert.strictEqual(arrKind({ name: 'Bass' }), 'bass');
+    assert.strictEqual(arrKind({ name: 'Backing Vox', type: 'vocals' }), 'vocals');
+    assert.strictEqual(arrKind(null), 'guitar', 'no arr → guitar default');
+});
+
+// ── the Tracks-view kind badge ────────────────────────────────────────
+t('_trackKindBadgePure: audio shows the layer, transcription shows the instrument', () => {
+    assert.deepStrictEqual(_trackKindBadgePure({ type: 'audio', sourceKind: 'master' }, []), ['MIX', 'Master mix']);
+    assert.deepStrictEqual(_trackKindBadgePure({ type: 'audio', sourceKind: 'stem' }, []), ['AUD', 'Audio']);
+    assert.deepStrictEqual(_trackKindBadgePure({ type: 'transcription', targetId: 'drums' }, []), ['DRM', 'Drums']);
+    const arrs = [{ name: 'Lead' }, { name: 'Piano' }, { name: 'Rhythm', type: 'bass' }, { name: 'Choir', type: 'vocals' }];
+    assert.deepStrictEqual(_trackKindBadgePure({ type: 'transcription', targetId: 'Lead', mixKey: 'arr:0' }, arrs), ['GTR', 'Guitar']);
+    assert.deepStrictEqual(_trackKindBadgePure({ type: 'transcription', targetId: 'Piano', mixKey: 'arr:1' }, arrs), ['KEY', 'Keys']);
+    assert.deepStrictEqual(_trackKindBadgePure({ type: 'transcription', targetId: 'Rhythm', mixKey: 'arr:2' }, arrs), ['BAS', 'Bass'], 'type wins over the non-bass name');
+    assert.deepStrictEqual(_trackKindBadgePure({ type: 'transcription', targetId: 'Choir', mixKey: 'arr:3' }, arrs), ['VOX', 'Vocals']);
 });
 
 for (const [name, fn] of tests) {

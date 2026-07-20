@@ -46,3 +46,29 @@ export function _typeKind(rawType) {
 export function _arrTypeKind(arr) {
     return _typeKind(arr && arr.type);
 }
+
+// The keys-family name matcher (prefix-anchored): arrangements whose name STARTS
+// with keys/piano/keyboard/synth open as piano-roll charts. Its canonical home
+// is this leaf so the whole name→kind fallback lives in one place; keys.js
+// re-exports it for the many sites that import KEYS_PATTERN from there.
+export const KEYS_PATTERN = /^(keys|piano|keyboard|synth)/i;
+
+// The runtime instrument kind inferred from a NAME — the legacy fallback for an
+// untyped track. Prefix-anchored keys/drums, then /bass/ anywhere, else guitar;
+// keys is tested before bass (so "Synth Bass" reads keys). This is now the ONE
+// name-inference implementation — arrangement.js `_arrKindPure` delegates here.
+export function _arrKindFromName(name) {
+    const n = String(name || '');
+    if (KEYS_PATTERN.test(n)) return 'keys';
+    if (/^drums/i.test(n)) return 'drums';
+    if (/bass/i.test(n)) return 'bass';
+    return 'guitar';
+}
+
+// The canonical instrument kind of an arrangement: an authored `type` WINS
+// (identity is DATA), else name inference. The type-authoritative resolver the
+// Tracks-view badge, the remaining view/routing sites, and drums-as-arrangements
+// read — so identity is decided in exactly one place.
+export function arrKind(arr) {
+    return _arrTypeKind(arr) || _arrKindFromName(arr && arr.name);
+}
