@@ -8,6 +8,7 @@ import { _abDisarm, _guideAnalysisReset, _resetAuditionForNewSong, loadAudio, re
 import { _handshapesAreDirty, _normalizeHandshape, flattenChords, reconstructChords } from './chords.js';
 import { _normalizeTuningToLanes } from './commands.js';
 import { editorBuild } from './create.js';
+import { isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
 import { EditHistory } from './history.js';
 import { isKeysMode, rollResetLaneH, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning, _stringCountFor } from './lanes.js';
@@ -218,6 +219,10 @@ export async function loadCDLC(filename, options = {}) {
         if (S.drumTab && Array.isArray(S.drumTab.hits)) {
             S.drumTab.hits.sort((a, b) => (a.t || 0) - (b.t || 0));
         }
+        // Migrate the song-level drum tab into a `type:"drums"` arrangement
+        // (S.arrangements comes from data.arrangements above; drums are appended
+        // last so no arr:<idx> shifts). The arrangement's payload IS S.drumTab.
+        syncDrumArrangement(S);
         // Freshly loaded from disk — not dirty until the user edits it.
         S.drumTabDirty = false;
         // The master recording's URL is the active source's anchor — held
@@ -650,7 +655,12 @@ export function _buildSaveBody(forceFullSnapshot) {
         // overwrite the on-disk `tones: null` sentinel with an
         // empty `{base, slots, changes, definitions}` dict on the
         // next sloppak save.
-        body.arrangements = S.arrangements.map(a => {
+        // Drums persist as the song-level `drum_tab` (body.drum_tab below), not
+        // as a manifest arrangement — the type:"drums" arrangement is a session-
+        // only derivation, so exclude it here to keep the built pack byte-
+        // identical (and to keep a drums entry out of arrangements[], where an
+        // old core would fretted-grade it).
+        body.arrangements = S.arrangements.filter(a => !isDrumArrangement(a)).map(a => {
             if (!a) return a;
             // Strip `_anchorEditCount` / `_handshapeEditCount` from every
             // arrangement so the dirty counters never leak to the backend's

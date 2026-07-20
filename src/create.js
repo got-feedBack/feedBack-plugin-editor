@@ -24,6 +24,7 @@ import {
     _updateTonesButtonVisibility,
 } from './annotation-lanes.js';
 import { _handshapesAreDirty, flattenChords, reconstructChords } from './chords.js';
+import { isDrumArrangement } from './drum-arrangement.js';
 import { EditHistory } from './history.js';
 import { host } from './host.js';
 import { isKeysMode, updatePianoRange } from './keys.js';
@@ -2568,6 +2569,9 @@ export async function editorBuild() {
     const savedArr = S.currentArr;
     const allArrangements = [];
     for (let i = 0; i < S.arrangements.length; i++) {
+        // Drums ship via `drum_tab`, never as a manifest arrangement (a session
+        // may hold a materialized type:"drums" arrangement).
+        if (isDrumArrangement(S.arrangements[i])) continue;
         S.currentArr = i;
         flattenChords();
         reconstructChords();

@@ -189,6 +189,7 @@ import {
     _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
 import { arrKind } from './instrument.js';
+import { clampAwayFromDrums } from './drum-arrangement.js';
 import {
     _restoreSuggestedMarks,
     _saveSuggestedMarks, _suggestedCount, chords, notes
@@ -1039,19 +1040,25 @@ function updateArrangementSelector() {
     const sel = document.getElementById('editor-arrangement');
     sel.innerHTML = '';
     S.arrangements.forEach((arr, i) => {
+        // The drums arrangement isn't offered in this pitched-part switcher —
+        // it's opened via 🥁 Edit Drums / its Tracks row. Skipping it keeps the
+        // dropdown (and its show/hide threshold below) byte-identical.
+        if (arr && arr.type === 'drums') return;
         const opt = document.createElement('option');
         opt.value = i;
         opt.textContent = arr.name;
         sel.appendChild(opt);
     });
-    sel.style.display = S.arrangements.length > 1 ? '' : 'none';
+    sel.style.display = sel.options.length > 1 ? '' : 'none';
     // Re-apply the active arrangement after the rebuild so callers that
     // changed S.currentArr (e.g. + Keys / + Drums append, remove-arr)
     // don't end up with a `<select>` snapped back to option 0 while the
     // canvas edits the appended arrangement. Clamp to the valid range
     // so an out-of-bounds S.currentArr doesn't render as a blank value.
     if (S.arrangements.length > 0) {
-        const idx = Math.max(0, Math.min(S.currentArr || 0, S.arrangements.length - 1));
+        // Clamp to a PITCHED index — the derived drums arrangement is never the
+        // selected pitched arrangement (it has no option in this switcher).
+        const idx = clampAwayFromDrums(S.arrangements, S.currentArr || 0);
         S.currentArr = idx;
         sel.value = String(idx);
     }

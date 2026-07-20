@@ -29,6 +29,9 @@ import { host } from './host.js';
 export function _partsListPure(arrangements, drumTab) {
     const parts = [];
     (arrangements || []).forEach((arr, i) => {
+        // The drums arrangement is drawn as the dedicated drum lane below (from
+        // `drumTab`), not as a note-lane — skip it here so it isn't listed twice.
+        if (arr && arr.type === 'drums') return;
         parts.push({
             kind: 'arr',
             idx: i,
