@@ -208,8 +208,8 @@ export const host = {
     /** Mixer strip keys in Tracks-column row order (mixer follows a reorder). */
     mixerTrackOrder: () => [],
     /**
-     * Per-part strip state BY KEY ('arr:<idx>' / 'drums') for band-mode
-     * MIDI playback: {audible, vol 0..1} with the whole-map solo rule.
+     * Per-part strip state BY KEY ('arr:<idx>', the drums arrangement included)
+     * for band-mode MIDI playback: {audible, vol 0..1} with the whole-map solo rule.
      * Owned by src/mixer-panel.js; inert default = every part at unity.
      */
     partStripState: () => ({ audible: true, vol: 1 }),

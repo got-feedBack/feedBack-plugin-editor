@@ -31,6 +31,7 @@ import { host } from './host.js';
 import { _pickOnsetsPure, _spectralFluxOnsetsPlan, _spectralFluxStep } from './onsets.js';
 import { _tourNoteAction } from './tour.js';
 import { _rollMidiForNote, _rollPitchCtx, _rollPitchCtxFor, midiToFreq } from './keys.js';
+import { drumArrangementIndex, isDrumArrangement } from './drum-arrangement.js';
 import { arrKind } from './instrument.js';
 import { _recState } from './midi-record.js';
 import { notes } from './notes.js';
@@ -1702,19 +1703,24 @@ function _guidePitchedEvents() {
 // identical. Drum parts clap (GM percussion is a follow-up).
 //
 // The band roster: one entry per mixable part, in strip order — the SAME
-// keys the mixer panel uses ('arr:<idx>' / 'drums'), so the strips and the
-// engine can never disagree about who is who.
+// `arr:<idx>` keys the mixer panel uses (the drums arrangement included), so
+// the strips and the engine can never disagree about who is who.
 function _bandPartsPure(arrangements, drumTab) {
     const out = [];
     (arrangements || []).forEach((a, i) => {
-        // The drums arrangement plays through the `'drums'` band key (from
-        // drumTab) below, not as an `arr:<idx>` part — skip it so it doesn't add
-        // a phantom (empty-note) band entry.
+        // The drums arrangement is appended below with the drum tab as its
+        // payload (its own notes are empty) — skip the plain arr pass so it
+        // isn't added twice.
         if (a && a.type === 'drums') return;
         if (a) out.push({ key: 'arr:' + i, idx: i, name: a.name || ('Track ' + (i + 1)) });
     });
     if (drumTab && Array.isArray(drumTab.hits) && drumTab.hits.length) {
-        out.push({ key: 'drums', idx: -1, name: 'Drums' });
+        // The drum part rides its arrangement's own `arr:<idx>` channel now
+        // (PR2b) — the SAME key the mixer strip uses, so the strip and the
+        // engine agree. `idx` points at the drums arrangement so the scheduler
+        // resolves it; fall back to the legacy key if it isn't materialized.
+        const di = drumArrangementIndex(arrangements);
+        out.push({ key: di >= 0 ? 'arr:' + di : 'drums', idx: di, name: 'Drums' });
     }
     return out;
 }
@@ -2335,10 +2341,19 @@ function _guideTick() {
             const target = _ensurePartGain(part.key);
             if (!target) continue;
             const arr = part.idx >= 0 ? S.arrangements[part.idx] : null;
-            // A drum-ENCODED arrangement (created/imported/legacy "Drums" part —
-            // no pitch, so _bandPartPitchedEvents returns []) claps its rhythm
-            // through this part's gain, else it voices neither GM nor clap and
-            // goes silent (review #280 follow-up; GM percussion here is a follow-up).
+            // The drum-grid arrangement (type:"drums") voices real GM percussion
+            // from the drum tab through this part's gain (review #282). Its own
+            // notes are empty, so it must be caught BEFORE the clap-notes path
+            // below. `part.key === 'drums'` is the defensive fallback for an
+            // un-materialized tab (di < 0 in the roster).
+            if (part.key === 'drums' || (arr && isDrumArrangement(arr))) {
+                _drumKitVoicesInWindow(from, to, target, 1);
+                continue;
+            }
+            // A drum-ENCODED pitched part (a legacy "Drums"-named arrangement with
+            // real notes, not type:"drums") claps its rhythm through this part's
+            // gain, else it voices neither GM nor clap and goes silent (review
+            // #280 follow-up; GM percussion here is a follow-up).
             if (arr && arrKind(arr) === 'drums') {
                 const times = _guideSanitizeTimesPure((arr.notes || []).map(n => n.time));
                 for (const t of _guideClapTimesInWindowPure(times, from, to)) {
@@ -2347,11 +2362,6 @@ function _guideTick() {
                     _bandFiredKeys.add(k);
                     _guideClapVoiceAt(_guideChartToCtxPure(t, S.playStartWall, S.playStartTime, _auditionRate()), target, 1);
                 }
-                continue;
-            }
-            // The drum-grid sidecar plays real GM percussion (review #282).
-            if (part.key === 'drums') {
-                _drumKitVoicesInWindow(from, to, target, 1);
                 continue;
             }
             const gm = editorGmVoiceFor(_gmKindPure(arrKind(arr)));

@@ -32,7 +32,7 @@
 // ════════════════════════════════════════════════════════════════════
 import { host } from './host.js';
 import { _renameGuardPure } from './arrangement.js';
-import { isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
+import { drumArrangementIndex, isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
 import { _partViewKeyPure } from './keys.js';
 import { arrKind, _arrTypeKind } from './instrument.js';
 import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart } from './mixer-panel.js';
@@ -105,7 +105,8 @@ export function _clickSourcePure(sources) {
 
 // The transcription targets: every arrangement plus the drum tab. targetId
 // is the durable chart-track key (shared with stemLinks); mixKey is the
-// session address partMix / band mode speak ('arr:<idx>' / 'drums').
+// session address partMix / band mode speak — always 'arr:<idx>' now, the
+// drums arrangement included (addressed by its own index).
 export function _trackSessionTargetsPure(arrangements, drumTab) {
     const out = [];
     const seen = new Set();
@@ -124,7 +125,17 @@ export function _trackSessionTargetsPure(arrangements, drumTab) {
         out.push({ id, name: String(arr.name || ('Track ' + (index + 1))).slice(0, 120), mixKey: 'arr:' + index });
     });
     if (drumTab && Array.isArray(drumTab.hits)) {
-        out.push({ id: DRUM_TARGET_ID, name: String(drumTab.name || 'Drums').slice(0, 120), mixKey: 'drums' });
+        // The drums arrangement's mix channel is `arr:<idx>` like every other
+        // part (retiring the `'drums'` mix-key singleton) — but its durable
+        // TARGET id stays 'drums', so the tracks-row / stemLinks / delete /
+        // rename hooks that key on it are untouched. Fall back to 'drums' only
+        // if the arrangement hasn't been materialized (defensive; it always is).
+        const di = drumArrangementIndex(arrangements);
+        out.push({
+            id: DRUM_TARGET_ID,
+            name: String(drumTab.name || 'Drums').slice(0, 120),
+            mixKey: di >= 0 ? 'arr:' + di : 'drums',
+        });
     }
     return out;
 }
@@ -869,8 +880,13 @@ export class DeleteDrumTabCmd {
         this._name = rowName;
         this._tab = S.drumTab;
         this._dirty = !!S.drumTabDirty;
-        this._hadMixStrip = !!(S.partMix && ('drums' in S.partMix));
-        this._mixStrip = S.partMix ? S.partMix.drums : undefined;
+        // The drums arrangement's mix strip is keyed `arr:<drumIdx>` now (PR2b).
+        // Capture the key at construct time — exec clears S.drumTab, which drops
+        // the arrangement and its index. Drums appends last, so on undo it
+        // re-materializes at the same slot (rollback re-derives the index).
+        this._mixKey = 'arr:' + drumArrangementIndex(S.arrangements);
+        this._hadMixStrip = !!(S.partMix && (this._mixKey in S.partMix));
+        this._mixStrip = S.partMix ? S.partMix[this._mixKey] : undefined;
         this._links = S.stemLinks;
         this._tree = S.trackSession;
         this._selectedTrackId = S.selectedTrackId;
@@ -882,7 +898,7 @@ export class DeleteDrumTabCmd {
         // next save (see _buildSaveBody) — without it the backend's
         // absent→preserve path would resurrect drum_tab.json on reload.
         S.drumTabDirty = true;
-        if (S.partMix) delete S.partMix.drums;
+        if (S.partMix) delete S.partMix[this._mixKey];
         S.stemLinks = _trackLinksRetargetPure(S.stemLinks, DRUM_TARGET_ID);
         if (S.selectedTrackId === transcriptionTrackId(DRUM_TARGET_ID)) {
             S.selectedTrackId = '';
@@ -896,7 +912,11 @@ export class DeleteDrumTabCmd {
         S.drumTabDirty = this._dirty;
         if (this._hadMixStrip) {
             if (!S.partMix) S.partMix = {};
-            S.partMix.drums = this._mixStrip;
+            // syncDrumArrangement (above) re-appended the drums arrangement;
+            // restore its strip under the CURRENT index (robust if the pitched
+            // count shifted while drums was deleted).
+            const di = drumArrangementIndex(S.arrangements);
+            S.partMix[di >= 0 ? 'arr:' + di : this._mixKey] = this._mixStrip;
         }
         S.stemLinks = this._links;
         if (this._selectedTrackId === transcriptionTrackId(DRUM_TARGET_ID)

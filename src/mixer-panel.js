@@ -7,7 +7,7 @@
 // (recording / guide / click) and the edit blip.
 //
 // This module owns the CANONICAL per-part mix state, `S.partMix` — a map from
-// part key ('arr:<idx>' for arrangements, 'drums' for the drum tab) to
+// part key ('arr:<idx>' for arrangements, the drums arrangement included) to
 // { vol, mute, solo }. Today the only per-part sound is the guide voice (claps
 // follow the active editing surface), so mute/solo/volume gate and scale the
 // guide claps for the part being edited; the Parts-gutter M/S/A (§2.5) and
@@ -25,14 +25,17 @@
 // Part mute/solo/volume is SESSION state — it resets with the loaded song
 // (create.js / file-ops.js clear `S.partMix` when they install arrangements).
 // ════════════════════════════════════════════════════════════════════
+import { drumArrangementIndex } from './drum-arrangement.js';
 import { host } from './host.js';
 import { S, editGen } from './state.js';
 import { _editorEscHtml, setStatus } from './ui.js';
 
 /* @pure:mixer-panel:start */
-// One strip per part: every arrangement, plus the drum tab as its own strip
-// (drums are a song-level sidecar, not an arrangement) — the same list shape
-// as the Parts view, keyed the way S.currentArr addresses parts (by index).
+// One strip per part, keyed the way S.currentArr addresses parts (by index).
+// The drums arrangement is an ordinary `type:"drums"` entry in `arrangements`
+// now (its strip is `arr:<idx>` like any other part — no `'drums'` singleton),
+// so a single pass over the arrangements covers it. `drumTab` is unused here;
+// it stays in the signature so callers match the sibling roster builders.
 export function _mixerPartsPure(arrangements, drumTab, stems, removedSourceIds, master) {
     const parts = [];
     // The master mix leads the audio band as its own channel strip (keyed
@@ -60,9 +63,6 @@ export function _mixerPartsPure(arrangements, drumTab, stems, removedSourceIds, 
             name: (arr && arr.name) || 'Track ' + (i + 1),
         });
     });
-    if (drumTab && Array.isArray(drumTab.hits) && drumTab.hits.length) {
-        parts.push({ key: 'drums', name: 'Drums' });
-    }
     return parts;
 }
 // Fader positions run 0..110: 0..100 is linear to unity, 101..110 adds
@@ -136,11 +136,19 @@ export function _mixerPartAudiblePure(partMix, key) {
     if (key === 'audio:master') return true;
     return _mixerAnySoloPure(partMix) ? st.solo : true;
 }
+// The mix key of the ACTIVE editing surface: the drums arrangement's channel
+// while the drum grid is open (`arr:<drumIdx>` — currentArr itself stays on a
+// pitched arrangement, #337), else the current pitched arrangement.
+export function _mixerActivePartKeyPure(drumEditMode, currentArr, drumIdx) {
+    return (drumEditMode && Number(drumIdx) >= 0)
+        ? 'arr:' + drumIdx
+        : 'arr:' + (Number(currentArr) || 0);
+}
 // What the guide-clap scheduler needs for the ACTIVE editing surface: claps
 // follow the drum grid in drum mode, the current arrangement otherwise, so
 // that surface's part decides whether (and how loud) the claps sound.
-export function _mixerClapStatePure(partMix, drumEditMode, currentArr) {
-    const key = drumEditMode ? 'drums' : 'arr:' + (Number(currentArr) || 0);
+export function _mixerClapStatePure(partMix, drumEditMode, currentArr, drumIdx) {
+    const key = _mixerActivePartKeyPure(drumEditMode, currentArr, drumIdx);
     return {
         audible: _mixerPartAudiblePure(partMix, key),
         vol: _mixerGainForFaderPure(_mixerPartStatePure(partMix, key).vol),
@@ -154,7 +162,7 @@ export function _mixerOpenFromStoredPure(raw) {
 
 // The host-hook target audio.js consults per scheduled clap voice.
 export function _mixerClapState() {
-    return _mixerClapStatePure(S.partMix, S.drumEditMode, S.currentArr);
+    return _mixerClapStatePure(S.partMix, S.drumEditMode, S.currentArr, drumArrangementIndex(S.arrangements));
 }
 
 // Band mode's per-KEY twin (host.partStripState): {audible, vol 0..1} for
@@ -195,7 +203,8 @@ function _selectedStripKeyPure() {
     if (!selected) return '';
     if (selected.type === 'audio') return 'audio:' + selected.sourceId;
     if (selected.type === 'transcription') {
-        if (selected.targetId === 'drums') return 'drums';
+        // The drums arrangement resolves through the same id→index path as any
+        // other part (its id is 'drums', so targetId 'drums' → its arr:<idx>).
         const idx = (S.arrangements || [])
             .findIndex((arr, i) => String((arr && arr.id) || ('arr:' + i)) === selected.targetId);
         return idx >= 0 ? 'arr:' + idx : '';
@@ -259,7 +268,7 @@ export function _mixerMeterPeakPure(key, levels, activeAudioId, activePart) {
 }
 
 function _meterPeakForKey(key, levels) {
-    const activePart = S.drumEditMode ? 'drums' : 'arr:' + (Number(S.currentArr) || 0);
+    const activePart = _mixerActivePartKeyPure(S.drumEditMode, S.currentArr, drumArrangementIndex(S.arrangements));
     return _mixerMeterPeakPure(key, levels, S.activeAudioSourceId, activePart);
 }
 
@@ -274,7 +283,7 @@ export function _mixerMeterInputPure(key, levels, activeAudioId, activePart, pla
 }
 
 function _meterInputForKey(key, levels) {
-    const activePart = S.drumEditMode ? 'drums' : 'arr:' + (Number(S.currentArr) || 0);
+    const activePart = _mixerActivePartKeyPure(S.drumEditMode, S.currentArr, drumArrangementIndex(S.arrangements));
     return _mixerMeterInputPure(key, levels, S.activeAudioSourceId, activePart,
         host.playAllTracksEnabled());
 }

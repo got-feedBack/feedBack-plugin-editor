@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The drums track is now an ordinary mixer / Tracks channel.** Building on the
+  drums-as-arrangement work below, the drum chart's mixer strip and Tracks mix now
+  use the same per-arrangement channel address every other part does, instead of a
+  one-off "drums" slot. Mute / solo / volume on the drums strip behave exactly like
+  a pitched track's — including in multi-track ("play all") playback, where the drum
+  kit now follows its own strip — and the drum grid's guide claps follow that strip
+  too. With a single drum chart you won't see a difference (its durable track
+  identity is unchanged, so delete/undo, rename, and pairing all work as before);
+  this is the wiring that lets *several* drum charts each get their own strip.
+
 - **Drums are now a selectable part in the arrangement switcher.** Pick
   **"🥁 Drums"** from the part dropdown to open the drum editor — exactly like
   switching to Lead, Rhythm, or Bass. The drum chart is no longer a mode tucked
