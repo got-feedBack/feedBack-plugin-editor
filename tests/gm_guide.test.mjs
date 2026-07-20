@@ -42,6 +42,7 @@ const {
 } = await import('../src/gm-guide.js');
 const { EDITOR_MENUS, _menuModelPure } = await import('../src/menu-bar.js');
 const { _editorShortcutRowsPure } = await import('../src/shortcuts.js');
+const { arrKind } = await import('../src/instrument.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -102,16 +103,31 @@ t('URL builder: org without an http(s) base yields null (chain moves on), junk s
 
 // ── Kind inference + per-kind voices ──────────────────────────────────
 
-t('kind inference mirrors the repo rule: KEYS_PATTERN start-anchored > /bass/i > guitar', () => {
-    assert.strictEqual(_gmKindPure('Keys'), 'keys');
-    assert.strictEqual(_gmKindPure('Piano 2'), 'keys');
-    assert.strictEqual(_gmKindPure('Synth Lead'), 'keys');
-    assert.strictEqual(_gmKindPure('Electric Piano'), 'guitar',
-        'start-anchored: "Electric Piano" is NOT a keys name (the pinned trap)');
-    assert.strictEqual(_gmKindPure('Bass'), 'bass');
-    assert.strictEqual(_gmKindPure('Lead Guitar'), 'guitar');
-    assert.strictEqual(_gmKindPure(''), 'guitar');
+t('voice family collapses the resolved kind to keys / bass / guitar', () => {
+    // _gmKindPure now takes the RESOLVED instrument kind (arrKind), not a name.
+    // The three GM voice families are keys / bass / guitar; drums and vocals
+    // (and anything unrecognized) fall to the guitar voice.
+    assert.strictEqual(_gmKindPure('keys'), 'keys');
+    assert.strictEqual(_gmKindPure('bass'), 'bass');
+    assert.strictEqual(_gmKindPure('guitar'), 'guitar');
+    assert.strictEqual(_gmKindPure('drums'), 'guitar', 'drums never reach the pitched voice');
+    assert.strictEqual(_gmKindPure('vocals'), 'guitar');
     assert.strictEqual(_gmKindPure(null), 'guitar');
+});
+
+t('an authored `type` drives the guide voice — a mis-NAMED part voices by what it IS', () => {
+    // The rename-safety payoff: identity is DATA. arrKind resolves the type
+    // ahead of the name, so a bass-typed part named "Lead Guitar" takes the
+    // BASS voice, and a keys-typed part named "Gtr" takes the KEYS voice —
+    // on main (name-only) both would have voiced as guitar.
+    assert.strictEqual(_gmKindPure(arrKind({ type: 'bass', name: 'Lead Guitar' })), 'bass');
+    assert.strictEqual(_gmKindPure(arrKind({ type: 'piano', name: 'Gtr' })), 'keys');
+    // Untyped still reads the name (byte-identical to the old behavior): the
+    // pinned start-anchored trap — "Electric Piano" is guitar, "Synth …" keys.
+    assert.strictEqual(_gmKindPure(arrKind({ name: 'Electric Piano' })), 'guitar',
+        'untyped: start-anchored name inference is unchanged');
+    assert.strictEqual(_gmKindPure(arrKind({ name: 'Synth Lead' })), 'keys');
+    assert.strictEqual(_gmKindPure(arrKind({ name: 'Bass' })), 'bass');
 });
 
 t('voice-for-kind: valid pref wins, garbage falls to the kind default, unknown kind is null', () => {

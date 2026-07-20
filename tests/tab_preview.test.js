@@ -22,9 +22,8 @@ if (!m) {
 // Extract the @pure block ALONE — no outer globals prepended. This is the
 // self-containment contract (@pure convention): the block must reference no
 // global declared outside it, or the extracted sandbox throws
-// "X is not defined". Pre-fix this block referenced the outer KEYS_PATTERN,
-// so building it in isolation and calling the guard on a keys part threw;
-// the guard now inlines its regexes.
+// "X is not defined". The guard now takes the RESOLVED instrument kind (the
+// caller passes arrKind), so it carries no regex and no outer ref at all.
 const { _tabPreviewGuardPure, _tabPreviewUrlPure, _tabPreviewHttpMessagePure, _tabPreviewKeyPolicyPure } = new Function(
     '"use strict";' + m[0]
     + '\nreturn { _tabPreviewGuardPure, _tabPreviewUrlPure, _tabPreviewHttpMessagePure, _tabPreviewKeyPolicyPure };'
@@ -38,43 +37,43 @@ function t(name, fn) {
 
 t('guard: fretted saved parts preview; every refusal names its reason', () => {
     assert.deepStrictEqual(
-        _tabPreviewGuardPure('song.sloppak', 'Lead', true), { ok: true, reason: '' });
-    assert.strictEqual(_tabPreviewGuardPure('s', 'Lead', false).ok, false, 'no arrangements');
-    const keys = _tabPreviewGuardPure('s', 'Piano', true);
+        _tabPreviewGuardPure('song.sloppak', 'guitar', true), { ok: true, reason: '' });
+    assert.strictEqual(_tabPreviewGuardPure('s', 'guitar', false).ok, false, 'no arrangements');
+    const keys = _tabPreviewGuardPure('s', 'keys', true);
     assert.strictEqual(keys.ok, false);
     assert.ok(/fretted/.test(keys.reason), 'keys refusal explains itself');
-    const unsaved = _tabPreviewGuardPure('', 'Lead', true);
+    const unsaved = _tabPreviewGuardPure('', 'guitar', true);
     assert.strictEqual(unsaved.ok, false);
     assert.ok(/Save/.test(unsaved.reason), 'unsaved refusal points at Save');
 });
 
 t('guard order: an empty session reads as "load a song", not "save first"', () => {
-    assert.ok(/Load/.test(_tabPreviewGuardPure('', '', false).reason));
+    assert.ok(/Load/.test(_tabPreviewGuardPure('', 'guitar', false).reason));
 });
 
 t('guard order: an unsaved keys part reads as "fretted only", not "save first" (keys wins)', () => {
     // Both the keys and the unsaved conditions hold; the non-fretted check
     // runs first, so the honest reason is the modality one, not Save-first.
-    const r = _tabPreviewGuardPure('', 'Piano', true);
+    const r = _tabPreviewGuardPure('', 'keys', true);
     assert.strictEqual(r.ok, false);
     assert.ok(/fretted/.test(r.reason) && !/Save/.test(r.reason));
 });
 
-t('guard: drums parts are non-fretted and refused (legacy guitar-encoded drums arrangements)', () => {
-    const drums = _tabPreviewGuardPure('song.sloppak', 'Drums', true);
+t('guard: drums parts are non-fretted and refused', () => {
+    const drums = _tabPreviewGuardPure('song.sloppak', 'drums', true);
     assert.strictEqual(drums.ok, false, 'a drums arrangement has no fret/string tab');
     assert.ok(/fretted/.test(drums.reason), 'drums refusal explains itself');
-    // Case-insensitive, prefix-anchored — matches the editor-wide /^drums/i gate.
-    assert.strictEqual(_tabPreviewGuardPure('s', 'drums (EOF)', true).ok, false);
 });
 
-t('guard is self-contained: extracting the @pure block alone still classifies keys/drums (no outer KEYS_PATTERN ref)', () => {
-    // These calls execute the inlined regexes inside the isolated block; a
-    // reference to an outer KEYS_PATTERN would have thrown before we got here.
-    assert.strictEqual(_tabPreviewGuardPure('s', 'Piano', true).ok, false);
-    assert.strictEqual(_tabPreviewGuardPure('s', 'Keyboard', true).ok, false);
-    assert.strictEqual(_tabPreviewGuardPure('s', 'Synth Lead', true).ok, false);
-    assert.strictEqual(_tabPreviewGuardPure('s.sloppak', 'Rhythm', true).ok, true);
+t('guard classifies by RESOLVED kind — bass and guitar are the fretted kinds', () => {
+    // The guard now consumes arrKind's output (an authored `type` wins over
+    // the name upstream), so name inference no longer lives here. bass and
+    // guitar are the fretted kinds; keys/drums are refused; anything else
+    // (e.g. an unrecognized kind) is treated as fretted, unchanged.
+    assert.strictEqual(_tabPreviewGuardPure('s.sloppak', 'bass', true).ok, true);
+    assert.strictEqual(_tabPreviewGuardPure('s.sloppak', 'guitar', true).ok, true);
+    assert.strictEqual(_tabPreviewGuardPure('s.sloppak', 'keys', true).ok, false);
+    assert.strictEqual(_tabPreviewGuardPure('s.sloppak', 'drums', true).ok, false);
 });
 
 t('key policy: preview modal is a read-only lens — only Escape acts (closes), every other key is swallowed', () => {

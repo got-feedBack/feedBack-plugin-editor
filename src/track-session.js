@@ -33,7 +33,7 @@
 import { host } from './host.js';
 import { _renameGuardPure } from './arrangement.js';
 import { _partViewKeyPure } from './keys.js';
-import { arrKind } from './instrument.js';
+import { arrKind, _arrTypeKind } from './instrument.js';
 import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart } from './mixer-panel.js';
 import { S, markSessionDirty } from './state.js';
 import { _editorEscHtml, setStatus } from './ui.js';
@@ -451,8 +451,8 @@ export function _trackFocusSourcePure(row) {
     return row.pairedSourceId || MASTER_ID;
 }
 
-export function _trackTranscriptionRenameGuardPure(oldName, requested, otherNames) {
-    return _renameGuardPure(oldName, requested, otherNames);
+export function _trackTranscriptionRenameGuardPure(oldName, requested, otherNames, typed) {
+    return _renameGuardPure(oldName, requested, otherNames, typed);
 }
 
 // True when the tree carries nothing the canonical song doesn't already
@@ -772,7 +772,7 @@ function applyTrackRename(trackId, requested) {
             const otherNames = S.arrangements
                 .filter((_, i) => i !== index).map(arr => arr && arr.name);
             const guard = _trackTranscriptionRenameGuardPure(
-                S.arrangements[index].name, requested, otherNames);
+                S.arrangements[index].name, requested, otherNames, !!_arrTypeKind(S.arrangements[index]));
             if (!guard.ok) { if (guard.reason) setStatus(guard.reason); return false; }
             clean = guard.name;
         }

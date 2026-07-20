@@ -37,6 +37,9 @@ if (!m) {
         S: { arrangements: [{ name: 'Lead' }], currentArr: 0, filename: 'song.sloppak' },
         alphaTab: {},
         document: { getElementById: () => ({ innerHTML: '' }) },
+        // _tabPreviewRender resolves the part's kind via arrKind before the
+        // guard; this race test stubs the guard, so a trivial resolver suffices.
+        arrKind: () => 'guitar',
         _tabPreviewGuardPure: () => ({ ok: true, reason: '' }),
         _tabPreviewUrlPure: () => '/api/plugins/tabview/gp5/song.sloppak?arrangement=0&t=1',
         _tabPreviewHttpMessagePure: (status) => 'Preview failed (' + status + ')',

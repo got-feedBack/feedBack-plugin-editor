@@ -1676,7 +1676,7 @@ function _guideGmProgram() {
     if (S.drumEditMode || !S.arrangements.length) return null;
     const arr = S.arrangements[S.currentArr];
     if (!arr) return null;
-    return editorGmVoiceFor(_gmKindPure(arr.name));
+    return editorGmVoiceFor(_gmKindPure(arrKind(arr)));
 }
 
 // Pitched events for the current arrangement: the same charted times the
@@ -2350,7 +2350,7 @@ function _guideTick() {
                 _drumKitVoicesInWindow(from, to, target, 1);
                 continue;
             }
-            const gm = editorGmVoiceFor(_gmKindPure(arr && arr.name));
+            const gm = editorGmVoiceFor(_gmKindPure(arrKind(arr)));
             const ready = gm !== null && gmPresetReady(gm);
             if (gm !== null && !ready) ensureGmPreset(gm, S.audioCtx);   // clap while it loads
             const groups = _gmEventsInWindowPure(_bandPartPitchedEvents(part.idx), from, to, 4);

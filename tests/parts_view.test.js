@@ -83,19 +83,17 @@ t('lane hit-test respects the waveform band and lane bounds', () => {
 });
 
 // ── per-lane instrument tag ────────────────────────────────────────────────────
-t('kind tag is inferred from each lane\'s OWN name, independent of the armed part', () => {
-    // Regression: _partsKindTag used to call the param-less isBassArr(), which
-    // always tested the armed arrangement — so a Bass lane got mistagged
-    // "Guitar" whenever a guitar part was armed. The pure helper keys off the
-    // lane's own name only, so a Bass lane tags Bass regardless of what's armed.
-    assert.strictEqual(_partsArrKindPure('Bass'), 'Bass');
-    assert.strictEqual(_partsArrKindPure('Lead Guitar'), 'Guitar');
-    assert.strictEqual(_partsArrKindPure('Rhythm'), 'Guitar');
-    assert.strictEqual(_partsArrKindPure('Piano'), 'Keys');
-    assert.strictEqual(_partsArrKindPure('Synth Lead'), 'Keys');
-    // Keys precedence + name-anchored keys pattern (matches KEYS_PATTERN).
-    assert.strictEqual(_partsArrKindPure('Bass Synth'), 'Bass', 'unanchored keys word does not win');
-    assert.strictEqual(_partsArrKindPure(''), 'Guitar', 'empty → Guitar');
+t('tag maps the RESOLVED kind → display label, per lane', () => {
+    // _partsArrKindPure now takes each lane's RESOLVED instrument kind (the
+    // caller passes arrKind(arr), so an authored `type` wins over the name and
+    // the tag is independent of both the armed part AND a misleading name).
+    // The old regression — the param-less isBassArr() always tested the armed
+    // arrangement — is prevented at the call site by resolving per lane.
+    assert.strictEqual(_partsArrKindPure('bass'), 'Bass');
+    assert.strictEqual(_partsArrKindPure('guitar'), 'Guitar');
+    assert.strictEqual(_partsArrKindPure('keys'), 'Keys');
+    // Anything else (drums/vocals/unrecognized) falls to the guitar silhouette.
+    assert.strictEqual(_partsArrKindPure('vocals'), 'Guitar');
     assert.strictEqual(_partsArrKindPure(null), 'Guitar', 'nullish → Guitar');
 });
 

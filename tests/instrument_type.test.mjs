@@ -23,6 +23,10 @@ import { isKeysArr, KEYS_PATTERN, _rollPitchCtxFor } from '../src/keys.js';
 import { _seedExtendedStringsFromTuning, _stringCountFor } from '../src/lanes.js';
 import { _isBassArr } from '../src/instrument.js';
 import { _trackKindBadgePure } from '../src/track-session.js';
+import { _gmKindPure } from '../src/gm-guide.js';
+import { _tabPreviewGuardPure } from '../src/tab-preview.js';
+import { _gp5ExportGuardPure } from '../src/gp5-export.js';
+import { _partsArrKindPure } from '../src/parts-view.js';
 import { seedState } from './_history_env.mjs';
 
 let pass = 0; let fail = 0;
@@ -161,6 +165,32 @@ t('_rollPitchCtxFor: a typed-keys part has no fretted context regardless of name
     assert.strictEqual(_rollPitchCtxFor({ name: 'Piano' }), null, 'untyped keys name → null (fallback, unchanged)');
     const gtr = _rollPitchCtxFor({ name: 'Grand Piano', type: 'guitar', tuning: [40, 45, 50, 55, 59, 64], capo: 0 });
     assert.notStrictEqual(gtr, null, 'typed guitar named "Piano" → a real fretted ctx (type wins)');
+});
+
+// ── the capstone readers consume arrKind → they honor an authored type ────
+// Each of these was NAME-based and is now fed arrKind's output by its caller.
+// The conversion is byte-identical for untyped arrangements, so ONLY a typed,
+// contrarily-named arrangement proves the reader actually consults the type.
+// Composed here with the real arrKind exactly as each call site does.
+t('gm-guide voice: a bass-typed part named "Lead Guitar" takes the bass voice', () => {
+    assert.strictEqual(_gmKindPure(arrKind({ type: 'bass', name: 'Lead Guitar' })), 'bass');
+    assert.strictEqual(_gmKindPure(arrKind({ type: 'piano', name: 'Gtr' })), 'keys');
+    assert.strictEqual(_gmKindPure(arrKind({ name: 'Lead' })), 'guitar', 'untyped name fallback');
+});
+
+t('tab-preview / gp5-export guards: a keys-typed guitar-named part is refused; a guitar-typed keys-named part is allowed', () => {
+    const keysTyped = arrKind({ type: 'piano', name: 'Lead' });   // → keys
+    const gtrTyped = arrKind({ type: 'guitar', name: 'Piano' });  // → guitar
+    assert.strictEqual(_tabPreviewGuardPure('s.sloppak', keysTyped, true).ok, false, 'keys-typed → no tab preview');
+    assert.strictEqual(_tabPreviewGuardPure('s.sloppak', gtrTyped, true).ok, true, 'guitar-typed "Piano" previews (payoff)');
+    assert.strictEqual(_gp5ExportGuardPure('s.feedpak', keysTyped, true).ok, false, 'keys-typed → no gp5 export');
+    assert.strictEqual(_gp5ExportGuardPure('s.feedpak', gtrTyped, true).ok, true, 'guitar-typed "Piano" exports (payoff)');
+});
+
+t('parts-view silhouette tag: a bass-typed part named "Rhythm" tags Bass', () => {
+    assert.strictEqual(_partsArrKindPure(arrKind({ type: 'bass', name: 'Rhythm' })), 'Bass');
+    assert.strictEqual(_partsArrKindPure(arrKind({ type: 'guitar', name: 'Bass Line' })), 'Guitar', 'typed guitar over /bass/ name');
+    assert.strictEqual(_partsArrKindPure(arrKind({ name: 'Bass' })), 'Bass', 'untyped name fallback');
 });
 
 for (const [name, fn] of tests) {
