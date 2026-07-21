@@ -497,6 +497,7 @@ export function installTrackSession(raw, audioUrl) {
         : raw;
     S.trackSession = _trackSessionNormalizePure(input, sources, S.arrangements, S.drumTab);
     S.selectedTrackId = '';
+    S.selectedRegionId = '';
     S.focusedSourceId = S.trackSession.tempoGuideSourceId;
     S.trackScrollY = 0;
     // The unified Tracks area is the landing surface for a session with
@@ -804,6 +805,9 @@ function selectTrack(trackId, openEditor = false) {
     const row = _rowsLive().rows.find(item => item.id === trackId);
     if (!row) return false;
     S.selectedTrackId = row.id;
+    // A track switch changes the region context — a region is only ever
+    // selected by clicking its block, which sets both ids together.
+    S.selectedRegionId = '';
     if (row.type === 'audio') {
         S.focusedSourceId = row.sourceId;
         // Focus this source as the active reference: the main waveform and
@@ -857,6 +861,7 @@ export class DeleteDrumTabCmd {
         this._links = S.stemLinks;
         this._tree = S.trackSession;
         this._selectedTrackId = S.selectedTrackId;
+        this._selectedRegionId = S.selectedRegionId;
     }
     exec() {
         S.drumTab = null;
@@ -868,6 +873,7 @@ export class DeleteDrumTabCmd {
         S.stemLinks = _trackLinksRetargetPure(S.stemLinks, DRUM_TARGET_ID);
         if (S.selectedTrackId === transcriptionTrackId(DRUM_TARGET_ID)) {
             S.selectedTrackId = '';
+            S.selectedRegionId = '';
         }
         commit(S.trackSession, `Deleted drum transcription “${this._name}”.`);
         host.partMixChanged();
@@ -883,6 +889,7 @@ export class DeleteDrumTabCmd {
         if (this._selectedTrackId === transcriptionTrackId(DRUM_TARGET_ID)
                 && !S.selectedTrackId) {
             S.selectedTrackId = this._selectedTrackId;
+            S.selectedRegionId = this._selectedRegionId;
         }
         commit(this._tree, `Restored drum transcription “${this._name}”.`);
         host.partMixChanged();
@@ -927,7 +934,7 @@ async function deleteTrack(trackId) {
         lastRender = '';
         refreshTrackSession();
     }
-    if (S.selectedTrackId === row.id) S.selectedTrackId = '';
+    if (S.selectedTrackId === row.id) { S.selectedTrackId = ''; S.selectedRegionId = ''; }
     _mixerPanelRefresh();
     host.draw();
     return true;

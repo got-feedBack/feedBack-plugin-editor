@@ -144,6 +144,10 @@ export const S = {
     // audio source the selection points at, per-row lane heights, the shared
     // header/canvas scroll, and the header column's width/viewport.
     selectedTrackId: '',
+    // The selected region within the selected track (its id, e.g. 'region:1').
+    // Regions are a track's content as placeable blocks; selecting one is the
+    // move/trim target a later PR acts on. '' = no region selected.
+    selectedRegionId: '',
     focusedSourceId: 'master',
     // The source shown as the main waveform and analyzed for onsets (Suggest,
     // snap). Playback is unaffected — every OTHER live source plays alongside.
