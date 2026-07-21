@@ -20,7 +20,7 @@ import { _recState } from './midi-record.js';
 import { _resizeSustainsForDeltaPure, _resizeTargetIndicesPure, notes } from './notes.js';
 import { MINIMAP_GRIP_W, _minimapHitPure, _minimapSongDur, _minimapThumbPure, _rulerZonePure, rulerOnDblClick, rulerOnMouseDown, rulerOnMouseMove, rulerOnMouseUp } from './ruler.js';
 import { _laneScrollForThumbPure, applyLaneScrollBounds, laneBarHit, laneBarRect, laneScrollBy, setLaneScrollY } from './lane-scroll.js';
-import { _editorChordGrabsStrumPure, _editorEffectiveChordSelectBehaviorPure, editorChordSelectBehavior, editorShortcutProfile } from './shortcuts.js';
+import { _editorChordGrabsStrumPure, _editorEffectiveChordSelectBehaviorPure, _editorEofWheelActionPure, editorChordSelectBehavior, editorShortcutProfile } from './shortcuts.js';
 import { S } from './state.js';
 import { _tempoBeatOnDragMove, _tempoMapOnDragEnd, _tempoMapOnDragMove, _tempoMapOnMouseDown, _tempoMarqueeOnEnd, _tempoPoleGrabTolerancePure, _tempoSyncAtX } from './tempo.js';
 import { editorCloseToolPalette, editorLeftTool, editorToolPaletteOpen, editorTrackToolMouse } from './tools.js';
@@ -859,6 +859,22 @@ export function onDblClick(e) {
 
 export function onWheel(e) {
     e.preventDefault();
+    // Legacy (EOF) profile: the wheel is a note-entry verb when notes are
+    // selected in note mode — plain wheel = sustain, Ctrl+wheel = fret, as in
+    // EOF itself. _editorEofWheelActionPure owns the exact scope (profile,
+    // mode, selection, modifiers); dispatching the registry command id reuses
+    // the [ ] / Ctrl+± implementations, so undo, status, and clamping match
+    // the keyboard exactly. Null falls through to the normal wheel grammar.
+    {
+        const eofCmd = _editorEofWheelActionPure(e, {
+            profile: editorShortcutProfile,
+            tempoMapMode: S.tempoMapMode,
+            partsViewMode: S.partsViewMode,
+            drumEditMode: S.drumEditMode,
+            selCount: S.sel ? S.sel.size : 0,
+        });
+        if (eofCmd) { host.runShortcutCommand(eofCmd); return; }
+    }
     // Tracks area: a vertical-dominant wheel scrolls the shared lane stack
     // (header column + canvas lanes together); a horizontal-dominant swipe
     // still pans the timeline.

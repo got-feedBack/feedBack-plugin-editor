@@ -45,6 +45,13 @@ export const host = {
     updateArrangementSelector: () => {},
     /** Dismiss the canvas context menu. */
     hideContextMenu: () => {},
+    /**
+     * Run a registry command by id — the shortcut-panel dispatcher
+     * (input.js editorRunShortcutCommand). Lets pointer gestures reuse the
+     * exact keyboard command semantics (undo, status, clamping) without a
+     * mouse.js → input.js import cycle. Inert default: "not handled".
+     */
+    runShortcutCommand: () => false,
     /** Snap a time to the active grid (or the nearest onset). Identity default. */
     snapTime: (t) => t,
     /**
