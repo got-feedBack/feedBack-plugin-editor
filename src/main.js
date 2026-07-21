@@ -110,7 +110,7 @@ import {
 } from './new-track.js';
 import {
     _editorTogglePartsView, _partsViewDraw, _partsViewOnDblClick,
-    _partsViewOnMouseDown, _refreshPartsViewButton
+    _partsViewOnMouseDown, _partsViewRegionDrag, _partsViewRegionDrop, _refreshPartsViewButton
 } from './parts-view.js';
 import { drawWaveform } from './waveform.js';
 import {
@@ -550,6 +550,8 @@ setHostHooks({
     updateZoomDisplay: (...a) => updateZoomDisplay(...a),
     partsViewOnMouseDown: (...a) => _partsViewOnMouseDown(...a),
     partsViewOnDblClick: (...a) => _partsViewOnDblClick(...a),
+    partsViewRegionDrag: (...a) => _partsViewRegionDrag(...a),
+    partsViewRegionDrop: (...a) => _partsViewRegionDrop(...a),
     resizeCanvas: (...a) => resizeCanvas(...a),
     editorCycleViewMode: (...a) => _editorCycleViewMode(...a),
     editorMovePart: (...a) => _editorMovePart(...a),

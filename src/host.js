@@ -71,6 +71,9 @@ export const host = {
     /** Parts-view mousedown / dblclick routing (parts view lives in main.js). */
     partsViewOnMouseDown: () => {},
     partsViewOnDblClick: () => {},
+    /** Region drag (Tracks area): track the pointer / commit the reposition. */
+    partsViewRegionDrag: () => {},
+    partsViewRegionDrop: () => {},
     /** Arm a transcription target (arrangement / drums) from the Tracks area. */
     selectTrackSessionTarget: () => {},
     /** Focus an audio source as the active waveform/onset reference. */

@@ -8,9 +8,10 @@ import { CP } from './canvas-appearance.js';
 import { ctx } from './canvas.js';
 import { hideContextMenu } from './context-menu.js';
 import { DRUM_PIECE_META, _refreshDrumEditButton } from './drum.js';
-import { timeOf } from './beats.js';
+import { beatOf, timeOf } from './beats.js';
 import { LABEL_W, TIMELINE_TOP, timeToX, xToTime } from './geometry.js';
-import { _regionBlockRectPure, _regionHitPure, _regionTimeSpanPure, _trackRegionsResolvePure } from './region.js';
+import { _regionBlockRectPure, _regionHitPure, _regionSnapStartPure, _regionTimeSpanPure, _trackRegionsResolvePure } from './region.js';
+import { MoveRegionCmd } from './region-commands.js';
 import { KEYS_PATTERN } from './keys.js';
 import { _stringCountFor } from './lanes.js';
 import { _downbeatTimes } from './loop.js';
@@ -293,6 +294,23 @@ export function _partsViewDraw(w, h) {
             ctx.fillRect(PARTS_GUTTER, y0 + laneH - 2, w - PARTS_GUTTER, 2);
         }
         if (row.type !== 'folder') _drawRegionBlocks(row, y0, laneH, w, _laneContentTimeExtent(row, arrIdx));
+        // Drag ghost: a dashed preview of where the block will land, on its own
+        // row, at the bar-snapped start (see _partsViewRegionDrag).
+        if (S.drag && S.drag.type === 'region-move' && S.drag.moved && row.id === S.drag.trackId) {
+            const gr = _regionBlockRectPure(
+                timeToX(S.drag.snappedStart), timeToX(S.drag.snappedStart + S.drag.spanW), PARTS_GUTTER, w);
+            if (gr.visible) {
+                const top = y0 + 1.5;
+                const boxH = Math.max(2, laneH - 3);
+                ctx.fillStyle = 'rgba(120,180,255,.16)';
+                ctx.fillRect(gr.x, top, gr.w, boxH);
+                ctx.strokeStyle = 'rgba(120,180,255,.85)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 3]);
+                ctx.strokeRect(gr.x + 0.5, top + 0.5, Math.max(1, gr.w - 1), boxH - 1);
+                ctx.setLineDash([]);
+            }
+        }
     }
     // One playhead spans the same unified track rows as the header list.
     const cx = timeToX(S.cursorTime || 0);
@@ -359,7 +377,63 @@ export function _partsViewOnMouseDown(e, x, y) {
         if (sel && idx >= 0) sel.value = String(idx);
         setStatus(`Transcription track: ${row.name} — double-click to open it`);
     }
+    // Arm a region drag on a hit block — transcription rows only (a notation
+    // arrangement or the drum tab). Audio regions carry a two-clock media
+    // pointer and move with the audio-region PR; here they only select. The
+    // move is committed on mouseUp once the pointer clears a click threshold, so
+    // a plain click still just selects. (Selecting a transcription arrangement
+    // above already armed it as S.currentArr, so the move targets the right part.)
+    if (hitRegion && row.type === 'transcription' && rExtent) {
+        const region = _trackRegionsResolvePure(row.regions).find(r => r.id === hitRegion);
+        if (region) {
+            const beatToTime = (beat) => timeOf(S.beats, beat);
+            const span = _regionTimeSpanPure(region, rExtent[0], rExtent[1], beatToTime);
+            S.drag = {
+                type: 'region-move',
+                trackId: row.id,
+                regionId: hitRegion,
+                region,
+                kind: row.targetId === 'drums' ? 'drums' : 'notation',
+                arrIdx: rArrIdx,
+                origStart: span.t0,
+                spanW: Math.max(0, span.t1 - span.t0),
+                startX: x,
+                snappedStart: span.t0,
+                moved: false,
+            };
+        }
+    }
     host.draw();
+}
+
+// Region drag (Tracks area): track the pointer, snap the block's start to a bar
+// line (Alt = free), and defer the actual move to the drop. A small click
+// threshold keeps a plain click a selection, not a move.
+export function _partsViewRegionDrag(x, free) {
+    const d = S.drag;
+    if (!d || d.type !== 'region-move') return;
+    if (!d.moved && Math.abs(x - d.startX) <= 3) return;
+    d.moved = true;
+    const dtRaw = (x - d.startX) / S.zoom;
+    d.snappedStart = _regionSnapStartPure(_downbeatTimes(), d.origStart + dtRaw, free);
+    host.draw();
+}
+
+// Drop: commit the move as one undoable MoveRegionCmd (beat-preserving; see
+// region-commands.js). A zero net move — click, or a drag snapped back to the
+// same bar — commits nothing.
+export function _partsViewRegionDrop() {
+    const d = S.drag;
+    S.drag = null;
+    if (!d || d.type !== 'region-move' || !d.moved) { host.draw(); return; }
+    const dBeat = beatOf(S.beats, d.snappedStart) - beatOf(S.beats, d.origStart);
+    if (Math.abs(dBeat) < 1e-9) { host.draw(); return; }
+    S.history.exec(new MoveRegionCmd({
+        kind: d.kind, arrIdx: d.arrIdx, trackId: d.trackId, region: d.region, dBeat,
+    }));
+    host.draw();
+    host.updateStatus();
+    setStatus(`Moved “${d.region.name || d.region.id}” ${dBeat > 0 ? 'later' : 'earlier'}`);
 }
 
 export function _partsViewOnDblClick(e) {
