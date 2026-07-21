@@ -66,7 +66,7 @@ globalThis.window = globalThis.window || globalThis;
 
 const {
     _mixerPartsPure, _mixerPartStatePure, _mixerAnySoloPure, _mixerPartAudiblePure,
-    _mixerClapStatePure, _mixerOpenFromStoredPure, _mixerClapState,
+    _mixerClapStatePure, _mixerActivePartKeyPure, _mixerOpenFromStoredPure, _mixerClapState,
     _mixerGainForFaderPure, _mixerFaderLabelPure, _mixerOrderedPartsPure,
     _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel,
 } = await import('../src/mixer-panel.js');
@@ -81,34 +81,23 @@ function t(name, fn) {
 
 // ── Pure strip model ─────────────────────────────────────────────────
 
-t('one strip per arrangement, keyed by index, drums appended only with hits', () => {
+t('one strip per arrangement, keyed by index; the drums arrangement is an ordinary strip', () => {
     const arrs = [{ name: 'Lead' }, { name: '' }, null];
     assert.deepStrictEqual(_mixerPartsPure(arrs, null), [
         { key: 'arr:0', name: 'Lead' },
         { key: 'arr:1', name: 'Track 2' },
         { key: 'arr:2', name: 'Track 3' },
     ]);
-    assert.deepStrictEqual(_mixerPartsPure([], { hits: [] }), []);
-    assert.deepStrictEqual(_mixerPartsPure([], { hits: [{ t: 1 }] }),
-        [{ key: 'drums', name: 'Drums' }]);
+    // A bare drum tab no longer conjures a 'drums' strip — drums are a
+    // type:"drums" arrangement now (PR2b), so they ride the arrangement pass and
+    // get an `arr:<idx>` strip named for themselves.
+    assert.deepStrictEqual(_mixerPartsPure([], { hits: [{ t: 1 }] }), []);
+    assert.deepStrictEqual(_mixerPartsPure(
+        [{ name: 'Lead' }, { name: 'Kit', type: 'drums' }], { hits: [{ t: 1 }] }),
+        [{ key: 'arr:0', name: 'Lead' }, { key: 'arr:1', name: 'Kit' }]);
     assert.deepStrictEqual(_mixerPartsPure(null, null), []);
 });
 
-// #336 regression: the drums arrangement (materialized into S.arrangements[])
-// must NOT get an 'arr:<idx>' strip — it already gets the dedicated 'drums'
-// strip from drumTab. Pre-fix it got both → two Drums strips after reload.
-t('the drums arrangement is not double-listed — exactly one Drums strip', () => {
-    const arrs = [{ name: 'Lead' }, { name: 'Bass' }, { name: 'Drums', type: 'drums' }];
-    const drumTab = { hits: [{ t: 0, p: 'kick' }] };
-    const parts = _mixerPartsPure(arrs, drumTab);
-    assert.deepStrictEqual(parts, [
-        { key: 'arr:0', name: 'Lead' },
-        { key: 'arr:1', name: 'Bass' },
-        { key: 'drums', name: 'Drums' },
-    ], 'the type:"drums" arrangement gets no arr:2 strip; only the drums strip');
-    assert.strictEqual(parts.filter(p => p.name === 'Drums').length, 1, 'exactly one Drums strip');
-    assert.ok(!parts.some(p => p.key === 'arr:2'), 'no arr:<idx> strip for the drums arrangement');
-});
 
 t('strip state defaults to audible unity; volume clamps into [0, 110] (+10 dB ceiling)', () => {
     assert.deepStrictEqual(_mixerPartStatePure({}, 'arr:0'), { vol: 100, mute: false, solo: false });
@@ -177,11 +166,19 @@ t('master is the OUTPUT bus: others solo/mute never silence it, its own mute doe
 
 // ── The clap state the guide scheduler consumes ──────────────────────
 
-t('clap state follows the active surface: drums in drum mode, else the current arrangement', () => {
-    const mix = { 'arr:1': { mute: true }, drums: { vol: 50 } };
-    assert.deepStrictEqual(_mixerClapStatePure(mix, false, 1), { audible: false, vol: 100 / 100 });
-    assert.deepStrictEqual(_mixerClapStatePure(mix, true, 1), { audible: true, vol: 0.5 });
-    assert.deepStrictEqual(_mixerClapStatePure(mix, false, 0), { audible: true, vol: 1 });
+t('clap state follows the active surface: the drums arrangement in drum mode, else the current arrangement', () => {
+    // Lead is arr:1; the drums arrangement is arr:2 (drumIdx = 2). currentArr
+    // stays on the pitched part even in drum mode (#337) — the clap key is what
+    // switches to the drums channel.
+    const mix = { 'arr:1': { mute: true }, 'arr:2': { vol: 50 } };
+    assert.deepStrictEqual(_mixerClapStatePure(mix, false, 1, 2), { audible: false, vol: 100 / 100 },
+        'not drum mode → the current (muted) arrangement');
+    assert.deepStrictEqual(_mixerClapStatePure(mix, true, 1, 2), { audible: true, vol: 0.5 },
+        'drum mode → the drums arrangement channel (arr:2)');
+    assert.deepStrictEqual(_mixerClapStatePure(mix, false, 0, 2), { audible: true, vol: 1 });
+    // No drums arrangement materialized (drumIdx = -1) → fall back to currentArr.
+    assert.deepStrictEqual(_mixerClapStatePure(mix, true, 1, -1), { audible: false, vol: 1 },
+        'drum mode with no drums arrangement → currentArr');
 });
 
 t('solo keeps the reference audible (D5): the gate is per-PART, and the host default leaves audio untouched', () => {
@@ -197,9 +194,38 @@ t('solo keeps the reference audible (D5): the gate is per-PART, and the host def
 });
 
 t('_mixerClapState reads live S (the wiring main.js hands to host.partClapState)', () => {
-    Object.assign(S, { partMix: { 'arr:0': { mute: true, vol: 40 } }, drumEditMode: false, currentArr: 0 });
+    Object.assign(S, { arrangements: [{ name: 'Lead' }], partMix: { 'arr:0': { mute: true, vol: 40 } }, drumEditMode: false, currentArr: 0 });
     assert.deepStrictEqual(_mixerClapState(), { audible: false, vol: 0.4 });
     S.partMix = {};
+});
+
+t('_mixerActivePartKeyPure: drum mode addresses the drums arrangement index; currentArr stays pitched (#337)', () => {
+    // In drum mode the active clap channel is the drums arrangement (arr:2),
+    // NOT currentArr — which is deliberately left on a pitched part.
+    assert.strictEqual(_mixerActivePartKeyPure(true, 0, 2), 'arr:2');
+    assert.strictEqual(_mixerActivePartKeyPure(true, 1, 2), 'arr:2', 'ignores currentArr in drum mode');
+    // Out of drum mode → the current pitched arrangement.
+    assert.strictEqual(_mixerActivePartKeyPure(false, 1, 2), 'arr:1');
+    // No drums arrangement materialized (drumIdx < 0) → fall back to currentArr,
+    // even with the flag set, so the key is always a real strip.
+    assert.strictEqual(_mixerActivePartKeyPure(true, 3, -1), 'arr:3');
+    assert.strictEqual(_mixerActivePartKeyPure(false, 'junk', 2), 'arr:0', 'a bad currentArr degrades to arr:0');
+});
+
+t('the drums mixer strip gates the drum guide clap in drum-edit mode (arr:<drumIdx>, live S)', () => {
+    // The runtime integration: with the drums arrangement materialized at arr:1,
+    // muting its mixer strip must silence the drum-grid guide claps — even though
+    // currentArr is a pitched part. This is the whole point of PR2b's rekey.
+    Object.assign(S, {
+        arrangements: [{ name: 'Lead' }, { name: 'Drums', type: 'drums' }],
+        drumEditMode: true, currentArr: 0,
+        partMix: { 'arr:1': { mute: true, vol: 50 } },
+    });
+    assert.strictEqual(_mixerClapState().audible, false, 'the muted drums strip gates the drum guide clap');
+    assert.strictEqual(_mixerClapState().vol, 0.5, 'and its fader scales the clap level');
+    S.partMix = {};
+    assert.strictEqual(_mixerClapState().audible, true, 'unmuted → the drum guide clap sounds again');
+    Object.assign(S, { drumEditMode: false });
 });
 
 // ── Panel open state: pref round-trip + toggle ───────────────────────
@@ -253,14 +279,14 @@ t('bus faders seed from host.mixUiState on open (incl. master, dB labels)', () =
 
 t('strips render one row per part; the refresh is memoized until state changes', () => {
     Object.assign(S, {
-        arrangements: [{ name: 'Lead <Guitar>' }, { name: 'Bass' }],
+        arrangements: [{ name: 'Lead <Guitar>' }, { name: 'Bass' }, { name: 'Drums', type: 'drums' }],
         drumTab: { hits: [{ t: 0.5 }] }, partMix: {}, currentArr: 0,
     });
     editorToggleMixerPanel(true);
     const html = els['editor-mixer-parts'].innerHTML;
     assert.ok(html.includes('Lead &lt;Guitar&gt;'), 'part name rendered (escaped)');
     assert.ok(html.includes('data-mix-part="arr:1"'), 'second strip');
-    assert.ok(html.includes('data-mix-part="drums"'), 'drums strip');
+    assert.ok(html.includes('data-mix-part="arr:2"'), 'the drums arrangement renders as an arr:<idx> strip');
     assert.ok(html.includes('data-mix-act="solo"'), 'solo button');
     assert.ok(html.includes('aria-valuetext="+0.0 dB"'), 'fader exposes its dB value to screen readers');
     // Memo: same state → no re-render (a sentinel survives the call).

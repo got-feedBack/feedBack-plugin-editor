@@ -32,7 +32,7 @@
 // ════════════════════════════════════════════════════════════════════
 import { host } from './host.js';
 import { _renameGuardPure } from './arrangement.js';
-import { isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
+import { drumArrangementIndex, isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
 import { _partViewKeyPure } from './keys.js';
 import { arrKind, _arrTypeKind } from './instrument.js';
 import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart } from './mixer-panel.js';
@@ -111,7 +111,8 @@ export function _clickSourcePure(sources) {
 
 // The transcription targets: every arrangement plus the drum tab. targetId
 // is the durable chart-track key (shared with stemLinks); mixKey is the
-// session address partMix / band mode speak ('arr:<idx>' / 'drums').
+// session address partMix / band mode speak — always 'arr:<idx>' now, the
+// drums arrangement included (addressed by its own index).
 export function _trackSessionTargetsPure(arrangements, drumTab) {
     const out = [];
     const seen = new Set();
@@ -130,7 +131,17 @@ export function _trackSessionTargetsPure(arrangements, drumTab) {
         out.push({ id, name: String(arr.name || ('Track ' + (index + 1))).slice(0, 120), mixKey: 'arr:' + index });
     });
     if (drumTab && Array.isArray(drumTab.hits)) {
-        out.push({ id: DRUM_TARGET_ID, name: String(drumTab.name || 'Drums').slice(0, 120), mixKey: 'drums' });
+        // The drums arrangement's mix channel is `arr:<idx>` like every other
+        // part (retiring the `'drums'` mix-key singleton) — but its durable
+        // TARGET id stays 'drums', so the tracks-row / stemLinks / delete /
+        // rename hooks that key on it are untouched. Fall back to 'drums' only
+        // if the arrangement hasn't been materialized (defensive; it always is).
+        const di = drumArrangementIndex(arrangements);
+        out.push({
+            id: DRUM_TARGET_ID,
+            name: String(drumTab.name || 'Drums').slice(0, 120),
+            mixKey: di >= 0 ? 'arr:' + di : 'drums',
+        });
     }
     return out;
 }
@@ -146,6 +157,22 @@ export function _partMixDropArrangementPure(partMix, index) {
         if (!Number.isInteger(n) || n === index) continue;
         out[n > index ? 'arr:' + (n - 1) : key] = value;
     }
+    return out;
+}
+
+// Inverse of _partMixDropArrangementPure: open a slot at `index` (renumber every
+// arr:<n> with n >= index UP one) and drop `strip` in at arr:<index>. Renumbers
+// the CURRENT map, so any live mute/solo/volume edits made while the slot was
+// gone ride along to their restored key instead of being clobbered.
+export function _partMixInsertArrangementPure(partMix, index, strip) {
+    const out = {};
+    for (const [key, value] of Object.entries(partMix && typeof partMix === 'object' ? partMix : {})) {
+        if (!key.startsWith('arr:')) { out[key] = value; continue; }
+        const n = Number(key.slice(4));
+        if (!Number.isInteger(n)) continue;
+        out[n >= index ? 'arr:' + (n + 1) : key] = value;
+    }
+    if (strip !== undefined) out['arr:' + index] = strip;
     return out;
 }
 
@@ -883,21 +910,41 @@ export class DeleteDrumTabCmd {
         this._name = rowName;
         this._tab = S.drumTab;
         this._dirty = !!S.drumTabDirty;
-        this._hadMixStrip = !!(S.partMix && ('drums' in S.partMix));
-        this._mixStrip = S.partMix ? S.partMix.drums : undefined;
+        // Snapshot everything the splice renumbers so undo is a TRUE inverse:
+        // deleting a drums arrangement that sits mid-list shifts every later
+        // arrangement (and its `arr:<idx>` mix strip) down a slot. Undo must
+        // put drums back in its ORIGINAL slot — NOT re-append it last — or the
+        // index-based undo commands, currentArr, and mix keys that ride on the
+        // old order would all point one arrangement off after the delete is undone.
+        this._drumIndex = drumArrangementIndex(S.arrangements);
+        this._drumStrip = (S.partMix && this._drumIndex >= 0) ? S.partMix['arr:' + this._drumIndex] : undefined;
+        this._prevCurrentArr = S.currentArr;
         this._links = S.stemLinks;
         this._tree = S.trackSession;
         this._selectedTrackId = S.selectedTrackId;
         this._selectedRegionId = S.selectedRegionId;
     }
     exec() {
+        // Capture the drum slot BEFORE syncDrumArrangement splices it out —
+        // dropping it must renumber the higher pitched arr:<n> keys down a
+        // slot, same as the pitched-delete path. A bare delete stranded every
+        // strip after drums (a stranded solo silenced the whole band).
+        const drumIndex = drumArrangementIndex(S.arrangements);
         S.drumTab = null;
         syncDrumArrangement(S);   // remove the derived type:"drums" arrangement
         // Dirty is what ships the explicit `drum_tab: null` removal on the
         // next save (see _buildSaveBody) — without it the backend's
         // absent→preserve path would resurrect drum_tab.json on reload.
         S.drumTabDirty = true;
-        if (S.partMix) delete S.partMix.drums;
+        // drumIndex is -1 if the drums arrangement was never materialized (the
+        // 'drums' target row exists off drumTab.hits alone) — dropping index -1
+        // would renumber EVERY arr:<n> down and corrupt the map, so only renumber
+        // when a real slot was found.
+        if (S.partMix && drumIndex >= 0) S.partMix = _partMixDropArrangementPure(S.partMix, drumIndex);
+        // The splice shifted every arrangement after drums down one slot; follow
+        // the selection so currentArr stays in bounds (and off drums) while
+        // drums is gone. Undo restores it from the snapshot. Mirrors the key renumber.
+        if (drumIndex >= 0 && drumIndex < S.currentArr) S.currentArr -= 1;
         S.stemLinks = _trackLinksRetargetPure(S.stemLinks, DRUM_TARGET_ID);
         if (S.selectedTrackId === transcriptionTrackId(DRUM_TARGET_ID)) {
             S.selectedTrackId = '';
@@ -908,12 +955,25 @@ export class DeleteDrumTabCmd {
     }
     rollback() {
         S.drumTab = this._tab;
-        syncDrumArrangement(S);   // restore the derived type:"drums" arrangement
-        S.drumTabDirty = this._dirty;
-        if (this._hadMixStrip) {
-            if (!S.partMix) S.partMix = {};
-            S.partMix.drums = this._mixStrip;
+        const arr = syncDrumArrangement(S);   // re-materialize (syncDrumArrangement appends LAST)
+        // Move drums back to its ORIGINAL slot so every later arrangement
+        // returns to its pre-delete index — otherwise index-based undo commands
+        // (and currentArr) would target the wrong arrangement after this undo.
+        if (arr && this._drumIndex >= 0) {
+            const cur = S.arrangements.indexOf(arr);
+            if (cur !== this._drumIndex) {
+                S.arrangements.splice(cur, 1);
+                S.arrangements.splice(this._drumIndex, 0, arr);
+            }
         }
+        S.drumTabDirty = this._dirty;
+        // Re-open the drum slot and shift the surviving strips back UP — the
+        // inverse of exec's drop. Operates on the CURRENT map, so live mix edits
+        // made while drums was gone survive the undo (they aren't history commands).
+        if (this._drumIndex >= 0 && S.partMix) {
+            S.partMix = _partMixInsertArrangementPure(S.partMix, this._drumIndex, this._drumStrip);
+        }
+        S.currentArr = this._prevCurrentArr;
         S.stemLinks = this._links;
         if (this._selectedTrackId === transcriptionTrackId(DRUM_TARGET_ID)
                 && !S.selectedTrackId) {

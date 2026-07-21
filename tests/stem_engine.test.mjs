@@ -25,12 +25,13 @@ const t = (name, fn) => tests.push([name, fn]);
 
 t('the mixer lists stem strips (audio band first), honoring removals', () => {
     const parts = _mixerPartsPure(
-        [{ name: 'Lead' }], { hits: [{}] },
+        [{ name: 'Lead' }, { name: 'Drums', type: 'drums' }], { hits: [{}] },
         [{ id: 'Guitar_L', name: 'Gtr L' }, { id: 'Bass_DI', name: 'Bass' }, { id: 'gone' }],
         ['gone']);
     assert.deepStrictEqual(parts.map(p => p.key),
-        ['audio:Guitar_L', 'audio:Bass_DI', 'arr:0', 'drums'],
-        'stems first (removed dropped), then parts, then drums');
+        ['audio:Guitar_L', 'audio:Bass_DI', 'arr:0', 'arr:1'],
+        'stems first (removed dropped), then parts — the drums arrangement is an ordinary arr:<idx> strip now');
+    assert.strictEqual(parts[3].name, 'Drums', 'the drums strip follows its arrangement name');
     assert.strictEqual(parts[0].name, 'Gtr L');
     assert.strictEqual(parts[0].kind, 'audio');
 });

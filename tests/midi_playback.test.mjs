@@ -4,8 +4,8 @@
  * real mixer over them (per-part gain nodes, whole-map solo rule).
  *
  * Pinned here:
- *   - the band roster uses EXACTLY the mixer panel's strip keys
- *     ('arr:<idx>' / 'drums'), so strips and engine can never disagree;
+ *   - the band roster uses EXACTLY the mixer panel's strip keys (all 'arr:<idx>'
+ *     now, the drums arrangement included), so strips and engine can't disagree;
  *   - the per-key strip state applies the DAW rule ACROSS parts (a solo on
  *     one track silences the others' gains, mute always wins);
  *   - the dedupe key is part-scoped (two parts on the same millisecond
@@ -32,6 +32,7 @@ const audio = await import('../src/audio.js');
 const { editorPlayAllTracksEnabled, editorTogglePlayAllTracks } = audio;
 const { _mixerPartStripState } = await import('../src/mixer-panel.js');
 const { host, setHostHooks } = await import('../src/host.js');
+const { drumArrangementIndex } = await import('../src/drum-arrangement.js');
 const { S } = await import('../src/state.js');
 
 let pass = 0, fail = 0;
@@ -43,19 +44,26 @@ function t(name, fn) {
 // The @pure:midi-playback block, sliced (the pures are module-local).
 import { readFileSync } from 'node:fs';
 const src = readFileSync(new URL('../src/audio.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-function slice(name) {
+// deps are injected as named args so a sliced function can call a real import
+// (`_bandPartsPure` now resolves the drums arrangement's index).
+function slice(name, deps = {}) {
     const at = src.indexOf(`function ${name}`);
     const body = src.slice(at, src.indexOf('\n}', at) + 2);
-    return new Function(`return (${body.replace(`function ${name}`, 'function')})`)();
+    const keys = Object.keys(deps);
+    return new Function(...keys, `return (${body.replace(`function ${name}`, 'function')})`)(...keys.map(k => deps[k]));
 }
-const _bandPartsPure = slice('_bandPartsPure');
+const _bandPartsPure = slice('_bandPartsPure', { drumArrangementIndex });
 const _bandFiredKeyPure = slice('_bandFiredKeyPure');
 
-t('the band roster mirrors the mixer strip keys, drums last', () => {
+t('the band roster mirrors the mixer strip keys, drums on its own arr:<idx>', () => {
+    // Drums are a type:"drums" arrangement now — the roster keys them by that
+    // arrangement's index (arr:2 here), the SAME key the mixer strip uses.
     const parts = _bandPartsPure(
-        [{ name: 'Lead' }, { name: 'Bass' }],
+        [{ name: 'Lead' }, { name: 'Bass' }, { name: 'Drums', type: 'drums' }],
         { hits: [{ t: 1 }] });
-    assert.deepStrictEqual(parts.map(p => p.key), ['arr:0', 'arr:1', 'drums']);
+    assert.deepStrictEqual(parts.map(p => p.key), ['arr:0', 'arr:1', 'arr:2'],
+        'the drum part rides arr:2, not a "drums" singleton');
+    assert.strictEqual(parts[2].idx, 2, 'and resolves to the drums arrangement index');
     assert.deepStrictEqual(_bandPartsPure([{ name: 'Lead' }], null).map(p => p.key), ['arr:0'],
         'no drum tab = no drums strip');
     assert.deepStrictEqual(_bandPartsPure([{ name: 'Lead' }], { hits: [] }).map(p => p.key), ['arr:0'],
