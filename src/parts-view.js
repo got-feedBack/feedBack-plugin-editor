@@ -12,6 +12,7 @@ import { beatOf, timeOf } from './beats.js';
 import { LABEL_W, TIMELINE_TOP, timeToX, xToTime } from './geometry.js';
 import { _regionBlockRectPure, _regionHitPure, _regionSnapStartPure, _regionTimeSpanPure, _trackRegionsResolvePure } from './region.js';
 import { MoveRegionCmd } from './region-commands.js';
+import { isDrumArrangement } from './drum-arrangement.js';
 import { arrKind } from './instrument.js';
 import { _stringCountFor } from './lanes.js';
 import { _downbeatTimes } from './loop.js';
@@ -27,14 +28,19 @@ import { setStatus } from './ui.js';
 import { host } from './host.js';
 
 /* @pure:parts-view:start */
-// One entry per part: every arrangement, plus the drum tab as its own lane
-// (drums are a song-level sidecar, not an arrangement).
+// One entry per part: every arrangement — each drum part (a song can hold
+// several) gets its own drum lane drawn from its OWN tab. The idx -1 lane is
+// the legacy unmaterialized tab (create-mode compose).
 export function _partsListPure(arrangements, drumTab) {
     const parts = [];
+    let anyDrumArr = false;
     (arrangements || []).forEach((arr, i) => {
-        // The drums arrangement is drawn as the dedicated drum lane below (from
-        // `drumTab`), not as a note-lane — skip it here so it isn't listed twice.
-        if (arr && arr.type === 'drums') return;
+        if (arr && arr.type === 'drums') {
+            anyDrumArr = true;
+            const hits = (arr.drumTab && Array.isArray(arr.drumTab.hits)) ? arr.drumTab.hits : [];
+            parts.push({ kind: 'drums', idx: i, name: arr.name || 'Drums', count: hits.length });
+            return;
+        }
         parts.push({
             kind: 'arr',
             idx: i,
@@ -43,7 +49,7 @@ export function _partsListPure(arrangements, drumTab) {
                  + ((arr && Array.isArray(arr.chords)) ? arr.chords.length : 0),
         });
     });
-    if (drumTab && Array.isArray(drumTab.hits) && drumTab.hits.length) {
+    if (!anyDrumArr && drumTab && Array.isArray(drumTab.hits) && drumTab.hits.length) {
         parts.push({ kind: 'drums', idx: -1, name: 'Drums', count: drumTab.hits.length });
     }
     return parts;
@@ -130,8 +136,13 @@ function _partsDrawSilhouette(part, y0, laneH, w) {
     const pad = 3;
     const innerH = laneH - pad * 2;
     if (part.kind === 'drums') {
+        // Each drum part paints ITS OWN tab (idx ≥ 0 names the arrangement);
+        // idx -1 is the legacy unmaterialized tab (create-mode compose).
+        const arr = part.idx >= 0 ? S.arrangements[part.idx] : null;
+        const tab = (arr && arr.drumTab) || S.drumTab;
+        if (!tab || !Array.isArray(tab.hits)) return;
         const bandH = innerH / 3;
-        for (const hit of S.drumTab.hits) {
+        for (const hit of tab.hits) {
             const x = timeToX(hit.t);
             if (x < PARTS_GUTTER || x > w) continue;
             const meta = DRUM_PIECE_META[hit.p];
@@ -288,7 +299,11 @@ export function _partsViewDraw(w, h) {
             ctx.stroke();
         }
         if (row.type === 'audio') _drawTrackAudioWaveform(row, y0, laneH, w);
-        else if (row.type === 'transcription' && row.targetId === 'drums') {
+        else if (row.type === 'transcription' && arrIdx >= 0 && isDrumArrangement(S.arrangements[arrIdx])) {
+            // A drum part's lane paints its OWN tab (any of several parts).
+            _partsDrawSilhouette({ kind: 'drums', idx: arrIdx }, y0, laneH, w);
+        } else if (row.type === 'transcription' && row.targetId === 'drums') {
+            // Legacy unmaterialized tab (create-mode compose).
             if (S.drumTab && Array.isArray(S.drumTab.hits)) _partsDrawSilhouette({ kind: 'drums', idx: -1 }, y0, laneH, w);
         } else if (row.type === 'transcription' && arrIdx >= 0) {
             _partsDrawSilhouette({ kind: 'arr', idx: arrIdx }, y0, laneH, w);
@@ -371,14 +386,18 @@ export function _partsViewOnMouseDown(e, x, y) {
         // Match the header row: focus this source as the active reference so
         // the waveform + onset tools follow the clicked lane too.
         host.selectTrackSessionSource(row.sourceId);
-    } else if (row.targetId === 'drums') {
-        setStatus('Drum transcription selected — double-click to open the drum editor');
     } else {
         const idx = _arrIndexForTarget(row.targetId);
-        if (idx >= 0 && idx !== S.currentArr) window.editorSelectArrangement(idx);
-        const sel = document.getElementById('editor-arrangement');
-        if (sel && idx >= 0) sel.value = String(idx);
-        setStatus(`Transcription track: ${row.name} — double-click to open it`);
+        if ((idx >= 0 && isDrumArrangement(S.arrangements[idx])) || row.targetId === 'drums') {
+            // A drum part (any of them) — arming is a no-op (currentArr never
+            // moves onto a drums arrangement); double-click opens its grid.
+            setStatus('Drum transcription selected — double-click to open the drum editor');
+        } else {
+            if (idx >= 0 && idx !== S.currentArr) window.editorSelectArrangement(idx);
+            const sel = document.getElementById('editor-arrangement');
+            if (sel && idx >= 0) sel.value = String(idx);
+            setStatus(`Transcription track: ${row.name} — double-click to open it`);
+        }
     }
     // Arm a region drag on a hit block — transcription rows only (a notation
     // arrangement or the drum tab). Audio regions carry a two-clock media

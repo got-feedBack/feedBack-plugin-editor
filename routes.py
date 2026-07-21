@@ -211,6 +211,27 @@ def _plugin_version() -> str:
 _DRUM_TAB_ABSENT = object()
 
 
+def _primary_drum_alias_id(raw):
+    """The id under which the PRIMARY drum part's song-level ``drum_tab``
+    alias entry is persisted.
+
+    The frontend sends the promoted primary's ACTUAL id (``parts[0].id``) as
+    ``drum_tab_id`` so that deleting the original primary and promoting a
+    survivor (e.g. ``drums-2``) round-trips the part's identity: the alias
+    entry keeps that id, so on reload the arrangement returns under the same
+    id its ``editor_stem_links`` / track-session tree rows are keyed by (they
+    would otherwise be dropped as orphans). Sanitized to the same filename-safe
+    charset as the extra parts; falls back to the legacy ``"drums"`` when the
+    field is absent/blank — a legacy single-drum pack (and an old client that
+    doesn't send the field) stays byte-identical, and old readers still find
+    the song-level ``drum_tab``.
+
+    Module-level so pytest can reach it.
+    """
+    pid = re.sub(r"[^a-z0-9_-]+", "-", str(raw or "").strip().lower()).strip("-_")
+    return pid or "drums"
+
+
 def _drum_arrs_to_drum_tab(drum_arrs, out_unmapped=None):
     """Fold drum arrangements into a drum_tab.
 
@@ -260,6 +281,62 @@ def _drum_arrs_to_drum_tab(drum_arrs, out_unmapped=None):
         "kit": [{"id": pid, "name": name} for pid, name in kit_seen.items()],
         "hits": hits,
     }
+
+
+def _is_drum_pointer_entry(entry):
+    """A manifest `arrangements[]` entry that is a DRUM-PART POINTER —
+    feedpak-spec 1.17.0 "drums as arrangements": `type: drums` with a
+    per-arrangement `drum_tab` file and NO note `file`. Old readers (and
+    the core loader's own file/notation gate) skip these cleanly; the
+    editor manages them in the save path's drum block, so the pitched
+    arrangement pipeline must never pair with one.
+
+    Module-level so pytest can reach it.
+    """
+    return (
+        isinstance(entry, dict)
+        and str(entry.get("type") or "").strip().lower() in ("drums", "drum")
+        and not (isinstance(entry.get("file"), str) and entry.get("file").strip())
+    )
+
+
+def _sanitize_extra_drum_tab(tab):
+    """A compact save-side sanitation for an EXTRA drum part's tab (the
+    primary's inline pass in `_save_sloppak` is the heavyweight original):
+    drop malformed / duplicate (t, piece) hits, round timestamps to the
+    millisecond, and sort — so every persisted drum tab holds the same
+    invariants the frontend's binary-search and drag-snap depend on.
+    Schema-shape validation (`validate_drum_tab`) already ran at the
+    request boundary. Returns a NEW dict; never mutates the request body.
+
+    Module-level so pytest can reach it.
+    """
+    import math as _math
+
+    seen: set = set()
+    clean_hits: list[dict] = []
+    for h in (tab.get("hits") or []) if isinstance(tab.get("hits"), list) else []:
+        if not isinstance(h, dict):
+            continue
+        try:
+            t = float(h.get("t"))  # type: ignore[arg-type]
+            p = str(h.get("p") or "")
+        except (TypeError, ValueError):
+            continue
+        if not _math.isfinite(t) or t < 0 or not p:
+            continue
+        t = round(t, 3)
+        if (t, p) in seen:
+            continue
+        seen.add((t, p))
+        clean = dict(h)
+        clean["t"] = t
+        clean["p"] = p
+        clean_hits.append(clean)
+    clean_hits.sort(key=lambda h2: h2["t"])
+    out = dict(tab)
+    out["hits"] = clean_hits
+    return out
 
 
 # Generic "field absent from request" sentinel used by the save endpoint
@@ -4345,10 +4422,23 @@ def setup(app, context):
             sloppak_form = "dir" if filepath.is_dir() else "zip"
 
             # Build a per-arrangement id list from the manifest so we can map
-            # edits back to the correct JSON file on save.
+            # edits back to the correct JSON file on save. Mirror the core
+            # loader's per-entry gate (lib/sloppak: an entry with neither
+            # `file` nor `notation` is skipped — that's how the drum-part
+            # POINTER entries ride the manifest invisibly), or the id list
+            # would misalign with song.arrangements on a multi-drum pack and
+            # every edit after the skip would map back to the WRONG file.
             arrangement_ids = []
             arrangement_types = []
             for entry in (loaded.manifest.get("arrangements", []) or []):
+                if not isinstance(entry, dict):
+                    continue
+                _rel_raw = entry.get("file")
+                _has_file = isinstance(_rel_raw, str) and bool(_rel_raw.strip())
+                _not_raw = entry.get("notation")
+                _has_notation = isinstance(_not_raw, str) and bool(_not_raw.strip())
+                if not _has_file and not _has_notation:
+                    continue
                 arrangement_ids.append(entry.get("id", ""))
                 arrangement_types.append(entry.get("type", ""))
 
@@ -4542,6 +4632,64 @@ def setup(app, context):
             _loaded_drum_tab = getattr(loaded, "drum_tab", None)
             if _loaded_drum_tab is not None:
                 result["drum_tab"] = _loaded_drum_tab
+            # EXTRA drum parts (feedpak-spec 1.17.0 "drums as arrangements"):
+            # type:"drums" manifest entries carrying per-arrangement
+            # `drum_tab` pointers. The core loader skips these (no `file`),
+            # so read their side files here. The entry that aliases the
+            # song-level `drum_tab:` file IS the primary — already loaded
+            # above; never load it twice. A malformed part file is skipped,
+            # never fatal (a reader must not crash on a bad side-file).
+            _primary_rel = loaded.manifest.get("drum_tab")
+            _primary_id = ""
+            _drum_parts = []
+            _seen_part_rels: set = set()
+            for _entry in (loaded.manifest.get("arrangements", []) or []):
+                if not _is_drum_pointer_entry(_entry):
+                    continue
+                _rel = _entry.get("drum_tab")
+                if not isinstance(_rel, str) or not _rel.strip():
+                    continue
+                _rel = _rel.strip()
+                if _rel == _primary_rel:
+                    # The alias entry for the song-level drum_tab IS the
+                    # primary — never load it as an extra. Surface its id so
+                    # the frontend re-materializes the primary under the same
+                    # id (a promoted, non-"drums" primary keeps its stem
+                    # links / tree rows on reload).
+                    if not _primary_id:
+                        _primary_id = str(_entry.get("id") or "")
+                    continue
+                if _rel in _seen_part_rels:
+                    continue
+                _seen_part_rels.add(_rel)
+                _src = Path(loaded.source_dir).resolve()
+                _p_path = (_src / _rel).resolve()
+                try:
+                    _p_path.relative_to(_src)   # path traversal guard
+                except ValueError:
+                    continue
+                try:
+                    _p_tab = json.loads(_p_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                from lib.drums import validate_drum_tab as _validate_part_tab
+                _p_ok, _ = _validate_part_tab(_p_tab) if isinstance(_p_tab, dict) else (False, "")
+                if not _p_ok:
+                    continue
+                _drum_parts.append({
+                    "id": str(_entry.get("id") or ""),
+                    "name": str(_entry.get("name") or _p_tab.get("name") or "Drums")[:120],
+                    "drum_tab": _p_tab,
+                })
+            if _drum_parts:
+                result["drum_parts"] = _drum_parts
+            # The primary's persisted id (from its alias entry) so the
+            # frontend re-materializes it under the same id it saved — only
+            # when there IS a primary drum_tab and an explicit alias id. A
+            # legacy pack with no alias entry omits it → the frontend keeps
+            # the default "drums", byte-identical.
+            if _loaded_drum_tab is not None and _primary_id:
+                result["drum_tab_id"] = _primary_id
             # Carry the manifest-derived arrangement id list onto each
             # arrangement so the frontend can round-trip it back to us.
             # Use a single `used_ids` set when generating fallback ids so two
@@ -4787,6 +4935,45 @@ def setup(app, context):
                     status_code=400,
                 )
 
+        # EXTRA drum parts (a song can hold several — feedpak-spec 1.17.0
+        # "drums as arrangements"): [{id, name, drum_tab}] persisted as
+        # type:"drums" manifest arrangement entries, each with its own
+        # per-arrangement drum_tab side file. Sentinel semantics mirror
+        # drum_tab: key absent → preserve whatever pointer entries the
+        # manifest already carries; a list (possibly EMPTY — the removal
+        # wire for a deleted extra part) → the authoritative set. Always
+        # ships beside drum_tab (the primary), never alone — that pairing
+        # keeps the alias entry's name and the extras rebuilt atomically.
+        drum_parts_payload = data.get("drum_parts", _DRUM_TAB_ABSENT)
+        if drum_parts_payload is not _DRUM_TAB_ABSENT:
+            if not isinstance(drum_parts_payload, list):
+                return JSONResponse(
+                    {"error": "drum_parts must be a list"}, status_code=400,
+                )
+            if session.get("format") != "sloppak":
+                return JSONResponse(
+                    {"error": "drum_parts can only be saved to sloppak-format songs"},
+                    status_code=400,
+                )
+            if drum_tab_payload is _DRUM_TAB_ABSENT:
+                return JSONResponse(
+                    {"error": "drum_parts requires drum_tab in the same save"},
+                    status_code=400,
+                )
+            from lib.drums import validate_drum_tab as _validate_part_tab
+            for _pi, _part in enumerate(drum_parts_payload):
+                if not isinstance(_part, dict) or not isinstance(_part.get("drum_tab"), dict):
+                    return JSONResponse(
+                        {"error": f"drum_parts[{_pi}] must be an object with a drum_tab object"},
+                        status_code=400,
+                    )
+                _p_ok, _p_reason = _validate_part_tab(_part["drum_tab"])
+                if not _p_ok:
+                    return JSONResponse(
+                        {"error": f"invalid drum_parts[{_pi}].drum_tab: {_p_reason}"},
+                        status_code=400,
+                    )
+
         # archive export (and its extended-range truncation path) has been
         # removed — sloppak preserves extended range natively, so no
         # string-peeling is needed on save.
@@ -4853,7 +5040,15 @@ def setup(app, context):
             # provided, it's the authoritative full snapshot (handles adds,
             # removes, reorders). Otherwise we update only the single
             # arrangement at arrangement_index from notes/chords/templates.
-            old_entries = list(manifest.get("arrangements", []) or [])
+            #
+            # Drum-part POINTER entries (type:"drums", no file — feedpak-spec
+            # 1.17.0) are managed by the drum block below: split them out so
+            # the pitched pipeline never pairs a wire arrangement with a
+            # file-less entry, and so the single-arrangement path's index
+            # math stays pitched-only (matching the frontend's indices).
+            _all_old_entries = list(manifest.get("arrangements", []) or [])
+            old_entries = [e for e in _all_old_entries if not _is_drum_pointer_entry(e)]
+            old_drum_entries = [e for e in _all_old_entries if _is_drum_pointer_entry(e)]
 
             if all_arrangements is None:
                 if arrangement_index >= len(old_entries):
@@ -5135,6 +5330,89 @@ def setup(app, context):
                 else:
                     drum_tab_path.unlink(missing_ok=True)
                     manifest.pop("drum_tab", None)
+
+            # Drum-part manifest entries (feedpak-spec 1.17.0 "drums as
+            # arrangements"). When the client shipped `drum_parts` it is the
+            # authoritative set: rebuild every pointer entry — the PRIMARY as
+            # an alias of the song-level drum_tab.json, each EXTRA part with
+            # its own drum_tab_<id>.json side file — and drop orphaned side
+            # files. When absent, re-append the entries the manifest already
+            # carried (they were split out of the pitched rebuild above), so
+            # an old client's save can't silently strip another writer's
+            # drum parts.
+            if drum_parts_payload is not _DRUM_TAB_ABSENT:
+                new_drum_entries: list[dict] = []
+                kept_drum_files: set = set()
+                used_part_ids: set = set()
+                if isinstance(drum_tab_payload, dict):
+                    # The primary's alias entry — same file the song-level
+                    # `drum_tab:` key names, so a reader that predates the
+                    # spec stays with one drum and a spec reader must not
+                    # load it twice. Its id FOLLOWS the incoming primary's id
+                    # (the frontend's `drum_tab_id`, = parts[0].id) so a
+                    # promoted primary round-trips its identity; legacy /
+                    # old-client saves fall back to "drums".
+                    _primary_id = _primary_drum_alias_id(data.get("drum_tab_id"))
+                    used_part_ids.add(_primary_id)
+                    new_drum_entries.append({
+                        "id": _primary_id,
+                        "name": str(drum_tab_payload.get("name") or "Drums")[:120],
+                        "type": "drums",
+                        "drum_tab": "drum_tab.json",
+                    })
+                for _part in drum_parts_payload:
+                    # Durable id → stable side-file name. Sanitize to a safe
+                    # filename charset; de-collide with a numeric suffix.
+                    _pid_raw = str(_part.get("id") or "").strip().lower()
+                    _pid = re.sub(r"[^a-z0-9_-]+", "-", _pid_raw).strip("-_") or "drums-2"
+                    if _pid in used_part_ids:
+                        _n = 2
+                        while f"{_pid}-{_n}" in used_part_ids:
+                            _n += 1
+                        _pid = f"{_pid}-{_n}"
+                    used_part_ids.add(_pid)
+                    _p_name = str(_part.get("name") or _part["drum_tab"].get("name") or "Drums")[:120]
+                    _p_rel = f"drum_tab_{_pid}.json"
+                    _p_path = (source_dir / _p_rel).resolve()
+                    try:
+                        _p_path.relative_to(source_dir)
+                    except ValueError:
+                        raise RuntimeError("drum part path escapes sandbox")
+                    _p_tab = _sanitize_extra_drum_tab(_part["drum_tab"])
+                    # The tab's own name field is what the part shows on
+                    # reload — keep it in lockstep with the entry name.
+                    _p_tab["name"] = _p_name
+                    _p_path.write_text(
+                        json.dumps(_p_tab, separators=(",", ":")),
+                        encoding="utf-8",
+                    )
+                    kept_drum_files.add(_p_path)
+                    new_drum_entries.append({
+                        "id": _pid,
+                        "name": _p_name,
+                        "type": "drums",
+                        "drum_tab": _p_rel,
+                    })
+                manifest["arrangements"] = (
+                    [e for e in (manifest.get("arrangements") or [])
+                     if not _is_drum_pointer_entry(e)]
+                    + new_drum_entries
+                )
+                # Drop orphaned extra side files (a deleted part, a changed
+                # id). Only the drum_tab_*.json family — drum_tab.json (the
+                # primary) is owned by the block above.
+                for _f in source_dir.glob("drum_tab_*.json"):
+                    if _f.resolve() not in kept_drum_files:
+                        try:
+                            _f.unlink()
+                        except OSError:
+                            pass
+            elif old_drum_entries:
+                manifest["arrangements"] = (
+                    [e for e in (manifest.get("arrangements") or [])
+                     if not _is_drum_pointer_entry(e)]
+                    + old_drum_entries
+                )
 
             # Apply edited top-level metadata (title/artist/album/year only —
             # don't let the editor overwrite stems/lyrics/cover paths).

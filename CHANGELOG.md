@@ -42,6 +42,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `editor_track_session` schema is bumped to v3 (purely additive — v2 trees carry
   no regions and need no migration). Rendering, playback, and build are unchanged
   and land in later steps.
+- **A song can hold several drum parts.** The payoff of the drums-as-arrangement
+  arc below: with drums already present, **＋ Track ▸ Drums** adds *another* drum
+  part (a second drummer, an aux-percussion layer), and a GP/MIDI drum import is
+  **added** as a new Drums track instead of replacing the one you have. Each part
+  is its own **🥁 entry in the part dropdown** — pick one to open *its* grid — with
+  its own Tracks row, mixer strip, and multi-track playback channel (two parts
+  hitting the same drum at the same instant both sound). Deleting a part removes
+  just that part (undoable, exact); renaming follows the part. Saving persists
+  every part: the first as the song-level drum tab today's game plays (packs stay
+  fully backward-compatible — older readers simply see that one), the rest as
+  `type: drums` arrangement entries per feedpak-spec 1.17.0, and they all come
+  back on reload. Create-mode compose sessions keep the one-part rule for now
+  (their build path persists a single drum tab).
+
 - **The drums track is now an ordinary mixer / Tracks channel.** Building on the
   drums-as-arrangement work below, the drum chart's mixer strip and Tracks mix now
   use the same per-arrangement channel address every other part does, instead of a

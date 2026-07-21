@@ -12,7 +12,7 @@ import { _editorEscHtml, _editorPromptText, setStatus } from './ui.js';
 import { flattenChords } from './chords.js';
 import { KEYS_PATTERN } from './keys.js';
 import { _arrTypeKind, _typeKind } from './instrument.js';
-import { clampAwayFromDrums, isDrumArrangement, pitchedArrangementCount, pitchedIndexOf, syncDrumArrangement } from './drum-arrangement.js';
+import { addDrumArrangement, clampAwayFromDrums, findDrumArrangement, isDrumArrangement, pitchedArrangementCount, pitchedIndexOf, syncDrumArrangement } from './drum-arrangement.js';
 import { _recState } from './midi-record.js';
 import { _maybeOfferMidiTempoMap, _showDrumImportUnmappedModal } from './import.js';
 import { host } from './host.js';
@@ -301,12 +301,29 @@ export function editorShowAddDrumsModal() {
     document.getElementById('editor-add-drums-status').textContent = '';
     const fileInput = document.getElementById('editor-add-drums-gp');
     if (fileInput) fileInput.value = '';
-    // Show the "will replace" notice only when a drum_tab already lives on
-    // the sloppak so the user knows what's about to happen.
+    // Notice when a drum tab already exists: in a saved sloppak session the
+    // import ADDS another Drums track (multiple drum parts); in a create-mode
+    // session (which can only persist one part) it still REPLACES.
     const existingEl = document.getElementById('editor-add-drums-existing');
     if (existingEl) {
         existingEl.classList.toggle('hidden', !S.drumTab);
+        if (S.drumTab) {
+            existingEl.textContent = _canAddAnotherDrums()
+                ? 'This song already has drums — this import will be added as another Drums track.'
+                : 'This song already has a drum track — importing will replace it.';
+        }
     }
+}
+
+// Can a SECOND (third, …) drum part be added — i.e. does a drum import ADD
+// another part (vs replace the existing tab)? True only when the primary part
+// is materialized as a type:"drums" arrangement in a non-create sloppak
+// session — the create flow's build (create_sloppak) persists a single
+// drum_tab, so create mode keeps the legacy one-part replace semantics.
+// (Exported for new-track.js's plan gate + the tests.)
+export function _canAddAnotherDrums() {
+    return !!(S.drumTab && !S.createMode && S.format === 'sloppak'
+        && findDrumArrangement(S.arrangements));
 }
 
 export function editorHideAddDrumsModal() {
@@ -317,23 +334,33 @@ export function editorHideAddDrumsModal() {
 // tab is pure client state until save (S.drumTab + S.drumTabDirty — the
 // same stash the GP/MIDI import path uses), and the create flow's
 // init_drums seeds the identical empty shape, so no backend call is
-// needed. Refuses when a drum tab already exists: replacing goes through
-// the import modal, which warns.
+// needed. When drums already exist, ADDS another drum part (a song can
+// hold several) — except in create mode, whose build persists one part.
 export function editorAddEmptyDrums() {
     if (!S.sessionId || S.format !== 'sloppak') return false;
-    if (S.drumTab) {
-        setStatus('This song already has a Drums track — open it with 🥁 Edit Drums, or import to replace it.');
+    if (S.drumTab && !_canAddAnotherDrums()) {
+        // Create-mode (or an unmaterialized legacy tab): still one part max.
+        setStatus('This song already has a Drums track — open it with 🥁 Edit Drums. Save the song to add more drum parts.');
         return false;
     }
-    S.drumTab = { version: 1, name: 'Drums', kit: [], hits: [] };
+    const tab = { version: 1, name: 'Drums', kit: [], hits: [] };
+    if (S.drumTab) {
+        // A second (third, …) part: append its own type:"drums" arrangement
+        // and make the fresh part the active grid target.
+        addDrumArrangement(S, tab);
+    }
+    S.drumTab = tab;
     S.drumTabDirty = true;
     S.drumSel = new Set();
-    syncDrumArrangement(S);   // materialize the type:"drums" arrangement
+    // Materialize beside a pitched part only — a drums-only session must not
+    // put a drums arrangement at index 0, where the default currentArr would
+    // land on it (the tab stays a legacy off-array singleton there).
+    if (pitchedArrangementCount(S.arrangements) > 0) syncDrumArrangement(S);
     markSessionDirty();
     host.updateArrangementSelector();
     host.updateStatus();
     host.draw();
-    setStatus('Added empty Drums track — 🥁 Edit Drums to add hits; save to commit.');
+    setStatus(`Added empty ${tab.name} track — 🥁 Edit Drums to add hits; save to commit.`);
     return true;
 }
 
@@ -451,28 +478,36 @@ export async function editorDoAddDrums() {
             return;
         }
 
-        // Stash on session state; the next save_song ships it as
-        // `drum_tab` and the backend writes drum_tab.json + manifest key.
-        // Normalize hits: ensure sorted by t so drum-editor hit-testing and
-        // dragging work correctly, and clear any stale selection so indices
-        // from the old tab don't point into the new hits array.
-        S.drumTab = data.drum_tab;
-        if (S.drumTab && Array.isArray(S.drumTab.hits)) {
-            S.drumTab.hits.sort((a, b) => (a.t || 0) - (b.t || 0));
+        // Stash on session state; the next save_song ships it (primary as
+        // `drum_tab`, extra parts as `drum_parts`) and the backend writes the
+        // drum tab JSONs + manifest keys. Normalize hits: ensure sorted by t
+        // so drum-editor hit-testing and dragging work correctly, and clear
+        // any stale selection so indices from the old tab don't point into
+        // the new hits array. When drums already exist (saved sloppak), the
+        // import ADDS another drum part; create mode still replaces.
+        const tab = data.drum_tab;
+        if (tab && Array.isArray(tab.hits)) {
+            tab.hits.sort((a, b) => (a.t || 0) - (b.t || 0));
         }
+        const added = _canAddAnotherDrums();
+        if (added) addDrumArrangement(S, tab);   // its own type:"drums" arrangement
+        S.drumTab = tab;                          // the imported part is now the grid target
         S.drumTabDirty = true;  // user-imported — persist on next save
         S.drumSel = new Set();
-        syncDrumArrangement(S);   // reflect the imported tab in S.arrangements[]
+        // Reflect the imported tab in S.arrangements[] — beside a pitched
+        // part only (a drums-only session must not put drums at index 0).
+        if (pitchedArrangementCount(S.arrangements) > 0) syncDrumArrangement(S);
 
         editorHideAddDrumsModal();
         const hitCount = Array.isArray(data.drum_tab.hits)
             ? data.drum_tab.hits.length : 0;
         const unmapped = Array.isArray(data.unmapped) ? data.unmapped : [];
         const droppedCount = unmapped.reduce((s, u) => s + Math.max(0, Number(u.count) || 0), 0);
+        const what = added ? `Added drum track “${tab.name}”` : 'Drum tab imported';
         if (droppedCount > 0) {
-            setStatus(`Drum tab imported (${hitCount} hits, ${droppedCount} unmapped — see dialog) — save to persist`);
+            setStatus(`${what} (${hitCount} hits, ${droppedCount} unmapped — see dialog) — save to persist`);
         } else {
-            setStatus(`Drum tab imported (${hitCount} hits) — save to persist`);
+            setStatus(`${what} (${hitCount} hits) — save to persist`);
         }
         // Refresh the toolbar drum button (text/colour) and canvas so the
         // user immediately sees the "⟳ Drums (N)" state without waiting for

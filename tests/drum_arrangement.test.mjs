@@ -25,6 +25,7 @@ import {
     DRUMS_ARR_TYPE, isDrumArrangement, findDrumArrangement, syncDrumArrangement,
     pitchedArrangementCount, clampAwayFromDrums, pitchedIndexOf,
     drumArrangementIndex, switcherShownIndex,
+    activeDrumArrangementIndex, addDrumArrangement, adoptDrumParts, drumArrangements,
 } from '../src/drum-arrangement.js';
 import { _trackSessionTargetsPure } from '../src/track-session.js';
 
@@ -217,6 +218,75 @@ t('switcherShownIndex: drum-edit mode shows the drums option; otherwise the curr
     assert.strictEqual(switcherShownIndex(arrs, 0, true), 2, 'drum mode always shows drums, whatever currentArr');
     // No drums arrangement → always the current part, even if the flag is set.
     assert.strictEqual(switcherShownIndex([gtr('Lead'), gtr('Bass')], 1, true), 1);
+});
+
+// ── N drum parts: the active part, adding, adopting (this PR) ─────────
+t('activeDrumArrangementIndex: identity match on the ACTIVE tab, across several parts', () => {
+    const kit = tab();
+    const live = tab({ name: 'Drums (Live)', hits: [{ t: 2, p: 'snare' }] });
+    const arrs = [gtr('Lead'),
+        { id: 'drums', name: 'Drums', type: DRUMS_ARR_TYPE, drumTab: kit },
+        { id: 'drums-2', name: 'Drums (Live)', type: DRUMS_ARR_TYPE, drumTab: live }];
+    assert.strictEqual(activeDrumArrangementIndex(arrs, kit), 1);
+    assert.strictEqual(activeDrumArrangementIndex(arrs, live), 2);
+    assert.strictEqual(activeDrumArrangementIndex(arrs, { hits: [] }), -1, 'an unknown tab matches nothing');
+    assert.strictEqual(activeDrumArrangementIndex(arrs, null), -1);
+    // The switcher displays the ACTIVE part while the grid is open…
+    assert.strictEqual(switcherShownIndex(arrs, 0, true, live), 2);
+    assert.strictEqual(switcherShownIndex(arrs, 0, true, kit), 1);
+    // …and falls back to the primary for a legacy unmaterialized tab.
+    assert.strictEqual(switcherShownIndex(arrs, 0, true, { hits: [] }), 1);
+});
+
+t('addDrumArrangement: unique durable ids and de-duplicated display names', () => {
+    const S = { arrangements: [gtr('Lead')], drumTab: null };
+    const first = tab();
+    S.drumTab = first;
+    syncDrumArrangement(S);   // primary: id 'drums'
+    const second = tab();
+    const arr2 = addDrumArrangement(S, second);
+    assert.strictEqual(arr2.id, 'drums-2', 'lowest unused id');
+    assert.strictEqual(arr2.name, 'Drums 2', 'display name de-duplicated against the primary');
+    assert.strictEqual(second.name, 'Drums 2', 'the tab’s own persisted name follows');
+    assert.strictEqual(arr2.drumTab, second, 'SAME object reference — the grid edits it in place');
+    const third = addDrumArrangement(S, tab());
+    assert.strictEqual(third.id, 'drums-3');
+    assert.deepStrictEqual(drumArrangements(S.arrangements).map(a => a.id),
+        ['drums', 'drums-2', 'drums-3'], 'primary first, in list order');
+});
+
+t('adoptDrumParts: load-time extras keep their persisted ids and sort their hits', () => {
+    const S = { arrangements: [gtr('Lead')], drumTab: null };
+    S.drumTab = tab();
+    syncDrumArrangement(S);
+    adoptDrumParts(S, [
+        { id: 'drums_live', name: 'Drums (Live)', drum_tab: { version: 1, hits: [{ t: 3, p: 'kick' }, { t: 1, p: 'snare' }] } },
+        { id: 'drums', name: 'Clash', drum_tab: { version: 1, hits: [] } },   // id collides with the primary
+        { id: 'x', name: 'Bad', drum_tab: null },                             // malformed → skipped
+    ]);
+    const parts = drumArrangements(S.arrangements);
+    assert.strictEqual(parts.length, 3, 'primary + two adopted (the malformed part is skipped)');
+    assert.strictEqual(parts[1].id, 'drums_live', 'persisted id kept');
+    assert.deepStrictEqual(parts[1].drumTab.hits.map(h => h.t), [1, 3], 'hits sorted on adopt');
+    assert.strictEqual(parts[2].id, 'drums-2', 'colliding id re-assigned, never a duplicate');
+    assert.strictEqual(activeDrumArrangementIndex(S.arrangements, S.drumTab), 1,
+        'the primary stays the active grid target');
+});
+
+t('syncDrumArrangement with SEVERAL parts: a null active tab never mass-deletes', () => {
+    const S = { arrangements: [gtr('Lead')], drumTab: tab() };
+    syncDrumArrangement(S);
+    addDrumArrangement(S, tab());
+    S.drumTab = null;
+    syncDrumArrangement(S);
+    assert.strictEqual(drumArrangements(S.arrangements).length, 2,
+        'with several parts, clearing the active tab is not a delete-everything instruction');
+    // The singleton contract still holds: one part + null tab → dropped.
+    const single = { arrangements: [gtr('Lead')], drumTab: tab() };
+    syncDrumArrangement(single);
+    single.drumTab = null;
+    syncDrumArrangement(single);
+    assert.strictEqual(drumArrangements(single.arrangements).length, 0);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

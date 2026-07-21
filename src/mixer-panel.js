@@ -25,7 +25,7 @@
 // Part mute/solo/volume is SESSION state — it resets with the loaded song
 // (create.js / file-ops.js clear `S.partMix` when they install arrangements).
 // ════════════════════════════════════════════════════════════════════
-import { drumArrangementIndex } from './drum-arrangement.js';
+import { activeDrumArrangementIndex } from './drum-arrangement.js';
 import { host } from './host.js';
 import { S, editGen } from './state.js';
 import { _editorEscHtml, setStatus } from './ui.js';
@@ -162,7 +162,9 @@ export function _mixerOpenFromStoredPure(raw) {
 
 // The host-hook target audio.js consults per scheduled clap voice.
 export function _mixerClapState() {
-    return _mixerClapStatePure(S.partMix, S.drumEditMode, S.currentArr, drumArrangementIndex(S.arrangements));
+    // The ACTIVE drum part's channel (a song can hold several) — its strip
+    // gates the grid's guide claps, whichever part is open.
+    return _mixerClapStatePure(S.partMix, S.drumEditMode, S.currentArr, activeDrumArrangementIndex(S.arrangements, S.drumTab));
 }
 
 // Band mode's per-KEY twin (host.partStripState): {audible, vol 0..1} for
@@ -268,7 +270,7 @@ export function _mixerMeterPeakPure(key, levels, activeAudioId, activePart) {
 }
 
 function _meterPeakForKey(key, levels) {
-    const activePart = _mixerActivePartKeyPure(S.drumEditMode, S.currentArr, drumArrangementIndex(S.arrangements));
+    const activePart = _mixerActivePartKeyPure(S.drumEditMode, S.currentArr, activeDrumArrangementIndex(S.arrangements, S.drumTab));
     return _mixerMeterPeakPure(key, levels, S.activeAudioSourceId, activePart);
 }
 
@@ -283,7 +285,7 @@ export function _mixerMeterInputPure(key, levels, activeAudioId, activePart, pla
 }
 
 function _meterInputForKey(key, levels) {
-    const activePart = _mixerActivePartKeyPure(S.drumEditMode, S.currentArr, drumArrangementIndex(S.arrangements));
+    const activePart = _mixerActivePartKeyPure(S.drumEditMode, S.currentArr, activeDrumArrangementIndex(S.arrangements, S.drumTab));
     return _mixerMeterInputPure(key, levels, S.activeAudioSourceId, activePart,
         host.playAllTracksEnabled());
 }

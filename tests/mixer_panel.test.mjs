@@ -213,19 +213,39 @@ t('_mixerActivePartKeyPure: drum mode addresses the drums arrangement index; cur
 });
 
 t('the drums mixer strip gates the drum guide clap in drum-edit mode (arr:<drumIdx>, live S)', () => {
-    // The runtime integration: with the drums arrangement materialized at arr:1,
-    // muting its mixer strip must silence the drum-grid guide claps — even though
-    // currentArr is a pitched part. This is the whole point of PR2b's rekey.
+    // The runtime integration: with the drums arrangement materialized at arr:1
+    // and ITS tab active in the grid, muting its mixer strip must silence the
+    // drum-grid guide claps — even though currentArr is a pitched part.
+    const tab = { hits: [{ t: 1 }] };
     Object.assign(S, {
-        arrangements: [{ name: 'Lead' }, { name: 'Drums', type: 'drums' }],
-        drumEditMode: true, currentArr: 0,
+        arrangements: [{ name: 'Lead' }, { name: 'Drums', type: 'drums', drumTab: tab }],
+        drumTab: tab, drumEditMode: true, currentArr: 0,
         partMix: { 'arr:1': { mute: true, vol: 50 } },
     });
     assert.strictEqual(_mixerClapState().audible, false, 'the muted drums strip gates the drum guide clap');
     assert.strictEqual(_mixerClapState().vol, 0.5, 'and its fader scales the clap level');
     S.partMix = {};
     assert.strictEqual(_mixerClapState().audible, true, 'unmuted → the drum guide clap sounds again');
-    Object.assign(S, { drumEditMode: false });
+    Object.assign(S, { drumEditMode: false, drumTab: null });
+});
+
+t('with TWO drum parts, the clap gate follows the ACTIVE part (live S)', () => {
+    // Editing the second part: ITS strip (arr:2) gates the grid claps — the
+    // first part's strip does not.
+    const kit = { hits: [{ t: 1 }] };
+    const live = { hits: [{ t: 2 }] };
+    Object.assign(S, {
+        arrangements: [{ name: 'Lead' },
+            { name: 'Drums', type: 'drums', drumTab: kit },
+            { name: 'Drums (Live)', type: 'drums', drumTab: live }],
+        drumTab: live, drumEditMode: true, currentArr: 0,
+        partMix: { 'arr:1': { mute: true }, 'arr:2': { vol: 30 } },
+    });
+    assert.deepStrictEqual(_mixerClapState(), { audible: true, vol: 0.3 },
+        'the ACTIVE part (arr:2) gates/scales the claps; the muted arr:1 strip is irrelevant');
+    S.drumTab = kit;   // switch the grid to the first part
+    assert.strictEqual(_mixerClapState().audible, false, 'now the muted arr:1 strip gates them');
+    Object.assign(S, { drumEditMode: false, drumTab: null, partMix: {} });
 });
 
 // ── Panel open state: pref round-trip + toggle ───────────────────────

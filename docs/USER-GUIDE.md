@@ -376,6 +376,13 @@ piano roll, with each row labeled by its GM note number (the familiar DAW
 drum-roll layout). The **drum limb lint** flags hits that would need three
 hands — advisory only.
 
+A song can hold **several drum parts** (a second drummer, an aux-percussion
+layer): with drums already present, **＋ Track ▸ Drums** adds another, and a
+GP/MIDI drum import is added as a new Drums track instead of replacing. Each
+part is its own 🥁 entry in the part dropdown — pick one to open *its* grid —
+with its own Tracks row and mixer channel. All parts save with the song; the
+first part is the one the game plays today.
+
 ---
 
 ## 8. Structure — sections, phrases, anchors, handshapes, tones

@@ -418,7 +418,7 @@ t('switcher → a pitched part leaves Parts and Tempo Map view too (draw renders
 
 t('switcher → Drums resyncs the <select> even when the drums path is unavailable', () => {
     Object.assign(S, {
-        arrangements: [GTR('Lead'), DRUMS()], currentArr: 0,
+        arrangements: [GTR('Lead'), { ...DRUMS(), drumTab: null }], currentArr: 0,
         drumTab: null, format: 'sloppak',   // no drum tab → the guarded early return
         tabViewMode: false, drumEditMode: false, sel: new Set(),
     });

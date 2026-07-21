@@ -28,7 +28,7 @@ globalThis.document = globalThis.document || { getElementById: () => null };
 const { DeleteDrumTabCmd } = await import('../src/track-session.js');
 const { EditHistory } = await import('../src/history.js');
 const { _buildSaveBody } = await import('../src/file-ops.js');
-const { syncDrumArrangement } = await import('../src/drum-arrangement.js');
+const { addDrumArrangement, syncDrumArrangement } = await import('../src/drum-arrangement.js');
 const { S } = await import('../src/state.js');
 
 let pass = 0, fail = 0;
@@ -141,12 +141,82 @@ t('the save wire ships an explicit drum_tab null after a delete', () => {
     const body = _buildSaveBody(false);
     assert.ok('drum_tab' in body, 'field present — absent means preserve-on-disk');
     assert.strictEqual(body.drum_tab, null, 'literal null is the removal wire');
+    assert.deepStrictEqual(body.drum_parts, [], 'and the extras list ships empty beside it');
 });
 
 t('a clean, untouched tab still ships nothing (preserve path)', () => {
     seed();
     const body = _buildSaveBody(false);
     assert.strictEqual('drum_tab' in body, false);
+    assert.strictEqual('drum_parts' in body, false, 'extras follow the same preserve path');
+});
+
+// ── multiple drum parts (N drums) ─────────────────────────────────────
+
+// seed() + a second part "Drums (Live)" (id drums-2, arr idx 2), made ACTIVE.
+function seedTwo() {
+    const tab1 = seed();
+    const tab2 = { name: 'Drums (Live)', version: 1, hits: [{ t: 2.0, lane: 'snare' }] };
+    addDrumArrangement(S, tab2);
+    S.drumTab = tab2;   // the user is editing the second part
+    S.drumEditMode = true;
+    S.partMix = { 'arr:0': { vol: 100 }, 'arr:1': { vol: 50 }, 'arr:2': { vol: 25 } };
+    return { tab1, tab2 };
+}
+
+t('deleting the ACTIVE second part hands the grid to the primary; undo is an EXACT round-trip', () => {
+    const { tab1, tab2 } = seedTwo();
+    const beforeArrs = S.arrangements.slice();
+    const beforePartMix = { ...S.partMix };
+    S.history.exec(new DeleteDrumTabCmd('Drums (Live)', 2));
+    assert.strictEqual(S.arrangements.length, 2, 'the part is gone');
+    assert.strictEqual(S.drumTab, tab1, 'the grid hands over to the primary');
+    assert.strictEqual(S.drumEditMode, true, 'drum mode stays on — a part remains');
+    assert.deepStrictEqual(S.partMix, { 'arr:0': { vol: 100 }, 'arr:1': { vol: 50 } },
+        'the deleted strip is dropped; the survivors keep their state');
+    S.history.doUndo();
+    assert.strictEqual(S.arrangements.length, beforeArrs.length);
+    beforeArrs.forEach((a, i) => assert.strictEqual(S.arrangements[i], a,
+        `arrangement ${i} restored by IDENTITY (drum commands hold refs into its hits)`));
+    assert.strictEqual(S.drumTab, tab2, 'the active part is back in the grid');
+    assert.deepStrictEqual(S.partMix, beforePartMix, 'partMix exact round-trip');
+    S.history.doRedo();
+    assert.strictEqual(S.arrangements.length, 2, 'redo re-deletes');
+    assert.strictEqual(S.drumTab, tab1);
+});
+
+t('deleting the PRIMARY promotes the second part — the save wire follows', () => {
+    const { tab2 } = seedTwo();
+    S.drumTab = S.arrangements[1].drumTab;   // editing the primary this time
+    S.history.exec(new DeleteDrumTabCmd('Drums', 1));
+    assert.strictEqual(S.arrangements.length, 2, 'Lead + the surviving part');
+    assert.strictEqual(S.drumTab, tab2, 'the survivor takes the grid');
+    const body = _buildSaveBody(false);
+    assert.deepStrictEqual(body.drum_tab, tab2,
+        'the promoted part ships as the song-level primary');
+    assert.deepStrictEqual(body.drum_parts, [], 'no extras remain');
+});
+
+t('deleting the LAST part exits drum-edit mode', () => {
+    seed();
+    S.drumEditMode = true;
+    S.history.exec(new DeleteDrumTabCmd('Drums', 1));
+    assert.strictEqual(S.drumTab, null);
+    assert.strictEqual(S.drumEditMode, false, 'nothing left for the grid to edit');
+    S.history.doUndo();
+    assert.strictEqual(S.drumEditMode, true, 'mode restored with the part');
+});
+
+t('save wire: the PRIMARY ships as drum_tab even while a SECONDARY is active in the grid', () => {
+    const { tab1, tab2 } = seedTwo();   // active = tab2 (the secondary)
+    S.drumTabDirty = true;
+    const body = _buildSaveBody(false);
+    assert.deepStrictEqual(body.drum_tab, tab1,
+        'primary = the FIRST drums arrangement, NOT S.drumTab (the active grid tab)');
+    assert.strictEqual(body.drum_parts.length, 1);
+    assert.strictEqual(body.drum_parts[0].id, 'drums-2', 'durable id rides the wire');
+    assert.strictEqual(body.drum_parts[0].name, 'Drums (Live)');
+    assert.deepStrictEqual(body.drum_parts[0].drum_tab, tab2, 'the extra part’s own tab');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
