@@ -11,7 +11,7 @@ import { S, markSessionDirty } from './state.js';
 import { _editorEscHtml, _editorPromptText, setStatus } from './ui.js';
 import { flattenChords } from './chords.js';
 import { KEYS_PATTERN } from './keys.js';
-import { _arrTypeKind } from './instrument.js';
+import { _arrTypeKind, _typeKind } from './instrument.js';
 import { addDrumArrangement, clampAwayFromDrums, findDrumArrangement, isDrumArrangement, pitchedArrangementCount, pitchedIndexOf, syncDrumArrangement } from './drum-arrangement.js';
 import { _recState } from './midi-record.js';
 import { _maybeOfferMidiTempoMap, _showDrumImportUnmappedModal } from './import.js';
@@ -165,6 +165,64 @@ export async function editorRenameArrangement() {
     host.draw();
     host.updateStatus();
     setStatus(`Renamed to “${guard.name}”`);
+}
+
+// Undoable instrument-type set. Instrument identity is DATA (the feedpak-spec
+// §5.2 `type` facet): an authored type WINS over name inference in every reader
+// — arrKind / isKeysArr / the 4-vs-6 string baseline / view routing — so this is
+// the escape hatch for a pack whose NAME loaded it into the wrong instrument
+// (e.g. a fretted chart named "Electric Piano" opening keys-locked with no way
+// to override). Rebuilds in place (Principle VI): only arr.type moves, notes and
+// strings are untouched. Refreshes the selector + lane metrics on exec AND
+// rollback so the view flips immediately in both directions (undo/redo call
+// host.draw()/updateStatus() themselves).
+class SetArrangementTypeCmd {
+    constructor(arrIdx, newType) {
+        this.arrIdx = arrIdx;
+        this.newType = newType;
+        const arr = S.arrangements[arrIdx];
+        this.oldType = arr ? arr.type : undefined;   // undefined = was untyped
+        // Metadata-only — writes arr.type, never a note. Opts out of the
+        // read-only-roll note lock so the escape hatch works even for a fretted
+        // part currently shown read-only in the roll (see history.js _locked).
+        this.metadataScope = true;
+    }
+    _set(type) {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        if (type) arr.type = type; else delete arr.type;
+        host.updateArrangementSelector();
+        host.resizeForLaneChange(this.arrIdx);
+    }
+    exec() { this._set(this.newType); }
+    rollback() { this._set(this.oldType); }
+}
+
+// Set the active arrangement's instrument type from the toolbar selector.
+// Only guitar / bass / keys are authorable here — drums-as-arrangement authoring
+// lands in a later stacked PR. A no-op only when the type is ALREADY AUTHORED to
+// this kind — NOT merely name-inferred: stamping an untyped part's inferred kind
+// is a real, useful op (it makes identity DATA, which frees the rename guard's
+// name-inference lock so the part can be renamed to a neutral display label).
+export function editorSetArrangementType(value) {
+    if (_recState !== 'idle') {
+        setStatus('Cannot change the instrument type while recording. Stop the take first.');
+        return;
+    }
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return;
+    const kind = _typeKind(value);
+    if (kind !== 'guitar' && kind !== 'bass' && kind !== 'keys') return;
+    if (kind === _arrTypeKind(arr)) return;   // already AUTHORED to this kind — nothing to do
+    // WRITE the canonical feedpak-spec §5.2 spelling: the keys family serializes
+    // as "piano" ("keys" is only a READ alias _typeKind folds in). The backend
+    // persists arr.type verbatim, so authoring "keys" would leave a non-canonical
+    // manifest value other consumers keyed on "piano" wouldn't recognize.
+    const canonType = kind === 'keys' ? 'piano' : kind;
+    S.history.exec(new SetArrangementTypeCmd(S.currentArr, canonType));
+    host.draw();
+    host.updateStatus();
+    setStatus(`Instrument type set to ${kind}`);
 }
 
 export async function editorRemoveArrangement() {

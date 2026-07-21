@@ -155,7 +155,7 @@ function _nextDrumArrId(arrangements) {
 // arrangement itself), so with several parts this is a careful no-op that
 // leaves the non-active parts alone. Returns the arrangement holding
 // `S.drumTab`, or null when there are no drums.
-export function syncDrumArrangement(S) {
+export function syncDrumArrangement(S, primaryId) {
     if (!S || !Array.isArray(S.arrangements)) return null;
     const all = drumArrangements(S.arrangements);
     const tab = S.drumTab;
@@ -182,7 +182,14 @@ export function syncDrumArrangement(S) {
         all[0].name = _tabName(tab);
         return all[0];
     }
-    const arr = _drumArrShell(_nextDrumArrId(S.arrangements), tab);
+    // Materialize the primary under its PERSISTED id when the loader supplied
+    // one (feedpak-spec 1.17.0 alias entry id) and it doesn't collide — so a
+    // promoted, non-"drums" primary keeps the id its stem links / tree rows are
+    // keyed by. No/blank/colliding id → the legacy "drums"-first default.
+    const wantId = (primaryId !== undefined && primaryId !== null) ? String(primaryId).trim() : '';
+    const usedNow = new Set(S.arrangements.map(a => (a && a.id !== undefined && a.id !== null) ? String(a.id) : ''));
+    const id = (wantId && !usedNow.has(wantId)) ? wantId : _nextDrumArrId(S.arrangements);
+    const arr = _drumArrShell(id, tab);
     S.arrangements.push(arr);
     return arr;
 }

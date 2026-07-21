@@ -73,6 +73,11 @@ export function arrKind(arr) {
     return _arrTypeKind(arr) || _arrKindFromName(arr && arr.name);
 }
 
+// True only for instrument kinds that have strings/tuning to edit.
+export function _isFrettedKind(kind) {
+    return kind === 'guitar' || kind === 'bass';
+}
+
 // Bass predicate — type-authoritative, but its NAME fallback stays the INDEPENDENT
 // `/bass/` test, NOT `arrKind === 'bass'`. Bass and keys are independent facets in
 // the legacy inference ("Synth Bass" is bass for string-count AND keys for the

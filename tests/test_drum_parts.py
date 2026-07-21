@@ -25,8 +25,27 @@ import json
 from routes import (
     _create_build_drum_entries,
     _is_drum_pointer_entry,
+    _primary_drum_alias_id,
     _sanitize_extra_drum_tab,
 )
+
+
+def test_primary_alias_id_follows_the_incoming_primary_id():
+    # The MED fix: the song-level drum_tab alias entry is persisted under the
+    # promoted primary's actual id (parts[0].id), NOT a hardcoded "drums" — so
+    # deleting the original primary and promoting a survivor round-trips its
+    # id, keeping its stem links / tree rows matched on reload.
+    assert _primary_drum_alias_id("drums-2") == "drums-2"
+    assert _primary_drum_alias_id("drums_live") == "drums_live"
+    # Legacy / old-client back-compat: absent or blank → the legacy "drums",
+    # so a single-drum pack stays byte-identical and old readers still match.
+    assert _primary_drum_alias_id(None) == "drums"
+    assert _primary_drum_alias_id("") == "drums"
+    assert _primary_drum_alias_id("   ") == "drums"
+    # Sanitized to the same filename-safe charset the extra parts use.
+    assert _primary_drum_alias_id("Drums (Live)") == "drums-live"
+    assert _primary_drum_alias_id("../evil") == "evil"
+    assert _primary_drum_alias_id("!!!") == "drums"
 
 
 def test_pointer_entry_is_type_drums_without_a_note_file():

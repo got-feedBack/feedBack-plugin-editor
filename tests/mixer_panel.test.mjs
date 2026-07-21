@@ -98,6 +98,7 @@ t('one strip per arrangement, keyed by index; the drums arrangement is an ordina
     assert.deepStrictEqual(_mixerPartsPure(null, null), []);
 });
 
+
 t('strip state defaults to audible unity; volume clamps into [0, 110] (+10 dB ceiling)', () => {
     assert.deepStrictEqual(_mixerPartStatePure({}, 'arr:0'), { vol: 100, mute: false, solo: false });
     assert.deepStrictEqual(_mixerPartStatePure(null, 'arr:0'), { vol: 100, mute: false, solo: false });
