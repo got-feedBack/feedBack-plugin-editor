@@ -15,6 +15,7 @@ function t(name, fn) {
 
 const ev = (key, mods = {}) => ({
     key,
+    code: mods.code || '',
     ctrlKey: !!mods.ctrl,
     metaKey: !!mods.meta,
     shiftKey: !!mods.shift,
@@ -88,10 +89,10 @@ t('exposes ready and planned shortcut command rows', () => {
     assert.strictEqual(customSnap.status, 'planned');
     assert.strictEqual(customSnap.key, 'Ctrl+Shift+G');
     assert.strictEqual(rows.find(r => r.id === 'toggleTempoMap').key, 'T (Tempo Map)');
-    assert.strictEqual(rows.find(r => r.id === 'showShortcutHelp').key, '?');
+    assert.strictEqual(rows.find(r => r.id === 'showShortcutHelp').key, 'F1 / ?');
     assert.strictEqual(rows.find(r => r.id === 'openCommandPalette').key, 'Ctrl+K');
-    assert.strictEqual(rows.find(r => r.id === 'setFretDigit').key, '0-9');
-    assert.strictEqual(rows.find(r => r.id === 'setFretTen').key, 'Shift+0');
+    assert.strictEqual(rows.find(r => r.id === 'setFretDigit').key, '0-9 / Ctrl+1-9');
+    assert.strictEqual(rows.find(r => r.id === 'setFretTen').key, 'Shift+0 / Ctrl+0');
     assert.strictEqual(rows.find(r => r.id === 'moveStringUp').key, 'Up');
     assert.strictEqual(rows.find(r => r.id === 'moveStringDown').key, 'Down');
     assert.strictEqual(rows.find(r => r.id === 'slideUp').status, 'ready');
@@ -101,7 +102,8 @@ t('exposes ready and planned shortcut command rows', () => {
     assert.strictEqual(rows.find(r => r.id === 'toggleSlap').key, 'Shift+O');
     assert.strictEqual(rows.find(r => r.id === 'slideEditor').key, 'S');
     assert.strictEqual(rows.find(r => r.id === 'cyclePickDirection').key, 'K');
-    assert.strictEqual(rows.find(r => r.id === 'setTimeSignature').key, 'Shift+T / Shift+I');
+    // EOF's Shift+T is Midi Tones; time signature is Shift+I only there.
+    assert.strictEqual(rows.find(r => r.id === 'setTimeSignature').key, 'Shift+I');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatCount').key, 'N (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatMinus').key, '[ (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatUnit').key, 'D (Tempo Map)');
@@ -131,7 +133,9 @@ t('exposes wired FeedBack Native key labels', () => {
     assert.strictEqual(rows.find(r => r.id === 'slideEditor').key, 'S');
     assert.strictEqual(rows.find(r => r.id === 'cyclePickDirection').key, 'K');
     assert.strictEqual(rows.find(r => r.id === 'importGp').key, '');
-    assert.strictEqual(rows.find(r => r.id === 'toggleTempoMap').key, 'T');
+    // Plain T opens the tool palette; T pressed again enters Tempo Map — the
+    // registry shows the chord that actually works (tools.js grammar).
+    assert.strictEqual(rows.find(r => r.id === 'toggleTempoMap').key, 'T,T');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatCount').key, 'N (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatPlus').key, '] (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatUnit').key, 'D (Tempo Map)');
@@ -192,7 +196,10 @@ t('maps FeedBack Native Tempo Map commands by active mode', () => {
 });
 
 t('maps EOF Tempo Map commands by active mode', () => {
-    assert.strictEqual(api._editorEofCommandForKeyPure(ev('t')), 'toggleTap');
+    // EOF's plain T is "Crazy status" — a feature this editor doesn't have, so
+    // the key stays FREE rather than squatting Tap (EOF's Tap is Ctrl+T).
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('t')), null);
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('t', { ctrl: true })), 'toggleTap');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('s')), 'slideEditor');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('4')), 'setFretDigit:4');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev(')', { shift: true })), 'setFretTen');
@@ -220,6 +227,24 @@ t('maps EOF Tempo Map commands by active mode', () => {
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('Insert'), 'tempoMap'), 'tempoInsertSync');
     assert.strictEqual(api._editorEofCommandForKeyPure(ev('Backspace'), 'tempoMap'), 'tempoDeleteSync');
 });
+t('EOF port: help, select-like, fret aliases, and numpad bookmarks land', () => {
+    // F1 = Help (EOF), beside the universal '?'.
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('F1')), 'showShortcutHelp');
+    // Shift+L = precise select-like → our one select-matching command; follow
+    // has no EOF key (EOF just auto-scrolls) and is button/View-menu only there.
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('l', { shift: true })), 'selectLike');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('l', { ctrl: true })), 'selectLike');
+    // EOF's own fret entry kept as a faithful alias: Ctrl+1-9, Ctrl+0=10, Ctrl+`=0.
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('3', { ctrl: true })), 'setFretDigit:3');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('0', { ctrl: true })), 'setFretTen');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('`', { ctrl: true })), 'setFretDigit:0');
+    // Numpad bookmarks (EOF: plain = goto, Ctrl = set) — and a NumLock numpad
+    // digit (e.key '5', code Numpad5) must NOT read as fret entry.
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('5', { code: 'Numpad5' })), 'gotoBookmark:5');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('5', { ctrl: true, code: 'Numpad5' })), 'setBookmark:5');
+    assert.strictEqual(api._editorEofCommandForKeyPure(ev('5', { code: 'Digit5' })), 'setFretDigit:5');
+});
+
 t('defaults right-click behavior by shortcut profile', () => {
     assert.strictEqual(api._editorDefaultRightClickBehaviorPure('feedback'), 'context');
     assert.strictEqual(api._editorDefaultRightClickBehaviorPure('eof'), 'eofEdit');
