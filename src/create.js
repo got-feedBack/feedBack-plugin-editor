@@ -2608,6 +2608,13 @@ export async function editorBuild() {
             chords: arr.chords,
             chord_templates: arr.chord_templates,
         };
+        // Ship an authored instrument `type` (feedpak-spec §5.2) into the build
+        // payload — without it the backend re-infers the type from the NAME on
+        // /build, so a create-mode part re-typed via the toolbar selector (e.g. a
+        // fretted chart named "Electric Piano" corrected to guitar) would lose the
+        // correction on its very first build. The save path already ships it via
+        // the full-arrangement spread in _buildSaveBody; the build whitelist must too.
+        if (arr.type) arrEntry.type = arr.type;
         if (buildTones) arrEntry.tones = buildTones;
         if (arr._gp_notation) arrEntry._gp_notation = arr._gp_notation;
         // PR3d: include authored anchors too — same dirty-gate as

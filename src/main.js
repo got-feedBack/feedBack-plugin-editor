@@ -69,7 +69,7 @@ import {
 import {
     editorDoAddDrums, editorDrumsFileSelected, editorDrumsGPSelected,
     editorHideAddDrumsModal, editorRemoveArrangement, editorRenameArrangement,
-    editorShowAddDrumsModal
+    editorSetArrangementType, editorShowAddDrumsModal
 } from './arrangement.js';
 import {
     _activeArrangementExceedsArchiveLimit, _editorLoadsInFlight, _resetOffsetUI,
@@ -188,7 +188,7 @@ import { _laneClipActive, applyLaneScrollBounds, drawLaneScrollbar, laneBandTop 
 import {
     _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
-import { arrKind } from './instrument.js';
+import { _isFrettedKind, arrKind } from './instrument.js';
 import { clampAwayFromDrums, pitchedArrangementCount } from './drum-arrangement.js';
 import {
     _restoreSuggestedMarks,
@@ -644,6 +644,7 @@ window.editorDoImportGuitar = editorDoImportGuitar;
 
 // Arrangement management (rename / remove / add-drums import) — arrangement.js.
 window.editorRenameArrangement = editorRenameArrangement;
+window.editorSetArrangementType = editorSetArrangementType;
 window.editorRemoveArrangement = editorRemoveArrangement;
 window.editorShowAddDrumsModal = editorShowAddDrumsModal;
 window.editorHideAddDrumsModal = editorHideAddDrumsModal;
@@ -1097,8 +1098,23 @@ function updateArrangementSelector() {
     if (stringsBtn) {
         const active = S.arrangements[S.currentArr];
         const activeKind = active && arrKind(active);
-        const stringsMode = !!active && activeKind !== 'keys' && activeKind !== 'drums';
+        const stringsMode = !!active && _isFrettedKind(activeKind);
         stringsBtn.classList.toggle('hidden', !S.sessionId || !stringsMode);
+    }
+
+    // Instrument-type selector — the escape hatch that AUTHORS the arrangement's
+    // `type` (which every identity reader now honors over the name). Shown on a
+    // live session for any string/keys arrangement so a fretted chart opened
+    // piano-locked by a keys word in its name can be re-typed to guitar/bass;
+    // drums-as-arrangement authoring is a later PR, so a drums part hides it.
+    const typeSel = document.getElementById('editor-arr-type');
+    if (typeSel) {
+        const active = S.arrangements[S.currentArr];
+        const k = active && arrKind(active);
+        const showType = !!active && !!S.sessionId
+            && (k === 'guitar' || k === 'bass' || k === 'keys');
+        typeSel.classList.toggle('hidden', !showType);
+        if (showType) typeSel.value = k;
     }
 
     // Show "● Record" (live MIDI) button on sloppak sessions only — archive's

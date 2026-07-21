@@ -36,9 +36,15 @@ export const MAX_UNDO = 500;
 //   suggestResolved  — the VA.3 suggest-position writer (resolved adds +
 //                      Accept) IS the sanctioned string/fret write path the
 //                      lock was holding the door for. It marks, never guesses.
+//   metadataScope    — arrangement metadata (its `type`), never a single note.
+//                      The lock guards silent string/fret WRITES; a type set
+//                      touches no note, and the type control is the escape
+//                      hatch a fretted part shown read-only in the roll needs
+//                      most (re-type it out of keys). Unlike songScope it keeps
+//                      _arrIdx, so undo still switches to the retyped part.
 // Nothing else opts out. Returns true when the command must not run.
 function _locked(cmd) {
-    if (cmd.songScope === true || cmd.pitchPreserving === true || cmd.suggestResolved === true) return false;
+    if (cmd.songScope === true || cmd.pitchPreserving === true || cmd.suggestResolved === true || cmd.metadataScope === true) return false;
     if (!_rollReadOnly()) return false;
     _rollLockNotice();
     return true;
