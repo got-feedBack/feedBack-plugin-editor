@@ -107,12 +107,34 @@ t('a name the editor and the save read differently is refused (both facets guard
     assert.strictEqual(P._renameGuardPure('Rhythm', 'Synthwave Lead', []).ok, false);
 });
 
-t('cross-kind renames refuse and say why', () => {
+t('cross-kind renames refuse and say why (untyped: name still drives the kind)', () => {
     const g = P._renameGuardPure('Lead', 'Bass 2', []);
     assert.strictEqual(g.ok, false);
     assert.ok(/guitar → bass/.test(g.reason), 'names the kind change');
     assert.strictEqual(P._renameGuardPure('Bass', 'Lead', []).ok, false);
     assert.strictEqual(P._renameGuardPure('Lead', 'Keys Solo', []).ok, false);
+});
+
+t('a TYPED part renames freely across name-inferred kinds — identity is data', () => {
+    // The capstone payoff: when the arrangement carries an authored `type`,
+    // the caller passes typed=true and the kind-change refusal is skipped —
+    // the name is a pure display label. Every case below is REFUSED untyped
+    // (see the cross-kind test) and ALLOWED typed.
+    assert.strictEqual(P._renameGuardPure('Lead', 'Bass 2', [], true).ok, true, 'guitar→bass name ok when typed');
+    assert.strictEqual(P._renameGuardPure('Lead', 'Electric Piano', [], true).ok, true, 'save-side keys ok when typed');
+    assert.strictEqual(P._renameGuardPure('Piano', 'Electric Piano', [], true).ok, true, 'runtime-facet move ok when typed');
+    const g = P._renameGuardPure('Lead', '  Grand Piano  ', [], true);
+    assert.deepStrictEqual(g, { ok: true, reason: '', name: 'Grand Piano' }, 'still trims');
+});
+
+t('a TYPED part still obeys the name-agnostic rules (empty / too-long / duplicate / no-op)', () => {
+    // typed relaxes ONLY the kind-change refusal — the structural checks stay.
+    assert.strictEqual(P._renameGuardPure('Lead', '   ', [], true).ok, false, 'empty still refused');
+    assert.strictEqual(P._renameGuardPure('Lead', 'x'.repeat(61), [], true).ok, false, 'too-long still refused');
+    assert.strictEqual(P._renameGuardPure('Lead', 'rhythm', ['Rhythm'], true).ok, false, 'duplicate still refused');
+    const noop = P._renameGuardPure('Lead', 'Lead', ['Rhythm'], true);
+    assert.strictEqual(noop.ok, false);
+    assert.strictEqual(noop.reason, '', 'a no-op is still a silent no-op');
 });
 
 t('empty, too-long, duplicate, and no-op inputs are handled', () => {

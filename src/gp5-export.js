@@ -15,18 +15,19 @@ import { S } from './state.js';
 import { setStatus } from './ui.js';
 import { guardSessionTransition } from './session-lifecycle.js';
 import { _tabPreviewUrlPure } from './tab-preview.js';
+import { arrKind } from './instrument.js';
 
 /* @pure:gp5-export:start */
 // Which parts can export, with the exact user-facing reason when one can't.
 // Mirrors the Tab preview guard: fretted-only (keys/drums pack as pitch, not
 // string·fret, so a GP conversion would engrave nonsense), and a SAVED pack is
-// required because the converter reads the last-saved pack. Regexes inlined so
-// this @pure block stays self-contained and slice-testable (the tab-preview
-// block inlines the same fretted test for the same reason).
-function _gp5ExportGuardPure(filename, arrName, hasArrangements) {
+// required because the converter reads the last-saved pack. The caller passes
+// the RESOLVED instrument kind (arrKind — an authored `type` wins over the
+// name), so keys/drums are refused by identity, not by a name guess; taking a
+// kind keeps this @pure block self-contained and slice-testable.
+function _gp5ExportGuardPure(filename, kind, hasArrangements) {
     if (!hasArrangements) return { ok: false, reason: 'Load a song first.' };
-    const nm = String(arrName || '');
-    if (/^(keys|piano|keyboard|synth)/i.test(nm) || /^drums/i.test(nm)) {
+    if (kind === 'keys' || kind === 'drums') {
         return { ok: false, reason: 'Guitar Pro export is for fretted tracks — keys and drums tracks have no tab.' };
     }
     if (!filename) {
@@ -79,7 +80,7 @@ function _downloadBytes(bytes, name) {
 export async function editorExportGp5() {
     const cur = () => (S.arrangements.length ? S.arrangements[S.currentArr] : null);
     let arr = cur();
-    let guard = _gp5ExportGuardPure(S.filename, arr && arr.name, !!S.arrangements.length);
+    let guard = _gp5ExportGuardPure(S.filename, arrKind(arr), !!S.arrangements.length);
     if (!guard.ok) { setStatus(guard.reason); return; }
     // The converter reads the SAVED pack and indexes it by S.currentArr — and
     // it CLAMPS that index into the saved track list. So an unsaved session
@@ -92,7 +93,7 @@ export async function editorExportGp5() {
     }
     // The prompt awaited: the song (and the current part) may have moved.
     arr = cur();
-    guard = _gp5ExportGuardPure(S.filename, arr && arr.name, !!S.arrangements.length);
+    guard = _gp5ExportGuardPure(S.filename, arrKind(arr), !!S.arrangements.length);
     if (!guard.ok) { setStatus(guard.reason); return; }
     const name = _gp5ExportNamePure(S.filename, arr && arr.name);
     setStatus('Exporting ' + name + '…');

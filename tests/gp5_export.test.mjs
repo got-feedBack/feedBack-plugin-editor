@@ -17,6 +17,7 @@ import {
     _gp5ExportGuardPure, _gp5ExportNamePure, _gp5ExportHttpMessagePure,
 } from '../src/gp5-export.js';
 import { _tabPreviewUrlPure } from '../src/tab-preview.js';
+import { arrKind } from '../src/instrument.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -28,32 +29,30 @@ async function ta(name, fn) {
     catch (e) { fail++; console.error('  FAIL ' + name + ': ' + e.message); }
 }
 
-// ── 1. guard truth table ─────────────────────────────────────────────────────
+// ── 1. guard truth table (the guard now takes the RESOLVED kind, not a name) ──
 t('guard: no arrangements → load a song first', () => {
-    const g = _gp5ExportGuardPure('song.feedpak', 'Lead', false);
+    const g = _gp5ExportGuardPure('song.feedpak', 'guitar', false);
     assert.strictEqual(g.ok, false);
     assert.match(g.reason, /Load a song first/);
 });
 
-t('guard: keys / piano / synth / drums parts are refused (no tab)', () => {
-    for (const nm of ['Keys', 'Piano', 'Keyboard 2', 'Synth Lead', 'Drums', 'Drums (kit)']) {
-        const g = _gp5ExportGuardPure('song.feedpak', nm, true);
-        assert.strictEqual(g.ok, false, nm + ' should be refused');
+t('guard: keys / drums kinds are refused (no tab)', () => {
+    for (const kind of ['keys', 'drums']) {
+        const g = _gp5ExportGuardPure('song.feedpak', kind, true);
+        assert.strictEqual(g.ok, false, kind + ' should be refused');
         assert.match(g.reason, /fretted tracks/);
     }
 });
 
 t('guard: fretted part but no saved filename → save first', () => {
-    const g = _gp5ExportGuardPure('', 'Lead', true);
+    const g = _gp5ExportGuardPure('', 'guitar', true);
     assert.strictEqual(g.ok, false);
     assert.match(g.reason, /Save the song first/);
 });
 
-t('guard: a fretted, saved part is OK', () => {
-    const g = _gp5ExportGuardPure('song.feedpak', 'Lead', true);
-    assert.deepStrictEqual(g, { ok: true, reason: '' });
-    // a name that merely CONTAINS "keys" mid-string is still fretted (start-anchored)
-    assert.strictEqual(_gp5ExportGuardPure('song.feedpak', 'Rhythm (keys double)', true).ok, true);
+t('guard: a fretted, saved part is OK (bass and guitar are the fretted kinds)', () => {
+    assert.deepStrictEqual(_gp5ExportGuardPure('song.feedpak', 'guitar', true), { ok: true, reason: '' });
+    assert.strictEqual(_gp5ExportGuardPure('song.feedpak', 'bass', true).ok, true);
 });
 
 // ── 2. download filename ─────────────────────────────────────────────────────
@@ -123,6 +122,8 @@ function exportEnv(overrides = {}) {
         S: { arrangements: [{ name: 'Lead' }], currentArr: 0, filename: 'song.feedpak' },
         statuses: [], downloads: [], fetched: [],
         setStatus: (msg) => env.statuses.push(msg),
+        // The orchestrator resolves the part's kind via arrKind before the guard.
+        arrKind,
         _gp5ExportGuardPure, _gp5ExportNamePure, _gp5ExportHttpMessagePure, _tabPreviewUrlPure,
         _downloadBytes: (_bytes, name) => env.downloads.push(name),
         fetch: (url) => {
@@ -168,6 +169,28 @@ await ta('the song can close during the prompt — guards are re-checked after t
     assert.deepStrictEqual(env.fetched, [], 'no conversion of a song that went away mid-prompt');
     assert.deepStrictEqual(env.downloads, []);
     assert.match(env.statuses.join(' '), /Load a song first/);
+});
+
+// ── 6. authored `type` drives the guard through the real orchestrator ─────────
+// Byte-identical for untyped inputs, so these typed cases are what prove the
+// conversion actually consults arrKind and not the name (the capstone payoff).
+await ta('a keys-TYPED part named like a guitar is refused — identity is data', async () => {
+    const env = exportEnv({
+        S: { arrangements: [{ type: 'piano', name: 'Lead' }], currentArr: 0, filename: 'song.feedpak' },
+    });
+    await env.run();
+    assert.deepStrictEqual(env.fetched, [], 'a keys part exports no tab, whatever its name');
+    assert.deepStrictEqual(env.downloads, []);
+    assert.match(env.statuses.join(' '), /fretted tracks/);
+});
+
+await ta('a guitar-TYPED part named "Piano" now exports — the free-rename payoff', async () => {
+    const env = exportEnv({
+        S: { arrangements: [{ type: 'guitar', name: 'Piano' }], currentArr: 0, filename: 'song.feedpak' },
+    });
+    await env.run();
+    assert.deepStrictEqual(env.downloads, ['song — Piano.gp5'], 'exports under its display name');
+    assert.strictEqual(env.fetched.length, 1, 'the conversion actually ran');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

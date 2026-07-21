@@ -12,7 +12,7 @@ import { beatOf, timeOf } from './beats.js';
 import { LABEL_W, TIMELINE_TOP, timeToX, xToTime } from './geometry.js';
 import { _regionBlockRectPure, _regionHitPure, _regionSnapStartPure, _regionTimeSpanPure, _trackRegionsResolvePure } from './region.js';
 import { MoveRegionCmd } from './region-commands.js';
-import { KEYS_PATTERN } from './keys.js';
+import { arrKind } from './instrument.js';
 import { _stringCountFor } from './lanes.js';
 import { _downbeatTimes } from './loop.js';
 import { _recState } from './midi-record.js';
@@ -61,15 +61,14 @@ export function _partsLaneAtYPure(y, waveformH, laneH, count) {
     const i = Math.floor((y - waveformH) / laneH);
     return i >= 0 && i < count ? i : -1;
 }
-// Instrument tag for a fretted/keyed arrangement, inferred from its NAME
-// alone so every Parts-view lane reflects its OWN part rather than the armed
-// arrangement. Self-contained (regexes inlined) so it stays unit-testable
-// inside this @pure block. Mirrors KEYS_PATTERN (/^(keys|piano|keyboard|
-// synth)/i) and isBassArr's /bass/i test, keys taking precedence.
-function _partsArrKindPure(name) {
-    const s = String(name || '');
-    if (/^(keys|piano|keyboard|synth)/i.test(s)) return 'Keys';
-    if (/bass/i.test(s)) return 'Bass';
+// Instrument tag for a fretted/keyed arrangement lane, from its RESOLVED
+// instrument kind (the caller passes arrKind — an authored `type` wins over
+// the name), so every Parts-view lane reflects its OWN part's identity rather
+// than the armed arrangement OR a misleading name. Self-contained (a plain
+// kind→tag map) so it stays unit-testable inside this @pure block.
+export function _partsArrKindPure(kind) {
+    if (kind === 'keys') return 'Keys';
+    if (kind === 'bass') return 'Bass';
     return 'Guitar';
 }
 // Unified-row hit test over the EXACT layout the header column shares —
@@ -151,7 +150,7 @@ function _partsDrawSilhouette(part, y0, laneH, w) {
         }
     }
     if (!events.length) return;
-    if (KEYS_PATTERN.test(arr.name || '')) {
+    if (arrKind(arr) === 'keys') {
         // Keys: pitch-mapped mini roll, range auto-fit to the part.
         let lo = Infinity, hi = -Infinity;
         for (const n of events) {
@@ -172,9 +171,10 @@ function _partsDrawSilhouette(part, y0, laneH, w) {
     // Fretted: string-ribbon rows, low strings at the bottom to match the
     // focus editor's orientation.
     const strings = Math.max(1, _stringCountFor(arr));
-    // Per-lane bass detection: isBassArr(arr) ignores its arg and tests the
-    // armed part, which would paint every lane the armed part's colour.
-    ctx.fillStyle = _partsArrKindPure(arr.name) === 'Bass' ? 'rgba(255,170,90,0.8)' : 'rgba(150,220,150,0.8)';
+    // Per-lane bass detection via the resolved kind (keys already returned
+    // above): an authored `type` wins over the name, so a bass lane paints
+    // orange regardless of what part is armed or how it's named.
+    ctx.fillStyle = _partsArrKindPure(arrKind(arr)) === 'Bass' ? 'rgba(255,170,90,0.8)' : 'rgba(150,220,150,0.8)';
     for (const n of events) {
         const x = timeToX(n.time);
         if (x < PARTS_GUTTER || x > w) continue;

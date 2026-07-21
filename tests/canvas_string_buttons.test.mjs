@@ -126,14 +126,14 @@ t('remove-with-notes undo and redo stay bound to their original arrangement', ()
     assert.deepStrictEqual(snap(other), otherBefore, 'redo leaves the selected arrangement untouched');
 });
 
-t('visibility: fretted String view only', () => {
+t('visibility: fretted parts only (now takes the resolved kind, not a name)', () => {
     const none = {};
-    assert.strictEqual(_stringButtonsVisiblePure('Lead', none), true);
-    assert.strictEqual(_stringButtonsVisiblePure('Bass', none), true);
-    assert.strictEqual(_stringButtonsVisiblePure('Keys', none), false);
-    assert.strictEqual(_stringButtonsVisiblePure('Drums', none), false);
+    assert.strictEqual(_stringButtonsVisiblePure('guitar', none), true);
+    assert.strictEqual(_stringButtonsVisiblePure('bass', none), true);
+    assert.strictEqual(_stringButtonsVisiblePure('keys', none), false);
+    assert.strictEqual(_stringButtonsVisiblePure('drums', none), false);
     for (const flag of ['keysMode', 'drumEdit', 'tempoMap', 'partsView', 'tabView']) {
-        assert.strictEqual(_stringButtonsVisiblePure('Lead', { [flag]: true }), false, flag);
+        assert.strictEqual(_stringButtonsVisiblePure('guitar', { [flag]: true }), false, flag);
     }
 });
 

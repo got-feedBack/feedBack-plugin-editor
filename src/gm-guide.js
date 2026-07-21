@@ -24,8 +24,9 @@
  *
  * Voice choice (1.5) is per part KIND — keys / bass / guitar (drums keep
  * their clap; the drum strip owns drum sounds) — stored as editor prefs
- * (`editorGmVoice:<kind>`), never the pack. Kind inference mirrors the
- * repo rule: KEYS_PATTERN (start-anchored) > /bass/i > guitar.
+ * (`editorGmVoice:<kind>`), never the pack. The part's instrument kind is
+ * resolved by the caller (arrKind — an authored `type` wins over the name)
+ * and collapsed here to the three voice families.
  *
  * This module is deliberately a leaf over state/keys: the audio scheduler
  * (src/audio.js) passes in the AudioContext and the guide bus, so no
@@ -33,7 +34,6 @@
  * node (that's how the unit tests run).
  */
 
-import { KEYS_PATTERN } from './keys.js';
 import { setStatus } from './ui.js';
 
 /* @pure:gm-guide:start */
@@ -69,13 +69,15 @@ export const GM_VOICE_CHOICES = Object.freeze({
     ]),
 });
 
-// Part kind for guide-voice purposes. Mirrors the repo's kind-inference
-// rule (keys > drums > bass > guitar) minus drums: the drum grid is a
-// separate edit mode (S.drumEditMode) that never reaches this path.
-export function _gmKindPure(arrName) {
-    const name = typeof arrName === 'string' ? arrName : '';
-    if (KEYS_PATTERN.test(name)) return 'keys';
-    if (/bass/i.test(name)) return 'bass';
+// The guide-voice family for a resolved instrument kind (arrKind — an
+// authored `type` wins over the name). The GM voices come in three families,
+// keys / bass / guitar; drums and vocals fall to the guitar voice — a drums
+// arrangement is edited through the drum grid (S.drumEditMode) and never
+// reaches this pitched path. Callers pass arrKind(arr), so a keys part named
+// like a guitar takes the keys voice (identity is DATA, not the name).
+export function _gmKindPure(kind) {
+    if (kind === 'keys') return 'keys';
+    if (kind === 'bass') return 'bass';
     return 'guitar';
 }
 

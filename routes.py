@@ -4347,8 +4347,10 @@ def setup(app, context):
             # Build a per-arrangement id list from the manifest so we can map
             # edits back to the correct JSON file on save.
             arrangement_ids = []
+            arrangement_types = []
             for entry in (loaded.manifest.get("arrangements", []) or []):
                 arrangement_ids.append(entry.get("id", ""))
+                arrangement_types.append(entry.get("type", ""))
 
             # Pick the audio for editor playback. A freshly-converted
             # sloppak has one `full` stem — use it directly. A stem-split
@@ -4550,6 +4552,14 @@ def setup(app, context):
                 if not aid:
                     aid = _arrangement_id(arr_data["name"], used_ids)
                 arr_data["id"] = aid
+                # Carry the manifest `type` facet (feedpak-spec §5.2) onto the
+                # arrangement so the frontend reads instrument identity as DATA,
+                # not from the name. Only when authored/non-empty — an untyped
+                # entry stays untyped and the frontend falls back to name
+                # inference, byte-identical.
+                atype = arrangement_types[i] if i < len(arrangement_types) else ""
+                if isinstance(atype, str) and atype.strip():
+                    arr_data["type"] = atype.strip()
 
             # Round-trip load: populate the piano-roll from notation for any
             # notation-only arrangement (see _populate_notation_notes).
@@ -4934,13 +4944,22 @@ def setup(app, context):
                         aid = _arrangement_id(ad.get("name", "arr"), used_ids)
                     used_ids.add(aid)
                     wire = _build_wire(ad, i == 0)
-                    _entry = _merge_manifest_entry(_old_by_id.get(aid), {
+                    _rebuilt = {
                         "id": aid,
                         "name": ad.get("name", "arr"),
                         "file": f"arrangements/{aid}.json",
                         "tuning": list(ad.get("tuning", [0]*6)),
                         "capo": int(ad.get("capo", 0)),
-                    })
+                    }
+                    # Carry an editor-authored instrument `type` into the entry
+                    # so a type SET in the editor persists — and a new typed
+                    # arrangement (e.g. a drums-as-arrangement) isn't re-inferred
+                    # from its name by the infer-once pass below. Only a non-empty
+                    # string; the merge preserves an existing type when absent.
+                    _atype = ad.get("type")
+                    if isinstance(_atype, str) and _atype.strip():
+                        _rebuilt["type"] = _atype.strip()
+                    _entry = _merge_manifest_entry(_old_by_id.get(aid), _rebuilt)
                     # Carry any GP-import notation alongside the entry (NOT on
                     # it — keeping it off the manifest entry means it can never
                     # leak into manifest.yaml); the sidecar writer consumes it.

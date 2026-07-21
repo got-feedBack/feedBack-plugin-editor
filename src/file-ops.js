@@ -11,6 +11,7 @@ import { editorBuild } from './create.js';
 import { EditHistory } from './history.js';
 import { isKeysMode, rollResetLaneH, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning, _stringCountFor } from './lanes.js';
+import { _isBassArr } from './instrument.js';
 import { _updateLoopRegionControls } from './loop.js';
 import { _marksSanitizePure } from './tempo-marks.js';
 import { _recState } from './midi-record.js';
@@ -563,7 +564,7 @@ export function filterSongs(q) {
 export function _activeArrangementExceedsArchiveLimit() {
     const a = S.arrangements[S.currentArr];
     if (!a) return false;
-    const isBass = /bass/i.test(a.name || '');
+    const isBass = _isBassArr(a);
     const roleLimit = isBass ? 4 : 6;
     return _stringCountFor(a) > roleLimit;
 }

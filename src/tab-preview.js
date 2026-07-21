@@ -7,20 +7,20 @@
 // exported explicitly.
 
 import { S } from './state.js';
+import { arrKind } from './instrument.js';
 
 /* @pure:tab-preview:start */
 // Guard: which parts can preview, with the exact user-facing reason when
 // one can't. NON-FRETTED parts (keys AND drums) are excluded — their wire
 // packing isn't fret/string, so a GP conversion of it would engrave
-// nonsense tab. The non-fretted test mirrors the editor-wide one
-// (KEYS_PATTERN /^(keys|piano|keyboard|synth)/i plus /^drums/i, e.g. the
-// Strings modal's gate) but is INLINED so this @pure block stays
-// self-contained and extractable — no reference to the outer KEYS_PATTERN
-// global, matching the parts-view block's "regexes inlined" convention.
-function _tabPreviewGuardPure(filename, arrName, hasArrangements) {
+// nonsense tab. The caller passes the RESOLVED instrument kind (arrKind — an
+// authored `type` wins over the name), so a keys part named like a guitar is
+// still refused, and a guitar part named "Piano" now correctly previews.
+// keys/drums are the two non-fretted runtime kinds; taking a kind (not a
+// name) also keeps this @pure block self-contained — no regex, no outer ref.
+function _tabPreviewGuardPure(filename, kind, hasArrangements) {
     if (!hasArrangements) return { ok: false, reason: 'Load a song first.' };
-    const nm = String(arrName || '');
-    if (/^(keys|piano|keyboard|synth)/i.test(nm) || /^drums/i.test(nm)) {
+    if (kind === 'keys' || kind === 'drums') {
         return { ok: false, reason: 'Tab preview is for fretted tracks — keys and drums tracks have no tab.' };
     }
     if (!filename) {
@@ -61,7 +61,7 @@ function _tabPreviewHttpMessagePure(status, bodyText) {
 // _tabPreviewUrlPure is the tabview-plugin GP5 conversion endpoint — the shared
 // contract. File ▸ Export ▸ Guitar Pro (src/gp5-export.js) downloads the bytes
 // from the same URL, so the endpoint format lives here only, never duplicated.
-export { _tabPreviewKeyPolicyPure, _tabPreviewUrlPure };
+export { _tabPreviewGuardPure, _tabPreviewKeyPolicyPure, _tabPreviewUrlPure };
 
 // Same pinned version + memoized loader idiom as the Tab View plugin —
 // pinning insulates the preview from CDN latest-tag churn (V12: alphaTab
@@ -113,7 +113,7 @@ async function _tabPreviewRender() {
     if (!mount) return;
     const arr = S.arrangements.length ? S.arrangements[S.currentArr] : null;
     const guard = _tabPreviewGuardPure(
-        S.filename, arr && arr.name, !!S.arrangements.length);
+        S.filename, arrKind(arr), !!S.arrangements.length);
     if (!guard.ok) {
         _tabPreviewDestroyApi();
         _tabPreviewStatus(guard.reason);
