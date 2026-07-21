@@ -321,7 +321,7 @@ Three ways to set the tempo, from coarse to fine:
    When an audio file's name carries the tempo (like `-147bpm`), Song Fit's
    *Set constant tempo* dialog pre-fills it for you — and a song created from
    such a file starts its grid at that BPM already.
-3. **Tempo Map mode** (press `T`, then `T` again) — the precise tool. The bottom
+3. **Tempo Map mode** (press `T`) — the precise tool. The bottom
    strip shows every **barline**; drag one onto its downbeat in the waveform and
    the surrounding bars re-space to fit. In this mode:
    - **`G` — Suggest fit**: from the selected barline, the editor proposes
