@@ -24,6 +24,7 @@ import {
     _updateTonesButtonVisibility,
 } from './annotation-lanes.js';
 import { _handshapesAreDirty, flattenChords, reconstructChords } from './chords.js';
+import { isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
 import { EditHistory } from './history.js';
 import { host } from './host.js';
 import { isKeysMode, updatePianoRange } from './keys.js';
@@ -2415,6 +2416,9 @@ export async function editorApplyCreateResult(data) {
     S.drumTabDirty = !!S.drumTab;
     S.drumEditMode = false;
     S.drumSel = new Set();
+    // Materialize the type:"drums" arrangement now (like loadCDLC / +Drums), so a
+    // freshly imported drum song has it immediately — not only after build+reopen.
+    syncDrumArrangement(S);
     // The DAW track-session feature is stacked independently. Its host hook is
     // inert on this branch, but when present it receives every create-time
     // source immediately so stems do not appear only after a save/reopen.
@@ -2568,6 +2572,9 @@ export async function editorBuild() {
     const savedArr = S.currentArr;
     const allArrangements = [];
     for (let i = 0; i < S.arrangements.length; i++) {
+        // Drums ship via `drum_tab`, never as a manifest arrangement (a session
+        // may hold a materialized type:"drums" arrangement).
+        if (isDrumArrangement(S.arrangements[i])) continue;
         S.currentArr = i;
         flattenChords();
         reconstructChords();

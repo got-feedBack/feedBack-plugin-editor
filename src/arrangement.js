@@ -12,6 +12,7 @@ import { _editorEscHtml, _editorPromptText, setStatus } from './ui.js';
 import { flattenChords } from './chords.js';
 import { KEYS_PATTERN } from './keys.js';
 import { _arrTypeKind, _typeKind } from './instrument.js';
+import { clampAwayFromDrums, isDrumArrangement, pitchedArrangementCount, pitchedIndexOf, syncDrumArrangement } from './drum-arrangement.js';
 import { _recState } from './midi-record.js';
 import { _maybeOfferMidiTempoMap, _showDrumImportUnmappedModal } from './import.js';
 import { host } from './host.js';
@@ -229,9 +230,12 @@ export async function editorRemoveArrangement() {
         setStatus('Cannot remove an arrangement while recording. Stop the take first.');
         return false;
     }
-    if (S.arrangements.length <= 1) return false;
+    // Count PITCHED arrangements — the derived drums arrangement doesn't count
+    // (removing the last pitched part would leave a drums-only, invalid song).
+    if (pitchedArrangementCount(S.arrangements) <= 1) return false;
     const removeIdx = S.currentArr;
     const arr = S.arrangements[removeIdx];
+    if (!arr || isDrumArrangement(arr)) return false;   // never the drums arrangement
     if (!confirm(`Remove "${arr.name}" arrangement?`)) return false;
 
     // Remove from backend first
@@ -242,7 +246,9 @@ export async function editorRemoveArrangement() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     session_id: S.sessionId,
-                    arrangement_index: removeIdx,
+                    // The backend's arrangements[] has no drums arrangement — map
+                    // the frontend index to its pitched-only position.
+                    arrangement_index: pitchedIndexOf(S.arrangements, removeIdx),
                 }),
             });
             const result = await resp.json();
@@ -265,7 +271,9 @@ export async function editorRemoveArrangement() {
     // reconstructChords() reset (#18): drop the stack when the model shifts
     // under it.
     if (S.history) S.history.reset();
-    S.currentArr = Math.min(removeIdx, S.arrangements.length - 1);
+    // Clamp to a PITCHED index — never leave the selection on the drums
+    // arrangement (which the removed slot may now expose).
+    S.currentArr = clampAwayFromDrums(S.arrangements, removeIdx);
     S.sel.clear();
     flattenChords();
     host.updateArrangementSelector();
@@ -320,6 +328,7 @@ export function editorAddEmptyDrums() {
     S.drumTab = { version: 1, name: 'Drums', kit: [], hits: [] };
     S.drumTabDirty = true;
     S.drumSel = new Set();
+    syncDrumArrangement(S);   // materialize the type:"drums" arrangement
     markSessionDirty();
     host.updateArrangementSelector();
     host.updateStatus();
@@ -453,6 +462,7 @@ export async function editorDoAddDrums() {
         }
         S.drumTabDirty = true;  // user-imported — persist on next save
         S.drumSel = new Set();
+        syncDrumArrangement(S);   // reflect the imported tab in S.arrangements[]
 
         editorHideAddDrumsModal();
         const hitCount = Array.isArray(data.drum_tab.hits)

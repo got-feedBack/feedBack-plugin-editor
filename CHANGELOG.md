@@ -42,6 +42,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `editor_track_session` schema is bumped to v3 (purely additive — v2 trees carry
   no regions and need no migration). Rendering, playback, and build are unchanged
   and land in later steps.
+- **Drums are now a first-class arrangement (groundwork for multiple drum charts).**
+  The single drum tab has always lived *outside* the arrangement list as a lone
+  off-array singleton — the one instrument that wasn't an ordinary track. It now
+  also lives *in* the arrangement list as a `type:"drums"` arrangement, migrated
+  in automatically when a song loads. Nothing changes for you yet: the drum grid,
+  the Tracks row, the mixer, and saving all behave exactly as before (a saved pack
+  is byte-for-byte identical — drums still persist as the song-level drum tab), and
+  the drum editor's undo history is untouched. This is the load-bearing model
+  change that lets a song hold *more than one* drum chart (two drummers, an aux-
+  percussion layer) in a following release, built on the new authored-instrument
+  `type` so a drums track is identified by what it *is*, never its name.
+
 - **A track's instrument is now DATA, not a guess from its name.** The editor used
   to infer whether a part was keys / bass / guitar from its *name*, in a dozen
   places with two subtly disagreeing rules — the reason renaming a track could flip
