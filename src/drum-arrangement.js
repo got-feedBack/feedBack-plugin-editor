@@ -50,6 +50,21 @@ export function findDrumArrangement(arrangements) {
     return (Array.isArray(arrangements) ? arrangements : []).find(isDrumArrangement) || null;
 }
 
+// The index of the drums arrangement in the list, or -1. The arrangement switcher
+// uses it to DISPLAY the drums option as selected while drum-edit mode is on —
+// even though S.currentArr itself stays on a pitched arrangement.
+export function drumArrangementIndex(arrangements) {
+    return (Array.isArray(arrangements) ? arrangements : []).findIndex(isDrumArrangement);
+}
+
+// Which arrangement index the switcher should DISPLAY as selected: the drums
+// arrangement while drum-edit mode is on (its view is the drum grid), else the
+// current pitched arrangement. currentArr itself never moves onto drums.
+export function switcherShownIndex(arrangements, currentArr, drumEditMode) {
+    const di = drumArrangementIndex(arrangements);
+    return (drumEditMode && di >= 0) ? di : currentArr;
+}
+
 // The number of PITCHED (non-drums) arrangements — what "how many arrangements
 // are there" means everywhere the derived drums arrangement must not be counted
 // (the remove-last-arrangement guard, single-arrangement checks).

@@ -24,6 +24,7 @@ import assert from 'node:assert';
 import {
     DRUMS_ARR_TYPE, isDrumArrangement, findDrumArrangement, syncDrumArrangement,
     pitchedArrangementCount, clampAwayFromDrums, pitchedIndexOf,
+    drumArrangementIndex, switcherShownIndex,
 } from '../src/drum-arrangement.js';
 import { _trackSessionTargetsPure } from '../src/track-session.js';
 
@@ -194,6 +195,25 @@ t('pitchedIndexOf maps a frontend index to the backend (drums-free) index', () =
     assert.strictEqual(pitchedIndexOf([gtr('Lead'), drums(), gtr('Keys')], 2), 1,
         'Keys is frontend idx 2 but backend idx 1 (the drums arrangement is not in the manifest)');
     assert.strictEqual(pitchedIndexOf([gtr('Lead'), drums(), gtr('Keys')], 0), 0);
+});
+
+// ── the switcher shows drums as a selectable option (PR2) ─────────────
+t('drumArrangementIndex finds the drums option, or -1', () => {
+    assert.strictEqual(drumArrangementIndex([gtr('Lead'), drums()]), 1);
+    assert.strictEqual(drumArrangementIndex([drums(), gtr('Lead')]), 0);
+    assert.strictEqual(drumArrangementIndex([gtr('Lead'), gtr('Bass')]), -1);
+    assert.strictEqual(drumArrangementIndex(null), -1);
+});
+
+t('switcherShownIndex: drum-edit mode shows the drums option; otherwise the current pitched part', () => {
+    const arrs = [gtr('Lead'), gtr('Bass'), drums()];
+    // drum-edit mode on → the dropdown displays the drums option (index 2)…
+    assert.strictEqual(switcherShownIndex(arrs, 1, true), 2);
+    // …even though currentArr stays on the pitched part (1) — that's the invariant.
+    assert.strictEqual(switcherShownIndex(arrs, 1, false), 1, 'not in drum mode → current pitched part');
+    assert.strictEqual(switcherShownIndex(arrs, 0, true), 2, 'drum mode always shows drums, whatever currentArr');
+    // No drums arrangement → always the current part, even if the flag is set.
+    assert.strictEqual(switcherShownIndex([gtr('Lead'), gtr('Bass')], 1, true), 1);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

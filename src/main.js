@@ -189,7 +189,7 @@ import {
     _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
 import { _isFrettedKind, arrKind } from './instrument.js';
-import { clampAwayFromDrums, pitchedArrangementCount } from './drum-arrangement.js';
+import { clampAwayFromDrums, isDrumArrangement, pitchedArrangementCount, switcherShownIndex } from './drum-arrangement.js';
 import {
     _restoreSuggestedMarks,
     _saveSuggestedMarks, _suggestedCount, chords, notes
@@ -604,6 +604,10 @@ setHostHooks({
         S.partsViewMode = false;
         S.tempoMapMode = false;
         S.tempoSel = -1;
+        // draw() checks tabViewMode first — drop the engraved-tab lens on any
+        // target switch (shared root cause with editorSwitcherSelect / the
+        // Edit-Drums button) or it paints the old part's tab over the new one.
+        S.tabViewMode = false;
         if (targetId === 'drums' && S.drumTab && S.format === 'sloppak') {
             S.drumEditMode = true;
             S.drumSel = new Set();
@@ -616,6 +620,7 @@ setHostHooks({
         _refreshPartsViewButton();
         _refreshDrumEditButton();
         _refreshTempoMapButton();
+        updateArrangementSelector();   // reflect drums/pitched selection in the switcher
         draw();
         updateStatus();
     },
@@ -1063,13 +1068,12 @@ function updateArrangementSelector() {
     const sel = document.getElementById('editor-arrangement');
     sel.innerHTML = '';
     S.arrangements.forEach((arr, i) => {
-        // The drums arrangement isn't offered in this pitched-part switcher —
-        // it's opened via 🥁 Edit Drums / its Tracks row. Skipping it keeps the
-        // dropdown (and its show/hide threshold below) byte-identical.
-        if (arr && arr.type === 'drums') return;
+        if (!arr) return;
         const opt = document.createElement('option');
         opt.value = i;
-        opt.textContent = arr.name;
+        // Drums are a selectable part whose view is the drum grid — mark the
+        // option with 🥁 so it reads as the drum editor, not a pitched chart.
+        opt.textContent = (arr.type === 'drums') ? ('🥁 ' + (arr.name || 'Drums')) : arr.name;
         sel.appendChild(opt);
     });
     sel.style.display = sel.options.length > 1 ? '' : 'none';
@@ -1079,11 +1083,11 @@ function updateArrangementSelector() {
     // canvas edits the appended arrangement. Clamp to the valid range
     // so an out-of-bounds S.currentArr doesn't render as a blank value.
     if (S.arrangements.length > 0) {
-        // Clamp to a PITCHED index — the derived drums arrangement is never the
-        // selected pitched arrangement (it has no option in this switcher).
-        const idx = clampAwayFromDrums(S.arrangements, S.currentArr || 0);
-        S.currentArr = idx;
-        sel.value = String(idx);
+        // currentArr stays a PITCHED index (the drum grid is a MODE over it, not
+        // a move onto the drums arrangement). But while drum-edit mode is on,
+        // DISPLAY the drums option as selected so the dropdown matches the canvas.
+        S.currentArr = clampAwayFromDrums(S.arrangements, S.currentArr || 0);
+        sel.value = String(switcherShownIndex(S.arrangements, S.currentArr, S.drumEditMode));
     }
 
     // "＋ Track" — the single New Track entry (the old + Drums / + Keys /
@@ -1845,6 +1849,61 @@ window.editorSelectArrangement = (val) => {
     if (isKeysMode()) updatePianoRange();
     draw();
     updateStatus();
+};
+// The arrangement <select> onchange. A DRUMS option opens the drum grid — a MODE
+// over the current pitched arrangement, so currentArr does NOT move onto the
+// drums arrangement (the invariant the rest of the editor relies on). Mirrors the
+// Tracks 'drums' row (openTrackSessionTarget). A pitched option leaves drum-edit
+// mode and selects it. editorSelectArrangement stays drums-unaware so its other
+// callers — undo replay, the Tracks row — are unchanged.
+window.editorSwitcherSelect = (val) => {
+    const idx = parseInt(val) || 0;
+    if (isDrumArrangement(S.arrangements[idx])) {
+        // Drums: open the drum grid as a MODE (currentArr stays pitched). A drums
+        // arrangement only exists in a sloppak session that has a drum tab; guard
+        // anyway so a drums index can NEVER fall through to editorSelectArrangement
+        // (which would move currentArr onto the drums arrangement).
+        // Resync the <select> before bailing: the onchange already moved the
+        // DOM value onto "Drums", so a bare return would leave it showing
+        // Drums while nothing switched (openTrackSessionTarget always reaches
+        // updateArrangementSelector for the same reason).
+        if (!(S.drumTab && S.format === 'sloppak')) { updateArrangementSelector(); return; }
+        _finalizeActiveDrag();
+        S.partsViewMode = false;
+        S.tempoMapMode = false;
+        S.tempoSel = -1;
+        // draw() checks tabViewMode FIRST, so drop the engraved-tab lens on the
+        // switch (mirrors the Edit-Drums button) or it keeps painting the old
+        // part's tab over the drum grid.
+        S.tabViewMode = false;
+        S.drumEditMode = true;
+        S.drumSel = new Set();
+        _refreshPartsViewButton();
+        _refreshDrumEditButton();
+        _refreshTempoMapButton();
+        updateArrangementSelector();
+        draw();
+        updateStatus();
+        return;
+    }
+    // A pitched part (guaranteed non-drums): leave EVERY mode-lens and select it.
+    // editorSelectArrangement moves currentArr (which stays off the drums slot)
+    // but clears none of the lens flags, and draw() renders whichever lens is
+    // still set instead of the arrangement (tabViewMode is even checked first).
+    // So drop them all here — parts/tempo included, not just drum/tab — mirroring
+    // the drums branch and openTrackSessionTarget; otherwise switching to a part
+    // while in Parts or Tempo Map view silently moves currentArr but keeps
+    // painting the old lens over it.
+    S.drumEditMode = false;
+    S.tabViewMode = false;
+    S.partsViewMode = false;
+    S.tempoMapMode = false;
+    S.tempoSel = -1;
+    window.editorSelectArrangement(String(idx));
+    _refreshDrumEditButton();
+    _refreshPartsViewButton();
+    _refreshTempoMapButton();
+    updateArrangementSelector();
 };
 window.editorToggleTech = (idx, tech) => {
     // Read-only roll (V4): the context-menu technique toggle mutates

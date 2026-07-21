@@ -1228,6 +1228,7 @@ function _ensureDrumEditButton() {
             host.refreshTempoMapButton();
             host.refreshPartsViewButton();
             host.refreshDrumPadStrip();
+            host.updateArrangementSelector();   // reflect drum-edit mode in the switcher
             host.draw();
         };
         drumsBtn.parentNode.insertBefore(btn, drumsBtn.nextSibling);

@@ -42,6 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `editor_track_session` schema is bumped to v3 (purely additive — v2 trees carry
   no regions and need no migration). Rendering, playback, and build are unchanged
   and land in later steps.
+- **Drums are now a selectable part in the arrangement switcher.** Pick
+  **"🥁 Drums"** from the part dropdown to open the drum editor — exactly like
+  switching to Lead, Rhythm, or Bass. The drum chart is no longer a mode tucked
+  off to the side; it's a first-class part listed alongside the pitched ones (and
+  the 🥁 Edit Drums button and the Tracks row now keep the dropdown in sync).
+  Selecting a pitched part returns you to it as before — under the hood the drum
+  grid stays a view *over* the current pitched part, so nothing else about editing
+  changes. This is the visible step of the drums-as-arrangement work below, and the
+  set-up for having *more than one* drum chart to choose between.
+
 - **Drums are now a first-class arrangement (groundwork for multiple drum charts).**
   The single drum tab has always lived *outside* the arrangement list as a lone
   off-array singleton — the one instrument that wasn't an ordinary track. It now
