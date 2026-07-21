@@ -132,7 +132,7 @@ import { _tabViewHideIfShown, _tabViewPing, editorToggleTabView, teardownTabView
 import { initToolbars } from './toolbars.js';
 import { _applyToolCursor, editorToolPaletteClick } from './tools.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
-import { _trackSessionTargetsPure, initTrackSession, installCreatedTrackSession, refreshTrackSession, scrollTrackSessionBy, trackSessionOrderedMixKeys } from './track-session.js';
+import { _trackSessionTargetsPure, initTrackSession, installCreatedTrackSession, placeImportedPartAsRegion, refreshTrackSession, scrollTrackSessionBy, trackSessionOrderedMixKeys } from './track-session.js';
 import { editorDismissSignpost } from './signposts.js';
 import { _editorSongFit } from './song-fit.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
@@ -578,6 +578,9 @@ setHostHooks({
     },
     playAllTracksEnabled: () => editorPlayAllTracksEnabled(),
     stripUiChanged: () => _mixerPanelRefresh(),
+    // Import-into-existing (R3b): the import flows land a fresh part in the
+    // Tracks view as a selected (optionally placed) region.
+    placeImportedPartAsRegion: (opts) => placeImportedPartAsRegion(opts),
     // The stem-mixer capability signal: its PRESENCE flips stemMixerAvailable()
     // true (lighting up Solo-my-source and the audio-row strips). Re-ramps the
     // stem gains off S.partMix and repaints the surfaces.

@@ -26,12 +26,13 @@
  */
 import assert from 'node:assert';
 
+import { seedState, trackHooks } from './_history_env.mjs';
 import { beatOf } from '../src/beats.js';
-import { _nextRegionIdPure, _regionsAreDefaultPure } from '../src/region.js';
+import { DEFAULT_REGION_ID, _nextRegionIdPure, _placeAtStartBeatPure, _regionsAreDefaultPure } from '../src/region.js';
 import { DeleteRegionCmd, MoveRegionCmd, PlaceRegionCmd } from '../src/region-commands.js';
 import { EditHistory } from '../src/history.js';
 import { S } from '../src/state.js';
-import { seedState, trackHooks } from './_history_env.mjs';
+import { placeImportedPartAsRegion } from '../src/track-session.js';
 
 let pass = 0; let fail = 0;
 const tests = [];
@@ -285,6 +286,82 @@ t('legacy fallback: kind drums with NO arrIdx still targets S.drumTab', () => {
         region: { id: 'region:1', startBeat: 0, lenBeat: null }, dBeat: 2 });
     cmd.exec();
     assert.deepStrictEqual(primaryTab.hits.map(h => h.t), [1.5, 2.0], 'no arrIdx → the active tab moved (legacy path)');
+});
+
+// ── _placeAtStartBeatPure (the import dialog's "Place at" resolution) ─
+t('_placeAtStartBeatPure: keep → null; bar1 → first downbeat; playhead snaps to bar', () => {
+    const beats = constGrid();   // downbeats at t=0,2,4,6 (beats 0,4,8,12)
+    assert.strictEqual(_placeAtStartBeatPure('keep', beats, 2.3, beatOf), null, 'keep = no placement');
+    assert.strictEqual(_placeAtStartBeatPure('nonsense', beats, 2.3, beatOf), null, 'unknown choice = keep');
+    assert.strictEqual(_placeAtStartBeatPure('bar1', beats, 2.3, beatOf), 0, 'bar 1 = the first downbeat’s beat');
+    assert.strictEqual(_placeAtStartBeatPure('playhead', beats, 2.3, beatOf), 4, 'cursor 2.3s snaps to the bar at t=2 → beat 4');
+    assert.strictEqual(_placeAtStartBeatPure('playhead', beats, 3.2, beatOf), 8, 'cursor 3.2s snaps up to t=4 → beat 8');
+    assert.strictEqual(_placeAtStartBeatPure('bar1', [], 0, (b, t) => t), 0, 'gridless chart degrades to 0');
+});
+
+// ── placeImportedPartAsRegion (the import front door's orchestrator) ──
+// The real post-import flow: the fresh part has NO track row yet — the
+// orchestrator must normalize the session (synthesizing the row), resolve the
+// track, then place/select. Stateful wiring, driven for real.
+function seedImportedDrumPart() {
+    const primaryTab = { version: 1, name: 'Drums', kit: [], hits: [{ t: 0.5, p: 36 }] };
+    const freshTab = { version: 1, name: 'Imported', kit: [], hits: [{ t: 0.5, p: 42 }, { t: 1.0, p: 38 }] };   // beats 1, 2
+    const arrs = [
+        { id: 'lead', name: 'Lead', notes: [{ time: 0.5, sustain: 0, string: 0, fret: 0, techniques: {} }], chords: [] },
+        { id: 'drums', name: 'Drums', type: 'drums', drumTab: primaryTab, notes: [], chords: [] },
+        { id: 'drums-2', name: 'Imported', type: 'drums', drumTab: freshTab, notes: [], chords: [] },
+    ];
+    seedState({ arrangements: arrs, currentArr: 0, beats: constGrid(), drumTab: freshTab,
+        audioUrl: '', stems: [], stemLinks: {}, cursorTime: 0,
+        trackSession: { version: 3, tracks: [], removedSourceIds: [], tempoGuideSourceId: '', tempoGuideLocked: false, tempoGuideMode: 'audio' },
+        selectedTrackId: '', selectedRegionId: '' });
+    S.history = new EditHistory();
+    trackHooks();
+    S.drumTabDirty = false;
+    return { primaryTab, freshTab };
+}
+const _trackById = (id) => S.trackSession.tracks.find(t => t.id === id);
+
+t('orchestrator bar1: synthesizes the row, places the part, selects the region; undo restores', () => {
+    const { primaryTab, freshTab } = seedImportedDrumPart();
+    const before = clone(freshTab.hits);
+    const ok = placeImportedPartAsRegion({ kind: 'drums', arrIdx: 2, placeAt: 'bar1' });
+    assert.strictEqual(ok, true);
+    assert.deepStrictEqual(freshTab.hits.map(h => h.t), [0.0, 0.5], 'the part slid to bar 1 (first onset at beat 0)');
+    assert.deepStrictEqual(primaryTab.hits.map(h => h.t), [0.5], 'the other part untouched');
+    const track = _trackById('transcription:drums-2');
+    assert.ok(track, 'the fresh part’s row was synthesized');
+    assert.strictEqual(track.regions.length, 1, 'a bounded region landed on it');
+    assert.strictEqual(S.selectedTrackId, 'transcription:drums-2', 'track selected');
+    assert.strictEqual(S.selectedRegionId, track.regions[0].id, 'the placed region selected');
+    S.history.doUndo();
+    assert.deepStrictEqual(freshTab.hits, before, 'undo restores the hits');
+    assert.ok(!('regions' in _trackById('transcription:drums-2')), 'and removes the window');
+});
+
+t('orchestrator keep: no motion, no persisted window — selection only', () => {
+    const { freshTab } = seedImportedDrumPart();
+    const before = clone(freshTab.hits);
+    const ok = placeImportedPartAsRegion({ kind: 'drums', arrIdx: 2, placeAt: 'keep' });
+    assert.strictEqual(ok, true);
+    assert.deepStrictEqual(freshTab.hits, before, 'keep = content stays at source timing');
+    assert.ok(!('regions' in _trackById('transcription:drums-2')), 'no regions key written');
+    assert.strictEqual(S.selectedTrackId, 'transcription:drums-2', 'track selected');
+    assert.strictEqual(S.selectedRegionId, DEFAULT_REGION_ID, 'the implicit default region selected');
+});
+
+t('orchestrator playhead: places at the cursor’s bar', () => {
+    const { freshTab } = seedImportedDrumPart();
+    S.cursorTime = 2.3;   // snaps to the bar at t=2 → beat 4
+    placeImportedPartAsRegion({ kind: 'drums', arrIdx: 2, placeAt: 'playhead' });
+    assert.deepStrictEqual(freshTab.hits.map(h => h.t), [2.0, 2.5], 'first onset landed on bar 2 (beat 4)');
+    assert.strictEqual(_trackById('transcription:drums-2').regions[0].startBeat, 4);
+});
+
+t('orchestrator refuses a bad arrIdx gracefully', () => {
+    seedImportedDrumPart();
+    assert.strictEqual(placeImportedPartAsRegion({ kind: 'drums', arrIdx: -1, placeAt: 'bar1' }), false);
+    assert.strictEqual(placeImportedPartAsRegion({ kind: 'drums', arrIdx: 99, placeAt: 'bar1' }), false);
 });
 
 // ── Through EditHistory (the real exec path) ──────────────────────────

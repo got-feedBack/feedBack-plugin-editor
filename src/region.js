@@ -250,3 +250,20 @@ export function _regionSnapStartPure(downbeats, rawStart, free) {
     }
     return Math.max(0, Number(best) || 0);
 }
+
+// The startBeat an import dialog's "Place at" choice resolves to, or null for
+// "keep source timing" (no placement — the content stays where the source put
+// it). 'bar1' = the first downbeat; 'playhead' = the cursor snapped to the
+// nearest bar (the region-snap default). Downbeats are derived here from the
+// grid itself (`measure > 0` marks a bar start) so the pure stays converter-
+// free; `beatOf` is passed in like the other pures. A gridless chart resolves
+// through beatOf's own degenerate (seconds-primary) handling.
+export function _placeAtStartBeatPure(placeAt, beats, cursorTime, beatOf) {
+    if (placeAt !== 'bar1' && placeAt !== 'playhead') return null;
+    const downbeats = (Array.isArray(beats) ? beats : [])
+        .filter(b => b && b.measure > 0).map(b => b.time).sort((a, b) => a - b);
+    const t = placeAt === 'bar1'
+        ? (downbeats.length ? downbeats[0] : 0)
+        : _regionSnapStartPure(downbeats, cursorTime, false);
+    return Math.max(0, beatOf(beats, t));
+}
