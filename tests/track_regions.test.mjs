@@ -73,6 +73,11 @@ t('_regionNormalizePure validates, clamps, and emits optional fields only when s
         { id: 'r5', startBeat: 0, lenBeat: null, name: 'Chorus', muted: true });
     assert.deepStrictEqual(_regionNormalizePure({ id: 'r6', name: '   ', muted: false }),
         { id: 'r6', startBeat: 0, lenBeat: null }, 'blank name / false mute are omitted');
+    const paddedMaxId = `  ${'x'.repeat(160)}  `;
+    assert.strictEqual(_regionNormalizePure({ id: paddedMaxId }).id, 'x'.repeat(160),
+        'id length is checked after trimming');
+    assert.strictEqual(_regionNormalizePure({ id: ` ${'x'.repeat(161)} ` }), null,
+        'trimmed ids over the limit are rejected');
 });
 
 t('_trackRegionsNormalizePure drops invalid, dedupes by id, and sorts by startBeat', () => {

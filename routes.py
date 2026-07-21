@@ -554,12 +554,12 @@ def _track_session_id(value):
 
 
 def _region_num_pos(value):
-    """A positive float, else 0.0 (mirrors src/region.js `_nonNegNumPure`)."""
+    """A non-negative float, else 0.0 (mirrors src/region.js `_nonNegNumPure`)."""
     try:
         n = float(value)
     except (TypeError, ValueError):
         return 0.0
-    return n if math.isfinite(n) and n > 0 else 0.0
+    return n if math.isfinite(n) and n >= 0 else 0.0
 
 
 def _region_num_or_none(value):

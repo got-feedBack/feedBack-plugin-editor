@@ -29,11 +29,13 @@ export const DEFAULT_REGION_ID = 'region:1';
 const MAX_REGIONS = 200;
 
 function _regionIdPure(value) {
-    return typeof value === 'string' && value.trim().length > 0 && value.length <= 160 ? value.trim() : '';
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    return trimmed.length > 0 && trimmed.length <= 160 ? trimmed : '';
 }
 function _nonNegNumPure(value, fallback) {
     const n = Number(value);
-    return Number.isFinite(n) && n > 0 ? n : fallback;
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 function _posNumOrNullPure(value) {
     if (value == null) return null;
