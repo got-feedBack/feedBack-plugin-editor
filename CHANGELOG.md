@@ -59,6 +59,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keybind-profile suite now treats intercepted keys as claimed, so this class
   of display drift fails tests instead of shipping. Also: Cableton gains Live's
   Ctrl+E Split for the existing split-at-playhead command.
+- **Soloing an audio track actually isolates it now.** The Master Mix strip used
+  to be immune to every solo, so soloing a stem (or several) left the full-mix
+  recording playing over it — the solo never isolated anything, and the mute
+  buttons then seemed inconsistent because the master ignored a solo that
+  silenced its unmuted neighbours. The master now joins the DAW solo rule
+  *within the audio band*: soloing a stem mutes the master like any peer track,
+  and soloing the master isolates the recording. Soloing a **transcription
+  part** still keeps the recording audible (it is the reference you chart
+  against — charrette D5), and mute still always wins. "Solo my source track"
+  now truly isolates the paired stem; solo the master strip alongside it to
+  compare the two.
+
 - **Corrected inaccurate and inconsistent UI labels.** The canvas status footer
   said "Scroll: zoom" although the wheel pans (Ctrl+wheel zooms); it now reads
   "Wheel/middle-drag: pan | Ctrl+wheel: zoom". In the in-app User Guide, Tempo Map

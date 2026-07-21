@@ -267,7 +267,8 @@ export function stemMixerAvailable() {
 // 'audio:<id>'), so this is an EXCLUSIVE isolate over the audio band —
 // enabling clears every OTHER stem's solo (Guitar after Bass must not stack
 // into Guitar+Bass); toggling off clears the paired stem's solo too. The
-// master recording stays audible (the reference is never gated by solo).
+// isolate is real now: the master mix mutes with the rest of the audio band
+// (solo the master strip alongside to hear both).
 export function editorSoloMyStem() {
     if (!stemMixerAvailable()) {
         setStatus('Solo my source track needs the stem mixer — not available in this build yet.');
@@ -292,7 +293,7 @@ export function editorSoloMyStem() {
     S.partMix[key] = { vol: Number.isFinite(cur.vol) ? cur.vol : 100, mute: false, solo: on };
     host.stemMixChanged();
     setStatus(on
-        ? `Soloing ${sid} — the source track "${arr.name}" transcribes against; the recording stays audible.`
+        ? `Soloing ${sid} — the source track "${arr.name}" transcribes against; the other audio tracks are muted.`
         : `${sid} solo off.`);
     return true;
 }

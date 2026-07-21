@@ -122,18 +122,27 @@ export function _mixerAnySoloPure(partMix) {
     if (!partMix || typeof partMix !== 'object') return false;
     return Object.keys(partMix).some(k => partMix[k] && partMix[k].solo);
 }
+// Any solo within the AUDIO band ('audio:<id>' strips, the master included)?
+// The master's solo immunity is scoped to this: it ignores transcription-part
+// solos (D5 — the reference stays audible while charting) but joins the rule
+// when the solo lives in its own band, so soloing a stem actually isolates it.
+export function _mixerAnyAudioSoloPure(partMix) {
+    if (!partMix || typeof partMix !== 'object') return false;
+    return Object.keys(partMix).some(k => k.startsWith('audio:') && partMix[k] && partMix[k].solo);
+}
 // The DAW audibility rule over PART keys only: mute always wins; any solo
 // anywhere means only soloed parts sound. Buses (recording/guide/click) are
 // not parts and never pass through here — solo keeps the reference audible.
 export function _mixerPartAudiblePure(partMix, key) {
     const st = _mixerPartStatePure(partMix, key);
     if (st.mute) return false;
-    // The master mix is the OUTPUT bus — the final destination downstream of the
-    // sum, not a peer channel. Another track's mute/solo removes only that
-    // track's contribution and must never silence the output; only master's OWN
-    // mute (the output fader, handled above) does. So master is immune to the
-    // whole-map solo rule.
-    if (key === 'audio:master') return true;
+    // The master mix strip is a peer AUDIO TRACK (the full-mix recording) —
+    // the actual output fader is the mixer's master BUS, not this strip. But
+    // it is also the default reference every part is charted against, so a
+    // TRANSCRIPTION part's solo never silences it (D5); only a solo within
+    // the audio band does — soloing a stem mutes the full mix like any DAW
+    // console, and the master's own solo isolates the recording.
+    if (key === 'audio:master') return _mixerAnyAudioSoloPure(partMix) ? st.solo : true;
     return _mixerAnySoloPure(partMix) ? st.solo : true;
 }
 // The mix key of the ACTIVE editing surface: the drums arrangement's channel
@@ -239,7 +248,9 @@ function _renderParts(container) {
             + `<span class="editor-mixer-strip-type">${p.kind === 'audio' ? 'AUDIO' : 'MIDI'}</span>`
             + `<div class="editor-mixer-ms-row">`
             + _msBtn(p.key, 'mute', st.mute, 'M', 'Mute track')
-            + _msBtn(p.key, 'solo', st.solo, 'S', 'Solo track — the recording stays audible')
+            + _msBtn(p.key, 'solo', st.solo, 'S', p.kind === 'audio'
+                ? 'Solo track — isolates it among the audio tracks'
+                : 'Solo track — the recording stays audible')
             + `</div>`
             + `<div class="editor-mixer-channel">`
             + _meterMarkup(p.key)
@@ -410,9 +421,16 @@ function _wire(panel) {
         _lastKey = '';
         _mixerPanelRefresh();
         const now = _mixerPartStatePure(S.partMix, key);
+        const isAudio = typeof key === 'string' && key.startsWith('audio:');
         setStatus(act === 'mute'
-            ? (now.mute ? 'Track muted — its guide voice is silent' : 'Track unmuted')
-            : (now.solo ? 'Track soloed — other tracks’ guide voices are silent; the recording stays audible' : 'Solo off'));
+            ? (now.mute
+                ? (isAudio ? 'Track muted' : 'Track muted — its guide voice is silent')
+                : 'Track unmuted')
+            : (now.solo
+                ? (isAudio
+                    ? 'Track soloed — the other audio tracks (master mix included) and unsoloed guide voices are silent'
+                    : 'Track soloed — other tracks’ guide voices are silent; the recording stays audible')
+                : 'Solo off'));
     });
     panel.addEventListener('input', (e) => {
         const el = e.target;
