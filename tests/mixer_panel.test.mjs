@@ -94,6 +94,22 @@ t('one strip per arrangement, keyed by index, drums appended only with hits', ()
     assert.deepStrictEqual(_mixerPartsPure(null, null), []);
 });
 
+// #336 regression: the drums arrangement (materialized into S.arrangements[])
+// must NOT get an 'arr:<idx>' strip — it already gets the dedicated 'drums'
+// strip from drumTab. Pre-fix it got both → two Drums strips after reload.
+t('the drums arrangement is not double-listed — exactly one Drums strip', () => {
+    const arrs = [{ name: 'Lead' }, { name: 'Bass' }, { name: 'Drums', type: 'drums' }];
+    const drumTab = { hits: [{ t: 0, p: 'kick' }] };
+    const parts = _mixerPartsPure(arrs, drumTab);
+    assert.deepStrictEqual(parts, [
+        { key: 'arr:0', name: 'Lead' },
+        { key: 'arr:1', name: 'Bass' },
+        { key: 'drums', name: 'Drums' },
+    ], 'the type:"drums" arrangement gets no arr:2 strip; only the drums strip');
+    assert.strictEqual(parts.filter(p => p.name === 'Drums').length, 1, 'exactly one Drums strip');
+    assert.ok(!parts.some(p => p.key === 'arr:2'), 'no arr:<idx> strip for the drums arrangement');
+});
+
 t('strip state defaults to audible unity; volume clamps into [0, 110] (+10 dB ceiling)', () => {
     assert.deepStrictEqual(_mixerPartStatePure({}, 'arr:0'), { vol: 100, mute: false, solo: false });
     assert.deepStrictEqual(_mixerPartStatePure(null, 'arr:0'), { vol: 100, mute: false, solo: false });

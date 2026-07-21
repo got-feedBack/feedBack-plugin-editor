@@ -24,7 +24,7 @@ import {
     _updateTonesButtonVisibility,
 } from './annotation-lanes.js';
 import { _handshapesAreDirty, flattenChords, reconstructChords } from './chords.js';
-import { isDrumArrangement } from './drum-arrangement.js';
+import { isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
 import { EditHistory } from './history.js';
 import { host } from './host.js';
 import { isKeysMode, updatePianoRange } from './keys.js';
@@ -2416,6 +2416,9 @@ export async function editorApplyCreateResult(data) {
     S.drumTabDirty = !!S.drumTab;
     S.drumEditMode = false;
     S.drumSel = new Set();
+    // Materialize the type:"drums" arrangement now (like loadCDLC / +Drums), so a
+    // freshly imported drum song has it immediately — not only after build+reopen.
+    syncDrumArrangement(S);
     // The DAW track-session feature is stacked independently. Its host hook is
     // inert on this branch, but when present it receives every create-time
     // source immediately so stems do not appear only after a save/reopen.
@@ -2605,6 +2608,13 @@ export async function editorBuild() {
             chords: arr.chords,
             chord_templates: arr.chord_templates,
         };
+        // Ship an authored instrument `type` (feedpak-spec §5.2) into the build
+        // payload — without it the backend re-infers the type from the NAME on
+        // /build, so a create-mode part re-typed via the toolbar selector (e.g. a
+        // fretted chart named "Electric Piano" corrected to guitar) would lose the
+        // correction on its very first build. The save path already ships it via
+        // the full-arrangement spread in _buildSaveBody; the build whitelist must too.
+        if (arr.type) arrEntry.type = arr.type;
         if (buildTones) arrEntry.tones = buildTones;
         if (arr._gp_notation) arrEntry._gp_notation = arr._gp_notation;
         // PR3d: include authored anchors too — same dirty-gate as
