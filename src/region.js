@@ -123,3 +123,44 @@ export function _regionContainsBeatPure(region, beat) {
     if (!Number.isFinite(len) || len <= 0) return true;
     return b < start + len;
 }
+
+// ── Layout (for drawing a region as a block on a track lane) ──────────
+
+// The region's TIME span on the timeline, given its lane's content extent
+// [contentStart, contentEnd] in seconds. A full-span region (no length, no
+// audio trim, at beat 0) spans the whole content; a bounded notation region
+// spans [beatToTime(startBeat), beatToTime(startBeat+lenBeat)]. Bounded regions
+// arrive with the move/trim PRs — today every region is full-span, so this
+// resolves to the content extent, but the bounded path is here so the renderer
+// needs no change when they land. `beatToTime` is the beats.js `timeOf`.
+export function _regionTimeSpanPure(region, contentStart, contentEnd, beatToTime) {
+    const c0 = Number.isFinite(Number(contentStart)) ? Number(contentStart) : 0;
+    const c1 = Number.isFinite(Number(contentEnd)) ? Number(contentEnd) : c0;
+    const start = Number(region && region.startBeat) || 0;
+    const bounded = !!region && (region.lenBeat != null || region.srcIn != null || start > 0);
+    if (!bounded) return { t0: c0, t1: Math.max(c0, c1) };
+    const b2t = typeof beatToTime === 'function' ? beatToTime : (b => b);
+    const t0 = b2t(start);
+    const t1 = region.lenBeat != null ? b2t(start + Number(region.lenBeat)) : c1;
+    return { t0, t1: Math.max(t0, t1) };
+}
+
+// Clamp a region's pixel span [x0, x1] to the visible band [gutter, width].
+// `visible` is false when the block is off-screen or collapses to nothing, so
+// the caller can skip both the draw and the hit target.
+export function _regionBlockRectPure(x0, x1, gutter, width) {
+    const g = Number(gutter) || 0;
+    const wMax = Number(width) || 0;
+    const lo = Math.max(g, Math.min(x0, x1));
+    const hi = Math.min(wMax, Math.max(x0, x1));
+    const w = hi - lo;
+    return { x: lo, w: Math.max(0, w), visible: w > 0.5 };
+}
+
+// Does a canvas x land inside a drawn region block? (Vertical bounds are the
+// lane's, tested by the caller before it gets here.)
+export function _regionHitPure(rect, x) {
+    if (!rect || !rect.visible) return false;
+    const n = Number(x);
+    return Number.isFinite(n) && n >= rect.x && n <= rect.x + rect.w;
+}

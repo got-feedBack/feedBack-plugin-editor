@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Track regions — you can see and select them.** Each track in the Tracks view
+  now draws its content inside a **region block** — a kind-coloured spine down the
+  left edge, a hairline border, and the region name — and clicking a track selects
+  the region under the pointer, the target the coming move/trim will act on. For
+  now every track has a single full-span region wrapping its whole content;
+  placing, moving, and trimming separate blocks land next. Builds on the region
+  data model below.
+
 - **Track regions — the data model (groundwork, no visible change yet).** A track
   can now carry `regions[]`: its audio/MIDI content as placeable blocks on the
   timeline, the foundation for importing a part into an existing project and for

@@ -8,7 +8,9 @@ import { CP } from './canvas-appearance.js';
 import { ctx } from './canvas.js';
 import { hideContextMenu } from './context-menu.js';
 import { DRUM_PIECE_META, _refreshDrumEditButton } from './drum.js';
+import { timeOf } from './beats.js';
 import { LABEL_W, TIMELINE_TOP, timeToX, xToTime } from './geometry.js';
+import { _regionBlockRectPure, _regionHitPure, _regionTimeSpanPure, _trackRegionsResolvePure } from './region.js';
 import { KEYS_PATTERN } from './keys.js';
 import { _stringCountFor } from './lanes.js';
 import { _downbeatTimes } from './loop.js';
@@ -181,6 +183,77 @@ function _partsDrawSilhouette(part, y0, laneH, w) {
     }
 }
 
+// The kind colour of a track's region spine — mirrors the silhouette/waveform
+// palette so a block reads as the same instrument as its content.
+function _regionSpineColor(row) {
+    if (row.type === 'audio') return row.sourceKind === 'master' ? '#5fa5f5' : '#4acddc';
+    if (row.targetId === 'drums') return '#c084fc';
+    const kind = _partsArrKindPure(row.name);
+    return kind === 'Bass' ? '#ffaa5a' : kind === 'Keys' ? '#8cbaff' : '#7bd88a';
+}
+
+// A lane's content extent in seconds [t0, t1] — an audio source's placed
+// duration, or the first..last event of a transcription/drum part — so a
+// full-span region block wraps exactly the content it contains. null when the
+// lane has nothing to bound (an empty part, or audio with no duration yet).
+function _laneContentTimeExtent(row, arrIdx) {
+    if (row.type === 'audio') {
+        const data = host.trackWaveform(row.sourceId);
+        const shift = (Number(S.audioShift) || 0) + (Number(row.sourceOffset) || 0);
+        if (data && data.duration > 0) return [shift, data.duration + shift];
+        const dur = Number(S.duration) || 0;
+        return dur > 0 ? [0, dur] : null;
+    }
+    let lo = Infinity, hi = -Infinity;
+    const consider = (t) => { const n = Number(t); if (Number.isFinite(n)) { if (n < lo) lo = n; if (n > hi) hi = n; } };
+    if (row.targetId === 'drums') {
+        if (S.drumTab && Array.isArray(S.drumTab.hits)) for (const hit of S.drumTab.hits) consider(hit.t);
+    } else if (arrIdx >= 0) {
+        const arr = S.arrangements[arrIdx];
+        if (arr) {
+            if (Array.isArray(arr.notes)) for (const n of arr.notes) consider(n.time);
+            if (Array.isArray(arr.chords)) for (const c of arr.chords) if (Array.isArray(c.notes)) for (const n of c.notes) consider(n.time);
+        }
+    }
+    return hi >= lo ? [lo, hi] : null;
+}
+
+// Draw each of a lane's regions as a block: a kind-colour spine, a hairline
+// border (accent when selected), and the name when the lane is tall enough.
+// Drawn OVER the content silhouette so the border reads. Today every track has
+// one full-span region wrapping its whole content; bounded blocks arrive with
+// the move/trim PRs and need no change here (the span pure resolves them).
+function _drawRegionBlocks(row, y0, laneH, w, extent) {
+    if (!extent) return;
+    const spine = _regionSpineColor(row);
+    const selectedRow = row.id === S.selectedTrackId;
+    const beatToTime = (beat) => timeOf(S.beats, beat);
+    for (const region of _trackRegionsResolvePure(row.regions)) {
+        const span = _regionTimeSpanPure(region, extent[0], extent[1], beatToTime);
+        const rect = _regionBlockRectPure(timeToX(span.t0), timeToX(span.t1), PARTS_GUTTER, w);
+        if (!rect.visible) continue;
+        const isSel = selectedRow && region.id === S.selectedRegionId;
+        const top = y0 + 1.5;
+        const boxH = Math.max(2, laneH - 3);
+        ctx.strokeStyle = isSel ? 'rgba(120,180,255,.95)' : 'rgba(148,163,184,.32)';
+        ctx.lineWidth = isSel ? 1.5 : 1;
+        ctx.strokeRect(rect.x + 0.5, top + 0.5, Math.max(1, rect.w - 1), boxH - 1);
+        ctx.fillStyle = spine;
+        ctx.fillRect(rect.x, top, 3, boxH);
+        if (laneH >= 30 && rect.w > 44) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(rect.x, top, rect.w, boxH);
+            ctx.clip();
+            ctx.font = '10px system-ui, sans-serif';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = isSel ? 'rgba(210,230,255,.95)' : 'rgba(200,210,230,.7)';
+            ctx.fillText(String(region.name || row.name || 'Region'), rect.x + 7, top + 3);
+            ctx.restore();
+        }
+    }
+}
+
 export function _partsViewDraw(w, h) {
     host.drawTimelineHeader(w);
     const rows = _unifiedRows();
@@ -219,6 +292,7 @@ export function _partsViewDraw(w, h) {
             ctx.fillStyle = 'rgba(251,191,36,.16)';
             ctx.fillRect(PARTS_GUTTER, y0 + laneH - 2, w - PARTS_GUTTER, 2);
         }
+        if (row.type !== 'folder') _drawRegionBlocks(row, y0, laneH, w, _laneContentTimeExtent(row, arrIdx));
     }
     // One playhead spans the same unified track rows as the header list.
     const cx = timeToX(S.cursorTime || 0);
@@ -251,6 +325,21 @@ export function _partsViewOnMouseDown(e, x, y) {
     const row = _partsTrackRowAtYPure(_laneLayoutLive(), y);
     if (!row || row.type === 'folder') return;
     S.selectedTrackId = row.id;
+    // Select the region block under the click (one region per track today; the
+    // hit rect is unclamped on the right — Infinity width — so a click past the
+    // visible fold still lands on its region).
+    const rArrIdx = row.type === 'transcription' ? _arrIndexForTarget(row.targetId) : -1;
+    const rExtent = _laneContentTimeExtent(row, rArrIdx);
+    let hitRegion = '';
+    if (rExtent) {
+        const beatToTime = (beat) => timeOf(S.beats, beat);
+        for (const region of _trackRegionsResolvePure(row.regions)) {
+            const span = _regionTimeSpanPure(region, rExtent[0], rExtent[1], beatToTime);
+            const rect = _regionBlockRectPure(timeToX(span.t0), timeToX(span.t1), PARTS_GUTTER, Infinity);
+            if (_regionHitPure(rect, x)) { hitRegion = region.id; break; }
+        }
+    }
+    S.selectedRegionId = hitRegion;
     refreshTrackSessionSelection();
     if (row.type === 'audio') {
         S.focusedSourceId = row.sourceId;
