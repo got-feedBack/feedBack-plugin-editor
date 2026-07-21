@@ -590,9 +590,12 @@ setHostHooks({
     // canvas lane. targetIds are chart-track keys (the stemLinks dialect);
     // _trackSessionTargetsPure maps them back to arrangement indices.
     selectTrackSessionTarget: (targetId) => {
-        if (targetId === 'drums') return;
         const target = _trackSessionTargetsPure(S.arrangements, S.drumTab).find(t => t.id === targetId);
         const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
+        // Arming a drum part is a no-op (any of them — the grid opens via
+        // openTrackSessionTarget); currentArr never moves onto a drums arr.
+        if (index >= 0 && isDrumArrangement(S.arrangements[index])) return;
+        if (targetId === 'drums') return;   // legacy unmaterialized row
         if (index >= 0 && index !== S.currentArr) window.editorSelectArrangement(String(index));
     },
     // Focus an audio source: its buffer becomes the waveform + onset source
@@ -604,17 +607,24 @@ setHostHooks({
         S.partsViewMode = false;
         S.tempoMapMode = false;
         S.tempoSel = -1;
-        // draw() checks tabViewMode first — drop the engraved-tab lens on any
-        // target switch (shared root cause with editorSwitcherSelect / the
-        // Edit-Drums button) or it paints the old part's tab over the new one.
+        // draw() checks tabViewMode first; a target switch must not leave an
+        // engraved view of the previous part painted over the new surface.
         S.tabViewMode = false;
-        if (targetId === 'drums' && S.drumTab && S.format === 'sloppak') {
+        const target = _trackSessionTargetsPure(S.arrangements, S.drumTab).find(t => t.id === targetId);
+        const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
+        const arr = index >= 0 ? S.arrangements[index] : null;
+        if (arr && isDrumArrangement(arr) && arr.drumTab && S.format === 'sloppak') {
+            // A drum part's row opens ITS grid: the row's own tab becomes the
+            // active grid target (a song can hold several drum parts).
+            S.drumTab = arr.drumTab;
+            S.drumEditMode = true;
+            S.drumSel = new Set();
+        } else if (targetId === 'drums' && S.drumTab && S.format === 'sloppak') {
+            // Legacy unmaterialized tab (create-mode compose).
             S.drumEditMode = true;
             S.drumSel = new Set();
         } else {
             S.drumEditMode = false;
-            const target = _trackSessionTargetsPure(S.arrangements, S.drumTab).find(t => t.id === targetId);
-            const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
             if (index >= 0) window.editorSelectArrangement(String(index));
         }
         _refreshPartsViewButton();
@@ -1087,7 +1097,7 @@ function updateArrangementSelector() {
         // a move onto the drums arrangement). But while drum-edit mode is on,
         // DISPLAY the drums option as selected so the dropdown matches the canvas.
         S.currentArr = clampAwayFromDrums(S.arrangements, S.currentArr || 0);
-        sel.value = String(switcherShownIndex(S.arrangements, S.currentArr, S.drumEditMode));
+        sel.value = String(switcherShownIndex(S.arrangements, S.currentArr, S.drumEditMode, S.drumTab));
     }
 
     // "＋ Track" — the single New Track entry (the old + Drums / + Keys /
@@ -1859,25 +1869,24 @@ window.editorSelectArrangement = (val) => {
 window.editorSwitcherSelect = (val) => {
     const idx = parseInt(val) || 0;
     if (isDrumArrangement(S.arrangements[idx])) {
-        // Drums: open the drum grid as a MODE (currentArr stays pitched). A drums
-        // arrangement only exists in a sloppak session that has a drum tab; guard
-        // anyway so a drums index can NEVER fall through to editorSelectArrangement
-        // (which would move currentArr onto the drums arrangement).
-        // Resync the <select> before bailing: the onchange already moved the
-        // DOM value onto "Drums", so a bare return would leave it showing
-        // Drums while nothing switched (openTrackSessionTarget always reaches
-        // updateArrangementSelector for the same reason).
-        if (!(S.drumTab && S.format === 'sloppak')) { updateArrangementSelector(); return; }
+        // A drum part: open the drum grid as a MODE (currentArr stays pitched)
+        // on THAT part's tab — a song can hold several, and each 🥁 option
+        // targets its own arrangement's payload. Guard so a drums index can
+        // NEVER fall through to editorSelectArrangement (which would move
+        // currentArr onto the drums arrangement).
+        const tab = S.arrangements[idx].drumTab;
+        if (!(tab && S.format === 'sloppak')) { updateArrangementSelector(); return; }
         _finalizeActiveDrag();
         S.partsViewMode = false;
         S.tempoMapMode = false;
         S.tempoSel = -1;
+        S.drumTab = tab;          // the selected part becomes the grid target
         // draw() checks tabViewMode FIRST, so drop the engraved-tab lens on the
         // switch (mirrors the Edit-Drums button) or it keeps painting the old
         // part's tab over the drum grid.
         S.tabViewMode = false;
         S.drumEditMode = true;
-        S.drumSel = new Set();
+        S.drumSel = new Set();    // indices from another part's hits are stale
         _refreshPartsViewButton();
         _refreshDrumEditButton();
         _refreshTempoMapButton();

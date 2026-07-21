@@ -8,7 +8,7 @@ import { _abDisarm, _guideAnalysisReset, _resetAuditionForNewSong, loadAudio, re
 import { _handshapesAreDirty, _normalizeHandshape, flattenChords, reconstructChords } from './chords.js';
 import { _normalizeTuningToLanes } from './commands.js';
 import { editorBuild } from './create.js';
-import { isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
+import { adoptDrumParts, findDrumArrangement, isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
 import { EditHistory } from './history.js';
 import { isKeysMode, rollResetLaneH, updatePianoRange } from './keys.js';
 import { _seedExtendedStringsFromTuning, _stringCountFor } from './lanes.js';
@@ -222,7 +222,22 @@ export async function loadCDLC(filename, options = {}) {
         // Migrate the song-level drum tab into a `type:"drums"` arrangement
         // (S.arrangements comes from data.arrangements above; drums are appended
         // last so no arr:<idx> shifts). The arrangement's payload IS S.drumTab.
-        syncDrumArrangement(S);
+        // Pass the persisted primary id (the alias entry id) so a promoted,
+        // non-"drums" primary re-materializes under the same id its stem links
+        // / tree rows are keyed by; absent → the legacy "drums" default.
+        syncDrumArrangement(S, data.drum_tab_id);
+        // EXTRA drum parts (a song can hold several): the backend reads them
+        // from the manifest's `type:"drums"` arrangement entries (per-
+        // arrangement `drum_tab` pointers, feedpak-spec 1.17.0) and ships
+        // them as `drum_parts` — adopt each as its own drums arrangement.
+        adoptDrumParts(S, data.drum_parts);
+        // A pack whose drums ride ONLY as pointer entries (another writer
+        // omitted the song-level alias): the grid still needs an active
+        // target — the first part.
+        if (!S.drumTab) {
+            const firstDrums = findDrumArrangement(S.arrangements);
+            if (firstDrums) S.drumTab = firstDrums.drumTab;
+        }
         // Freshly loaded from disk — not dirty until the user edits it.
         S.drumTabDirty = false;
         // The master recording's URL is the active source's anchor — held
@@ -715,19 +730,41 @@ export function _buildSaveBody(forceFullSnapshot) {
             && (arr.handshapes.length > 0 || _handshapesAreDirty(arr))) {
         body.handshapes = arr.handshapes;
     }
-    // Drum-tab payload — separate from arrangements (see sloppak-spec §5.3).
-    // S.drumTab is null while the sloppak has none; after +Drums it holds the
-    // parsed JSON dict. Only ship `drum_tab` when the user actually
-    // imported / edited / DELETED it this session (`S.drumTabDirty`) — a tab
-    // merely loaded from disk is left out so the backend's no-op path
-    // preserves the manifest entry unchanged instead of re-serialising the
-    // whole hit list on every unrelated save. A dirty null MUST ship: it is
-    // the explicit-removal wire (the Tracks column's drum delete) — the
-    // backend only unlinks drum_tab.json on a literal null, so omitting the
-    // field here hit the absent→preserve path and the deleted drums
-    // resurrected on the next load.
+    // Drum payloads — separate from arrangements (see sloppak-spec §5.3).
+    // Only ship them when the user actually imported / edited / DELETED /
+    // renamed drums this session (`S.drumTabDirty`) — parts merely loaded
+    // from disk are left out so the backend's no-op path preserves the
+    // manifest entries unchanged instead of re-serialising every hit list
+    // on every unrelated save.
+    //
+    //   drum_tab    — the PRIMARY part's tab (the FIRST drums arrangement —
+    //                 NOT S.drumTab, which points at the ACTIVE part: the
+    //                 user may be editing a secondary when they save). A
+    //                 dirty null MUST ship: it is the explicit-removal wire —
+    //                 the backend only unlinks drum_tab.json on a literal
+    //                 null, so omitting the field hit the absent→preserve
+    //                 path and deleted drums resurrected on the next load.
+    //   drum_parts  — the EXTRA parts [{id, name, drum_tab}], persisted as
+    //                 type:"drums" manifest arrangement entries with per-
+    //                 arrangement drum_tab pointers (feedpak-spec 1.17.0).
+    //                 An explicitly EMPTY list is the removal wire for a
+    //                 deleted extra part, so it always ships beside drum_tab.
     if (S.drumTabDirty && S.drumTab !== undefined) {
-        body.drum_tab = S.drumTab;
+        const parts = S.arrangements.filter(isDrumArrangement);
+        // Legacy unmaterialized tab (create-mode compose) has no drums
+        // arrangement — its S.drumTab IS the primary, as before.
+        body.drum_tab = parts.length ? (parts[0].drumTab ?? null) : S.drumTab;
+        // The primary's durable id (parts[0].id) — the backend persists the
+        // alias entry under it so a promoted primary (e.g. "drums-2" after the
+        // original "drums" was deleted) round-trips its identity and its stem
+        // links / tree rows survive reload. Blank for a legacy unmaterialized
+        // tab → the backend defaults to "drums".
+        body.drum_tab_id = parts.length ? String(parts[0].id || '') : '';
+        body.drum_parts = parts.slice(1).map(a => ({
+            id: String(a.id || ''),
+            name: String(a.name || 'Drums').slice(0, 120),
+            drum_tab: a.drumTab,
+        }));
     }
     // Beat-primary: strip the runtime beat cache so the wire stays seconds-only.
     return _stripBeatsFromSaveBody(body);

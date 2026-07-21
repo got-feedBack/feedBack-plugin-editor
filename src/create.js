@@ -24,7 +24,7 @@ import {
     _updateTonesButtonVisibility,
 } from './annotation-lanes.js';
 import { _handshapesAreDirty, flattenChords, reconstructChords } from './chords.js';
-import { isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
+import { isDrumArrangement, pitchedArrangementCount, syncDrumArrangement } from './drum-arrangement.js';
 import { EditHistory } from './history.js';
 import { host } from './host.js';
 import { isKeysMode, updatePianoRange } from './keys.js';
@@ -2416,9 +2416,13 @@ export async function editorApplyCreateResult(data) {
     S.drumTabDirty = !!S.drumTab;
     S.drumEditMode = false;
     S.drumSel = new Set();
-    // Materialize the type:"drums" arrangement now (like loadCDLC / +Drums), so a
-    // freshly imported drum song has it immediately — not only after build+reopen.
-    syncDrumArrangement(S);
+    // Materialize the drums as a type:"drums" arrangement here too (the load
+    // path has done so since the drums-as-arrangements foundation) so the
+    // switcher's 🥁 option and the drums mixer strip exist in create-mode
+    // sessions as well — but ONLY beside a pitched part: a drums-only import
+    // must not put a drums arrangement at index 0, where the default
+    // currentArr would land on it (it stays a legacy off-array tab instead).
+    if (pitchedArrangementCount(S.arrangements) > 0) syncDrumArrangement(S);
     // The DAW track-session feature is stacked independently. Its host hook is
     // inert on this branch, but when present it receives every create-time
     // source immediately so stems do not appear only after a save/reopen.

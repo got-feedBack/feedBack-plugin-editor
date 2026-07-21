@@ -55,19 +55,31 @@ function slice(name, deps = {}) {
 const _bandPartsPure = slice('_bandPartsPure', { drumArrangementIndex });
 const _bandFiredKeyPure = slice('_bandFiredKeyPure');
 
-t('the band roster mirrors the mixer strip keys, drums on its own arr:<idx>', () => {
-    // Drums are a type:"drums" arrangement now — the roster keys them by that
-    // arrangement's index (arr:2 here), the SAME key the mixer strip uses.
+t('the band roster mirrors the mixer strip keys, each drum part on its own arr:<idx>', () => {
+    // Drum parts are type:"drums" arrangements now, each OWNING its tab — the
+    // roster keys each by its arrangement index, the SAME key its strip uses,
+    // and a song can hold several.
+    const kit = { hits: [{ t: 1 }] };
+    const live = { hits: [{ t: 2 }] };
     const parts = _bandPartsPure(
-        [{ name: 'Lead' }, { name: 'Bass' }, { name: 'Drums', type: 'drums' }],
-        { hits: [{ t: 1 }] });
-    assert.deepStrictEqual(parts.map(p => p.key), ['arr:0', 'arr:1', 'arr:2'],
-        'the drum part rides arr:2, not a "drums" singleton');
-    assert.strictEqual(parts[2].idx, 2, 'and resolves to the drums arrangement index');
+        [{ name: 'Lead' }, { name: 'Bass' },
+         { name: 'Drums', type: 'drums', drumTab: kit },
+         { name: 'Drums (Live)', type: 'drums', drumTab: live }],
+        kit);
+    assert.deepStrictEqual(parts.map(p => p.key), ['arr:0', 'arr:1', 'arr:2', 'arr:3'],
+        'both drum parts ride their own arr:<idx>, no "drums" singleton');
+    assert.strictEqual(parts[3].name, 'Drums (Live)');
     assert.deepStrictEqual(_bandPartsPure([{ name: 'Lead' }], null).map(p => p.key), ['arr:0'],
         'no drum tab = no drums strip');
     assert.deepStrictEqual(_bandPartsPure([{ name: 'Lead' }], { hits: [] }).map(p => p.key), ['arr:0'],
         'an EMPTY drum tab is not a part');
+    assert.deepStrictEqual(_bandPartsPure(
+        [{ name: 'Lead' }, { name: 'Kit', type: 'drums', drumTab: { hits: [] } }], { hits: [] })
+        .map(p => p.key), ['arr:0'],
+        'an EMPTY drum PART schedules nothing');
+    assert.deepStrictEqual(_bandPartsPure([{ name: 'Lead' }], kit).map(p => p.key),
+        ['arr:0', 'drums'],
+        'legacy unmaterialized tab (create mode) keeps the "drums" band key');
 });
 
 t('the dedupe key is part-scoped: same millisecond, two parts, both fire', () => {

@@ -19,7 +19,7 @@
 import { S } from './state.js';
 import { setStatus } from './ui.js';
 import { editorAddEmptyFretted, editorAddEmptyKeys, editorShowAddKeysModal, editorShowImportGuitarModal } from './import.js';
-import { editorAddEmptyDrums, editorShowAddDrumsModal } from './arrangement.js';
+import { _canAddAnotherDrums, editorAddEmptyDrums, editorShowAddDrumsModal } from './arrangement.js';
 import { editorToggleStemTracks } from './stem-tracks.js';
 
 /* @pure:new-track:start */
@@ -43,7 +43,12 @@ export function _newTrackPlanPure(sel, ctx) {
     }
     if (inst === 'Keys') return { action: 'empty-keys' };
     if (inst === 'Drums') {
-        return c.hasDrumTab ? { action: 'blocked', reason: 'drums-exist' } : { action: 'empty-drums' };
+        // A song can hold several drum parts now — an existing drum tab only
+        // blocks the empty start when another part CANNOT be added (create
+        // mode, whose build persists a single drum_tab).
+        return (c.hasDrumTab && !c.drumsCanAdd)
+            ? { action: 'blocked', reason: 'drums-exist' }
+            : { action: 'empty-drums' };
     }
     return { action: 'empty-fretted', role: inst };
 }
@@ -73,19 +78,22 @@ function _renderNewTrackModal() {
     for (const r of modal.querySelectorAll('input[name="new-track-source"]')) {
         r.checked = r.value === _sel.source;
     }
-    // Drums with an existing drum tab: empty-start is blocked (one drum tab
-    // per song) — say so inline instead of failing at Create.
+    // Drums with an existing drum tab: in a saved sloppak session the empty
+    // start ADDS another drum part — say so; in create mode (one part max)
+    // it stays blocked, phrased inline instead of failing at Create.
     const note = _byId('editor-new-track-note');
     if (note) {
-        const drumsBlocked = isTrans && _sel.instrument === 'Drums' && _sel.source === 'empty' && !!S.drumTab;
-        note.textContent = drumsBlocked
-            ? 'This song already has a Drums track — choose "Import from a file" to replace it.'
-            : '';
+        const drumsEmpty = isTrans && _sel.instrument === 'Drums' && _sel.source === 'empty' && !!S.drumTab;
+        note.textContent = !drumsEmpty ? ''
+            : _canAddAnotherDrums()
+                ? 'This song already has drums — this will add another Drums track.'
+                : 'This song already has a Drums track — save the song first to add more drum parts, or choose "Import from a file" to replace it.';
     }
     const create = _byId('editor-new-track-create');
     if (create) {
         create.disabled = _newTrackPlanPure(_sel, {
             hasSession: !!S.sessionId, format: S.format, hasDrumTab: !!S.drumTab,
+            drumsCanAdd: _canAddAnotherDrums(),
         }).action === 'blocked';
     }
 }
@@ -121,6 +129,7 @@ export function editorNewTrackSetSource(source) {
 export async function editorNewTrackCreate() {
     const plan = _newTrackPlanPure(_sel, {
         hasSession: !!S.sessionId, format: S.format, hasDrumTab: !!S.drumTab,
+        drumsCanAdd: _canAddAnotherDrums(),
     });
     switch (plan.action) {
         case 'audio-picker': {
