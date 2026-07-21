@@ -316,13 +316,14 @@ export function editorShowAddDrumsModal() {
 }
 
 // Can a SECOND (third, …) drum part be added — i.e. does a drum import ADD
-// another part (vs replace the existing tab)? True only when the primary part
-// is materialized as a type:"drums" arrangement in a non-create sloppak
-// session — the create flow's build (create_sloppak) persists a single
-// drum_tab, so create mode keeps the legacy one-part replace semantics.
-// (Exported for new-track.js's plan gate + the tests.)
+// another part (vs replace the existing tab)? True once the primary part is
+// materialized as a type:"drums" arrangement in a sloppak session — both the
+// /save_song and create-mode /build paths persist the extras now. A part
+// only materializes beside a pitched track (drums are never index 0), so a
+// drums-only compose session — its lone off-array tab — can't add a second
+// until a melodic track exists. (Exported for new-track.js's plan gate + tests.)
 export function _canAddAnotherDrums() {
-    return !!(S.drumTab && !S.createMode && S.format === 'sloppak'
+    return !!(S.drumTab && S.format === 'sloppak'
         && findDrumArrangement(S.arrangements));
 }
 
@@ -334,13 +335,14 @@ export function editorHideAddDrumsModal() {
 // tab is pure client state until save (S.drumTab + S.drumTabDirty — the
 // same stash the GP/MIDI import path uses), and the create flow's
 // init_drums seeds the identical empty shape, so no backend call is
-// needed. When drums already exist, ADDS another drum part (a song can
-// hold several) — except in create mode, whose build persists one part.
+// needed. When drums already exist, ADDS another drum part (a song can hold
+// several — create and edit sessions alike, once a melodic track exists).
 export function editorAddEmptyDrums() {
     if (!S.sessionId || S.format !== 'sloppak') return false;
     if (S.drumTab && !_canAddAnotherDrums()) {
-        // Create-mode (or an unmaterialized legacy tab): still one part max.
-        setStatus('This song already has a Drums track — open it with 🥁 Edit Drums. Save the song to add more drum parts.');
+        // The only remaining one-part case: a drums-only session whose tab
+        // isn't materialized as an arrangement (no melodic track to sit beside).
+        setStatus('This song already has a Drums track — open it with 🥁 Edit Drums. Add a melodic track first to hold more than one drum part.');
         return false;
     }
     const tab = { version: 1, name: 'Drums', kit: [], hits: [] };
