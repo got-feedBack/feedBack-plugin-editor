@@ -188,7 +188,7 @@ import { _laneClipActive, applyLaneScrollBounds, drawLaneScrollbar, laneBandTop 
 import {
     _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
-import { arrKind } from './instrument.js';
+import { _isFrettedKind, arrKind } from './instrument.js';
 import {
     _restoreSuggestedMarks,
     _saveSuggestedMarks, _suggestedCount, chords, notes
@@ -1071,7 +1071,7 @@ function updateArrangementSelector() {
     if (stringsBtn) {
         const active = S.arrangements[S.currentArr];
         const activeKind = active && arrKind(active);
-        const stringsMode = !!active && activeKind !== 'keys' && activeKind !== 'drums';
+        const stringsMode = !!active && _isFrettedKind(activeKind);
         stringsBtn.classList.toggle('hidden', !S.sessionId || !stringsMode);
     }
 
