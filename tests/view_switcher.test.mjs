@@ -21,6 +21,7 @@ import {
     _partViewKeyPure, _rollMidiForNote, _viewForPure, noteToMidi, updatePianoRange, } from '../src/keys.js';
 import { LC } from '../src/lanes.js';
 import { S } from '../src/state.js';
+import { isDrumArrangement } from '../src/drum-arrangement.js';
 
 // Only @pure:edit-history is still sliced — it lives in src/main.js.
 const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
@@ -348,6 +349,84 @@ t('read-only roll: inspector editorInspectorSetFlag does not mutate the fretted 
     setFlag('accent', true);
     assert.strictEqual(note.techniques.accent, true, 'writes once editable');
     assert.strictEqual(history.undo.length, 1, 'and now it is one undoable commit');
+});
+
+// ── The arrangement switcher must drop the engraved-tab lens on a mode
+//    switch. draw() checks S.tabViewMode FIRST (main.js), so a stale lens
+//    keeps painting the previous part's tab over the new mode. The
+//    Edit-Drums button already clears it; editorSwitcherSelect (and its
+//    twin openTrackSessionTarget) did not. ────────────────────────────────
+const DRUMS = () => ({ id: 'drums', name: 'Drums', type: 'drums', drumTab: { version: 1 } });
+const GTR = (name = 'Lead') => ({ id: name.toLowerCase(), name, notes: [], chords: [] });
+
+function makeSwitcher() {
+    let selectorSyncs = 0;
+    const fn = extractWinFn('editorSwitcherSelect', {
+        isDrumArrangement,
+        S,
+        _finalizeActiveDrag: () => {},
+        _refreshPartsViewButton: () => {},
+        _refreshDrumEditButton: () => {},
+        _refreshTempoMapButton: () => {},
+        updateArrangementSelector: () => { selectorSyncs++; },
+        draw: () => {},
+        updateStatus: () => {},
+        window: { editorSelectArrangement: (v) => { S.currentArr = parseInt(v) || 0; } },
+    });
+    return { fn, counts: { get selectorSyncs() { return selectorSyncs; } } };
+}
+
+t('switcher → Drums drops the engraved lens (draw checks tabViewMode first)', () => {
+    Object.assign(S, {
+        arrangements: [GTR('Lead'), DRUMS()], currentArr: 0,
+        drumTab: { version: 1 }, format: 'sloppak',
+        tabViewMode: true, drumEditMode: false, drumSel: new Set(),
+        partsViewMode: false, tempoMapMode: false, tempoSel: -1, sel: new Set(),
+    });
+    makeSwitcher().fn('1');   // the Drums option
+    assert.strictEqual(S.drumEditMode, true, 'drum grid opened');
+    assert.strictEqual(S.tabViewMode, false, 'lens dropped so the drum grid is what draws');
+});
+
+t('switcher → a pitched part drops the drum-notation lens', () => {
+    Object.assign(S, {
+        arrangements: [GTR('Lead'), GTR('Bass'), DRUMS()], currentArr: 0,
+        drumTab: { version: 1 }, format: 'sloppak',
+        tabViewMode: true, drumEditMode: true, drumSel: new Set(), sel: new Set(),
+    });
+    makeSwitcher().fn('1');   // Bass — a pitched part
+    assert.strictEqual(S.drumEditMode, false, 'left drum mode');
+    assert.strictEqual(S.tabViewMode, false, 'drum-notation lens dropped over the pitched arrangement');
+});
+
+t('switcher → a pitched part leaves Parts and Tempo Map view too (draw renders the live lens)', () => {
+    // Parts/Tempo are mutually-exclusive lenses like the drum grid: the drums
+    // branch and openTrackSessionTarget both drop them, so the pitched branch
+    // must too, else currentArr moves but draw() keeps painting the old lens.
+    Object.assign(S, {
+        arrangements: [GTR('Lead'), GTR('Bass'), DRUMS()], currentArr: 0,
+        drumTab: { version: 1 }, format: 'sloppak',
+        tabViewMode: false, drumEditMode: false, drumSel: new Set(), sel: new Set(),
+        partsViewMode: true, tempoMapMode: true, tempoSel: 3,
+    });
+    makeSwitcher().fn('1');   // Bass — a pitched part
+    assert.strictEqual(S.currentArr, 1, 'switched to the pitched part');
+    assert.strictEqual(S.partsViewMode, false, 'left Parts view so the part is what draws');
+    assert.strictEqual(S.tempoMapMode, false, 'left Tempo Map view');
+    assert.strictEqual(S.tempoSel, -1, 'tempo selection cleared with the mode');
+});
+
+t('switcher → Drums resyncs the <select> even when the drums path is unavailable', () => {
+    Object.assign(S, {
+        arrangements: [GTR('Lead'), DRUMS()], currentArr: 0,
+        drumTab: null, format: 'sloppak',   // no drum tab → the guarded early return
+        tabViewMode: false, drumEditMode: false, sel: new Set(),
+    });
+    const { fn, counts } = makeSwitcher();
+    fn('1');
+    assert.strictEqual(counts.selectorSyncs, 1,
+        'the dropdown is snapped back off the Drums option it optimistically showed');
+    assert.strictEqual(S.drumEditMode, false, 'nothing switched');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
