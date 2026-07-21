@@ -32,6 +32,7 @@
 // ════════════════════════════════════════════════════════════════════
 import { host } from './host.js';
 import { _renameGuardPure } from './arrangement.js';
+import { isDrumArrangement, syncDrumArrangement } from './drum-arrangement.js';
 import { _partViewKeyPure } from './keys.js';
 import { arrKind, _arrTypeKind } from './instrument.js';
 import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart } from './mixer-panel.js';
@@ -116,6 +117,11 @@ export function _trackSessionTargetsPure(arrangements, drumTab) {
     const seen = new Set();
     (Array.isArray(arrangements) ? arrangements : []).forEach((arr, index) => {
         if (!arr) return;
+        // The drums arrangement is addressed through the legacy `'drums'` target
+        // below (appended from `drumTab`), not as an `arr:<idx>` target — skip it
+        // here so drums don't get a duplicate row. (Promoting drums to their own
+        // arr:<idx> target is the follow-up.)
+        if (isDrumArrangement(arr)) return;
         let id = idOf(_partViewKeyPure(arr)) || 'arr:' + index;
         // Duplicate part names collapse to one key — suffix the later ones so
         // every part keeps a row (same degradation stemLinks already has).
@@ -886,6 +892,7 @@ export class DeleteDrumTabCmd {
     }
     exec() {
         S.drumTab = null;
+        syncDrumArrangement(S);   // remove the derived type:"drums" arrangement
         // Dirty is what ships the explicit `drum_tab: null` removal on the
         // next save (see _buildSaveBody) — without it the backend's
         // absent→preserve path would resurrect drum_tab.json on reload.
@@ -901,6 +908,7 @@ export class DeleteDrumTabCmd {
     }
     rollback() {
         S.drumTab = this._tab;
+        syncDrumArrangement(S);   // restore the derived type:"drums" arrangement
         S.drumTabDirty = this._dirty;
         if (this._hadMixStrip) {
             if (!S.partMix) S.partMix = {};

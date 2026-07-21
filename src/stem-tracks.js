@@ -26,6 +26,7 @@ import { S, markSessionDirty } from './state.js';
 import { host } from './host.js';
 import { setStatus, _editorPromptText } from './ui.js';
 import { _partViewKeyPure } from './keys.js';
+import { isDrumArrangement } from './drum-arrangement.js';
 import { editorTempoGuideState, editorToggleTempoGuide, reconcileTempoGuideToStems } from './track-session.js';
 
 /* @pure:stem-tracks:start */
@@ -47,6 +48,11 @@ function _stemRowsPure(stems, stemLinks, arrangements) {
         pairedWith: linkedTo(s2.id),
     }));
 }
+// Chart tracks a stem can pair with: PITCHED arrangements only — the derived
+// drums arrangement is a song-level sidecar, never a stem-transcription target.
+function _stemPairArrsPure(arrangements) {
+    return (arrangements || []).filter(a => !isDrumArrangement(a));
+}
 // Toggle a pairing IMMUTABLY: linking a stem to a track drops that track's
 // previous link (one source track per chart track); picking '' unlinks.
 function _stemLinkSetPure(links, arrKey, stemId) {
@@ -58,7 +64,7 @@ function _stemLinkSetPure(links, arrKey, stemId) {
     return out;
 }
 /* @pure:stem-tracks:end */
-export { _stemLinkSetPure, _stemRowsPure };
+export { _stemLinkSetPure, _stemRowsPure, _stemPairArrsPure };
 
 const $modal = () => document.getElementById('editor-stem-tracks-modal');
 const $list = () => document.getElementById('editor-stem-tracks-list');
@@ -102,7 +108,7 @@ function _render() {
     if (!list) return;
     const rows = _stemRowsPure(S.stems, S.stemLinks, S.arrangements);
     const arrOptions = (paired) => ['<option value="">— not paired —</option>']
-        .concat((S.arrangements || []).map((a) => {
+        .concat(_stemPairArrsPure(S.arrangements).map((a) => {
             const k = _partViewKeyPure(a);
             const sel = paired && paired.key === k ? ' selected' : '';
             return `<option value="${_esc(k)}"${sel}>${_esc(a.name || 'track')}</option>`;

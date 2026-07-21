@@ -189,6 +189,7 @@ import {
     _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
 import { _isFrettedKind, arrKind } from './instrument.js';
+import { clampAwayFromDrums, pitchedArrangementCount } from './drum-arrangement.js';
 import {
     _restoreSuggestedMarks,
     _saveSuggestedMarks, _suggestedCount, chords, notes
@@ -1038,23 +1039,49 @@ function updateTimeDisplay() {
 // File operations
 // ════════════════════════════════════════════════════════════════════
 
+/* @pure:arr-affordances:start */
+// The Remove / Reorder button gates, counted over PITCHED parts only. The
+// derived drums arrangement (type:"drums", appended last) must never make a
+// single-pitched song look removable (a silent no-op) or let the last pitched
+// part move DOWN past drums (breaks append-last, shifts arr:<idx> mix keys).
+// `currentArr` is always a pitched index (clamped away from drums).
+// Not exported — main.js is IIFE-wrapped; the test slices this @pure block out.
+function _arrAffordancePure(pitchedCount, currentArr, sessionId, format) {
+    const canRemove = pitchedCount > 1;
+    // Reorder persists only through the full-snapshot sloppak save.
+    const canReorder = canRemove && !!sessionId && format === 'sloppak';
+    return {
+        canRemove,
+        canReorder,
+        upDisabled: !canReorder || currentArr <= 0,
+        downDisabled: !canReorder || currentArr >= pitchedCount - 1,
+    };
+}
+/* @pure:arr-affordances:end */
+
 function updateArrangementSelector() {
     const sel = document.getElementById('editor-arrangement');
     sel.innerHTML = '';
     S.arrangements.forEach((arr, i) => {
+        // The drums arrangement isn't offered in this pitched-part switcher —
+        // it's opened via 🥁 Edit Drums / its Tracks row. Skipping it keeps the
+        // dropdown (and its show/hide threshold below) byte-identical.
+        if (arr && arr.type === 'drums') return;
         const opt = document.createElement('option');
         opt.value = i;
         opt.textContent = arr.name;
         sel.appendChild(opt);
     });
-    sel.style.display = S.arrangements.length > 1 ? '' : 'none';
+    sel.style.display = sel.options.length > 1 ? '' : 'none';
     // Re-apply the active arrangement after the rebuild so callers that
     // changed S.currentArr (e.g. + Keys / + Drums append, remove-arr)
     // don't end up with a `<select>` snapped back to option 0 while the
     // canvas edits the appended arrangement. Clamp to the valid range
     // so an out-of-bounds S.currentArr doesn't render as a blank value.
     if (S.arrangements.length > 0) {
-        const idx = Math.max(0, Math.min(S.currentArr || 0, S.arrangements.length - 1));
+        // Clamp to a PITCHED index — the derived drums arrangement is never the
+        // selected pitched arrangement (it has no option in this switcher).
+        const idx = clampAwayFromDrums(S.arrangements, S.currentArr || 0);
         S.currentArr = idx;
         sel.value = String(idx);
     }
@@ -1108,10 +1135,14 @@ function updateArrangementSelector() {
         }
     }
 
-    // Show remove button when there are multiple arrangements
+    // Remove / Reorder affordances count PITCHED parts only — the derived drums
+    // arrangement doesn't count (a 1-pitched + drums song must not offer Remove,
+    // which editorRemoveArrangement refuses anyway → a silent no-op).
+    const affordance = _arrAffordancePure(
+        pitchedArrangementCount(S.arrangements), S.currentArr, S.sessionId, S.format);
     const removeBtn = document.getElementById('editor-remove-arr-btn');
     if (removeBtn) {
-        removeBtn.classList.toggle('hidden', S.arrangements.length <= 1);
+        removeBtn.classList.toggle('hidden', !affordance.canRemove);
     }
 
     // Rename is available whenever an arrangement is active on a live
@@ -1128,16 +1159,19 @@ function updateArrangementSelector() {
     // `arrangement_index`, so a reorder there is silently lost (worse, the
     // stale index re-targets the wrong part). Gate to sloppak sessions,
     // exactly like +Keys / Record, so the affordance never lies.
+    // Bound on PITCHED positions only: drums is appended LAST, so the last
+    // pitched part sits at index pitchedCount-1. Counting the drums entry would
+    // let it move DOWN past drums (breaking append-last and shifting arr:<idx>
+    // mix keys). S.currentArr is always a pitched index (clamped away from drums).
     const upBtn = document.getElementById('editor-move-arr-earlier-btn');
     const downBtn = document.getElementById('editor-move-arr-later-btn');
-    const canReorder = S.arrangements.length > 1 && !!S.sessionId && S.format === 'sloppak';
     if (upBtn) {
-        upBtn.classList.toggle('hidden', !canReorder);
-        upBtn.disabled = !canReorder || S.currentArr <= 0;
+        upBtn.classList.toggle('hidden', !affordance.canReorder);
+        upBtn.disabled = affordance.upDisabled;
     }
     if (downBtn) {
-        downBtn.classList.toggle('hidden', !canReorder);
-        downBtn.disabled = !canReorder || S.currentArr >= S.arrangements.length - 1;
+        downBtn.classList.toggle('hidden', !affordance.canReorder);
+        downBtn.disabled = affordance.downDisabled;
     }
 
     // The Tracks header column mirrors arrangement names/count — keep it in
@@ -2301,7 +2335,10 @@ function _editorMovePart(dir) {
         return true;
     }
     const from = S.currentArr;
-    const to = _movePartTargetPure(from, dir, S.arrangements.length);
+    // Bound on PITCHED count, not arrangements.length: the drums arrangement is
+    // appended last, so a pitched part must never move past it (would break the
+    // append-last invariant and shift arr:<idx> mix keys onto the wrong parts).
+    const to = _movePartTargetPure(from, dir, pitchedArrangementCount(S.arrangements));
     if (to < 0) return true;   // at an end / nothing to do
     const [moved] = S.arrangements.splice(from, 1);
     S.arrangements.splice(to, 0, moved);

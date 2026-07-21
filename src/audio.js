@@ -1707,6 +1707,10 @@ function _guidePitchedEvents() {
 function _bandPartsPure(arrangements, drumTab) {
     const out = [];
     (arrangements || []).forEach((a, i) => {
+        // The drums arrangement plays through the `'drums'` band key (from
+        // drumTab) below, not as an `arr:<idx>` part — skip it so it doesn't add
+        // a phantom (empty-note) band entry.
+        if (a && a.type === 'drums') return;
         if (a) out.push({ key: 'arr:' + i, idx: i, name: a.name || ('Track ' + (i + 1)) });
     });
     if (drumTab && Array.isArray(drumTab.hits) && drumTab.hits.length) {

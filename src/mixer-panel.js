@@ -28,6 +28,7 @@
 import { host } from './host.js';
 import { S, editGen } from './state.js';
 import { _editorEscHtml, setStatus } from './ui.js';
+import { isDrumArrangement } from './drum-arrangement.js';
 
 /* @pure:mixer-panel:start */
 // One strip per part: every arrangement, plus the drum tab as its own strip
@@ -55,6 +56,9 @@ export function _mixerPartsPure(arrangements, drumTab, stems, removedSourceIds, 
         parts.push({ key: 'audio:' + id, name: stem.name || id, kind: 'audio' });
     }
     (arrangements || []).forEach((arr, i) => {
+        // The drums arrangement gets its OWN 'drums' strip below (from drumTab),
+        // not an 'arr:<idx>' strip — skip it here so drums don't show twice.
+        if (isDrumArrangement(arr)) return;
         parts.push({
             key: 'arr:' + i,
             name: (arr && arr.name) || 'Track ' + (i + 1),
