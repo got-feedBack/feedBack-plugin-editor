@@ -6,7 +6,7 @@ a playable feedBack chart: import a tab or start from audio, line the grid up
 to the take, author every note, and build a `.feedpak` the whole ecosystem
 plays.
 
-![The Song Editor: waveform, beat grid, and a synced Guitar Pro chart on the string lanes.](assets/guide/workspace.png)
+![The Song Editor: the multitrack Tracks column at left, the waveform and beat grid up top, and a synced Guitar Pro chart laid out on the string lanes.](assets/guide/workspace.png)
 
 **New here?** The **[User Guide](docs/USER-GUIDE.md)** (also in-app under
 Help ▸ User Guide) walks the whole journey — create a project from a
@@ -29,7 +29,10 @@ read this top-to-bottom once — the architecture section saves real time.
   A Logic-style **tool palette** (`T`: pointer, pencil/draw, eraser, marquee,
   mute, scissors), four **shortcut profiles** (FeedBack / Logical / Cableton /
   Legacy-EOF), a searchable command palette (`Ctrl+K`), and a customizable
-  canvas (grid strength, brightness, hue). Undo/redo is the edit contract:
+  canvas (grid strength, brightness, hue). Navigate a long arrangement with a
+  real horizontal scrollbar and overview strip, per-view zoom (the piano roll
+  stretches and compacts on its own), and Logic-style **Scroll in Play** that
+  glides the timeline under a pinned playhead. Undo/redo is the edit contract:
   every mutation is a command with exec/rollback.
 - **Time** — a beat-primary tempo map (`beatOf`/`timeOf` over one anchor
   set): Tempo Map mode fits the grid to a recording (sync points, tap tempo,

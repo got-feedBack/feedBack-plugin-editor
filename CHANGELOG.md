@@ -146,6 +146,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   song returns the roll to its automatic height — a stretch chosen for one
   arrangement's range means nothing for the next one's.
 
+### Changed
+
+- **Refreshed the User Guide, README and first-run tour against the current
+  build.** Recaptured every screenshot in the in-app User Guide and the repo
+  README from a live build with a clean demo song — the hero now shows the
+  multitrack Tracks column, and the Drums image shows the piece-lane grid the
+  text already describes (it used to be the old import dialog). Documented the
+  overview-strip scrollbar and Scroll-in-Play navigation, and pointed the
+  Transcribe tour's last step at the Snap control by name. Docs and one tour
+  string only — no behaviour change.
+
 ### Fixed
 
 - **The Create-New wizard offers to remap incompatible drum notes.** Importing

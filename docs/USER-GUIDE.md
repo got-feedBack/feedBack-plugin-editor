@@ -13,7 +13,7 @@ narrow/widen the grid, Ctrl+4 toggles snap, Ctrl+L loops), and **Legacy
 (EOF)**. Anything a profile doesn't remap keeps its FeedBack key. Switch
 profiles in **Help ▸ Shortcut profile** or the shortcut panel (`?`).
 
-![The Song Editor loaded with a song: the menu bar and toolbars up top, the timeline (waveform and colored note blocks per string) in the middle, the transport and inspector around it.](../assets/guide/workspace.png)
+![The Song Editor loaded with a song: the multitrack Tracks column down the left, the menu bar and toolbars up top, and the timeline (waveform and colored note blocks per string) filling the middle.](../assets/guide/workspace.png)
 
 **The whole journey, at a glance** — a feedpak goes from nothing to playable in
 six steps, and this guide follows them in order:
@@ -57,7 +57,7 @@ tracks you want as arrangements, and pick one audio row as the **Guide** —
 the recording the tempo map follows. Extra audio files stay available as
 separate source tracks.
 
-![The Create New Arrangement dialog: arrangement chips, a master audio and a Guitar Pro chart staged for import, the track table, and song details auto-filled.](../assets/guide/import.png)
+![The Create New Arrangement dialog: a master audio and a Guitar Pro chart staged for import, the track table with its Guide selector, and song details auto-filled.](../assets/guide/import.png)
 
 Song details (title, artist, album, art) auto-fill from the import where they
 can — **Find cover…**, **Identify from audio…**, and **Match…** fill in the
@@ -139,6 +139,10 @@ defaults** puts everything back.
 - **Move around**: `Page Up`/`Page Down` jump beat to beat; `Alt+←`/`Alt+→` jump
   note to note; `Ctrl+Page Up/Down` jump grid lines. Set numbered **bookmarks**
   with `Shift+Alt+1…9` and jump to them with `Alt+1…9`.
+- **Scroll and zoom the canvas**: the mouse wheel **pans** and **Ctrl+wheel**
+  zooms (**Alt+wheel** stretches the piano-roll lanes); the **overview strip**
+  above the lanes is a real horizontal scrollbar — drag it to skim a long song,
+  double-click it to fit the whole song, or grab its ends to zoom to a span.
 
 ---
 
@@ -164,6 +168,8 @@ note — same-time notes there are independent voices, not a strum.)
 - **Timing** — drag a note along the timeline. With **snap** on (`G` to toggle,
   `,` / `.` to change resolution) notes land on the grid; switch snap to target
   **audio onsets** instead of grid lines when you're matching a loose take.
+  **Nudge** the selection one grid step earlier / later with `←` / `→` (these
+  move the playhead when nothing is selected).
 - **Sustain** — drag a note's tail to shorten / lengthen (or **Note ▸**
   Shorten / Lengthen sustain; `[` / `]` in the EOF profile).
 - **Duplicate** the selection to the next position with `Ctrl+D`; **select all
@@ -235,8 +241,8 @@ gets the view that fits it automatically:
   General-MIDI percussion notes, pitch-ordered like a DAW drum roll), and
   **Notation** (the tab engraved on a percussion staff, click-to-select
   included; editing stays in the grid). The **Rows** button additionally
-  switches the grid between *Full* and *Compact* piece rows — and returning
-  from Piano roll puts you back on whichever you were using.
+  cycles the grid through *Full*, *Compact*, and *GM roll* piece rows — and
+  returning from Piano roll puts you back on whichever you were using.
 
 Switch with the **view dropdown** top-right — String view, Piano roll, Tab,
 Notation, or **Notation + Tab** together — or cycle views with the keyboard
@@ -315,9 +321,9 @@ Three ways to set the tempo, from coarse to fine:
    When an audio file's name carries the tempo (like `-147bpm`), Song Fit's
    *Set constant tempo* dialog pre-fills it for you — and a song created from
    such a file starts its grid at that BPM already.
-3. **Tempo Map mode** (`T`) — the precise tool. The bottom strip shows every
-   **barline**; drag one onto its downbeat in the waveform and the surrounding
-   bars re-space to fit. In this mode:
+3. **Tempo Map mode** (press `T`) — the precise tool. The bottom
+   strip shows every **barline**; drag one onto its downbeat in the waveform and
+   the surrounding bars re-space to fit. In this mode:
    - **`G` — Suggest fit**: from the selected barline, the editor proposes
      downbeats from the audio's onsets — all the way to the end of the song.
      Where the audio stops corroborating, the remaining barlines continue as
@@ -365,7 +371,7 @@ few milliseconds early or late. It moves every track together and is undoable.
 
 ## 7. Drums
 
-![The Add Drum Arrangement dialog, offering to import a Guitar Pro or MIDI drum track.](../assets/guide/drums.png)
+![The drum piece-lane grid: kit pieces (kick, snare, hats, toms, ride…) as rows with a kit map below, and a groove charted across the bars.](../assets/guide/drums.png)
 
 Drum tracks use a **piece-lane grid**: rows are kit pieces (kick, snare, hats…),
 columns are grid positions. Click to place a hit; the **drum pad strip** maps a
