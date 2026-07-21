@@ -811,6 +811,13 @@ function _drumBuildPayloadPure(arrangements, drumTab) {
     const drumArrs = (Array.isArray(arrangements) ? arrangements : []).filter(isDrumArrangement);
     const primaryTab = drumArrs.length ? drumArrs[0].drumTab : drumTab;
     const out = { drum_tab: (primaryTab && Array.isArray(primaryTab.hits)) ? primaryTab : null };
+    // The promoted primary's durable id (drumArrs[0].id) — the backend
+    // persists the alias entry under it so a survivor promoted to primary
+    // (e.g. "drums-2" after the original was deleted) round-trips its identity
+    // and its stem links / tree rows survive reload. Blank when there is no
+    // materialized drums arrangement → the backend defaults to "drums". Twin
+    // of file-ops.js `_buildSaveBody`'s `body.drum_tab_id`.
+    out.drum_tab_id = drumArrs.length ? String(drumArrs[0].id || '') : '';
     if (drumArrs.length) {
         out.drum_parts = drumArrs.slice(1).map(a => ({
             id: String(a.id || ''),

@@ -339,7 +339,7 @@ def _sanitize_extra_drum_tab(tab):
     return out
 
 
-def _create_build_drum_entries(staging, drum_tab, drum_parts):
+def _create_build_drum_entries(staging, drum_tab, drum_parts, drum_tab_id=None):
     """The `type: drums` manifest arrangement entries for a CREATE-MODE build
     with multiple drum parts (feedpak 1.17.0 "drums as arrangements"), and the
     side effect of writing each EXTRA part's `drum_tab_<id>.json` into
@@ -358,13 +358,18 @@ def _create_build_drum_entries(staging, drum_tab, drum_parts):
     from pathlib import Path as _Path
 
     staging = _Path(staging)
+    # The primary's alias entry id FOLLOWS the incoming primary's id
+    # (drum_tab_id = parts[0].id) so a promoted primary round-trips its
+    # identity; legacy / old-client builds fall back to "drums". Twin of
+    # /save_song ~5404.
+    primary_id = _primary_drum_alias_id(drum_tab_id)
     entries = [{
-        "id": "drums",
+        "id": primary_id,
         "name": str(drum_tab.get("name") or "Drums")[:120],
         "type": "drums",
         "drum_tab": "drum_tab.json",
     }]
-    used_ids = {"drums"}
+    used_ids = {primary_id}
     for part in (drum_parts or []):
         if not isinstance(part, dict) or not isinstance(part.get("drum_tab"), dict):
             continue
@@ -8746,6 +8751,7 @@ def setup(app, context):
                 output_path=output,
                 drum_tab=drum_tab if isinstance(drum_tab, dict) else None,
                 drum_parts=drum_parts,
+                drum_tab_id=data.get("drum_tab_id"),
                 audio_tracks=extra_audio_tracks,
                 audio_guide_name=(build_audio_tracks[0]["name"]
                                   if build_audio_tracks else ""),
@@ -8857,6 +8863,7 @@ def setup(app, context):
                           meta: dict, output_path: Path,
                           drum_tab: dict | None = None,
                           drum_parts: list | None = None,
+                          drum_tab_id: str | None = None,
                           lyrics: list | None = None,
                           preview_path: str = "",
                           fail_if_exists: bool = False,
@@ -9159,7 +9166,7 @@ def setup(app, context):
                     # index 0 — that slot is the played chart).
                     manifest["arrangements"] = (
                         list(manifest.get("arrangements") or [])
-                        + _create_build_drum_entries(staging, drum_tab, drum_parts))
+                        + _create_build_drum_entries(staging, drum_tab, drum_parts, drum_tab_id))
 
             # Vocals seed: an empty (or authored) lyrics track. feedpak §7.1
             # lyrics.json is a flat array of syllables — an empty array is a

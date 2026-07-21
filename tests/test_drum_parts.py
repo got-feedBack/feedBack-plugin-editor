@@ -174,3 +174,22 @@ def test_create_build_sanitizes_a_non_list_hits_tab_to_empty(tmp_path):
         {"id": "bad", "drum_tab": {"version": 1, "hits": "not-a-list"}}])
     assert [e["id"] for e in entries] == ["drums", "bad"]
     assert json.loads((tmp_path / "drum_tab_bad.json").read_text())["hits"] == []
+
+
+def test_create_build_primary_alias_id_round_trips_a_promoted_primary(tmp_path):
+    # Regression: promote a survivor to primary in create mode (delete the
+    # original "drums" → DeleteDrumTabCmd promotes "drums-2" to parts[0]) then
+    # Build. The primary alias entry must keep id "drums-2" (not the literal
+    # "drums") so its editor_stem_links / track_session tree rows — keyed by
+    # "drums-2" — survive reopen instead of being dropped as orphans. Mirrors
+    # the SAVE-path fix (routes.py ~5404). Extras de-collide against it.
+    entries = _create_build_drum_entries(
+        tmp_path, _dtab("Drums (Live)"),
+        [{"id": "drums", "name": "Drums", "drum_tab": _dtab("Drums")}],
+        drum_tab_id="drums-2")
+    assert entries[0]["id"] == "drums-2", "promoted primary keeps its id, not 'drums'"
+    assert entries[0]["drum_tab"] == "drum_tab.json"
+    assert "drums-2" not in [e["id"] for e in entries[1:]], "extra de-collides off the primary id"
+    # Legacy default: absent/blank drum_tab_id → alias id "drums" (byte-identical).
+    legacy = _create_build_drum_entries(tmp_path, _dtab("Drums"), [])
+    assert legacy[0]["id"] == "drums"
