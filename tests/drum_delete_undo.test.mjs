@@ -28,6 +28,7 @@ globalThis.document = globalThis.document || { getElementById: () => null };
 const { DeleteDrumTabCmd } = await import('../src/track-session.js');
 const { EditHistory } = await import('../src/history.js');
 const { _buildSaveBody } = await import('../src/file-ops.js');
+const { syncDrumArrangement } = await import('../src/drum-arrangement.js');
 const { S } = await import('../src/state.js');
 
 let pass = 0, fail = 0;
@@ -47,13 +48,16 @@ function seed() {
         }],
         currentArr: 0, beats: [], sections: [],
         drumTab: tab, drumTabDirty: false,
-        partMix: { drums: { audible: false, vol: 0.5 }, 'arr:0': { audible: true, vol: 1 } },
+        // The drums arrangement materializes at idx 1 (Lead is 0), so its mix
+        // strip is keyed 'arr:1' now — the retired 'drums' singleton (PR2b).
+        partMix: { 'arr:1': { audible: false, vol: 0.5 }, 'arr:0': { audible: true, vol: 1 } },
         stemLinks: { drums: 'Drums_stem', lead: 'Guitar_L' },
         trackSession: null, trackHeights: {}, stems: [],
         sessionDirty: false,
         history: new EditHistory(),
         sel: new Set(),
     });
+    syncDrumArrangement(S);   // materialize the type:"drums" arrangement (idx 1)
     return tab;
 }
 
@@ -62,7 +66,7 @@ t('delete execs as one history command — the stack survives', () => {
     S.history.exec(new DeleteDrumTabCmd('Drums'));
     assert.strictEqual(S.drumTab, null, 'tab cleared');
     assert.strictEqual(S.drumTabDirty, true, 'dirty → the removal ships on the next save');
-    assert.strictEqual('drums' in S.partMix, false, 'mixer strip dropped');
+    assert.strictEqual('arr:1' in S.partMix, false, 'mixer strip dropped');
     assert.strictEqual(S.stemLinks.drums, undefined, 'pairing retargeted away');
     assert.strictEqual(S.stemLinks.lead, 'Guitar_L', 'other pairings untouched');
     assert.strictEqual(S.history.undo.length, 1, 'the delete IS on the undo stack');
@@ -77,7 +81,7 @@ t('undo restores the very same tab object, flags, strip, and pairing', () => {
         'IDENTITY restore — older drum commands hold references into these hits');
     assert.strictEqual(S.drumTabDirty, false,
         'a disk-clean tab returns clean, so an unrelated save does not re-serialize it');
-    assert.deepStrictEqual(S.partMix.drums, { audible: false, vol: 0.5 }, 'mixer strip back');
+    assert.deepStrictEqual(S.partMix['arr:1'], { audible: false, vol: 0.5 }, 'mixer strip back');
     assert.strictEqual(S.stemLinks, linksBefore, 'pairing map reference restored');
     assert.strictEqual(S.history.redo.length, 1, 'redo holds the delete');
 });
@@ -89,7 +93,7 @@ t('redo re-deletes; a second undo restores again (round-trip stability)', () => 
     S.history.doRedo();
     assert.strictEqual(S.drumTab, null);
     assert.strictEqual(S.drumTabDirty, true);
-    assert.strictEqual('drums' in S.partMix, false);
+    assert.strictEqual('arr:1' in S.partMix, false);
     S.history.doUndo();
     assert.strictEqual(S.drumTab, tab);
     assert.strictEqual(S.drumTabDirty, false);

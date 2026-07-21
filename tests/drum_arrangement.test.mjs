@@ -147,16 +147,19 @@ t('load → save round-trips the pitched arrangements byte-identically', () => {
 });
 
 // ── no duplicate tracks/band rows for drums ───────────────────────────
-t('_trackSessionTargetsPure: the drums arrangement does NOT add an arr target — drums stay the legacy "drums" target', () => {
+t('_trackSessionTargetsPure: the drums arrangement mixes on arr:<idx> but keeps its durable "drums" target id (PR2b)', () => {
     const payload = tab();
     const S = { arrangements: [gtr('Lead')], drumTab: payload };
-    syncDrumArrangement(S);   // arrangements = [Lead, drumsArr]
+    syncDrumArrangement(S);   // arrangements = [Lead, drumsArr] → drums is idx 1
     const targets = _trackSessionTargetsPure(S.arrangements, S.drumTab);
-    const drumTargets = targets.filter(x => x.mixKey === 'drums');
-    assert.strictEqual(drumTargets.length, 1, 'exactly one drum target');
-    assert.strictEqual(drumTargets[0].id, 'drums');
-    assert.ok(!targets.some(x => x.mixKey === 'arr:1'), 'the drums arrangement (idx 1) gets NO arr:1 target');
-    assert.strictEqual(targets.filter(x => x.mixKey.startsWith('arr:')).length, 1, 'only the pitched part is an arr target');
+    const drumTargets = targets.filter(x => x.id === 'drums');
+    assert.strictEqual(drumTargets.length, 1, 'exactly one drum target (no duplicate row)');
+    assert.strictEqual(drumTargets[0].mixKey, 'arr:1',
+        'the drums target now mixes on the drums arrangement index, not the legacy "drums" key');
+    assert.ok(!targets.some(x => x.mixKey === 'drums'), 'the legacy "drums" mix-key singleton is retired');
+    // Both parts mix on arr:<idx> now (the pitched part from the loop; drums from
+    // the appended target), but only ONE carries the durable "drums" id.
+    assert.strictEqual(targets.filter(x => x.mixKey.startsWith('arr:')).length, 2, 'both parts mix on arr:<idx>');
 });
 
 t('_trackSessionTargetsPure: a pitched part NAMED "Drums" still gets its arr target (not filtered)', () => {

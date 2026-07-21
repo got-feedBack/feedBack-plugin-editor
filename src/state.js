@@ -59,8 +59,9 @@ export const S = {
     partsViewMode: false,
     drumSel: new Set(),
 
-    // Per-part mix state (mixer panel, B6) — 'arr:<idx>' / 'drums' →
-    // { vol, mute, solo }. Session-scoped UI state (never the pack): the
+    // Per-part mix state (mixer panel, B6) — 'arr:<idx>' (the drums
+    // arrangement included) → { vol, mute, solo }. Session-scoped UI state
+    // (never the pack): the
     // canonical source for part mute/solo/volume that the mixer strips,
     // the guide-clap gate (via host.partClapState) and the future
     // Parts-gutter M/S/A all read. Reset when a song is installed.
