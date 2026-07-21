@@ -300,6 +300,26 @@ def _is_drum_pointer_entry(entry):
     )
 
 
+def _drum_pointer_entry(old_entry, entry_id, name, drum_tab_rel):
+    """One rebuilt drum-pointer manifest entry, merged ONTO its predecessor
+    (the prior entry with the same id) via the same ``_merge_manifest_entry``
+    rule the pitched pipeline uses — so additive spec keys the editor doesn't
+    author (the feedpak-spec 1.18.0 entry-level ``tones`` sound binding,
+    future extension keys) survive the drum block's full rebuild instead of
+    being silently stripped on every drum-dirty save. The editor-owned keys
+    (id/name/type/drum_tab) always take the rebuilt value; ``old_entry`` is
+    ``None`` for a genuinely new part.
+
+    Module-level so pytest can reach it.
+    """
+    return _merge_manifest_entry(old_entry, {
+        "id": entry_id,
+        "name": name,
+        "type": "drums",
+        "drum_tab": drum_tab_rel,
+    })
+
+
 def _sanitize_extra_drum_tab(tab):
     """A compact save-side sanitation for an EXTRA drum part's tab (the
     primary's inline pass in `_save_sloppak` is the heavyweight original):
@@ -5398,6 +5418,14 @@ def setup(app, context):
                 new_drum_entries: list[dict] = []
                 kept_drum_files: set = set()
                 used_part_ids: set = set()
+                # Prior drum-pointer entries by id: each rebuilt entry merges
+                # ONTO its predecessor via _drum_pointer_entry, so additive
+                # spec keys (the 1.18.0 entry `tones` binding, extension
+                # keys) survive the rebuild — see that helper's docstring.
+                _old_drum_by_id = {
+                    str(e.get("id")): e for e in old_drum_entries
+                    if isinstance(e, dict) and e.get("id")
+                }
                 if isinstance(drum_tab_payload, dict):
                     # The primary's alias entry — same file the song-level
                     # `drum_tab:` key names, so a reader that predates the
@@ -5408,12 +5436,10 @@ def setup(app, context):
                     # old-client saves fall back to "drums".
                     _primary_id = _primary_drum_alias_id(data.get("drum_tab_id"))
                     used_part_ids.add(_primary_id)
-                    new_drum_entries.append({
-                        "id": _primary_id,
-                        "name": str(drum_tab_payload.get("name") or "Drums")[:120],
-                        "type": "drums",
-                        "drum_tab": "drum_tab.json",
-                    })
+                    new_drum_entries.append(_drum_pointer_entry(
+                        _old_drum_by_id.get(_primary_id), _primary_id,
+                        str(drum_tab_payload.get("name") or "Drums")[:120],
+                        "drum_tab.json"))
                 for _part in drum_parts_payload:
                     # Durable id → stable side-file name. Sanitize to a safe
                     # filename charset; de-collide with a numeric suffix.
@@ -5441,12 +5467,8 @@ def setup(app, context):
                         encoding="utf-8",
                     )
                     kept_drum_files.add(_p_path)
-                    new_drum_entries.append({
-                        "id": _pid,
-                        "name": _p_name,
-                        "type": "drums",
-                        "drum_tab": _p_rel,
-                    })
+                    new_drum_entries.append(_drum_pointer_entry(
+                        _old_drum_by_id.get(_pid), _pid, _p_name, _p_rel))
                 manifest["arrangements"] = (
                     [e for e in (manifest.get("arrangements") or [])
                      if not _is_drum_pointer_entry(e)]

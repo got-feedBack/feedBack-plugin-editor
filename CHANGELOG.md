@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A drum edit no longer strips another tool's authored keys from drum-part
+  manifest entries.** Saving with drum changes rebuilds the `type: drums`
+  arrangement entries; that rebuild now merges onto the prior same-id entry —
+  the same unknown-key preservation rule the pitched pipeline already follows —
+  so additive spec fields the editor doesn't author (like feedpak-spec 1.18.0's
+  per-arrangement `tones` sound binding) survive the save instead of silently
+  vanishing. Entries the editor owns (`id`/`name`/`type`/`drum_tab`) still take
+  the rebuilt values, and single-drum packs stay byte-identical.
+
 - **Corrected inaccurate and inconsistent UI labels.** The canvas status footer
   said "Scroll: zoom" although the wheel pans (Ctrl+wheel zooms); it now reads
   "Wheel/middle-drag: pan | Ctrl+wheel: zoom". In the in-app User Guide, Tempo Map
