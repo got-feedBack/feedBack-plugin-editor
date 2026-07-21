@@ -42,6 +42,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `editor_track_session` schema is bumped to v3 (purely additive — v2 trees carry
   no regions and need no migration). Rendering, playback, and build are unchanged
   and land in later steps.
+- **A track's instrument is now DATA, not a guess from its name.** The editor used
+  to infer whether a part was keys / bass / guitar from its *name*, in a dozen
+  places with two subtly disagreeing rules — the reason renaming a track could flip
+  its lane layout, and why the rename dialog has to refuse some names. The pack
+  format already records an authored instrument `type` per arrangement; the editor
+  now **reads it** (carrying it through load and save) and lets it drive *every*
+  identity decision — the keys/bass view, string counts, the guide-instrument
+  voice, the fretted-only Tab preview and Guitar-Pro export guards, and the
+  Parts-view silhouettes — falling back to the old name inference only when a
+  track is untyped. Existing songs open exactly as before — but a part named
+  against its instrument (a guitar called "Grand Piano") finally reads as, sounds
+  as, and exports as what it *is*. **The Tracks list now badges each transcription
+  track with its instrument** (GTR / BAS / KEY / DRM / VOX) instead of a generic
+  "MIDI", read from that same authoritative identity. And **renaming a typed track
+  is now free**: its identity is data, so the name is a pure display label and the
+  rename dialog no longer refuses a name that merely *looks* like another
+  instrument (untyped/legacy tracks keep the old kind-change guard, which protects
+  them from silently re-laning notes). Foundation for first-class drum tracks and
+  vocals.
+
+- **A per-track instrument-type control (next to the arrangement selector).**
+  Now that the editor honors an authored instrument `type` above the name for the
+  first time, an already-saved pack whose fretted (string+fret) chart has a keys
+  word *mid-name* — "Electric Piano", "Lead Synth" — can open **piano-locked**:
+  string buttons hidden, view stuck on the roll, with previously no way to
+  override it. The new **Guitar / Bass / Keys** dropdown sets the track's type
+  directly, which wins over the name everywhere — so a mis-named fretted part can
+  be corrected back to Guitar and reopens in string view immediately. The change
+  is undoable (Ctrl+Z) and persists with the pack on save; switching type rebuilds
+  the chart in place with no note loss.
 
 - **The piano roll stretches, compacts and scrolls.** Its lane height used to be
   derived and untouchable — the whole pitch range packed into about 350px — so a

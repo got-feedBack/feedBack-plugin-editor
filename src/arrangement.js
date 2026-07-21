@@ -11,6 +11,7 @@ import { S, markSessionDirty } from './state.js';
 import { _editorEscHtml, _editorPromptText, setStatus } from './ui.js';
 import { flattenChords } from './chords.js';
 import { KEYS_PATTERN } from './keys.js';
+import { _arrTypeKind, _typeKind } from './instrument.js';
 import { _recState } from './midi-record.js';
 import { _maybeOfferMidiTempoMap, _showDrumImportUnmappedModal } from './import.js';
 import { host } from './host.js';
@@ -22,12 +23,16 @@ import { host } from './host.js';
 // ── Part rename (EDITOR-VIEW-MODALITY / DAW-workspace 2.2b) ──────────
 // Unblocked by the manifest `type` stamping + merge-not-rebuild save
 // (#101): a rename no longer strips the entry's `type`/unknown keys, and
-// sloppak sessions carry a stable `id` the view prefs key off. One hard
-// limit stays, enforced honestly: the NAME still drives kind inference
-// (keys → piano roll + notation sidecar, /bass/i → 4-lane layout,
-// /^drums/i → drum routing), so a rename that would CHANGE the inferred
-// kind is refused — silently re-laning a 6-string chart as a 4-string
-// bass would strand notes on invisible strings.
+// sloppak sessions carry a stable `id` the view prefs key off.
+//
+// For a TYPED part the rename is FREE: its instrument identity is DATA (the
+// authored `type`, which every identity reader now honors), so the name is a
+// pure display label and can change to anything. The kind-change refusal only
+// applies to UNTYPED / legacy packs, where the NAME still drives kind inference
+// (keys → piano roll + notation sidecar, /bass/i → 4-lane layout, /^drums/i →
+// drum routing) — there, a rename that would CHANGE the inferred kind is
+// refused, since silently re-laning a 6-string chart as a 4-string bass would
+// strand notes on invisible strings.
 
 /* @pure:rename-arr:start */
 // A part name feeds TWO independent interpreters, and a rename must not shift
@@ -72,11 +77,13 @@ function _arrKindLabelPure(name) {
     if (/bass/i.test(n)) return 'bass';
     return 'guitar';
 }
-// Validate a rename: trimmed non-empty, bounded, unique among the OTHER
-// parts (case-insensitive — the save-side name discipline), and never a
-// kind change under EITHER interpreter. Returns {ok, reason, name} with the
-// trimmed name.
-function _renameGuardPure(oldName, rawNewName, otherNames) {
+// Validate a rename: trimmed non-empty, bounded, and unique among the OTHER
+// parts (case-insensitive — the save-side name discipline). For an UNTYPED
+// part it is additionally never a kind change under EITHER interpreter; a
+// TYPED part (`typed` true) skips that check — its identity is the authored
+// `type`, not the name, so a rename can't re-lane it. Returns {ok, reason,
+// name} with the trimmed name.
+function _renameGuardPure(oldName, rawNewName, otherNames, typed) {
     const name = String(rawNewName || '').trim();
     if (!name) return { ok: false, reason: 'Name can’t be empty.', name };
     if (name.length > 60) return { ok: false, reason: 'Name too long (max 60 characters).', name };
@@ -85,23 +92,27 @@ function _renameGuardPure(oldName, rawNewName, otherNames) {
     if (taken.has(name.toLowerCase())) {
         return { ok: false, reason: `Another track is already named “${name}”.`, name };
     }
-    const runtimeMoved = _arrKindPure(oldName) !== _arrKindPure(name);
-    const saveMoved = _arrSaveKindPure(oldName) !== _arrSaveKindPure(name);
-    if (runtimeMoved || saveMoved) {
-        const oldLabel = _arrKindLabelPure(oldName);
-        const newLabel = _arrKindLabelPure(name);
-        const reason = (oldLabel !== newLabel)
-            // A clean instrument change (e.g. guitar → bass, guitar → keys).
-            ? `That name would change the track’s instrument (${oldLabel} → ${newLabel}) — `
-                + 'lane layout and notation still key off the name. Add a new track instead.'
-            // Same label, but the two interpreters disagree on this exact name
-            // (e.g. "Piano" → "Electric Piano": the editor keys off the first
-            // word and would drop to guitar lanes, while the save still writes
-            // keys). Re-laning either way strands notes, so refuse.
-            : 'That name is read differently by the editor and the saved file, so it would '
-                + 'change the track’s layout. The editor keys off the FIRST word, the save off '
-                + 'any keys word — pick a name both agree on.';
-        return { ok: false, reason, name };
+    // Identity is DATA for a typed part — the name is a free display label, so
+    // the kind-change refusal below (a NAME-inference guard) does not apply.
+    if (!typed) {
+        const runtimeMoved = _arrKindPure(oldName) !== _arrKindPure(name);
+        const saveMoved = _arrSaveKindPure(oldName) !== _arrSaveKindPure(name);
+        if (runtimeMoved || saveMoved) {
+            const oldLabel = _arrKindLabelPure(oldName);
+            const newLabel = _arrKindLabelPure(name);
+            const reason = (oldLabel !== newLabel)
+                // A clean instrument change (e.g. guitar → bass, guitar → keys).
+                ? `That name would change the track’s instrument (${oldLabel} → ${newLabel}) — `
+                    + 'lane layout and notation still key off the name. Add a new track instead.'
+                // Same label, but the two interpreters disagree on this exact name
+                // (e.g. "Piano" → "Electric Piano": the editor keys off the first
+                // word and would drop to guitar lanes, while the save still writes
+                // keys). Re-laning either way strands notes, so refuse.
+                : 'That name is read differently by the editor and the saved file, so it would '
+                    + 'change the track’s layout. The editor keys off the FIRST word, the save off '
+                    + 'any keys word — pick a name both agree on.';
+            return { ok: false, reason, name };
+        }
     }
     return { ok: true, reason: '', name };
 }
@@ -144,7 +155,7 @@ export async function editorRenameArrangement() {
     const others = S.arrangements
         .filter((_, i) => i !== S.currentArr)
         .map(a => a && a.name);
-    const guard = _renameGuardPure(arr.name, val, others);
+    const guard = _renameGuardPure(arr.name, val, others, !!_arrTypeKind(arr));
     if (!guard.ok) {
         if (guard.reason) setStatus(guard.reason);
         return;
@@ -153,6 +164,64 @@ export async function editorRenameArrangement() {
     host.draw();
     host.updateStatus();
     setStatus(`Renamed to “${guard.name}”`);
+}
+
+// Undoable instrument-type set. Instrument identity is DATA (the feedpak-spec
+// §5.2 `type` facet): an authored type WINS over name inference in every reader
+// — arrKind / isKeysArr / the 4-vs-6 string baseline / view routing — so this is
+// the escape hatch for a pack whose NAME loaded it into the wrong instrument
+// (e.g. a fretted chart named "Electric Piano" opening keys-locked with no way
+// to override). Rebuilds in place (Principle VI): only arr.type moves, notes and
+// strings are untouched. Refreshes the selector + lane metrics on exec AND
+// rollback so the view flips immediately in both directions (undo/redo call
+// host.draw()/updateStatus() themselves).
+class SetArrangementTypeCmd {
+    constructor(arrIdx, newType) {
+        this.arrIdx = arrIdx;
+        this.newType = newType;
+        const arr = S.arrangements[arrIdx];
+        this.oldType = arr ? arr.type : undefined;   // undefined = was untyped
+        // Metadata-only — writes arr.type, never a note. Opts out of the
+        // read-only-roll note lock so the escape hatch works even for a fretted
+        // part currently shown read-only in the roll (see history.js _locked).
+        this.metadataScope = true;
+    }
+    _set(type) {
+        const arr = S.arrangements[this.arrIdx];
+        if (!arr) return;
+        if (type) arr.type = type; else delete arr.type;
+        host.updateArrangementSelector();
+        host.resizeForLaneChange(this.arrIdx);
+    }
+    exec() { this._set(this.newType); }
+    rollback() { this._set(this.oldType); }
+}
+
+// Set the active arrangement's instrument type from the toolbar selector.
+// Only guitar / bass / keys are authorable here — drums-as-arrangement authoring
+// lands in a later stacked PR. A no-op only when the type is ALREADY AUTHORED to
+// this kind — NOT merely name-inferred: stamping an untyped part's inferred kind
+// is a real, useful op (it makes identity DATA, which frees the rename guard's
+// name-inference lock so the part can be renamed to a neutral display label).
+export function editorSetArrangementType(value) {
+    if (_recState !== 'idle') {
+        setStatus('Cannot change the instrument type while recording. Stop the take first.');
+        return;
+    }
+    const arr = S.arrangements[S.currentArr];
+    if (!arr) return;
+    const kind = _typeKind(value);
+    if (kind !== 'guitar' && kind !== 'bass' && kind !== 'keys') return;
+    if (kind === _arrTypeKind(arr)) return;   // already AUTHORED to this kind — nothing to do
+    // WRITE the canonical feedpak-spec §5.2 spelling: the keys family serializes
+    // as "piano" ("keys" is only a READ alias _typeKind folds in). The backend
+    // persists arr.type verbatim, so authoring "keys" would leave a non-canonical
+    // manifest value other consumers keyed on "piano" wouldn't recognize.
+    const canonType = kind === 'keys' ? 'piano' : kind;
+    S.history.exec(new SetArrangementTypeCmd(S.currentArr, canonType));
+    host.draw();
+    host.updateStatus();
+    setStatus(`Instrument type set to ${kind}`);
 }
 
 export async function editorRemoveArrangement() {

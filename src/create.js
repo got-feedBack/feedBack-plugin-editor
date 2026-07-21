@@ -26,7 +26,8 @@ import {
 import { _handshapesAreDirty, flattenChords, reconstructChords } from './chords.js';
 import { EditHistory } from './history.js';
 import { host } from './host.js';
-import { KEYS_PATTERN, isKeysMode, updatePianoRange } from './keys.js';
+import { isKeysMode, updatePianoRange } from './keys.js';
+import { arrKind } from './instrument.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
 import { S, markSessionDirty, markSessionSaved } from './state.js';
 import { _marksSanitizePure } from './tempo-marks.js';
@@ -2422,8 +2423,7 @@ export async function editorApplyCreateResult(data) {
     resetStemAudioCache();   // …nor stale stem buffers
     void syncStemAudio().finally(() => host.draw());   // decode stems, then repaint their lanes
     const _importHasDrums = !!(S.drumTab && (S.drumTab.hits || []).length);
-    const _importHasKeys = (S.arrangements || []).some(
-        a => KEYS_PATTERN.test(a.name || ''));
+    const _importHasKeys = (S.arrangements || []).some(a => arrKind(a) === 'keys');
     if (_importHasDrums || _importHasKeys) S.format = 'sloppak';
 
     // Reset offset UI so _effectiveAudioOffset() doesn't carry over a
@@ -2601,6 +2601,13 @@ export async function editorBuild() {
             chords: arr.chords,
             chord_templates: arr.chord_templates,
         };
+        // Ship an authored instrument `type` (feedpak-spec §5.2) into the build
+        // payload — without it the backend re-infers the type from the NAME on
+        // /build, so a create-mode part re-typed via the toolbar selector (e.g. a
+        // fretted chart named "Electric Piano" corrected to guitar) would lose the
+        // correction on its very first build. The save path already ships it via
+        // the full-arrangement spread in _buildSaveBody; the build whitelist must too.
+        if (arr.type) arrEntry.type = arr.type;
         if (buildTones) arrEntry.tones = buildTones;
         if (arr._gp_notation) arrEntry._gp_notation = arr._gp_notation;
         // PR3d: include authored anchors too — same dirty-gate as

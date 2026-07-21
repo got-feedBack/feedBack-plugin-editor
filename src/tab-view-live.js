@@ -27,7 +27,7 @@ import { setStatus } from './ui.js';
 import { notes } from './notes.js';
 import { beatOf } from './beats.js';
 import { _openMidiForArr, _stringCountFor } from './lanes.js';
-import { KEYS_PATTERN } from './keys.js';
+import { arrKind } from './instrument.js';
 import { _alphaTexFromDrumHitsPure, _alphaTexFromNotesPure } from './alphatex.js';
 import { TAB_RENDERER_FONT_DIR, _tabPreviewLoadScript } from './tab-preview.js';
 
@@ -231,7 +231,7 @@ export function _tabViewPing() {
         }
     } else {
         const arr = S.arrangements && S.arrangements[S.currentArr];
-        if (!arr || KEYS_PATTERN.test(arr.name || '') || /^drums/i.test(arr.name || '')) {
+        if (!arr || arrKind(arr) === 'keys' || arrKind(arr) === 'drums') {
             S.tabViewMode = false;
             _tabViewHideIfShown();
             setStatus('Tab view is for fretted tracks — switched back to this track’s normal view.');
@@ -285,7 +285,7 @@ export function editorToggleTabView(force) {
         }
         const arr = S.arrangements && S.arrangements[S.currentArr];
         if (!arr) { setStatus('Load a song first.'); return true; }
-        if (KEYS_PATTERN.test(arr.name || '') || /^drums/i.test(arr.name || '')) {
+        if (arrKind(arr) === 'keys' || arrKind(arr) === 'drums') {
             setStatus('Tab view is for fretted tracks — keys and drums have no tab.');
             return true;
         }

@@ -19,6 +19,10 @@ import { _openMidiForArr, _soundingPitchPure, _stringCountFor } from './lanes.js
 import { notes } from './notes.js';
 import { S } from './state.js';
 import { PIANO_NOTE_NAMES, _noteNamesForKeyPure } from './theory.js';
+import { KEYS_PATTERN, _arrTypeKind, arrKind } from './instrument.js';
+// Re-export so the many sites that import KEYS_PATTERN from keys.js keep working;
+// its canonical definition now lives in the instrument-identity leaf.
+export { KEYS_PATTERN };
 
 // ── Piano roll constants ────────────────────────────────────────────
 export const PIANO_OCTAVE_COLORS = [
@@ -27,10 +31,6 @@ export const PIANO_OCTAVE_COLORS = [
 ];
 export let PIANO_LANE_H = 10;  // pixels per MIDI semitone
 export let pianoRange = { lo: 36, hi: 96 }; // MIDI range, updated per arrangement
-// Names that should open in keys (piano-roll) editor mode. Arrangements
-// named "Piano", "Keyboard", or "Synth" render as piano-roll charts rather
-// than 6-string guitar charts.
-export const KEYS_PATTERN = /^(keys|piano|keyboard|synth)/i;
 
 // Per-part editing-view choice (V2/V9 of EDITOR-VIEW-MODALITY-DESIGN):
 // 'string' (fretted lanes) or 'piano' (the roll). Keys-DATA arrangements
@@ -82,6 +82,10 @@ export function _viewPrefsSave() {
     } catch (_) { /* ignore */ }
 }
 export function viewFor(arr) {
+    // An authored keys `type` piano-locks the part regardless of its name;
+    // otherwise the legacy name test drives the piano-lock + stored preference.
+    const k = _arrTypeKind(arr);
+    if (k) return k === 'keys' ? 'piano' : (_viewPrefs()[_partViewKeyPure(arr)] === 'piano' ? 'piano' : 'string');
     return _viewForPure(arr && arr.name, _viewPrefs()[_partViewKeyPure(arr)]);
 }
 
@@ -92,7 +96,11 @@ export function viewFor(arr) {
 export function isKeysArr() {
     if (!S.arrangements.length) return false;
     const arr = S.arrangements[S.currentArr];
-    return !!(arr && KEYS_PATTERN.test(arr.name || ''));
+    if (!arr) return false;
+    // An authored `type` is authoritative (instrument identity is DATA); the
+    // legacy prefix name test is the fallback for untyped/legacy packs.
+    const k = _arrTypeKind(arr);
+    return k ? k === 'keys' : KEYS_PATTERN.test(arr.name || '');
 }
 
 // Piano SURFACE predicate: the piano-roll view is active for the current
@@ -125,7 +133,7 @@ export function _rollPitchCtx() {
 // The per-arrangement form (multi-track MIDI playback schedules EVERY part,
 // not just the current one): same rules, arr injected.
 export function _rollPitchCtxFor(arr) {
-    if (!arr || KEYS_PATTERN.test(arr.name || '')) return null;
+    if (!arr || arrKind(arr) === 'keys') return null;
     const laneCount = _stringCountFor(arr);
     const tuning = (Array.isArray(arr.tuning) ? arr.tuning : []).slice(0, laneCount);
     while (tuning.length < laneCount) tuning.push(0);

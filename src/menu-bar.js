@@ -35,6 +35,7 @@
 
 import { _editorSetGuideVoiceMode, editorFollowEnabled, editorGuideVoiceMode, editorScrollInPlayEnabled } from './audio.js';
 import { GM_VOICE_CHOICES, _gmKindPure, editorGmVoiceFor, editorSetGmVoice } from './gm-guide.js';
+import { arrKind } from './instrument.js';
 import { _editorRunEofCommand } from './input.js';
 import { _editorShortcutRowsPure, editorShortcutProfile } from './shortcuts.js';
 import { S } from './state.js';
@@ -451,7 +452,7 @@ function windowFns() {
 // model to render no instrument rows.
 function _gmGuideMenuCtx() {
     const arr = (S.arrangements && S.arrangements[S.currentArr]) || null;
-    const kind = (!arr || S.drumEditMode) ? null : _gmKindPure(arr.name);
+    const kind = (!arr || S.drumEditMode) ? null : _gmKindPure(arrKind(arr));
     return {
         mode: editorGuideVoiceMode(),
         kind,

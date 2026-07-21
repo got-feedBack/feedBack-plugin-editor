@@ -11,7 +11,8 @@ import { _editorEscHtml, setStatus } from './ui.js';
 import { ReplaceArrangementChartCmd } from './commands.js';
 import { TempoGridCmd, _tempoRemapMarksByTime } from './tempo.js';
 import { DRUM_PIECE_META, DRUM_PIECE_ORDER, _drumImportHitPure } from './drum.js';
-import { KEYS_PATTERN, _uniqueKeysName, updatePianoRange } from './keys.js';
+import { _uniqueKeysName, updatePianoRange } from './keys.js';
+import { arrKind, _isBassArr } from './instrument.js';
 import { flattenChords } from './chords.js';
 import { host } from './host.js';
 
@@ -593,7 +594,7 @@ async function _addEmptyArrangement(arrangement, statusElId, okStatus) {
         if (sel) sel.value = S.currentArr;
 
         flattenChords();
-        if (KEYS_PATTERN.test(arrangement.name || '') && typeof updatePianoRange === 'function') {
+        if (arrKind(arrangement) === 'keys' && typeof updatePianoRange === 'function') {
             updatePianoRange();
         }
         host.updateArrangementSelector();
@@ -729,9 +730,8 @@ export function editorImportGuitarRefreshReplaceTargets() {
     const eligible = S.arrangements
         .map((a, i) => ({ a, i }))
         .filter(({ a }) => {
-            const nm = a.name || '';
-            if (KEYS_PATTERN.test(nm) || /^drums/i.test(nm)) return false;
-            return /bass/i.test(nm) === wantBass;
+            if (arrKind(a) === 'keys' || arrKind(a) === 'drums') return false;
+            return _isBassArr(a) === wantBass;
         });
     if (replaceSel) {
         replaceSel.innerHTML = eligible.map(({ a, i }) =>
