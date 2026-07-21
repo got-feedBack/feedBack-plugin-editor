@@ -164,3 +164,75 @@ export function _regionHitPure(rect, x) {
     const n = Number(x);
     return Number.isFinite(n) && n >= rect.x && n <= rect.x + rect.w;
 }
+
+// ── Move (reposition) ─────────────────────────────────────────────────
+
+// The exact seconds shift for a beat offset `dBeat` when the tempo is globally
+// constant (a uniform grid) or absent (a degenerate < 2-beat grid = seconds-
+// primary), else null to signal "remap each note through beats individually".
+// Uniform: every consecutive gap is equal, so secondsPerBeat·dBeat is exact and
+// carries none of the beatOf∘timeOf round-trip drift. Degenerate: beat == time,
+// so the shift simply IS dBeat. This is the fast path that makes the common
+// (constant-tempo) region move bit-exact — a round-trip test would otherwise
+// fail on sub-microsecond float drift (the same `_r3` drift TempoMapCmd flags).
+export function _regionConstantShiftPure(beats, dBeat) {
+    if (!Array.isArray(beats) || beats.length < 2) return dBeat;      // seconds-primary
+    const g0 = beats[1].time - beats[0].time;
+    for (let i = 2; i < beats.length; i++) {
+        if (Math.abs((beats[i].time - beats[i - 1].time) - g0) > 1e-9) return null;
+    }
+    return g0 * dBeat;
+}
+
+// Reposition a set of note/hit intervals by a constant beat offset `dBeat`,
+// against the tempo map `beats`. A notation/drum region MOVE preserves MUSICAL
+// position, not wall-clock seconds (mirrors TempoMapCmd's interval walk): each
+// note is the interval [onset, onset+sustain]; both ends remap through beats and
+// the new sustain is the reprojected span (never negative), so a beat-filling
+// note stays beat-filling and its feel scales to the destination tempo.
+//   newTime    = timeOf(beatOf(oldTime) + dBeat)
+//   newSustain = timeOf(beatOf(oldTime + oldSustain) + dBeat) - newTime   (>= 0)
+// FAST PATH: when the tempo is constant across the grid, collapse to one exact
+// seconds shift (a constant shift never changes a duration). `dBeat === 0` is
+// the caller's no-op — routing a zero move through beats would perturb every
+// note by an epsilon. `beatOf`/`timeOf` are passed in so this stays converter-
+// free like the layout pures above. Returns fresh arrays; never mutates input.
+// AUDIO regions do NOT use this — their samples are physical seconds, so they
+// move by a constant dtime (re-gridding audio would be a time-stretch, a
+// separate op); this beat-remap is for notation/drum content only.
+export function _regionRemapPure(times, sustains, dBeat, beats, beatOf, timeOf) {
+    const n = times.length;
+    const outT = new Array(n);
+    const outS = new Array(n);
+    const shift = _regionConstantShiftPure(beats, dBeat);
+    for (let i = 0; i < n; i++) {
+        const t = Number(times[i]) || 0;
+        const s = Math.max(0, Number(sustains ? sustains[i] : 0) || 0);
+        if (shift !== null) {
+            outT[i] = t + shift;
+            outS[i] = s;                                 // constant shift keeps duration
+        } else {
+            const nt = timeOf(beats, beatOf(beats, t) + dBeat);
+            const ne = s > 0 ? timeOf(beats, beatOf(beats, t + s) + dBeat) : nt;
+            outT[i] = nt;
+            outS[i] = Math.max(0, ne - nt);
+        }
+    }
+    return { times: outT, sustains: outS };
+}
+
+// Snap a region's dragged start time to the nearest bar line (downbeat) — the
+// DAW default for regions (Logic/Live snap regions to bars, not subdivisions).
+// `free` (the Alt modifier) bypasses snapping for a fine nudge. Never < 0, and
+// a chart with no downbeats falls back to the free position.
+export function _regionSnapStartPure(downbeats, rawStart, free) {
+    const t = Math.max(0, Number(rawStart) || 0);
+    if (free || !Array.isArray(downbeats) || !downbeats.length) return t;
+    let best = downbeats[0];
+    let bestD = Math.abs(Number(best) - t);
+    for (const d of downbeats) {
+        const dd = Math.abs(Number(d) - t);
+        if (dd < bestD) { bestD = dd; best = d; }
+    }
+    return Math.max(0, Number(best) || 0);
+}

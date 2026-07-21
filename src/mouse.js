@@ -408,6 +408,12 @@ export function onMouseMove(e) {
 
 function _onMouseMoveBody(e, x, y, L) {
 
+    // Region drag (Tracks area) owns the pointer before any other handler.
+    if (S.drag && S.drag.type === 'region-move') {
+        host.partsViewRegionDrag(x, e.altKey);
+        return;
+    }
+
     if (rulerOnMouseMove(e, x, canvas ? canvas.width / DPR : 0)) return;
 
     // Loop-create drag on the ruler — re-resolve the span to the cursor,
@@ -659,6 +665,12 @@ export function onMouseUp(e) {
     if (S.drag.type === 'lane-scroll') {
         S.drag = null;
         host.draw();
+        return;
+    }
+
+    // Region drag finalise: commits the reposition as one MoveRegionCmd.
+    if (S.drag.type === 'region-move') {
+        host.partsViewRegionDrop();
         return;
     }
 

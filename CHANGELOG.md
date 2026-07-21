@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Track regions — drag a track's block to move its content.** In the Tracks
+  view you can now grab a region block and slide it along the timeline; it snaps
+  to bar lines (hold **Alt** for a free nudge), shows a dashed preview of where it
+  will land, and drops as one undoable step. The move preserves **musical**
+  position, not wall-clock seconds — each note keeps its beat, so a part dropped
+  under a different tempo re-locks to that section's grid and a sustained note
+  keeps its beat-length (on a steady-tempo song this is just a clean shift). The
+  transcription's own notes move with the block; audio blocks still only select
+  for now (they move with the audio-region step). New `src/region-commands.js`
+  (`MoveRegionCmd`, beat-preserving with a constant-tempo fast path and snapshot
+  undo) plus the drag wiring in the Tracks canvas. Placing an imported part and
+  trimming a block land next.
+
 - **Track regions — you can see and select them.** Each track in the Tracks view
   now draws its content inside a **region block** — a kind-coloured spine down the
   left edge, a hairline border, and the region name — and clicking a track selects
