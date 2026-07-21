@@ -38,6 +38,13 @@
         <!-- Arrangement selector -->
         <select id="editor-arrangement" class="bg-dark-700 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none" onchange="editorSwitcherSelect(this.value)" style="display:none">
         </select>
+        <!-- Instrument type (first-class DATA — wins over the name). Escape hatch
+             for a fretted chart opened piano-locked by a keys word in its name. -->
+        <select id="editor-arr-type" class="bg-dark-700 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none hidden" onchange="editorSetArrangementType(this.value)" title="Instrument type for this track — authored identity wins over the name (fixes a fretted chart that opened as keys because its name contains a keys word). Undoable.">
+            <option value="guitar">Guitar</option>
+            <option value="bass">Bass</option>
+            <option value="keys">Keys</option>
+        </select>
         <button id="editor-rename-arr-btn" onclick="editorRenameArrangement()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs text-gray-500 hover:text-white transition hidden" title="Rename current track (display label — undoable; the instrument kind can't change here)">✏</button>
         <button id="editor-move-arr-earlier-btn" onclick="editorMovePart(-1)" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs text-gray-500 hover:text-white transition hidden disabled:opacity-40 disabled:cursor-not-allowed" title="Move current track earlier in the list (persists on save; clears undo history)">‹</button>
         <button id="editor-move-arr-later-btn" onclick="editorMovePart(1)" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs text-gray-500 hover:text-white transition hidden disabled:opacity-40 disabled:cursor-not-allowed" title="Move current track later in the list (persists on save; clears undo history)">›</button>
