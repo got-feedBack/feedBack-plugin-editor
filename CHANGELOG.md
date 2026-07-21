@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Corrected inaccurate and inconsistent UI labels.** The canvas status footer
+  said "Scroll: zoom" although the wheel pans (Ctrl+wheel zooms); it now reads
+  "Wheel/middle-drag: pan | Ctrl+wheel: zoom". In the in-app User Guide, Tempo Map
+  entry is now "T,T" (plain T opens the tool palette first), the drum-row density
+  lists all three states (Full / Compact / GM roll — matching the Track menu and
+  the live Rows button), and the `[`/`]` sustain keys are no longer scoped to the
+  EOF profile (they work in FeedBack too). The landing "Create New" card names both
+  on-ramps (import a chart, or start from an empty timeline) instead of import-only
+  copy; the tool-palette header is title-case; the drum-pad toolbar button reads
+  "Drum Pads" (distinct from the in-strip Kit/Pads toggle); the Mixer tooltip
+  matches the Control Bar's wording; and the create-song year placeholder is current.
+
 ### Added
 
 - **Track regions — drag a track's block to move its content.** In the Tracks
