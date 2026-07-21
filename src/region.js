@@ -108,6 +108,20 @@ export function _trackRegionsResolvePure(raw) {
     return norm.length ? norm : [_defaultRegionPure()];
 }
 
+// The next free `region:N` id for a track, given its persisted regions[] (or
+// absent). N is one past the highest numeric suffix in use, and the implicit
+// default (DEFAULT_REGION_ID = `region:1`) is always counted even when it isn't
+// persisted — so a placed region never collides with it. A fresh track (no
+// regions) yields `region:2`. Non-numeric ids don't participate in the count.
+export function _nextRegionIdPure(raw) {
+    let max = 1;                       // DEFAULT_REGION_ID occupies region:1
+    for (const region of _trackRegionsNormalizePure(raw)) {
+        const m = /^region:(\d+)$/.exec(region.id);
+        if (m) { const n = Number(m[1]); if (n > max) max = n; }
+    }
+    return 'region:' + (max + 1);
+}
+
 // Membership predicate: does a beat fall inside the region's window? startBeat
 // inclusive, startBeat+lenBeat exclusive; lenBeat null = open to the end of
 // content. This is the primitive a later move/trim command uses to select "the
