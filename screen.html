@@ -95,7 +95,7 @@
             <svg id="editor-play-icon" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
         </button>
         <span id="editor-time-display" class="text-xs text-gray-500 font-mono w-20">0:00 / 0:00</span>
-        <span id="editor-measure-display" class="text-xs text-gray-500 font-mono w-16" title="Current measure and time signature">M-- --</span>
+        <span id="editor-measure-display" class="text-xs text-gray-500 font-mono w-16" title="Current measure and time signature">—</span>
         <span id="editor-chord-display" class="text-xs text-accent font-mono w-14" title="Chord at the playhead"></span>
         <!-- Loop selected bars on the 3D highway (drag the bottom beat bar to
              select a range first). Returns to this exact edit position on exit. -->
@@ -110,7 +110,7 @@
             <option value="2">Count: 2 bars</option>
             <option value="4">Count: 4 bars</option>
         </select>
-        <button id="editor-mixer-btn" onclick="editorToggleMixer()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Mixer panel: track volume / mute / solo + recording / guide / click levels (Shift+C)" aria-pressed="false">Mix</button>
+        <button id="editor-mixer-btn" onclick="editorToggleMixer()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Mixer panel: track volume / mute / solo + bus levels (Shift+C)" aria-pressed="false">Mix</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
         </div>
@@ -125,7 +125,7 @@
         <div class="editor-tb" data-tb="overlays">
         <button id="editor-onset-btn" onclick="editorToggleOnsetStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Onset strip: amber blocks mark detected attacks in the recording (Shift+W). Display only — never places notes." aria-pressed="false">Onsets</button>
         <button id="editor-tab-preview-btn" onclick="editorShowTabPreview()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Preview the current track as engraved tab (read-only — renders the pack as last saved; needs the Tab View plugin)">Tab…</button>
-        <button id="editor-drum-pads-btn" onclick="editorToggleDrumPadStrip()" class="hidden px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Drum pads: kit legend + input strip — selected hits light up, click a pad to add a hit at the cursor, Listen flashes pads from a MIDI kit (GM map)" aria-pressed="true">Pads</button>
+        <button id="editor-drum-pads-btn" onclick="editorToggleDrumPadStrip()" class="hidden px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium" title="Drum pads: kit legend + input strip — selected hits light up, click a pad to add a hit at the cursor, Listen flashes pads from a MIDI kit (GM map)" aria-pressed="true">Drum Pads</button>
         <button id="editor-fretboard-btn" onclick="editorToggleFretboardStrip()" class="px-2 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed" title="Fretboard strip: light every playable position for the selected notes — click one to assign it, right-click to cycle the finger mark (fretted parts)" aria-pressed="false">Fret</button>
 
         <div class="h-4 w-px bg-gray-700"></div>
@@ -480,7 +480,7 @@
         <div class="flex-1"></div>
         <button id="editor-lint-chip" onclick="editorToggleLintPopover()" aria-controls="editor-lint-pop" aria-expanded="false" class="hidden px-1.5 rounded text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-400/30 hover:bg-amber-500/25" title="Playability notes for this track — advisory only, never blocking. Click to review; each row seeks and selects."></button>
         <span id="editor-note-count" class="text-xs text-gray-600"></span>
-        <span class="text-xs text-gray-600">Scroll: zoom | Middle-drag: pan | Dbl-click: add note | Del: delete | Select notes or drag the ⇆ bars strip → ▶ Loop in 3D</span>
+        <span class="text-xs text-gray-600">Wheel/middle-drag: pan | Ctrl+wheel: zoom | Dbl-click: add note | Del: delete | Select notes or drag the ⇆ bars strip → ▶ Loop in 3D</span>
     </div>
 </div>
 
@@ -665,7 +665,7 @@
                     </div>
                     <div>
                         <label class="text-xs text-gray-500">Year</label>
-                        <input type="text" id="editor-create-year" placeholder="2024" inputmode="numeric"
+                        <input type="text" id="editor-create-year" placeholder="2025" inputmode="numeric"
                             class="w-full bg-dark-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 outline-none">
                     </div>
                     <div class="grid grid-cols-2 gap-2">
@@ -846,7 +846,7 @@
 <!-- Tool palette (Logic-style: T opens it at the cursor; a key or a click
      picks the left-click tool — see CLICK-TOOLS-DESIGN.md) -->
 <div id="editor-tool-palette" class="hidden fixed z-50 bg-dark-700 border border-gray-700 rounded-lg shadow-xl p-1.5 w-48" style="left:0;top:0">
-    <div class="text-[10px] font-medium text-gray-500 px-3 py-1">TOOL — press a key or click</div>
+    <div class="text-[10px] font-medium text-gray-500 px-3 py-1">Tool — press a key or click</div>
     <div class="editor-tool-palette-rows"></div>
 </div>
 
@@ -1087,7 +1087,7 @@
                 Keys below are the default <strong>FeedBack</strong> profile — press
                 <kbd>?</kbd> for the full, profile-aware shortcut list.</p>
             <figure>
-                <img src="/api/plugins/editor/assets/guide/workspace.png" alt="The Song Editor loaded with a song — menu bar, toolbar, transport, the timeline with waveform and notes, and the inspector.">
+                <img src="/api/plugins/editor/assets/guide/workspace.png" alt="The Song Editor loaded with a song — the multitrack Tracks column down the left, the menu bar and toolbars up top, and the timeline (waveform and colored note blocks per string) filling the middle.">
                 <figcaption>The editor with a song loaded: the menu bar and toolbars up top, the timeline (waveform + colored note blocks per string) in the middle, the transport and inspector around it.</figcaption>
             </figure>
 
@@ -1127,7 +1127,7 @@
                 <li><strong>Fret</strong> — <kbd>F</kbd> to edit, or type <kbd>0</kbd>–<kbd>9</kbd> (<kbd>Shift</kbd>+<kbd>0</kbd> for 10; <kbd>Ctrl</kbd>+<kbd>+</kbd>/<kbd>-</kbd> to nudge).</li>
                 <li><strong>String</strong> — <kbd>↑</kbd>/<kbd>↓</kbd> move between strings; <kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> move <em>keeping the pitch</em> (cycles fretting positions in the roll).</li>
                 <li><strong>Timing</strong> — drag along the timeline. With <strong>snap</strong> (<kbd>G</kbd> to toggle, <kbd>,</kbd>/<kbd>.</kbd> for resolution) notes land on the grid; switch snap to target <strong>audio onsets</strong> when matching a loose take.</li>
-                <li><strong>Sustain</strong> — drag the tail (or <em>Note ▸ Shorten/Lengthen sustain</em>; <kbd>[</kbd>/<kbd>]</kbd> in the EOF profile). <strong>Duplicate</strong> to next position <kbd>Ctrl</kbd>+<kbd>D</kbd>; <strong>select matching</strong> <kbd>Ctrl</kbd>+<kbd>L</kbd>; <strong>resnap</strong> <kbd>Shift</kbd>+<kbd>R</kbd>.</li>
+                <li><strong>Sustain</strong> — drag the tail (or <em>Note ▸ Shorten/Lengthen sustain</em>; <kbd>[</kbd>/<kbd>]</kbd> keys). <strong>Duplicate</strong> to next position <kbd>Ctrl</kbd>+<kbd>D</kbd>; <strong>select matching</strong> <kbd>Ctrl</kbd>+<kbd>L</kbd>; <strong>resnap</strong> <kbd>Shift</kbd>+<kbd>R</kbd>.</li>
             </ul>
             <p><strong>Techniques</strong> toggle on the selection — hammer-on <kbd>H</kbd>, pull-off <kbd>P</kbd>, bend <kbd>B</kbd>, slide <kbd>S</kbd>, palm-mute <kbd>M</kbd>, vibrato <kbd>V</kbd>, harmonics <kbd>N</kbd>/<kbd>Shift</kbd>+<kbd>N</kbd>, accent <kbd>A</kbd>, mute <kbd>X</kbd>. The rest are under <em>Note ▸ Techniques</em> with their keys shown.</p>
             <figure>
@@ -1144,22 +1144,22 @@
             <ol>
                 <li><strong>Sync tempo to audio</strong> (<em>Tempo/Grid</em> menu) — detects the BPM and scales the whole grid to match. A good first pass on a steady take.</li>
                 <li><strong>Set a constant BPM</strong> — type into the BPM box for a single-tempo song.</li>
-                <li><strong>Tempo Map mode</strong> (<kbd>T</kbd>) — the precise tool. Drag a barline onto its downbeat and neighbours re-space to fit. Inside it: <kbd>G</kbd> suggest a fit from the audio's onsets (click a ghost to accept), <kbd>Shift</kbd>+<kbd>B</kbd> tap tempo, <kbd>B</kbd> set BPM, <kbd>M</kbd> metric modulation, <kbd>I</kbd> mark a barline, <kbd>Del</kbd> delete one, <kbd>Shift</kbd>+<kbd>T</kbd> time signature. <strong>Beat-lock</strong> a hand-verified barline so later auto-fits leave its time alone (your manual edits are always kept).</li>
+                <li><strong>Tempo Map mode</strong> (<kbd>T</kbd>,<kbd>T</kbd>) — the precise tool. Drag a barline onto its downbeat and neighbours re-space to fit. Inside it: <kbd>G</kbd> suggest a fit from the audio's onsets (click a ghost to accept), <kbd>Shift</kbd>+<kbd>B</kbd> tap tempo, <kbd>B</kbd> set BPM, <kbd>M</kbd> metric modulation, <kbd>I</kbd> mark a barline, <kbd>Del</kbd> delete one, <kbd>Shift</kbd>+<kbd>T</kbd> time signature. <strong>Beat-lock</strong> a hand-verified barline so later auto-fits leave its time alone (your manual edits are always kept).</li>
             </ol>
             <figure>
                 <img src="/api/plugins/editor/assets/guide/tempomap.png" alt="Tempo Map mode: vertical barline poles across the timeline, each labeled with its measure and BPM, over the waveform.">
-                <figcaption>Tempo Map mode (<kbd>T</kbd>): each vertical pole is a barline (labeled with its measure and BPM). Drag one onto its downbeat in the waveform and the bars around it re-space to fit.</figcaption>
+                <figcaption>Tempo Map mode (<kbd>T</kbd>,<kbd>T</kbd>): each vertical pole is a barline (labeled with its measure and BPM). Drag one onto its downbeat in the waveform and the bars around it re-space to fit.</figcaption>
             </figure>
             <p>The <strong>Offset</strong> box shifts the whole chart in time against the recording — for when the notes are right relative to each other but the chart sits a few ms early or late.</p>
             <p class="tip">Sync, BPM-rescale, and Offset move <strong>every track at once</strong> and are <strong>undoable</strong> — experiment freely.</p>
 
             <h3>7 · Drums &amp; 8 · Structure</h3>
             <ul>
-                <li><strong>Drums</strong> — a piece-lane grid (rows = kit pieces, columns = grid positions). Click to place; the pad strip monitors a MIDI e-kit. Row density (Full / Compact) is in the <em>Track</em> menu.</li>
+                <li><strong>Drums</strong> — a piece-lane grid (rows = kit pieces, columns = grid positions). Click to place; the pad strip monitors a MIDI e-kit. Row density (Full / Compact / GM roll) is in the <em>Track</em> menu.</li>
                 <li><strong>Add</strong> menu — sections <kbd>Shift</kbd>+<kbd>M</kbd>, phrases <kbd>Shift</kbd>+<kbd>P</kbd>, hand anchors <kbd>Shift</kbd>+<kbd>F</kbd>, handshapes <kbd>Ctrl</kbd>+<kbd>H</kbd>, tone changes <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>.</li>
             </ul>
             <figure>
-                <img src="/api/plugins/editor/assets/guide/drums.png" alt="The Add Drum Arrangement dialog, offering to import a Guitar Pro or MIDI drum track.">
+                <img src="/api/plugins/editor/assets/guide/drums.png" alt="The drum piece-lane grid: kit pieces (kick, snare, hats, toms, ride…) as rows with a kit map below, and a groove charted across the bars.">
                 <figcaption>Adding drums: import a Guitar Pro or MIDI drum track, then edit it on the piece-lane grid.</figcaption>
             </figure>
 

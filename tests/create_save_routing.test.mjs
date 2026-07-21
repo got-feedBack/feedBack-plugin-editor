@@ -26,6 +26,7 @@ globalThis.document = globalThis.document || { getElementById: () => null };
 
 const { saveCDLC, _removeEmptyPickedFile, _suggestedSaveNamePure } =
     await import('../src/file-ops.js');
+const { _drumBuildPayloadPure } = await import('../src/create.js');
 const { S } = await import('../src/state.js');
 
 let pass = 0, fail = 0;
@@ -156,6 +157,82 @@ await t('_suggestedSaveNamePure: create mode derives the name the build will wri
     assert.strictEqual(_suggestedSaveNamePure('', '', 'Someone'), 'Untitled_Someone.feedpak');
     assert.strictEqual(_suggestedSaveNamePure('', '', ''), 'song.feedpak');
     assert.strictEqual(_suggestedSaveNamePure(null, null, null), 'song.feedpak');
+});
+
+// ── create-mode N drums: the /build drum payload (feedpak 1.17.0) ─────────
+const dtab = (name, hits = [{ t: 1, p: 'kick' }]) => ({ version: 1, name, kit: [], hits });
+
+await t('_drumBuildPayloadPure: primary = first drums arr (NOT the active tab); extras follow', () => {
+    const kit = dtab('Drums');
+    const live = dtab('Drums (Live)', [{ t: 2, p: 'snare' }]);
+    const arrs = [
+        { id: 'lead', name: 'Lead', notes: [] },
+        { id: 'drums', name: 'Drums', type: 'drums', drumTab: kit },
+        { id: 'drums-2', name: 'Drums (Live)', type: 'drums', drumTab: live },
+    ];
+    // The user is editing the SECOND part (active tab = live) — the primary
+    // shipped must still be the FIRST part's tab, not the active one.
+    const payload = _drumBuildPayloadPure(arrs, live);
+    assert.strictEqual(payload.drum_tab, kit, 'primary is the first drums arrangement, not the active tab');
+    assert.strictEqual(payload.drum_tab_id, 'drums', 'ships the primary drums arr id, not the active one');
+    assert.deepStrictEqual(payload.drum_parts, [
+        { id: 'drums-2', name: 'Drums (Live)', drum_tab: live },
+    ]);
+});
+
+await t('_drumBuildPayloadPure: a PROMOTED primary ships drum_tab_id = drumArrs[0].id (orphan-on-reload fix)', () => {
+    // Original "drums" deleted → "drums-2" promoted to parts[0]. drum_tab_id
+    // must follow it so the backend aliases the entry under "drums-2".
+    const live = dtab('Drums (Live)', [{ t: 2, p: 'snare' }]);
+    const payload = _drumBuildPayloadPure(
+        [{ id: 'lead', name: 'Lead' }, { id: 'drums-2', name: 'Drums (Live)', type: 'drums', drumTab: live }], live);
+    assert.strictEqual(payload.drum_tab, live);
+    assert.strictEqual(payload.drum_tab_id, 'drums-2');
+});
+
+await t('_drumBuildPayloadPure: one drum part ships an EMPTY extras list (writes the alias entry)', () => {
+    const kit = dtab('Drums');
+    const payload = _drumBuildPayloadPure(
+        [{ id: 'lead', name: 'Lead' }, { id: 'drums', name: 'Drums', type: 'drums', drumTab: kit }], kit);
+    assert.strictEqual(payload.drum_tab, kit);
+    assert.strictEqual(payload.drum_tab_id, 'drums');
+    assert.deepStrictEqual(payload.drum_parts, [], 'materialized single drum → empty extras (not absent)');
+});
+
+await t('_drumBuildPayloadPure: a legacy unmaterialized tab stays byte-identical (no drum_parts key)', () => {
+    const kit = dtab('Drums');
+    // Drums-only compose (no pitched part → no drums arrangement): the tab
+    // rides S.drumTab and there is NO drum_parts key at all.
+    const payload = _drumBuildPayloadPure([], kit);
+    assert.strictEqual(payload.drum_tab, kit);
+    assert.strictEqual(payload.drum_tab_id, '', 'no materialized drums arr → blank id (backend defaults to "drums")');
+    assert.strictEqual('drum_parts' in payload, false);
+    // No drums at all → drum_tab null, blank id, still no drum_parts.
+    assert.deepStrictEqual(_drumBuildPayloadPure([{ id: 'lead' }], null), { drum_tab: null, drum_tab_id: '' });
+});
+
+await t('create-mode build ships the drum parts on the /build wire (real editorBuild through saveCDLC)', async () => {
+    seedCreateSession();
+    const kit = dtab('Drums');
+    const live = dtab('Drums (Live)', [{ t: 2, p: 'snare' }]);
+    // Two materialized drum parts; the user is on the secondary in the grid.
+    S.arrangements.push({ id: 'drums', name: 'Drums', type: 'drums', drumTab: kit });
+    S.arrangements.push({ id: 'drums-2', name: 'Drums (Live)', type: 'drums', drumTab: live });
+    S.drumTab = live;
+    let body = null;
+    globalThis.fetch = async (url, opts) => {
+        body = JSON.parse(opts.body);
+        return { json: async () => ({ success: true, filename: 'x.feedpak' }) };
+    };
+    const ok = await saveCDLC();
+    assert.strictEqual(ok, true);
+    assert.deepStrictEqual(body.drum_tab, kit, 'the PRIMARY tab ships as drum_tab, not the active secondary');
+    assert.strictEqual(body.drum_tab_id, 'drums', 'the /build wire carries the primary id for round-trip');
+    assert.strictEqual(body.drum_parts.length, 1);
+    assert.strictEqual(body.drum_parts[0].id, 'drums-2');
+    assert.strictEqual(body.drum_parts[0].name, 'Drums (Live)');
+    assert.deepStrictEqual(body.drum_parts[0].drum_tab, live);
+    S.arrangements = []; S.drumTab = null;
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

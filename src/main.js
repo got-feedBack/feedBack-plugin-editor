@@ -2114,7 +2114,7 @@ window.editorShowStartLanding = () => {
     h.textContent = 'Song Editor';
     const sub = document.createElement('p');
     sub.className = 'text-xs text-gray-400 mb-4';
-    sub.textContent = 'Open an existing feedpak to edit, or start a new arrangement.';
+    sub.textContent = 'Open an existing feedpak to edit, or start a new song.';
     inner.appendChild(h); inner.appendChild(sub);
     const mk = (label, blurb, onClick) => {
         const b = document.createElement('button');
@@ -2130,7 +2130,7 @@ window.editorShowStartLanding = () => {
         'Browse your song library and open a feedpak to edit.',
         () => window.editorShowLoadModal()));
     inner.appendChild(mk('✨  Create New',
-        'Add session files, review the tracks, and choose a tempo guide.',
+        'Start a new song — import Guitar Pro, MIDI, or audio, or begin from an empty chart.',
         () => window.editorShowCreateModal()));
     const cancel = document.createElement('div'); cancel.className = 'flex justify-end mt-2';
     const cb = document.createElement('button');

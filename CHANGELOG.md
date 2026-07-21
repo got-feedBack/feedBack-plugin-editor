@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Corrected inaccurate and inconsistent UI labels.** The canvas status footer
+  said "Scroll: zoom" although the wheel pans (Ctrl+wheel zooms); it now reads
+  "Wheel/middle-drag: pan | Ctrl+wheel: zoom". In the in-app User Guide, Tempo Map
+  entry is now "T,T" (plain T opens the tool palette first), the drum-row density
+  lists all three states (Full / Compact / GM roll — matching the Track menu and
+  the live Rows button), and the `[`/`]` sustain keys are no longer scoped to the
+  EOF profile (they work in FeedBack too). The landing "Create New" card names both
+  on-ramps (import a chart, or start from an empty timeline) instead of import-only
+  copy; the tool-palette header is title-case; the drum-pad toolbar button reads
+  "Drum Pads" (distinct from the in-strip Kit/Pads toggle); the Mixer tooltip
+  matches the Control Bar's wording; and the create-song year placeholder is current.
+
 ### Added
 
 - **Track regions — import a drum part into an existing project as a placed,
@@ -24,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **multi-drum songs**: a region on a drum part's track now always acts on
   that part's own tab — never whichever part happens to be active in the drum
   grid (dragging an extra part's block used to move nothing at all).
+
+- **Multiple drum parts now work when creating a new song too.** The several-
+  drum-parts feature previously covered only songs you re-open and Save; a
+  *create-mode* session (New Song from a Guitar Pro / MIDI import) was capped at
+  one drum chart. Now, once a melodic track exists, **＋ Track ▸ Drums** adds
+  another drum part in a create session just like an existing one, and Building
+  the song persists every part (the first as the song-level drum tab today's
+  game plays, the rest as `type: drums` arrangement entries per feedpak-spec
+  1.17.0). A drums-only draft still holds one part until you add a melodic
+  track (drums are never the primary chart). Packs stay backward-compatible.
 
 - **Track regions — drag a track's block to move its content.** In the Tracks
   view you can now grab a region block and slide it along the timeline; it snaps
@@ -147,6 +171,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same thing as a Vertical Zoom slider (Logic Pro guide, p.297). Loading a
   song returns the roll to its automatic height — a stretch chosen for one
   arrangement's range means nothing for the next one's.
+
+### Changed
+
+- **Refreshed the User Guide, README and first-run tour against the current
+  build.** Recaptured every screenshot in the in-app User Guide and the repo
+  README from a live build with a clean demo song — the hero now shows the
+  multitrack Tracks column, and the Drums image shows the piece-lane grid the
+  text already describes (it used to be the old import dialog). Documented the
+  overview-strip scrollbar and Scroll-in-Play navigation, and pointed the
+  Transcribe tour's last step at the Snap control by name. Docs and one tour
+  string only — no behaviour change.
 
 ### Fixed
 

@@ -76,7 +76,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'cycleViewMode', label: 'Cycle track view (String / Piano roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'showTabPreview', label: 'Preview track as tab (read-only, saved pack)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleTabView', label: 'Tab view (live engraving of the current track)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
-    { id: 'toggleDrumDensity', label: 'Toggle drum row density (Full / Compact)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
+    { id: 'toggleDrumDensity', label: 'Cycle drum row density (Full / Compact / GM roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleFollow', label: 'Toggle follow playhead', group: 'View', status: 'ready', keys: { feedback: 'Shift+L', cableton: 'Ctrl+Shift+F', eof: 'Shift+L' } },
     { id: 'toggleScrollInPlay', label: 'Toggle scroll in play (continuous follow)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'renamePart', label: 'Rename current track', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },

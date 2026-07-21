@@ -78,16 +78,17 @@ function _renderNewTrackModal() {
     for (const r of modal.querySelectorAll('input[name="new-track-source"]')) {
         r.checked = r.value === _sel.source;
     }
-    // Drums with an existing drum tab: in a saved sloppak session the empty
-    // start ADDS another drum part — say so; in create mode (one part max)
-    // it stays blocked, phrased inline instead of failing at Create.
+    // Drums with an existing drum tab: once a drum part is materialized the
+    // empty start ADDS another (create + edit sessions alike) — say so. The
+    // only blocked case left is a drums-only session (no melodic track to sit
+    // beside), phrased inline instead of failing at Create.
     const note = _byId('editor-new-track-note');
     if (note) {
         const drumsEmpty = isTrans && _sel.instrument === 'Drums' && _sel.source === 'empty' && !!S.drumTab;
         note.textContent = !drumsEmpty ? ''
             : _canAddAnotherDrums()
                 ? 'This song already has drums — this will add another Drums track.'
-                : 'This song already has a Drums track — save the song first to add more drum parts, or choose "Import from a file" to replace it.';
+                : 'This song already has a Drums track — add a melodic track first to hold more than one drum part, or choose "Import from a file" to replace it.';
     }
     const create = _byId('editor-new-track-create');
     if (create) {
