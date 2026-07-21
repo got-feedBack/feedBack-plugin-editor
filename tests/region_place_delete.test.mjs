@@ -364,6 +364,52 @@ t('orchestrator refuses a bad arrIdx gracefully', () => {
     assert.strictEqual(placeImportedPartAsRegion({ kind: 'drums', arrIdx: 99, placeAt: 'bar1' }), false);
 });
 
+// ── _partsViewRegionDelete (the Del-key surface, driven for real) ─────
+const { _partsViewRegionDelete } = await import('../src/parts-view.js');
+
+t('Del on a selected bounded region deletes its notes + window; undo restores', () => {
+    const regions = [{ id: 'A', startBeat: 0, lenBeat: 4 }, { id: 'B', startBeat: 4, lenBeat: 4 }];
+    const arr = seedNotation({ notes: [note(0.5), note(2.0), note(2.5)], regions });   // beats 1, 4, 5
+    Object.assign(S, { partsViewMode: true, audioUrl: '', stems: [], stemLinks: {},
+        selectedTrackId: 'transcription:Lead', selectedRegionId: 'B' });
+    const notesBefore = clone(arr.notes);
+    const regionsBefore = clone(S.trackSession.tracks[0].regions);
+    assert.strictEqual(_partsViewRegionDelete(), true, 'the key was consumed');
+    assert.deepStrictEqual(arr.notes.map(n => n.time), [0.5], 'B’s notes deleted, A’s kept');
+    assert.deepStrictEqual(S.trackSession.tracks[0].regions, [{ id: 'A', startBeat: 0, lenBeat: 4 }], 'B’s window dropped');
+    assert.strictEqual(S.selectedRegionId, '', 'the deleted region deselected');
+    S.history.doUndo();
+    assert.deepStrictEqual(arr.notes, notesBefore, 'undo restores the notes');
+    assert.deepStrictEqual(S.trackSession.tracks[0].regions, regionsBefore, 'and the window');
+});
+
+t('Del gates: consumed only in the Tracks view with a region selected', () => {
+    const arr = seedNotation({ notes: [note(0.5)] });
+    Object.assign(S, { audioUrl: '', stems: [], stemLinks: {} });
+    S.partsViewMode = false;
+    S.selectedTrackId = 'transcription:Lead';
+    S.selectedRegionId = 'region:1';
+    assert.strictEqual(_partsViewRegionDelete(), false, 'not in the Tracks view → fall through');
+    S.partsViewMode = true;
+    S.selectedRegionId = '';
+    assert.strictEqual(_partsViewRegionDelete(), false, 'no region selected → fall through');
+    S.selectedRegionId = 'region:404';
+    assert.strictEqual(_partsViewRegionDelete(), false, 'stale region id → fall through');
+    assert.strictEqual(arr.notes.length, 1, 'nothing was deleted by the refusals');
+});
+
+t('Del on a drum part’s region deletes ITS hits (not the active tab’s)', () => {
+    const { primaryTab, extraTab } = seedTwoDrumParts();
+    Object.assign(S, { partsViewMode: true, audioUrl: '', stems: [], stemLinks: {} });
+    S.trackSession.tracks[2].regions = [{ id: 'B', startBeat: 0, lenBeat: 2 }];   // owns beat 0..1
+    S.selectedTrackId = 'transcription:drums-2';
+    S.selectedRegionId = 'B';
+    const primaryBefore = clone(primaryTab.hits);
+    assert.strictEqual(_partsViewRegionDelete(), true);
+    assert.deepStrictEqual(extraTab.hits.map(h => h.t), [1.5], 'only the windowed hit of the part deleted');
+    assert.deepStrictEqual(primaryTab.hits, primaryBefore, 'the ACTIVE tab untouched');
+});
+
 // ── Through EditHistory (the real exec path) ──────────────────────────
 t('via S.history.exec: place → delete, undo/redo restore both', () => {
     const arr = seedNotation({ notes: [note(0.5), note(1.0)] });   // beats 1, 2

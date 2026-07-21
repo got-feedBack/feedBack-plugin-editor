@@ -231,6 +231,12 @@ export const host = {
      * because track-session imports arrangement — the usual seam inversion.
      */
     placeImportedPartAsRegion: () => false,
+    /**
+     * Del/Backspace in the Tracks view: delete the selected region block
+     * (content + window, one undoable step). Owned by src/parts-view.js;
+     * input.js's Delete ladder asks here. False = key not consumed.
+     */
+    partsViewRegionDelete: () => false,
     stripUiChanged: () => {},
     /** The persisted band-mode pref, read by the panel's header toggle. */
     playAllTracksEnabled: () => false,

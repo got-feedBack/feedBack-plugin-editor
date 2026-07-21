@@ -1889,6 +1889,14 @@ export function onKeyDown(e) {
     }
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Tracks view: delete the selected region block (its window AND the
+        // content it owns, one undoable step). parts-view owns the resolution
+        // (which part, which kind) — asked through the host table; false =
+        // no region selected / not in the Tracks view, fall through.
+        if (!e.target.matches('input, select, textarea') && host.partsViewRegionDelete()) {
+            e.preventDefault();
+            return;
+        }
         // Tempo-map mode: delete the selected barline(s) — bulk when a
         // multi-selection exists (PR 5a), else the single focus.
         if (S.tempoMapMode && (S.tempoSel >= 0 || (S.tempoSelMulti && S.tempoSelMulti.size)) &&

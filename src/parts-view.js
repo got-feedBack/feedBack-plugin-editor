@@ -11,7 +11,7 @@ import { DRUM_PIECE_META, _refreshDrumEditButton } from './drum.js';
 import { beatOf, timeOf } from './beats.js';
 import { LABEL_W, TIMELINE_TOP, timeToX, xToTime } from './geometry.js';
 import { _regionBlockRectPure, _regionHitPure, _regionSnapStartPure, _regionTimeSpanPure, _trackRegionsResolvePure } from './region.js';
-import { MoveRegionCmd } from './region-commands.js';
+import { DeleteRegionCmd, MoveRegionCmd } from './region-commands.js';
 import { isDrumArrangement } from './drum-arrangement.js';
 import { arrKind } from './instrument.js';
 import { _stringCountFor } from './lanes.js';
@@ -461,6 +461,29 @@ export function _partsViewRegionDrop() {
     host.draw();
     host.updateStatus();
     setStatus(`Moved “${d.region.name || d.region.id}” ${dBeat > 0 ? 'later' : 'earlier'}`);
+}
+
+// Delete the selected region block — the Del/Backspace surface for the Tracks
+// view (input.js routes here through the host table). Removes the window AND
+// the content it owns as one undoable DeleteRegionCmd. Transcription rows only
+// — an audio region carries a two-clock media pointer and stays select-only
+// until the audio-region PR. Same kind/arrIdx resolution as the drag arming,
+// so a drum part's region always deletes ITS OWN hits. Returns true when it
+// consumed the key (a caller must then preventDefault).
+export function _partsViewRegionDelete() {
+    if (!S.partsViewMode || !S.selectedTrackId || !S.selectedRegionId || !S.history) return false;
+    const row = _unifiedRows().find(r => r.id === S.selectedTrackId);
+    if (!row || row.type !== 'transcription') return false;
+    const region = _trackRegionsResolvePure(row.regions).find(r => r.id === S.selectedRegionId);
+    if (!region) return false;
+    const arrIdx = _arrIndexForTarget(row.targetId);
+    const kind = (arrIdx >= 0 && isDrumArrangement(S.arrangements[arrIdx])) || row.targetId === 'drums'
+        ? 'drums' : 'notation';
+    S.history.exec(new DeleteRegionCmd({ kind, arrIdx, trackId: row.id, region }));
+    host.draw();
+    host.updateStatus();
+    setStatus(`Deleted region “${region.name || region.id}” and its notes — Undo restores it`);
+    return true;
 }
 
 export function _partsViewOnDblClick(e) {
