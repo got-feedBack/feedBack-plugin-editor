@@ -415,7 +415,12 @@ export function _partsViewOnMouseDown(e, x, y) {
                 trackId: row.id,
                 regionId: hitRegion,
                 region,
-                kind: row.targetId === 'drums' ? 'drums' : 'notation',
+                // Any drum part's row (its own arrangement, or the legacy
+                // unmaterialized 'drums' target) moves DRUM content — the
+                // command resolves the part's own tab from arrIdx, so dragging
+                // a non-active part never shifts the active grid's hits.
+                kind: (rArrIdx >= 0 && isDrumArrangement(S.arrangements[rArrIdx])) || row.targetId === 'drums'
+                    ? 'drums' : 'notation',
                 arrIdx: rArrIdx,
                 origStart: span.t0,
                 spanW: Math.max(0, span.t1 - span.t0),

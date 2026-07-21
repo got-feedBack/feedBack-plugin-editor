@@ -216,6 +216,77 @@ t('delete drums: removes the windowed hits + entry; round-trips and dirties', ()
     assert.deepStrictEqual(drumTab.hits, before, 'rollback restores hits EXACTLY');
 });
 
+// ── Multi-drum seam: commands act on the part the TRACK names ─────────
+// A song can hold several drum parts; S.drumTab is only the ACTIVE grid
+// target. A region command must resolve the tab from arrIdx (the part whose
+// track carries the region) — never assume the active tab.
+function seedTwoDrumParts() {
+    const primaryTab = { version: 1, name: 'Drums', kit: [], hits: [{ t: 0.5, p: 36 }, { t: 1.0, p: 38 }] };
+    const extraTab = { version: 1, name: 'Drums 2', kit: [], hits: [{ t: 0.5, p: 42 }, { t: 1.5, p: 42 }] };
+    const arrs = [
+        { id: 'lead', name: 'Lead', notes: [{ time: 0.5, sustain: 0, string: 0, fret: 0, techniques: {} }], chords: [] },
+        { id: 'drums', name: 'Drums', type: 'drums', drumTab: primaryTab, notes: [], chords: [] },
+        { id: 'drums-2', name: 'Drums 2', type: 'drums', drumTab: extraTab, notes: [], chords: [] },
+    ];
+    seedState({ arrangements: arrs, currentArr: 0, beats: constGrid(), drumTab: primaryTab,
+        trackSession: { version: 3, tracks: [
+            { id: 'transcription:lead', type: 'transcription', targetId: 'lead' },
+            { id: 'transcription:drums', type: 'transcription', targetId: 'drums' },
+            { id: 'transcription:drums-2', type: 'transcription', targetId: 'drums-2' },
+        ], removedSourceIds: [], tempoGuideSourceId: '', tempoGuideLocked: false, tempoGuideMode: 'audio' },
+        selectedTrackId: '', selectedRegionId: '' });
+    S.history = new EditHistory();
+    trackHooks();
+    S.drumTabDirty = false;
+    return { primaryTab, extraTab };
+}
+
+t('move on a NON-ACTIVE drum part shifts ITS hits; the active tab is untouched', () => {
+    const { primaryTab, extraTab } = seedTwoDrumParts();
+    const primaryBefore = clone(primaryTab.hits);
+    const extraBefore = clone(extraTab.hits);
+    const cmd = new MoveRegionCmd({ kind: 'drums', arrIdx: 2, trackId: 'transcription:drums-2',
+        region: { id: 'region:1', startBeat: 0, lenBeat: null }, dBeat: 2 });
+    cmd.exec();
+    assert.deepStrictEqual(extraTab.hits.map(h => h.t), [1.5, 2.5], 'the part’s own hits rode +2 beats');
+    assert.deepStrictEqual(primaryTab.hits, primaryBefore, 'the ACTIVE tab (primary) never moved');
+    cmd.rollback();
+    assert.deepStrictEqual(extraTab.hits, extraBefore, 'rollback restores the part’s hits exactly');
+    assert.deepStrictEqual(primaryTab.hits, primaryBefore, 'primary still untouched after rollback');
+});
+
+t('place on a NON-ACTIVE drum part slides ITS hits + regions land on ITS track', () => {
+    const { primaryTab, extraTab } = seedTwoDrumParts();
+    const primaryBefore = clone(primaryTab.hits);
+    const track = S.trackSession.tracks[2];
+    const cmd = new PlaceRegionCmd({ kind: 'drums', arrIdx: 2, trackId: 'transcription:drums-2', startBeat: 4 });
+    cmd.exec();
+    assert.deepStrictEqual(extraTab.hits.map(h => h.t), [2.0, 3.0], 'the part’s hits placed at bar 2');
+    assert.deepStrictEqual(primaryTab.hits, primaryBefore, 'the ACTIVE tab (primary) never moved');
+    assert.strictEqual(track.regions.length, 1, 'the region landed on the part’s OWN track');
+    assert.ok(!('regions' in S.trackSession.tracks[1]), 'not on the primary’s track');
+    cmd.rollback();
+    assert.ok(!('regions' in track), 'rollback clears it');
+});
+
+t('delete on a NON-ACTIVE drum part removes ITS windowed hits only', () => {
+    const { primaryTab, extraTab } = seedTwoDrumParts();
+    const primaryBefore = clone(primaryTab.hits);
+    S.trackSession.tracks[2].regions = [{ id: 'B', startBeat: 0, lenBeat: 2 }];   // owns beats 0..1
+    new DeleteRegionCmd({ kind: 'drums', arrIdx: 2, trackId: 'transcription:drums-2',
+        region: { id: 'B', startBeat: 0, lenBeat: 2 } }).exec();
+    assert.deepStrictEqual(extraTab.hits.map(h => h.t), [1.5], 'only the windowed hit (beat 1) removed');
+    assert.deepStrictEqual(primaryTab.hits, primaryBefore, 'the ACTIVE tab untouched');
+});
+
+t('legacy fallback: kind drums with NO arrIdx still targets S.drumTab', () => {
+    const { primaryTab } = seedTwoDrumParts();
+    const cmd = new MoveRegionCmd({ kind: 'drums', trackId: 'transcription:drums',
+        region: { id: 'region:1', startBeat: 0, lenBeat: null }, dBeat: 2 });
+    cmd.exec();
+    assert.deepStrictEqual(primaryTab.hits.map(h => h.t), [1.5, 2.0], 'no arrIdx → the active tab moved (legacy path)');
+});
+
 // ── Through EditHistory (the real exec path) ──────────────────────────
 t('via S.history.exec: place → delete, undo/redo restore both', () => {
     const arr = seedNotation({ notes: [note(0.5), note(1.0)] });   // beats 1, 2

@@ -3,9 +3,9 @@
 //
 // A region is a WINDOW over content, never a copy (src/region.js). "Move
 // region" therefore shifts the CONTENT the window covers — a notation region
-// shifts the arrangement's contained notes, a drum region shifts S.drumTab's
-// contained hits — as one undoable edit, with the window's own placement riding
-// along for a BOUNDED region. It goes through S.history.exec (NOT the
+// shifts the arrangement's contained notes, a drum region shifts its own
+// part's tab hits (see _drumTabFor) — as one undoable edit, with the window's
+// own placement riding along for a BOUNDED region. It goes through S.history.exec (NOT the
 // track-session commit() path): commit() only marks the session dirty, so an
 // in-place time shift would leave the coverage/chord/lint memos stale — exec()
 // bumps editGen, which is what forces them to recompute.
@@ -34,12 +34,21 @@ import { S } from './state.js';
 // by this sub-cent-of-a-beat guard so the region keeps owning its own notes.
 const REGION_LEN_GUARD = 1e-4;
 
-// ── Content/track access shared by the placement commands ─────────────
-// (MoveRegionCmd predates these and keeps its own copies as methods; leaving it
-// untouched avoids churning shipped, tested code.)
+// ── Content/track access shared by all region commands ────────────────
+// A song can hold SEVERAL drum parts (each type:"drums" arrangement OWNS its
+// `.drumTab`; `S.drumTab` is only the ACTIVE grid target) — so a drums region
+// command must act on the tab of the part whose TRACK carries the region, not
+// whichever part happens to be active. `arrIdx >= 0` names that part;
+// `arrIdx < 0` is the legacy unmaterialized tab (create-mode compose), which
+// IS `S.drumTab`. Same resolution the lane silhouette paints by.
+function _drumTabFor(arrIdx) {
+    const arr = Number.isInteger(arrIdx) && arrIdx >= 0 && S.arrangements ? S.arrangements[arrIdx] : null;
+    return (arr && arr.drumTab) || S.drumTab;
+}
 function _contentList(kind, arrIdx) {
     if (kind === 'drums') {
-        return (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab.hits : null;
+        const tab = _drumTabFor(arrIdx);
+        return (tab && Array.isArray(tab.hits)) ? tab.hits : null;
     }
     const arr = S.arrangements && S.arrangements[arrIdx];
     return arr && Array.isArray(arr.notes) ? arr.notes : null;
@@ -64,10 +73,11 @@ function _restoreRegions(track, snap) {
 }
 
 export class MoveRegionCmd {
-    // `kind`: 'notation' shifts S.arrangements[arrIdx].notes; 'drums' shifts
-    // S.drumTab.hits. `region` is the resolved region object being moved (its id
-    // locates it in the track's regions[]); `dBeat` is the snapped bar/beat
-    // distance of the drag.
+    // `kind`: 'notation' shifts S.arrangements[arrIdx].notes; 'drums' shifts the
+    // hits of the drum part `arrIdx` names (its own `.drumTab`; arrIdx < 0 = the
+    // legacy unmaterialized S.drumTab — see _drumTabFor). `region` is the
+    // resolved region object being moved (its id locates it in the track's
+    // regions[]); `dBeat` is the snapped bar/beat distance of the drag.
     constructor({ kind, arrIdx, trackId, region, dBeat }) {
         this.kind = kind;
         this.arrIdx = arrIdx;
@@ -95,13 +105,7 @@ export class MoveRegionCmd {
         return r.lenBeat != null || (Number(r.startBeat) || 0) > 0 || r.srcIn != null;
     }
 
-    _list() {
-        if (this.kind === 'drums') {
-            return (S.drumTab && Array.isArray(S.drumTab.hits)) ? S.drumTab.hits : null;
-        }
-        const arr = S.arrangements && S.arrangements[this.arrIdx];
-        return arr && Array.isArray(arr.notes) ? arr.notes : null;
-    }
+    _list() { return _contentList(this.kind, this.arrIdx); }
 
     _timeOf(item) { return this.kind === 'drums' ? item.t : item.time; }
 
