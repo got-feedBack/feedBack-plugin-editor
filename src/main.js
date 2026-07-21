@@ -69,7 +69,7 @@ import {
 import {
     editorDoAddDrums, editorDrumsFileSelected, editorDrumsGPSelected,
     editorHideAddDrumsModal, editorRemoveArrangement, editorRenameArrangement,
-    editorShowAddDrumsModal
+    editorSetArrangementType, editorShowAddDrumsModal
 } from './arrangement.js';
 import {
     _activeArrangementExceedsArchiveLimit, _editorLoadsInFlight, _resetOffsetUI,
@@ -188,8 +188,8 @@ import { _laneClipActive, applyLaneScrollBounds, drawLaneScrollbar, laneBandTop 
 import {
     _rollLockNotice,
     _rollMidiForNote, _rollPitchCtx, _rollReadOnly, editorKeyNoteNames, isKeysMode, midiToNote, updatePianoRange } from './keys.js';
-import { arrKind } from './instrument.js';
-import { clampAwayFromDrums, isDrumArrangement, switcherShownIndex } from './drum-arrangement.js';
+import { _isFrettedKind, arrKind } from './instrument.js';
+import { clampAwayFromDrums, isDrumArrangement, pitchedArrangementCount, switcherShownIndex } from './drum-arrangement.js';
 import {
     _restoreSuggestedMarks,
     _saveSuggestedMarks, _suggestedCount, chords, notes
@@ -605,6 +605,9 @@ setHostHooks({
         S.partsViewMode = false;
         S.tempoMapMode = false;
         S.tempoSel = -1;
+        // draw() checks tabViewMode first; a target switch must not leave an
+        // engraved view of the previous part painted over the new surface.
+        S.tabViewMode = false;
         const target = _trackSessionTargetsPure(S.arrangements, S.drumTab).find(t => t.id === targetId);
         const index = target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
         const arr = index >= 0 ? S.arrangements[index] : null;
@@ -656,6 +659,7 @@ window.editorDoImportGuitar = editorDoImportGuitar;
 
 // Arrangement management (rename / remove / add-drums import) — arrangement.js.
 window.editorRenameArrangement = editorRenameArrangement;
+window.editorSetArrangementType = editorSetArrangementType;
 window.editorRemoveArrangement = editorRemoveArrangement;
 window.editorShowAddDrumsModal = editorShowAddDrumsModal;
 window.editorHideAddDrumsModal = editorHideAddDrumsModal;
@@ -1048,6 +1052,26 @@ function updateTimeDisplay() {
 // File operations
 // ════════════════════════════════════════════════════════════════════
 
+/* @pure:arr-affordances:start */
+// The Remove / Reorder button gates, counted over PITCHED parts only. The
+// derived drums arrangement (type:"drums", appended last) must never make a
+// single-pitched song look removable (a silent no-op) or let the last pitched
+// part move DOWN past drums (breaks append-last, shifts arr:<idx> mix keys).
+// `currentArr` is always a pitched index (clamped away from drums).
+// Not exported — main.js is IIFE-wrapped; the test slices this @pure block out.
+function _arrAffordancePure(pitchedCount, currentArr, sessionId, format) {
+    const canRemove = pitchedCount > 1;
+    // Reorder persists only through the full-snapshot sloppak save.
+    const canReorder = canRemove && !!sessionId && format === 'sloppak';
+    return {
+        canRemove,
+        canReorder,
+        upDisabled: !canReorder || currentArr <= 0,
+        downDisabled: !canReorder || currentArr >= pitchedCount - 1,
+    };
+}
+/* @pure:arr-affordances:end */
+
 function updateArrangementSelector() {
     const sel = document.getElementById('editor-arrangement');
     sel.innerHTML = '';
@@ -1088,8 +1112,23 @@ function updateArrangementSelector() {
     if (stringsBtn) {
         const active = S.arrangements[S.currentArr];
         const activeKind = active && arrKind(active);
-        const stringsMode = !!active && activeKind !== 'keys' && activeKind !== 'drums';
+        const stringsMode = !!active && _isFrettedKind(activeKind);
         stringsBtn.classList.toggle('hidden', !S.sessionId || !stringsMode);
+    }
+
+    // Instrument-type selector — the escape hatch that AUTHORS the arrangement's
+    // `type` (which every identity reader now honors over the name). Shown on a
+    // live session for any string/keys arrangement so a fretted chart opened
+    // piano-locked by a keys word in its name can be re-typed to guitar/bass;
+    // drums-as-arrangement authoring is a later PR, so a drums part hides it.
+    const typeSel = document.getElementById('editor-arr-type');
+    if (typeSel) {
+        const active = S.arrangements[S.currentArr];
+        const k = active && arrKind(active);
+        const showType = !!active && !!S.sessionId
+            && (k === 'guitar' || k === 'bass' || k === 'keys');
+        typeSel.classList.toggle('hidden', !showType);
+        if (showType) typeSel.value = k;
     }
 
     // Show "● Record" (live MIDI) button on sloppak sessions only — archive's
@@ -1108,10 +1147,14 @@ function updateArrangementSelector() {
         }
     }
 
-    // Show remove button when there are multiple arrangements
+    // Remove / Reorder affordances count PITCHED parts only — the derived drums
+    // arrangement doesn't count (a 1-pitched + drums song must not offer Remove,
+    // which editorRemoveArrangement refuses anyway → a silent no-op).
+    const affordance = _arrAffordancePure(
+        pitchedArrangementCount(S.arrangements), S.currentArr, S.sessionId, S.format);
     const removeBtn = document.getElementById('editor-remove-arr-btn');
     if (removeBtn) {
-        removeBtn.classList.toggle('hidden', S.arrangements.length <= 1);
+        removeBtn.classList.toggle('hidden', !affordance.canRemove);
     }
 
     // Rename is available whenever an arrangement is active on a live
@@ -1128,16 +1171,19 @@ function updateArrangementSelector() {
     // `arrangement_index`, so a reorder there is silently lost (worse, the
     // stale index re-targets the wrong part). Gate to sloppak sessions,
     // exactly like +Keys / Record, so the affordance never lies.
+    // Bound on PITCHED positions only: drums is appended LAST, so the last
+    // pitched part sits at index pitchedCount-1. Counting the drums entry would
+    // let it move DOWN past drums (breaking append-last and shifting arr:<idx>
+    // mix keys). S.currentArr is always a pitched index (clamped away from drums).
     const upBtn = document.getElementById('editor-move-arr-earlier-btn');
     const downBtn = document.getElementById('editor-move-arr-later-btn');
-    const canReorder = S.arrangements.length > 1 && !!S.sessionId && S.format === 'sloppak';
     if (upBtn) {
-        upBtn.classList.toggle('hidden', !canReorder);
-        upBtn.disabled = !canReorder || S.currentArr <= 0;
+        upBtn.classList.toggle('hidden', !affordance.canReorder);
+        upBtn.disabled = affordance.upDisabled;
     }
     if (downBtn) {
-        downBtn.classList.toggle('hidden', !canReorder);
-        downBtn.disabled = !canReorder || S.currentArr >= S.arrangements.length - 1;
+        downBtn.classList.toggle('hidden', !affordance.canReorder);
+        downBtn.disabled = affordance.downDisabled;
     }
 
     // The Tracks header column mirrors arrangement names/count — keep it in
@@ -1827,12 +1873,16 @@ window.editorSwitcherSelect = (val) => {
         // NEVER fall through to editorSelectArrangement (which would move
         // currentArr onto the drums arrangement).
         const tab = S.arrangements[idx].drumTab;
-        if (!(tab && S.format === 'sloppak')) return;
+        if (!(tab && S.format === 'sloppak')) { updateArrangementSelector(); return; }
         _finalizeActiveDrag();
         S.partsViewMode = false;
         S.tempoMapMode = false;
         S.tempoSel = -1;
         S.drumTab = tab;          // the selected part becomes the grid target
+        // draw() checks tabViewMode FIRST, so drop the engraved-tab lens on the
+        // switch (mirrors the Edit-Drums button) or it keeps painting the old
+        // part's tab over the drum grid.
+        S.tabViewMode = false;
         S.drumEditMode = true;
         S.drumSel = new Set();    // indices from another part's hits are stale
         _refreshPartsViewButton();
@@ -1843,11 +1893,23 @@ window.editorSwitcherSelect = (val) => {
         updateStatus();
         return;
     }
-    // A pitched part (guaranteed non-drums): leave drum-edit mode and select it —
-    // editorSelectArrangement moves currentArr, which stays off the drums slot.
+    // A pitched part (guaranteed non-drums): leave EVERY mode-lens and select it.
+    // editorSelectArrangement moves currentArr (which stays off the drums slot)
+    // but clears none of the lens flags, and draw() renders whichever lens is
+    // still set instead of the arrangement (tabViewMode is even checked first).
+    // So drop them all here — parts/tempo included, not just drum/tab — mirroring
+    // the drums branch and openTrackSessionTarget; otherwise switching to a part
+    // while in Parts or Tempo Map view silently moves currentArr but keeps
+    // painting the old lens over it.
     S.drumEditMode = false;
+    S.tabViewMode = false;
+    S.partsViewMode = false;
+    S.tempoMapMode = false;
+    S.tempoSel = -1;
     window.editorSelectArrangement(String(idx));
     _refreshDrumEditButton();
+    _refreshPartsViewButton();
+    _refreshTempoMapButton();
     updateArrangementSelector();
 };
 window.editorToggleTech = (idx, tech) => {
@@ -2339,7 +2401,10 @@ function _editorMovePart(dir) {
         return true;
     }
     const from = S.currentArr;
-    const to = _movePartTargetPure(from, dir, S.arrangements.length);
+    // Bound on PITCHED count, not arrangements.length: the drums arrangement is
+    // appended last, so a pitched part must never move past it (would break the
+    // append-last invariant and shift arr:<idx> mix keys onto the wrong parts).
+    const to = _movePartTargetPure(from, dir, pitchedArrangementCount(S.arrangements));
     if (to < 0) return true;   // at an end / nothing to do
     const [moved] = S.arrangements.splice(from, 1);
     S.arrangements.splice(to, 0, moved);

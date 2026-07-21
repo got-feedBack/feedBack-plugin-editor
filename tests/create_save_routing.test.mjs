@@ -71,6 +71,24 @@ await t('create-mode saveCDLC routes to /build (never /save) and reports durable
         'a build IS the durable save — the dirty flag clears so the close guard stays quiet');
 });
 
+await t('create-mode build ships an authored arr.type (a re-typed track is not re-inferred from its name)', async () => {
+    seedCreateSession();
+    // A fretted part the user re-typed to guitar via the new selector, whose NAME
+    // still reads keys. Build must carry the authored type or /build re-infers
+    // "piano" from the name and the correction is lost on the first save.
+    S.arrangements[0].name = 'Electric Piano';
+    S.arrangements[0].type = 'guitar';
+    let body = null;
+    globalThis.fetch = async (url, opts) => {
+        body = JSON.parse(opts.body);
+        return { json: async () => ({ success: true, filename: 'x.feedpak' }) };
+    };
+    await saveCDLC();
+    assert.ok(Array.isArray(body.arrangements), 'build ships the arrangement snapshot');
+    assert.strictEqual(body.arrangements[0].type, 'guitar',
+        'the authored type rides the build payload (else /build re-infers keys from the name)');
+});
+
 await t('a failed build reports save failure and keeps the session dirty', async () => {
     seedCreateSession();
     globalThis.fetch = async () => ({ json: async () => ({ error: 'DLC folder not configured' }) });

@@ -81,7 +81,7 @@ const flush = () => new Promise((r) => setImmediate(r));
 
 const stemTracks = await import('../src/stem-tracks.js');
 const {
-    _stemLinkSetPure, _stemRowsPure, _submitStemOp,
+    _stemLinkSetPure, _stemRowsPure, _stemPairArrsPure, _submitStemOp,
     editorSoloMyStem, initStemTracks, stemMixerAvailable,
 } = stemTracks;
 const { S } = await import('../src/state.js');
@@ -140,6 +140,24 @@ t('rows follow stem order and resolve pairings by the id-or-name key rule', () =
     assert.strictEqual(rows[0].pairedWith.name, 'Lead', 'id-keyed link resolves');
     assert.strictEqual(rows[1].pairedWith.name, 'Bass', 'name-keyed link resolves');
     assert.strictEqual(rows[2].pairedWith, null, 'unpaired is honest');
+});
+
+// #336 regression: the stem-pairing dropdown lists PITCHED chart tracks only —
+// the derived drums arrangement is a song-level sidecar, never a pairing target.
+// Pre-fix arrOptions mapped ALL arrangements → the Drums arrangement was offered.
+t('the pairing option list excludes the drums arrangement', () => {
+    const arrangements = [
+        { id: 'a1', name: 'Lead' },
+        { id: 'drums', name: 'Drums', type: 'drums' },
+        { id: 'a2', name: 'Bass' },
+    ];
+    const pairable = _stemPairArrsPure(arrangements);
+    assert.deepStrictEqual(pairable.map(a => a.name), ['Lead', 'Bass'],
+        'the type:"drums" arrangement is not a pairing target');
+    assert.ok(!pairable.some(a => a.type === 'drums'), 'no drums arrangement in the options');
+    // A pitched part NAMED "Drums" (no authored type) is still pairable.
+    assert.strictEqual(
+        _stemPairArrsPure([{ name: 'Drums' }]).length, 1, 'a name-only "Drums" stays pairable');
 });
 
 t('a chart track pairs with ONE stem; re-pairing replaces; empty unlinks', () => {

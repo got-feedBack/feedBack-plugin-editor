@@ -18,7 +18,7 @@
  */
 import assert from 'node:assert';
 
-import { _typeKind, _arrTypeKind, _arrKindFromName, arrKind } from '../src/instrument.js';
+import { _typeKind, _arrTypeKind, _arrKindFromName, _isFrettedKind, arrKind } from '../src/instrument.js';
 import { isKeysArr, KEYS_PATTERN, _rollPitchCtxFor } from '../src/keys.js';
 import { _seedExtendedStringsFromTuning, _stringCountFor } from '../src/lanes.js';
 import { _isBassArr } from '../src/instrument.js';
@@ -128,6 +128,14 @@ t('arrKind: authored type wins, name inference is the fallback', () => {
     assert.strictEqual(arrKind({ name: 'Bass' }), 'bass');
     assert.strictEqual(arrKind({ name: 'Backing Vox', type: 'vocals' }), 'vocals');
     assert.strictEqual(arrKind(null), 'guitar', 'no arr → guitar default');
+});
+
+t('_isFrettedKind gates string controls to guitar and bass only', () => {
+    assert.strictEqual(_isFrettedKind('guitar'), true);
+    assert.strictEqual(_isFrettedKind('bass'), true);
+    for (const kind of ['keys', 'drums', 'vocals', null, undefined]) {
+        assert.strictEqual(_isFrettedKind(kind), false, `${kind} has no string controls`);
+    }
 });
 
 // ── the Tracks-view kind badge ────────────────────────────────────────

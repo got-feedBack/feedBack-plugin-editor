@@ -143,6 +143,22 @@ export function _partMixDropArrangementPure(partMix, index) {
     return out;
 }
 
+// Inverse of _partMixDropArrangementPure: open a slot at `index` (renumber every
+// arr:<n> with n >= index UP one) and drop `strip` in at arr:<index>. Renumbers
+// the CURRENT map, so any live mute/solo/volume edits made while the slot was
+// gone ride along to their restored key instead of being clobbered.
+export function _partMixInsertArrangementPure(partMix, index, strip) {
+    const out = {};
+    for (const [key, value] of Object.entries(partMix && typeof partMix === 'object' ? partMix : {})) {
+        if (!key.startsWith('arr:')) { out[key] = value; continue; }
+        const n = Number(key.slice(4));
+        if (!Number.isInteger(n)) continue;
+        out[n >= index ? 'arr:' + (n + 1) : key] = value;
+    }
+    if (strip !== undefined) out['arr:' + index] = strip;
+    return out;
+}
+
 // Normalize any persisted/half-trusted tree against the loaded song: drop
 // rows whose source/target no longer exists, append rows for anything new,
 // repair parent cycles, and default the tempo guide. Idempotent — this is
@@ -903,7 +919,7 @@ export class DeleteDrumTabCmd {
         this._mode = !!S.drumEditMode;
         this._currentArr = S.currentArr;
         this._dirty = !!S.drumTabDirty;
-        this._partMix = (S.partMix && typeof S.partMix === 'object') ? { ...S.partMix } : S.partMix;
+        this._drumStrip = (S.partMix && this._index >= 0) ? S.partMix['arr:' + this._index] : undefined;
         this._links = S.stemLinks;
         this._tree = S.trackSession;
         this._selectedTrackId = S.selectedTrackId;
@@ -957,7 +973,11 @@ export class DeleteDrumTabCmd {
             S.drumTab = this._tab;
             syncDrumArrangement(S);   // restore the derived type:"drums" arrangement
         }
-        S.partMix = (this._partMix && typeof this._partMix === 'object') ? { ...this._partMix } : this._partMix;
+        // Re-open the restored slot in the CURRENT map so live mix edits made
+        // while this drum part was absent survive the undo.
+        if (this._arr && S.partMix) {
+            S.partMix = _partMixInsertArrangementPure(S.partMix, this._index, this._drumStrip);
+        }
         S.drumTabDirty = this._dirty;
         S.stemLinks = this._links;
         if (this._selectedTrackId === transcriptionTrackId(this._targetId)
