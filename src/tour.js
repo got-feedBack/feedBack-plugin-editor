@@ -37,7 +37,7 @@ export const TOURS = {
             { text: 'The recording never moves — you line the GRID up to it. Turn on Onsets (Shift+W) to see the audio’s attacks.', advanceOn: 'onsets' },
             { text: 'Open Tempo Map (T), then drag the first barline onto the first strong amber onset block.', advanceOn: 'tempoMap' },
             { text: 'Tap the tempo (Shift+B in Tempo Map) so the grid matches the groove.', advanceOn: 'tapTempo' },
-            { text: 'Switch snap to Onset — now notes lock to the audio’s attacks, not just the grid.', advanceOn: 'snapOnset' },
+            { text: 'Set the Snap control to Onset — now notes lock to the audio’s attacks, not just the grid.', advanceOn: 'snapOnset' },
         ],
     },
 };

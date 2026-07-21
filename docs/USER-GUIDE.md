@@ -13,7 +13,7 @@ narrow/widen the grid, Ctrl+4 toggles snap, Ctrl+L loops), and **Legacy
 (EOF)**. Anything a profile doesn't remap keeps its FeedBack key. Switch
 profiles in **Help ▸ Shortcut profile** or the shortcut panel (`?`).
 
-![The Song Editor loaded with a song: the menu bar and toolbars up top, the timeline (waveform and colored note blocks per string) in the middle, the transport and inspector around it.](../assets/guide/workspace.png)
+![The Song Editor loaded with a song: the multitrack Tracks column down the left, the menu bar and toolbars up top, and the timeline (waveform and colored note blocks per string) filling the middle.](../assets/guide/workspace.png)
 
 **The whole journey, at a glance** — a feedpak goes from nothing to playable in
 six steps, and this guide follows them in order:
@@ -139,6 +139,9 @@ defaults** puts everything back.
 - **Move around**: `Page Up`/`Page Down` jump beat to beat; `Alt+←`/`Alt+→` jump
   note to note; `Ctrl+Page Up/Down` jump grid lines. Set numbered **bookmarks**
   with `Shift+Alt+1…9` and jump to them with `Alt+1…9`.
+- **Scroll and zoom the canvas**: the mouse wheel zooms and **Shift+wheel** pans;
+  the **overview strip** above the lanes is a real horizontal scrollbar — drag it
+  to skim a long song, or grab its ends to zoom to a span.
 
 ---
 
@@ -365,7 +368,7 @@ few milliseconds early or late. It moves every track together and is undoable.
 
 ## 7. Drums
 
-![The Add Drum Arrangement dialog, offering to import a Guitar Pro or MIDI drum track.](../assets/guide/drums.png)
+![The drum piece-lane grid: kit pieces (kick, snare, hats, toms, ride…) as rows with a kit map below, and a groove charted across the bars.](../assets/guide/drums.png)
 
 Drum tracks use a **piece-lane grid**: rows are kit pieces (kick, snare, hats…),
 columns are grid positions. Click to place a hit; the **drum pad strip** maps a
