@@ -724,9 +724,9 @@ function render() {
     // master from the pane is a real workflow — dogfooding sessions kept
     // reaching for it — so the pane now mirrors the drawer. Same keys, same
     // handlers (mix-mute/mix-solo/mix-vol are key-generic), and the master
-    // keeps its reference semantics: a transcription part's solo never
-    // silences it (D5), while a solo within the audio band — a stem's or its
-    // own — gates it like any peer track (_mixerPartAudiblePure).
+    // follows the one whole-map solo rule like any peer track: any solo —
+    // a transcription part's, a stem's, or its own — gates it
+    // (_mixerPartAudiblePure).
     const mixControls = row => {
         if (!_trackRowShowsStripPure(row)) return '';
         const key = _editorEscHtml(row.mixKey);

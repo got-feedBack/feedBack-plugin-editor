@@ -84,6 +84,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against — charrette D5), and mute still always wins. "Solo my source track"
   now truly isolates the paired stem; solo the master strip alongside it to
   compare the two.
+- **Soloing a transcription track now isolates it too — solo is one rule
+  across both bands.** The audio-band scoping above kept the Master Mix immune
+  to transcription-part solos, so soloing a part left the full-mix recording
+  (and with it, the song) playing over the isolated part. Solo now means
+  *isolate* everywhere: any solo silences every unsoloed strip, the master
+  included — matching what the stems already did. To keep the recording as a
+  reference while soloing a part, solo the Master Mix alongside it; mute still
+  always wins.
 - **Replace Audio no longer crosses song boundaries.** If an upload or download
   finishes after you switch songs, close the dialog, or start another Replace
   Audio request, the stale result is discarded instead of being applied to the

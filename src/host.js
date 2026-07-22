@@ -203,8 +203,8 @@ export const host = {
      * schedules voices. Lives in src/mixer-panel.js (the canonical
      * `S.partMix` owner); audio.js must not import that module, so it
      * crosses here. Inert default: audible at unity — exactly the
-     * pre-panel behavior. Part solo NEVER gates the reference recording
-     * (D5), which rides its own transparent gain path.
+     * pre-panel behavior. The reference recording never passes through this
+     * hook — its gate is its own 'audio:master' strip (partStripState).
      */
     partClapState: () => ({ audible: true, vol: 1 }),
     /**
