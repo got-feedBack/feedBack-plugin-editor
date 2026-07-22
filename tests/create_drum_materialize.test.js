@@ -54,5 +54,23 @@ t('editorApplyCreateResult calls syncDrumArrangement AFTER assigning S.drumTab',
         'sync must run AFTER the drumTab assignment, so it materializes the live payload');
 });
 
+// GP multi-drum split: several drum tracks arrive as `drum_parts`; the create
+// path must adopt them as extra type:"drums" arrangements beside the primary.
+t('create.js imports adoptDrumParts from the drum-arrangement leaf', () => {
+    assert.ok(/import\s*\{[^}]*\badoptDrumParts\b[^}]*\}\s*from\s*['"]\.\/drum-arrangement\.js['"]/.test(src),
+        'adoptDrumParts must be imported to materialize the EXTRA GP drum parts');
+});
+
+t('editorApplyCreateResult adopts drum_parts AFTER syncDrumArrangement (extras beside the primary)', () => {
+    const body = extractFn('editorApplyCreateResult');
+    const syncAt = body.indexOf('syncDrumArrangement(S)');
+    const adoptAt = body.indexOf('adoptDrumParts(S, data.drum_parts)');
+    assert.ok(adoptAt >= 0, "the path adopts the import's extra drum_parts");
+    assert.ok(adoptAt > syncAt,
+        'adopt must run AFTER the primary is materialized, so the extras append beside it');
+    assert.ok(/Array\.isArray\(data\.drum_parts\)\s*&&\s*data\.drum_parts\.length/.test(body),
+        'the adopt is guarded on data.drum_parts being a non-empty list (a single-drum import never calls it)');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

@@ -283,6 +283,44 @@ def _drum_arrs_to_drum_tab(drum_arrs, out_unmapped=None):
     }
 
 
+def _gp_drum_arrs_to_parts(drum_arrs, has_pitched):
+    """Split GP drum arrangements into (primary_tab, extra_parts, unmapped).
+
+    With SEVERAL drum tracks AND a melodic part, keep each drummer as its own
+    part: one drum_tab per arrangement (the GP track name preserved), the first
+    non-empty as the primary (song-level `drum_tab` back-compat alias), the rest
+    as `drum_parts` [{id, name, drum_tab}] — the shape a reload adopts and
+    /build persists. One drum track, or a drums-only import (no melodic part to
+    sit beside — a drums arrangement never sits at index 0), folds into a single
+    tab, byte-identical to the prior behavior. `primary_tab` is None only when
+    there is nothing to keep (no hits and nothing to remap). Module-level so
+    pytest can reach it, mirroring `_drum_arrs_to_drum_tab`.
+    """
+    unmapped: dict[int, dict] = {}
+    if len(drum_arrs) > 1 and has_pitched:
+        tabs = []
+        for darr in drum_arrs:
+            tab = _drum_arrs_to_drum_tab([darr], out_unmapped=unmapped)
+            name = (darr.get("name") or "").strip()
+            if name:
+                tab["name"] = name[:120]
+            tabs.append(tab)
+        with_hits = [t for t in tabs if t["hits"]]
+        if with_hits:
+            extras = [
+                {"id": "", "name": t.get("name") or "Drums", "drum_tab": t}
+                for t in with_hits[1:]
+            ]
+            return with_hits[0], extras, unmapped
+        # Every drum note needs manual mapping — keep one empty tab so the
+        # mapper (which mutates the tab object) can recover them.
+        return (tabs[0] if unmapped else None), [], unmapped
+    tab = _drum_arrs_to_drum_tab(drum_arrs, out_unmapped=unmapped)
+    if tab["hits"] or unmapped:
+        return tab, [], unmapped
+    return None, [], unmapped
+
+
 def _is_drum_pointer_entry(entry):
     """A manifest `arrangements[]` entry that is a DRUM-PART POINTER —
     feedpak-spec 1.17.0 "drums as arrangements": `type: drums` with a
@@ -7848,22 +7886,20 @@ def setup(app, context):
             # add route's bare `unmapped`) because this response also carries
             # arrangements, tempo and track data — an unqualified key there
             # would read as "unmapped WHAT?".
-            _unmapped: dict[int, dict] = {}
-            _tab = _drum_arrs_to_drum_tab(
-                [_arrs[i] for i in sorted(_drum_idx)], out_unmapped=_unmapped,
+            _drum_arr_list = [_arrs[i] for i in sorted(_drum_idx)]
+            _pitched = [a for i, a in enumerate(_arrs) if i not in _drum_idx]
+            _primary, _extras, _unmapped = _gp_drum_arrs_to_parts(
+                _drum_arr_list, bool(_pitched),
             )
-            # Keep an empty tab when every note needs manual mapping. The
-            # mapper writes its recovered hits into this object; omitting it
-            # would make the all-unmapped case unrecoverable.
-            if _tab["hits"] or _unmapped:
-                result["drum_tab"] = _tab
+            if _primary is not None:
+                result["drum_tab"] = _primary
+            if _extras:
+                result["drum_parts"] = _extras
             if _unmapped:
                 result["drum_unmapped"] = [
                     _safe_unmapped_entry(m, rec) for m, rec in sorted(_unmapped.items())
                 ]
-            result["arrangements"] = [
-                a for i, a in enumerate(_arrs) if i not in _drum_idx
-            ]
+            result["arrangements"] = _pitched
             _xf = sessions[session_id]["xml_files"]
             sessions[session_id]["xml_files"] = [
                 xf for i, xf in enumerate(_xf) if i not in _drum_idx
