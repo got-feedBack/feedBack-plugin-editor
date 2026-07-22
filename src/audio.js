@@ -734,16 +734,63 @@ function _auditionRefreshUi() {
     if (host && typeof host.updateTimeDisplay === 'function') host.updateTimeDisplay();
 }
 
+// Preserve the historical S.audioSource surface (stop + assignable onended)
+// while the active reference is represented by one BufferSource per region.
+// MIDI recording and teardown deliberately treat this as a single source.
+function _audioSourceGroup(nodes) {
+    if (!nodes.length) return null;
+    let onended = null;
+    let remaining = nodes.length;
+    const group = {
+        stop() {
+            for (const node of nodes) {
+                try { node.stop(); } catch (_) { /* already stopped */ }
+            }
+        },
+        get onended() { return onended; },
+        set onended(fn) { onended = typeof fn === 'function' ? fn : null; },
+    };
+    for (const node of nodes) {
+        const cleanup = node.onended;
+        node.onended = (event) => {
+            if (typeof cleanup === 'function') cleanup.call(node, event);
+            remaining--;
+            if (remaining === 0 && onended) onended.call(group, event);
+        };
+    }
+    return group;
+}
+
 export function _startAudioSourceAtCursor(preRoll = 0) {
     // Slide the recording by S.audioShift (the chart clock, anchored below, is
     // untouched — only the buffer read position moves). A positive shift can
     // push the audio start into the future (delay) or, near the end, past the
     // buffer entirely (no source; the transport still runs so the cursor and
     // guide advance over the trailing silence).
-    const st = _audioBufferStartPure(S.cursorTime,
-        (Number(S.audioShift) || 0) + (Number(S.activeAudioSourceOffset) || 0),
-        S.audioBuffer && S.audioBuffer.duration);
+    const duration = S.audioBuffer && S.audioBuffer.duration;
+    const activeShift = (Number(S.audioShift) || 0) + (Number(S.activeAudioSourceOffset) || 0);
+    const placements = _audioRegionPlacementsPure(
+        _trackRegionsForSourceId(S.activeAudioSourceId), duration,
+        (b) => timeOf(S.beats, b));
+    const starts = placements
+        .filter(region => !region.muted)
+        .map(region => ({ region, start: _regionStartPure(
+            S.cursorTime, activeShift + region.startBeatTime, region.srcIn, region.srcOut) }))
+        .filter(item => item.start.play);
+    // The pitch-preserving MediaElement can represent only one continuous,
+    // full-file placement. Authored region windows therefore use the
+    // sample-accurate 100% path (the same limitation as multi-stem audition).
+    const wholeFile = placements.length === 1 && !placements[0].muted
+        && placements[0].startBeatTime === 0 && placements[0].srcIn === 0
+        && placements[0].srcOut >= duration;
+    const st = starts[0] ? starts[0].start : { play: false, offset: 0, delay: 0 };
     let slow = _auditionActive();
+    if (slow && !wholeFile) {
+        slow = false;
+        S.auditionRate = 1;
+        _auditionRefreshUi();
+        setStatus('Audition speed is unavailable for edited audio regions — playing at 100%.');
+    }
     if (slow && st.play) {
         // Pitch-preserving slow path: the reference rides the MediaElement, so
         // the sample-accurate BufferSource is silenced. Both feed the SAME
@@ -761,21 +808,45 @@ export function _startAudioSourceAtCursor(preRoll = 0) {
             setStatus('Audition speed is unavailable for this recording — playing at 100%.');
         }
     }
-    if (!slow && st.play) {
+    if (!slow && starts.length) {
         _stopRefMedia();   // rate 1 → the slow-path element must be silent
-        S.audioSource = S.audioCtx.createBufferSource();
-        S.audioSource.buffer = S.audioBuffer;
         // Reference recording stays on a transparent path to destination — its
         // mixer fader is a plain gain (unity by default): the guide-clap limiter
         // must never color the recording, even when claps are off. Only the
         // guide/click voices sum through the limiter (see _ensureMasterBus).
         const target = _activeRefTarget();
-        if (target) S.audioSource.connect(target);
-        else S.audioSource.connect(S.audioCtx.destination);
         _mixApplyFirstPlayFade();
-        const when = (preRoll > 0 || st.delay > 0) ? S.audioCtx.currentTime + preRoll + st.delay : 0;
-        S.audioSource.start(when, st.offset);
-    } else if (!st.play) {
+        const ctxNow = S.audioCtx.currentTime;
+        const nodes = [];
+        for (const { region, start: p } of starts) {
+            const node = S.audioCtx.createBufferSource();
+            node.buffer = S.audioBuffer;
+            const when = (preRoll > 0 || p.delay > 0) ? ctxNow + preRoll + p.delay : 0;
+            const trimmed = region.srcIn > 0 || region.srcOut < duration;
+            if (trimmed) {
+                const g = S.audioCtx.createGain();
+                const realStart = when > 0 ? when : ctxNow;
+                const env = _declickEnvelopePure(realStart, p.duration, DECLICK_FADE);
+                g.gain.setValueAtTime(env[0].gain, env[0].t);
+                for (let i = 1; i < env.length; i++) {
+                    g.gain.linearRampToValueAtTime(env[i].gain, env[i].t);
+                }
+                g.connect(target || S.audioCtx.destination);
+                node.connect(g);
+                node.onended = () => { try { g.disconnect(); } catch (_) { /* ctx gone */ } };
+            } else if (target) {
+                node.connect(target);
+            } else {
+                node.connect(S.audioCtx.destination);
+            }
+            // Keep the untouched one-region case byte-for-byte on the legacy
+            // two-argument start path. Trimmed windows need the duration cap.
+            if (trimmed && p.duration != null) node.start(when, p.offset, p.duration);
+            else node.start(when, p.offset);
+            nodes.push(node);
+        }
+        S.audioSource = _audioSourceGroup(nodes);
+    } else if (!starts.length) {
         _stopRefMedia();
         S.audioSource = null;
     }

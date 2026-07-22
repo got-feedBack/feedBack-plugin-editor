@@ -206,21 +206,75 @@ t('a failed slow path DEMOTES to 100% and plays the buffer — never silence und
         audioBuffer: { duration: 60 }, audioSource: null,
         audioCtx: { currentTime: 0, createBufferSource: () => ({ connect() {}, start() {} }) },
     };
-    const run = new Function('S', '_audioBufferStartPure', '_auditionActive', '_startRefMediaAt',
+    const run = new Function('S', '_auditionActive', '_startRefMediaAt',
         '_mixApplyFirstPlayFade', '_stopRefMedia', '_auditionRefreshUi', 'setStatus',
         '_ensureRefGain', '_activeRefTarget', '_anchorTransportAtCursor', '_stopStemSources', '_startStemSources',
+        '_audioRegionPlacementsPure', '_trackRegionsForSourceId', 'timeOf', '_regionStartPure',
+        '_audioSourceGroup', '_declickEnvelopePure', 'DECLICK_FADE',
         extractFn('_startAudioSourceAtCursor') + '\nreturn _startAudioSourceAtCursor;'
     )(S,
-        () => ({ play: true, offset: 5, delay: 0 }),
         () => Number(S.auditionRate) < 1,
         () => false,                       // the slow path is unavailable
         () => {}, () => {}, () => {}, (m) => status.push(m), () => null, () => ({ connect() {} }),
-        () => {}, () => {}, () => 0);       // stem scheduler stubs (no stems here)
+        () => {}, () => {}, () => 0,        // stem scheduler stubs (no stems here)
+        () => [{ startBeatTime: 0, srcIn: 0, srcOut: 60, muted: false }],
+        () => null, (_beats, beat) => beat,
+        () => ({ play: true, offset: 5, delay: 0, duration: 55 }),
+        (nodes) => nodes[0], () => [], 0.005);
 
     run(0);
     assert.strictEqual(S.auditionRate, 1, 'demoted to full speed so the clock matches the audio');
     assert.ok(S.audioSource, 'the BufferSource took over — the recording is audible');
     assert.ok(status.some(m => /unavailable/i.test(m)), 'and the user is told why');
+});
+
+t('the active reference schedules every authored audio region (it is not skipped)', () => {
+    const starts = [];
+    const target = { connect() {} };
+    const S = {
+        cursorTime: 5, audioShift: 0, activeAudioSourceOffset: 0,
+        activeAudioSourceId: 'master', auditionRate: 1, beats: [],
+        audioBuffer: { duration: 60 }, audioSource: null,
+        audioCtx: {
+            currentTime: 10,
+            destination: target,
+            createBufferSource: () => ({
+                connect() {}, stop() {},
+                start(...args) { starts.push(args); },
+            }),
+            createGain: () => ({
+                gain: { setValueAtTime() {}, linearRampToValueAtTime() {} },
+                connect() {}, disconnect() {},
+            }),
+        },
+    };
+    const run = new Function('S', '_auditionActive', '_startRefMediaAt',
+        '_mixApplyFirstPlayFade', '_stopRefMedia', '_auditionRefreshUi', 'setStatus',
+        '_ensureRefGain', '_activeRefTarget', '_anchorTransportAtCursor', '_stopStemSources', '_startStemSources',
+        '_audioRegionPlacementsPure', '_trackRegionsForSourceId', 'timeOf', '_regionStartPure',
+        '_audioSourceGroup', '_declickEnvelopePure', 'DECLICK_FADE',
+        extractFn('_startAudioSourceAtCursor') + '\nreturn _startAudioSourceAtCursor;'
+    )(S,
+        () => false, () => false,
+        () => {}, () => {}, () => {}, () => {}, () => null, () => target,
+        () => {}, () => {}, () => 0,
+        () => [
+            { startBeatTime: 0, srcIn: 2, srcOut: 8, muted: false },
+            { startBeatTime: 10, srcIn: 1, srcOut: 4, muted: false },
+        ],
+        () => [], (_beats, beat) => beat,
+        (cursor, start, srcIn, srcOut) => cursor >= start
+            ? { play: true, offset: srcIn + cursor - start, delay: 0, duration: srcOut - srcIn - (cursor - start) }
+            : { play: true, offset: srcIn, delay: start - cursor, duration: srcOut - srcIn },
+        (nodes) => ({ nodes, stop() {} }),
+        (when, duration) => [{ t: when, gain: 0 }, { t: when + Math.min(0.005, duration / 2), gain: 1 }],
+        0.005);
+
+    run(0);
+    assert.strictEqual(starts.length, 2, 'both active-source regions get BufferSource nodes');
+    assert.deepStrictEqual(starts[0], [0, 7, 1], 'cursor is caught up inside the first trim');
+    assert.deepStrictEqual(starts[1], [15, 1, 3], 'the future region is scheduled at its own in-point');
+    assert.strictEqual(S.audioSource.nodes.length, 2, 'the stop/onended wrapper owns the whole active group');
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
