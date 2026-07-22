@@ -2841,7 +2841,12 @@ def _compute_anchors(notes, chords, width=_ANCHOR_WIDTH):
             # run — that lone forward move is not thrash.
             reachable = (ghi - glo) <= width
             nxt = groups[j + 1] if j + 1 < ng else None
-            returns = nxt is not None and win_lo <= nxt[1] and nxt[2] <= win_hi
+            # Compare the return against the effective placed window, which
+            # includes the comfort margin around the raw run bounds.
+            tentative_fret = _place(win_lo, win_hi)
+            returns = (nxt is not None
+                       and tentative_fret <= nxt[1]
+                       and nxt[2] <= tentative_fret + width)
             if reachable and returns:
                 j += 1
                 continue

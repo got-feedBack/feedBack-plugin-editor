@@ -84,6 +84,14 @@ def test_lone_high_outlier_is_a_reach_not_two_shifts():
     assert got[0]["fret"] == 2
 
 
+def test_outlier_return_uses_the_effective_comfort_window():
+    # The raw run spans only fret 3, but _place gives it window [2, 6]. A
+    # return at fret 4 is inside that real window and must not cause 2→11→3
+    # thrash around the lone fret-12 reach.
+    got = _compute_anchors(seq([3, 3, 3, 12, 4, 4, 4]), [])
+    assert frets_of(got) == [2]
+
+
 def test_trailing_outlier_is_a_real_final_position():
     # No evidence of return (nothing follows) -> the final high note is a
     # genuine move, so it gets its own anchor rather than a phantom reach.
