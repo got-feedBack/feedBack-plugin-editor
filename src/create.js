@@ -2015,7 +2015,9 @@ async function _editorDoMidiCreate() {
     if (createState.midiPath && (picked.length || drumPicked.length)) {
         // Pitched first so each drum part has a pitched sibling to sit beside.
         if (picked.length) {
-            await importMidiTracksIntoSession(createState.midiPath, picked, midiStatusEl);
+            await importMidiTracksIntoSession(createState.midiPath, picked, midiStatusEl, {
+                keepUpload: drumPicked.length > 0,
+            });
         }
         if (drumPicked.length) {
             await importMidiDrumTracksIntoSession(createState.midiPath, drumPicked, midiStatusEl);

@@ -134,6 +134,10 @@ await ta('imports each channel-9 drum track as its own drums part, with the righ
     assert.strictEqual(reqs[1].body.track_index, 12);
     assert.strictEqual(reqs[1].body.arrangement_name, 'Aux Perc');
     assert.strictEqual(reqs[0].body.midi_path, '/tmp/slopsmith_midi_x/upload.mid', 'the staged create-flow path is reused');
+    assert.strictEqual(reqs[0].body.keep_upload, true,
+        'the staged MIDI survives until every selected drum track is converted');
+    assert.strictEqual(reqs[1].body.keep_upload, false,
+        'the final drum conversion owns temp-file cleanup');
 });
 
 await ta('skips a note-less drum track without calling the backend', async () => {
@@ -147,6 +151,7 @@ await ta('skips a note-less drum track without calling the backend', async () =>
     const reqs = log.filter(r => r.url.includes('import-drums-midi'));
     assert.strictEqual(reqs.length, 1, 'the empty track was never fetched');
     assert.strictEqual(reqs[0].body.track_index, 10);
+    assert.strictEqual(reqs[0].body.keep_upload, false, 'the only real track cleans up');
 });
 
 await ta('one failing track does not abort the rest', async () => {

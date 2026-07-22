@@ -493,9 +493,10 @@ export function _stashImportedDrumTab(tab, placeAt = 'keep') {
 // track is skipped, not fatal. Returns how many parts were imported.
 export async function importMidiDrumTracksIntoSession(midiPath, drumTracks, statusEl = null) {
     if (!midiPath || !S.sessionId || !Array.isArray(drumTracks) || !drumTracks.length) return 0;
+    const picked = drumTracks.filter(t => t && Number(t.notes) > 0);
     let imported = 0;
-    for (const t of drumTracks) {
-        if (!t || Number(t.notes) <= 0) continue;
+    for (let i = 0; i < picked.length; i++) {
+        const t = picked[i];
         try {
             const resp = await fetch('/api/plugins/editor/import-drums-midi', {
                 method: 'POST',
@@ -505,6 +506,7 @@ export async function importMidiDrumTracksIntoSession(midiPath, drumTracks, stat
                     track_index: Number(t.index) || 0,
                     audio_offset: host.effectiveAudioOffset(),
                     arrangement_name: t.name || 'Drums',
+                    keep_upload: i < picked.length - 1,
                 }),
             });
             const data = await resp.json();

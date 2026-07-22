@@ -7338,13 +7338,14 @@ def setup(app, context):
             traceback.print_exc()
             return JSONResponse({"error": str(e)}, 500)
 
-        # Clean up the MIDI temp dir now that EVERY conversion is complete —
-        # the client no longer needs to reference midi_path after this response.
-        try:
-            shutil.rmtree(Path(midi_path).parent)
-        except OSError as _cleanup_err:
-            import warnings
-            warnings.warn(f"Could not clean up MIDI temp dir: {_cleanup_err}")
+        # A create flow that also selected drums reuses this staged file for
+        # the following drum conversions. Its last consumer owns cleanup.
+        if not data.get("keep_upload"):
+            try:
+                shutil.rmtree(Path(midi_path).parent)
+            except OSError as _cleanup_err:
+                import warnings
+                warnings.warn(f"Could not clean up MIDI temp dir: {_cleanup_err}")
 
         # Legacy single-track callers read `arrangement`; the batch form reads
         # `arrangements` (same order as the request's `tracks`).
@@ -8532,14 +8533,15 @@ def setup(app, context):
             # swept by the opportunistic TTL cleanup, same as import_keys_midi.
             return JSONResponse({"error": str(e)}, 500)
 
-        # Clean up the MIDI temp dir now that conversion is complete — mirrors
-        # import_keys_midi which also rmtrees after a successful conversion so
-        # temp dirs don't accumulate between TTL cleanup runs.
-        try:
-            shutil.rmtree(_midi_tmp_dir)
-        except OSError as _cleanup_err:
-            import warnings
-            warnings.warn(f"Could not clean up drums MIDI temp dir: {_cleanup_err}")
+        # Multi-track create import reuses one staged file. Earlier conversions
+        # retain it; the final request removes it. Add-Drums remains the single
+        # consumer and therefore keeps the default cleanup behavior.
+        if not data.get("keep_upload"):
+            try:
+                shutil.rmtree(_midi_tmp_dir)
+            except OSError as _cleanup_err:
+                import warnings
+                warnings.warn(f"Could not clean up drums MIDI temp dir: {_cleanup_err}")
 
         # Defensive .get() reads — if a future converter shape ever leaves
         # `count` or `times` partially populated, return zero/empty rather
