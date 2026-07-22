@@ -1769,6 +1769,17 @@ export function onKeyDown(e) {
     if (S.partsViewMode
             && _editorFeedbackCommandForKeyPure(e, 'note') !== 'togglePartsView'
             && _editorEofCommandForKeyPure(e, 'note') !== 'togglePartsView') {
+        // The Tracks overview owns exactly one editing key: Delete/Backspace
+        // removes the SELECTED REGION BLOCK (its window AND the content it
+        // owns, one undoable step) — a region op on this surface, not a
+        // note-edit on the hidden chart. parts-view owns the resolution
+        // (which part, which kind) through the host table; false = no region
+        // selected, and the key stays ignored like everything else here.
+        if ((e.key === 'Delete' || e.key === 'Backspace')
+                && !e.target.matches('input, select, textarea')
+                && host.partsViewRegionDelete()) {
+            e.preventDefault();
+        }
         return;
     }
 
@@ -1889,6 +1900,8 @@ export function onKeyDown(e) {
     }
 
     if (e.key === 'Delete' || e.key === 'Backspace') {
+        // (Region-block delete lives in the partsViewMode gate above — this
+        // ladder is only reachable outside the Tracks overview.)
         // Tempo-map mode: delete the selected barline(s) — bulk when a
         // multi-selection exists (PR 5a), else the single focus.
         if (S.tempoMapMode && (S.tempoSel >= 0 || (S.tempoSelMulti && S.tempoSelMulti.size)) &&

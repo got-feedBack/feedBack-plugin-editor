@@ -108,6 +108,20 @@ export function _trackRegionsResolvePure(raw) {
     return norm.length ? norm : [_defaultRegionPure()];
 }
 
+// The next free `region:N` id for a track, given its persisted regions[] (or
+// absent). N is one past the highest numeric suffix in use, and the implicit
+// default (DEFAULT_REGION_ID = `region:1`) is always counted even when it isn't
+// persisted — so a placed region never collides with it. A fresh track (no
+// regions) yields `region:2`. Non-numeric ids don't participate in the count.
+export function _nextRegionIdPure(raw) {
+    let max = 1;                       // DEFAULT_REGION_ID occupies region:1
+    for (const region of _trackRegionsNormalizePure(raw)) {
+        const m = /^region:(\d+)$/.exec(region.id);
+        if (m) { const n = Number(m[1]); if (n > max) max = n; }
+    }
+    return 'region:' + (max + 1);
+}
+
 // Membership predicate: does a beat fall inside the region's window? startBeat
 // inclusive, startBeat+lenBeat exclusive; lenBeat null = open to the end of
 // content. This is the primitive a later move/trim command uses to select "the
@@ -235,4 +249,21 @@ export function _regionSnapStartPure(downbeats, rawStart, free) {
         if (dd < bestD) { bestD = dd; best = d; }
     }
     return Math.max(0, Number(best) || 0);
+}
+
+// The startBeat an import dialog's "Place at" choice resolves to, or null for
+// "keep source timing" (no placement — the content stays where the source put
+// it). 'bar1' = the first downbeat; 'playhead' = the cursor snapped to the
+// nearest bar (the region-snap default). Downbeats are derived here from the
+// grid itself (`measure > 0` marks a bar start) so the pure stays converter-
+// free; `beatOf` is passed in like the other pures. A gridless chart resolves
+// through beatOf's own degenerate (seconds-primary) handling.
+export function _placeAtStartBeatPure(placeAt, beats, cursorTime, beatOf) {
+    if (placeAt !== 'bar1' && placeAt !== 'playhead') return null;
+    const downbeats = (Array.isArray(beats) ? beats : [])
+        .filter(b => b && b.measure > 0).map(b => b.time).sort((a, b) => a - b);
+    const t = placeAt === 'bar1'
+        ? (downbeats.length ? downbeats[0] : 0)
+        : _regionSnapStartPure(downbeats, cursorTime, false);
+    return Math.max(0, beatOf(beats, t));
 }

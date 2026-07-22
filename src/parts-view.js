@@ -11,7 +11,7 @@ import { DRUM_PIECE_META, _refreshDrumEditButton } from './drum.js';
 import { beatOf, timeOf } from './beats.js';
 import { LABEL_W, TIMELINE_TOP, timeToX, xToTime } from './geometry.js';
 import { _regionBlockRectPure, _regionHitPure, _regionSnapStartPure, _regionTimeSpanPure, _trackRegionsResolvePure } from './region.js';
-import { MoveRegionCmd } from './region-commands.js';
+import { DeleteRegionCmd, MoveRegionCmd } from './region-commands.js';
 import { isDrumArrangement } from './drum-arrangement.js';
 import { arrKind } from './instrument.js';
 import { _stringCountFor } from './lanes.js';
@@ -103,6 +103,9 @@ function _arrIndexForTarget(targetId) {
     const target = _trackSessionTargetsPure(S.arrangements, S.drumTab)
         .find(item => item.id === targetId);
     return target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
+}
+function _isDrumRow(arrIdx, targetId) {
+    return (arrIdx >= 0 && isDrumArrangement(S.arrangements[arrIdx])) || targetId === 'drums';
 }
 
 // An audio lane's waveform, when the host has one cached for the source
@@ -388,7 +391,7 @@ export function _partsViewOnMouseDown(e, x, y) {
         host.selectTrackSessionSource(row.sourceId);
     } else {
         const idx = _arrIndexForTarget(row.targetId);
-        if ((idx >= 0 && isDrumArrangement(S.arrangements[idx])) || row.targetId === 'drums') {
+        if (_isDrumRow(idx, row.targetId)) {
             // A drum part (any of them) — arming is a no-op (currentArr never
             // moves onto a drums arrangement); double-click opens its grid.
             setStatus('Drum transcription selected — double-click to open the drum editor');
@@ -415,7 +418,11 @@ export function _partsViewOnMouseDown(e, x, y) {
                 trackId: row.id,
                 regionId: hitRegion,
                 region,
-                kind: row.targetId === 'drums' ? 'drums' : 'notation',
+                // Any drum part's row (its own arrangement, or the legacy
+                // unmaterialized 'drums' target) moves DRUM content — the
+                // command resolves the part's own tab from arrIdx, so dragging
+                // a non-active part never shifts the active grid's hits.
+                kind: _isDrumRow(rArrIdx, row.targetId) ? 'drums' : 'notation',
                 arrIdx: rArrIdx,
                 origStart: span.t0,
                 spanW: Math.max(0, span.t1 - span.t0),
@@ -456,6 +463,28 @@ export function _partsViewRegionDrop() {
     host.draw();
     host.updateStatus();
     setStatus(`Moved “${d.region.name || d.region.id}” ${dBeat > 0 ? 'later' : 'earlier'}`);
+}
+
+// Delete the selected region block — the Del/Backspace surface for the Tracks
+// view (input.js routes here through the host table). Removes the window AND
+// the content it owns as one undoable DeleteRegionCmd. Transcription rows only
+// — an audio region carries a two-clock media pointer and stays select-only
+// until the audio-region PR. Same kind/arrIdx resolution as the drag arming,
+// so a drum part's region always deletes ITS OWN hits. Returns true when it
+// consumed the key (a caller must then preventDefault).
+export function _partsViewRegionDelete() {
+    if (!S.partsViewMode || !S.selectedTrackId || !S.selectedRegionId || !S.history) return false;
+    const row = _unifiedRows().find(r => r.id === S.selectedTrackId);
+    if (!row || row.type !== 'transcription') return false;
+    const region = _trackRegionsResolvePure(row.regions).find(r => r.id === S.selectedRegionId);
+    if (!region) return false;
+    const arrIdx = _arrIndexForTarget(row.targetId);
+    const kind = _isDrumRow(arrIdx, row.targetId) ? 'drums' : 'notation';
+    S.history.exec(new DeleteRegionCmd({ kind, arrIdx, trackId: row.id, region }));
+    host.draw();
+    host.updateStatus();
+    setStatus(`Deleted region “${region.name || region.id}” and its notes — Undo restores it`);
+    return true;
 }
 
 export function _partsViewOnDblClick(e) {

@@ -36,7 +36,9 @@ import { drumArrangementIndex, findDrumArrangement, isDrumArrangement, pitchedAr
 import { _partViewKeyPure } from './keys.js';
 import { arrKind, _arrTypeKind } from './instrument.js';
 import { _mixerPanelRefresh, _mixerPartStatePure, mixerSetPart, mixerTogglePart } from './mixer-panel.js';
-import { _regionsAreDefaultPure, _trackRegionsNormalizePure } from './region.js';
+import { beatOf } from './beats.js';
+import { DEFAULT_REGION_ID, _placeAtStartBeatPure, _regionsAreDefaultPure, _trackRegionsNormalizePure } from './region.js';
+import { PlaceRegionCmd } from './region-commands.js';
 import { S, markSessionDirty } from './state.js';
 import { _editorEscHtml, setStatus } from './ui.js';
 
@@ -770,6 +772,39 @@ export function refreshTrackSession() {
 export function refreshTrackSessionSelection() {
     lastRender = '';
     refreshTrackSession();
+}
+
+// ── Import-into-existing: land a fresh part as a region (R3b) ─────────
+// After an import adopts a new part (a drum tab today; the arrangement paths
+// can reuse the same seam), surface it in the Tracks view as a SELECTED region
+// — optionally PLACING it (content slid so its first onset lands on the
+// resolved startBeat, a bounded window written, all one undoable edit) when
+// the dialog said "Bar 1" / "Playhead". `placeAt` ∈ {'keep','bar1','playhead'};
+// keep = no content motion and no persisted window — the implicit default
+// full-span region is already selectable + draggable, so selection is all it
+// needs. Reached through host.placeImportedPartAsRegion (arrangement.js sits
+// below this module in the import graph — the usual host-table seam).
+export function placeImportedPartAsRegion({ kind, arrIdx, placeAt = 'keep', items } = {}) {
+    if (!Number.isInteger(arrIdx) || arrIdx < -1) return false;
+    if (arrIdx === -1 && kind !== 'drums') return false;
+    // The fresh part's row must exist before a region/selection can land on it.
+    S.trackSession = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
+    const targetMixKey = arrIdx === -1 ? 'drums' : 'arr:' + arrIdx;
+    const target = _trackSessionTargetsPure(S.arrangements, S.drumTab)
+        .find(t => t.mixKey === targetMixKey);
+    if (!target) return false;
+    const trackId = transcriptionTrackId(target.id);
+    const startBeat = _placeAtStartBeatPure(placeAt, S.beats, S.cursorTime || 0, beatOf);
+    if (startBeat != null && S.history) {
+        S.history.exec(new PlaceRegionCmd({ kind, arrIdx, trackId, startBeat, items }));
+    } else {
+        S.selectedTrackId = trackId;
+        S.selectedRegionId = DEFAULT_REGION_ID;
+    }
+    lastRender = '';
+    refreshTrackSession();
+    host.draw();
+    return true;
 }
 function refreshTrackSelectionClass() {
     const el = panel();

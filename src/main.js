@@ -109,8 +109,8 @@ import {
     editorShowNewTrackModal
 } from './new-track.js';
 import {
-    _editorTogglePartsView, _partsViewDraw, _partsViewOnDblClick,
-    _partsViewOnMouseDown, _partsViewRegionDrag, _partsViewRegionDrop, _refreshPartsViewButton
+    _editorTogglePartsView, _partsViewDraw, _partsViewOnDblClick, _partsViewOnMouseDown,
+    _partsViewRegionDelete, _partsViewRegionDrag, _partsViewRegionDrop, _refreshPartsViewButton
 } from './parts-view.js';
 import { drawWaveform } from './waveform.js';
 import {
@@ -132,7 +132,7 @@ import { _tabViewHideIfShown, _tabViewPing, editorToggleTabView, teardownTabView
 import { initToolbars } from './toolbars.js';
 import { _applyToolCursor, editorToolPaletteClick } from './tools.js';
 import { editorStartTour, editorTourEscape, editorTourSkip, _tourAdvance, _tourNoteAction } from './tour.js';
-import { _trackSessionTargetsPure, initTrackSession, installCreatedTrackSession, refreshTrackSession, scrollTrackSessionBy, trackSessionOrderedMixKeys } from './track-session.js';
+import { _trackSessionTargetsPure, initTrackSession, installCreatedTrackSession, placeImportedPartAsRegion, refreshTrackSession, scrollTrackSessionBy, trackSessionOrderedMixKeys } from './track-session.js';
 import { editorDismissSignpost } from './signposts.js';
 import { _editorSongFit } from './song-fit.js';
 import { _transportBarTick, initTransportBar } from './transport-bar.js';
@@ -554,6 +554,7 @@ setHostHooks({
     partsViewOnDblClick: (...a) => _partsViewOnDblClick(...a),
     partsViewRegionDrag: (...a) => _partsViewRegionDrag(...a),
     partsViewRegionDrop: (...a) => _partsViewRegionDrop(...a),
+    partsViewRegionDelete: () => _partsViewRegionDelete(),
     resizeCanvas: (...a) => resizeCanvas(...a),
     editorCycleViewMode: (...a) => _editorCycleViewMode(...a),
     editorMovePart: (...a) => _editorMovePart(...a),
@@ -578,6 +579,9 @@ setHostHooks({
     },
     playAllTracksEnabled: () => editorPlayAllTracksEnabled(),
     stripUiChanged: () => _mixerPanelRefresh(),
+    // Import-into-existing (R3b): the import flows land a fresh part in the
+    // Tracks view as a selected (optionally placed) region.
+    placeImportedPartAsRegion: (opts) => placeImportedPartAsRegion(opts),
     // The stem-mixer capability signal: its PRESENCE flips stemMixerAvailable()
     // true (lighting up Solo-my-source and the audio-row strips). Re-ramps the
     // stem gains off S.partMix and repaints the surfaces.

@@ -23,6 +23,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Track regions — import a drum part into an existing project as a placed,
+  movable region.** The Add-Drums import (New Track ▸ Drums ▸ from a file, or
+  Track ▸ Drums…) now lands the imported part in the Tracks view **selected as
+  a region**, ready to drag — and a new **"Place at"** choice in the dialog
+  says where: **Keep source timing** (the default — the file's own timing, no
+  content motion), **Bar 1**, or **Playhead** (the whole part slides there as
+  one undoable step, snapped to the bar, beats preserved across tempo
+  changes). **Delete/Backspace** on a selected region block removes the block
+  and the notes it owns as one undoable step. Under the hood:
+  `PlaceRegionCmd` / `DeleteRegionCmd` (bounded window + verbatim-snapshot
+  undo, mirroring the move command) and a `placeImportedPartAsRegion`
+  orchestrator the import flows reach through the host table. Also fixes the region commands and the Tracks drag-arming for
+  **multi-drum songs**: a region on a drum part's track now always acts on
+  that part's own tab — never whichever part happens to be active in the drum
+  grid (dragging an extra part's block used to move nothing at all).
+
 - **Multiple drum parts now work when creating a new song too.** The several-
   drum-parts feature previously covered only songs you re-open and Save; a
   *create-mode* session (New Song from a Guitar Pro / MIDI import) was capped at

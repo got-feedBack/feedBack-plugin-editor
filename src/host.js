@@ -224,6 +224,19 @@ export const host = {
     partMixChanged: () => {},
     /** The visible audio-source roster changed (remove/restore/import/rename). */
     audioSourcesChanged: () => {},
+    /**
+     * Land a freshly-imported part in the Tracks view as a selected region,
+     * optionally placed at bar 1 / the playhead (R3b). Owned by
+     * src/track-session.js; the import flows (arrangement.js) reach it here
+     * because track-session imports arrangement — the usual seam inversion.
+     */
+    placeImportedPartAsRegion: () => false,
+    /**
+     * Del/Backspace in the Tracks view: delete the selected region block
+     * (content + window, one undoable step). Owned by src/parts-view.js;
+     * input.js's Delete ladder asks here. False = key not consumed.
+     */
+    partsViewRegionDelete: () => false,
     stripUiChanged: () => {},
     /** The persisted band-mode pref, read by the panel's header toggle. */
     playAllTracksEnabled: () => false,

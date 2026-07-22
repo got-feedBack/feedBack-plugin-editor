@@ -12,7 +12,7 @@ import { _editorEscHtml, _editorPromptText, setStatus } from './ui.js';
 import { flattenChords } from './chords.js';
 import { KEYS_PATTERN } from './keys.js';
 import { _arrTypeKind, _typeKind } from './instrument.js';
-import { addDrumArrangement, clampAwayFromDrums, findDrumArrangement, isDrumArrangement, pitchedArrangementCount, pitchedIndexOf, syncDrumArrangement } from './drum-arrangement.js';
+import { activeDrumArrangementIndex, addDrumArrangement, clampAwayFromDrums, findDrumArrangement, isDrumArrangement, pitchedArrangementCount, pitchedIndexOf, syncDrumArrangement } from './drum-arrangement.js';
 import { _recState } from './midi-record.js';
 import { _maybeOfferMidiTempoMap, _showDrumImportUnmappedModal } from './import.js';
 import { host } from './host.js';
@@ -313,6 +313,14 @@ export function editorShowAddDrumsModal() {
                 : 'This song already has a drum track — importing will replace it.';
         }
     }
+    // "Place at": default to the file's own timing on every open. Hidden in
+    // create mode — a create session can hold several drum parts now (#343),
+    // but region PLACEMENT there stays deferred until the create build path
+    // proves it round-trips regions[]; the import still lands selected.
+    const placeRow = document.getElementById('editor-add-drums-place-row');
+    if (placeRow) placeRow.classList.toggle('hidden', !!S.createMode);
+    const placeSel = document.getElementById('editor-add-drums-place');
+    if (placeSel) placeSel.value = 'keep';
 }
 
 // Can a SECOND (third, …) drum part be added — i.e. does a drum import ADD
@@ -499,6 +507,20 @@ export async function editorDoAddDrums() {
         // Reflect the imported tab in S.arrangements[] — beside a pitched
         // part only (a drums-only session must not put drums at index 0).
         if (pitchedArrangementCount(S.arrangements) > 0) syncDrumArrangement(S);
+
+        // Land the fresh part in the Tracks view as a selected region — placed
+        // at bar 1 / the playhead when the dialog said so, else left at the
+        // source file's own timing (R3b import-into-existing). Create mode
+        // forces 'keep' (its Place-at row is hidden — placement is deferred
+        // until the create build path proves it round-trips regions[]), so
+        // there the import lands selected at source timing.
+        const placeSel = document.getElementById('editor-add-drums-place');
+        host.placeImportedPartAsRegion({
+            kind: 'drums',
+            arrIdx: activeDrumArrangementIndex(S.arrangements, tab),
+            placeAt: (placeSel && !S.createMode) ? placeSel.value : 'keep',
+            items: Array.isArray(tab.hits) ? tab.hits.slice() : [],
+        });
 
         editorHideAddDrumsModal();
         const hitCount = Array.isArray(data.drum_tab.hits)
