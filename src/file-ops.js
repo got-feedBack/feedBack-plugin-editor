@@ -934,9 +934,11 @@ export async function editorSaveAs() {
     }
 
     // Create mode prepares a session-scoped package without publishing it.
-    const saved = S.format === 'archive'
-        ? await editorSaveAsSloppakConfirm()
-        : await saveCDLC({ skipExternal: true });
+    const saved = S.createMode
+        ? await saveCDLC({ skipExternal: true })
+        : (S.format === 'archive'
+            ? await editorSaveAsSloppakConfirm()
+            : await saveCDLC({ skipExternal: true }));
     if (!saved) {
         await _removeEmptyPickedFile(handle);   // don't strand a 0-byte husk
         return false;

@@ -122,6 +122,24 @@ def test_omitted_destination_preserves_library_build(build_routes):
     assert routes._sessions["create"]["filename"] == expected.name
 
 
+def test_library_build_removes_previous_private_save_generation(build_routes):
+    routes, app, dlc, session_dir = build_routes
+    first = asyncio.run(app.routes["/api/plugins/editor/build"](
+        _payload(destination="session")))
+    assert first["success"] is True
+    previous = Path(routes._sessions["create"]["export_path"])
+    assert previous.parent == session_dir
+    assert previous.is_file()
+
+    second = asyncio.run(app.routes["/api/plugins/editor/build"](
+        _payload(destination="library")))
+    assert second["success"] is True
+    assert list(dlc.iterdir()), "the explicit library export still publishes"
+    assert not previous.exists(), "the superseded private generation is reclaimed"
+    assert "export_path" not in routes._sessions["create"]
+    assert "export_filename" not in routes._sessions["create"]
+
+
 def test_unknown_destination_is_rejected_before_writing(build_routes):
     _routes, app, dlc, session_dir = build_routes
     response = asyncio.run(app.routes["/api/plugins/editor/build"](

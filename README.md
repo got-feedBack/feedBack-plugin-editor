@@ -56,10 +56,12 @@ read this top-to-bottom once — the architecture section saves real time.
   (candidate positions from the suggest-position resolver, click to assign),
   a drum kit / pad strip (GM-mapped, MIDI-monitor capable), and advisory
   playability/limb lints that name physical questions without ever blocking.
-- **Save and export are separate** — Save preserves the editable `.feedpak`
-  project at the location you choose. **Export to Library** assembles and
-  publishes a playable library copy through the host's core libraries. Export
-  never pretends that unsaved project edits were saved.
+- **Save and export are separate** — with the native file picker, Save preserves
+  the editable `.feedpak` project at the location you choose and reuses that
+  destination. Browser fallback downloads a copy but keeps the project marked
+  unsaved because download completion cannot be verified. **Export to Library**
+  assembles and publishes a playable library copy through the host's core
+  libraries; export never pretends that unsaved project edits were saved.
 
 ## Layout
 

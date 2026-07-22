@@ -26,7 +26,7 @@ globalThis.localStorage = globalThis.localStorage || {
 globalThis.window = globalThis.window || globalThis;
 globalThis.document = globalThis.document || { getElementById: () => null };
 
-const { editorSave, saveCDLC, _removeEmptyPickedFile, _suggestedSaveNamePure } =
+const { editorSave, editorSaveAs, saveCDLC, _removeEmptyPickedFile, _suggestedSaveNamePure } =
     await import('../src/file-ops.js');
 const { _drumBuildPayloadPure, editorBuild } = await import('../src/create.js');
 const { S } = await import('../src/state.js');
@@ -121,6 +121,37 @@ await t('first Save picks a durable project file; later Save reuses it', async (
     assert.strictEqual(pickerCalls, 1, 'the second Save reuses the chosen handle');
     assert.strictEqual(writes.length, 2);
     assert.strictEqual(S.sessionDirty, false);
+    delete window.showSaveFilePicker;
+});
+
+await t('archive-format create Save As stays session-only instead of publishing', async () => {
+    seedCreateSession();
+    S.format = 'archive';
+    const writes = [];
+    const handle = {
+        createWritable: async () => ({
+            write: async blob => { writes.push(blob); },
+            close: async () => {},
+            abort: async () => {},
+        }),
+    };
+    window.showSaveFilePicker = async () => handle;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+        calls.push({ url: String(url), body: opts?.body ? JSON.parse(opts.body) : null });
+        if (String(url).includes('/session/export')) {
+            return { ok: true, blob: async () => ({ package: 'session' }) };
+        }
+        return { json: async () => ({ success: true, filename: 'project.feedpak' }) };
+    };
+
+    assert.strictEqual(await editorSaveAs(), true);
+    const build = calls.find(call => call.url.endsWith('/api/plugins/editor/build'));
+    assert.ok(build, 'create-mode Save As prepares through /build');
+    assert.strictEqual(build.body.destination, 'session');
+    assert.strictEqual(calls.some(call => call.url.includes('/save_as_sloppak')), false,
+        'archive-format create mode must not publish through the legacy conversion route');
+    assert.strictEqual(writes.length, 1, 'the private package reaches only the picked file');
     delete window.showSaveFilePicker;
 });
 

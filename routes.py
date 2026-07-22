@@ -8833,7 +8833,7 @@ def setup(app, context):
         else:
             session.pop("export_path", None)
             session.pop("export_filename", None)
-        if destination == "session" and previous_export:
+        if previous_export:
             previous = Path(previous_export)
             if previous != Path(output_path):
                 try:

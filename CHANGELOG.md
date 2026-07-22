@@ -11,11 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Save is now project persistence; Export to Library is publishing.** Importing
   files creates only an unsaved editing session. A new project's first Save
-  chooses a `.feedpak` name and location, later saves reuse it, and no library
-  file is created until the explicit Export to Library action. Exporting no
-  longer clears unsaved project changes. The editor's own Back button now uses
-  the Save / Don't Save / Cancel guard; complete shell navigation and desktop
-  app-exit guarding still require a cancellable host navigation/close contract.
+  chooses a `.feedpak` name and location through the native picker, later saves
+  reuse it, and no library file is created until the explicit Export to Library
+  action. In browsers without the native picker, Save downloads a copy but
+  keeps the project marked unsaved because completion cannot be verified.
+  Exporting no longer clears unsaved project changes. The editor's own Back
+  button now uses the Save / Don't Save / Cancel guard; complete shell navigation
+  and desktop app-exit guarding still require a cancellable host navigation/close contract.
 
 - **The Legacy (EOF) profile is now a faithful port of EOF's pro-guitar keyset,
   pinned to the reference.** F1 opens help, Ctrl+1-9 / Ctrl+0 / Ctrl+` set frets
