@@ -22,7 +22,7 @@
 // ════════════════════════════════════════════════════════════════════
 import { beatOf, timeOf } from './beats.js';
 import {
-    _nextRegionIdPure, _regionContainsBeatPure, _regionRemapPure,
+    DEFAULT_REGION_ID, _nextRegionIdPure, _regionContainsBeatPure, _regionRemapPure,
     _trackRegionsNormalizePure, _trackRegionsResolvePure,
 } from './region.js';
 import { S } from './state.js';
@@ -218,13 +218,14 @@ export class PlaceRegionCmd {
     // `kind`: 'notation' places S.arrangements[arrIdx].notes; 'drums' places
     // S.drumTab.hits. `startBeat` is the snapped bar/beat the block lands on.
     // `regionId`/`name` are optional (id defaults to the track's next free one).
-    constructor({ kind, arrIdx, trackId, startBeat, regionId, name } = {}) {
+    constructor({ kind, arrIdx, trackId, startBeat, regionId, name, items } = {}) {
         this.kind = kind;
         this.arrIdx = arrIdx;
         this.trackId = trackId;
         this.startBeat = Math.max(0, Number(startBeat) || 0);
         this.regionId = (typeof regionId === 'string' && regionId.trim()) ? regionId.trim() : null;
         this.name = (typeof name === 'string' && name.trim()) ? name.trim().slice(0, 120) : null;
+        this.items = Array.isArray(items) ? items.slice() : null;
         // A placement changes only WHEN content plays, never pitch — passes the
         // read-only-roll lock like MoveRegionCmd. Drum content is song-level.
         this.pitchPreserving = true;
@@ -237,12 +238,19 @@ export class PlaceRegionCmd {
     }
 
     exec() {
+        const track = _findTrack(this.trackId);
+        if (!track) return;
         const list = _contentList(this.kind, this.arrIdx);
         if (!list || !list.length) return;                 // nothing to place
+        const itemSet = this.items ? new Set(this.items) : null;
+        const targets = itemSet
+            ? list.filter(it => itemSet.has(it))
+            : list;
+        if (!targets.length) return;
         this._before = list.slice();
         const isDrums = this.kind === 'drums';
-        const times = list.map(it => Number(_timeOfItem(this.kind, it)) || 0);
-        const sustains = list.map(it => (isDrums ? 0 : Math.max(0, Number(it.sustain) || 0)));
+        const times = targets.map(it => Number(_timeOfItem(this.kind, it)) || 0);
+        const sustains = targets.map(it => (isDrums ? 0 : Math.max(0, Number(it.sustain) || 0)));
         // Beat extent of the content as imported (independent of the shift — a
         // musical move preserves beat span, so lenBeat is computed once here).
         let minBeat = Infinity; let maxOnset = -Infinity; let maxEnd = -Infinity;
@@ -255,33 +263,38 @@ export class PlaceRegionCmd {
         }
         if (!Number.isFinite(minBeat)) return;
         const dBeat = this.startBeat - minBeat;
-        this._snap = list.map((it, i) => ({ item: it, time: times[i], sustain: sustains[i] }));
+        const onsetSpan = Math.max(0, maxOnset - minBeat);
+        let lenBeat = maxEnd - minBeat;
+        if (!(lenBeat > onsetSpan)) lenBeat = onsetSpan + REGION_LEN_GUARD;
+        const existing = _trackRegionsNormalizePure(track.regions);
+        const existingIds = new Set(existing.map(region => region.id));
+        existingIds.add(DEFAULT_REGION_ID);
+        this._placedId = this.regionId && !existingIds.has(this.regionId)
+            ? this.regionId
+            : _nextRegionIdPure(existing);
+        const region = { id: this._placedId, startBeat: this.startBeat, lenBeat };
+        if (this.name) region.name = this.name;
+        const nextRegions = _trackRegionsNormalizePure([...existing, region]);
+        if (!nextRegions.some(item => item.id === this._placedId)) return;
+
+        this._snap = targets.map((it, i) => ({ item: it, time: times[i], sustain: sustains[i] }));
         // Slide the content (skip the beat round trip when it wouldn't move —
         // routing dBeat 0 through beats perturbs every note by an epsilon).
         if (dBeat !== 0) {
             const { times: nt, sustains: ns } = _regionRemapPure(times, sustains, dBeat, S.beats, beatOf, timeOf);
             if (isDrums) {
-                list.forEach((h, i) => { h.t = nt[i]; });
+                targets.forEach((h, i) => { h.t = nt[i]; });
                 list.sort((a, b) => (a.t || 0) - (b.t || 0));
             } else {
-                list.forEach((n, i) => { n.time = nt[i]; n.sustain = ns[i]; });
+                targets.forEach((n, i) => { n.time = nt[i]; n.sustain = ns[i]; });
                 list.sort((a, b) => (a.time || 0) - (b.time || 0));
             }
         }
         if (isDrums) S.drumTabDirty = true;
         // The bounded window covering the placed content (guarded so a zero-
         // sustain tail onset stays strictly inside — see REGION_LEN_GUARD).
-        const onsetSpan = Math.max(0, maxOnset - minBeat);
-        let lenBeat = maxEnd - minBeat;
-        if (!(lenBeat > onsetSpan)) lenBeat = onsetSpan + REGION_LEN_GUARD;
-        const track = _findTrack(this.trackId);
-        if (track) {
-            this._regionBefore = _snapRegions(track);
-            this._placedId = this.regionId || _nextRegionIdPure(track.regions);
-            const region = { id: this._placedId, startBeat: this.startBeat, lenBeat };
-            if (this.name) region.name = this.name;
-            track.regions = _trackRegionsNormalizePure([..._trackRegionsNormalizePure(track.regions), region]);
-        }
+        this._regionBefore = _snapRegions(track);
+        track.regions = nextRegions;
         // Land selected — a placed region arrives ready to drag (design R3).
         this._sel = { taken: true, track: S.selectedTrackId, region: S.selectedRegionId };
         S.selectedTrackId = this.trackId;
@@ -328,6 +341,10 @@ export class DeleteRegionCmd {
     }
 
     exec() {
+        const regionId = typeof this.region.id === 'string' ? this.region.id.trim() : '';
+        if (!regionId || regionId.length > 160) return;
+        const track = _findTrack(this.trackId);
+        if (!track) return;
         const list = _contentList(this.kind, this.arrIdx);
         if (!list) return;
         this._before = list.slice();
@@ -339,12 +356,9 @@ export class DeleteRegionCmd {
         list.length = 0;
         for (const it of keep) list.push(it);
         if (this.kind === 'drums') S.drumTabDirty = true;
-        const track = _findTrack(this.trackId);
-        if (track) {
-            this._regionBefore = _snapRegions(track);
-            const remaining = _trackRegionsNormalizePure(track.regions).filter(r => r.id !== this.region.id);
-            track.regions = _trackRegionsNormalizePure(remaining);
-        }
+        this._regionBefore = _snapRegions(track);
+        const remaining = _trackRegionsNormalizePure(track.regions).filter(r => r.id !== regionId);
+        track.regions = _trackRegionsNormalizePure(remaining);
         this._sel = { taken: true, track: S.selectedTrackId, region: S.selectedRegionId };
         if (S.selectedRegionId === this.region.id) S.selectedRegionId = '';
     }

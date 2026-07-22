@@ -519,6 +519,7 @@ export async function editorDoAddDrums() {
             kind: 'drums',
             arrIdx: activeDrumArrangementIndex(S.arrangements, tab),
             placeAt: (placeSel && !S.createMode) ? placeSel.value : 'keep',
+            items: Array.isArray(tab.hits) ? tab.hits.slice() : [],
         });
 
         editorHideAddDrumsModal();

@@ -170,6 +170,44 @@ t('place drums: hits slide, a region lands on the drum track, tab dirtied; round
     assert.deepStrictEqual(drumTab.hits, before, 'rollback restores hits EXACTLY');
     assert.ok(!('regions' in track), 'and removes the region key');
 });
+t('place scopes motion and bounds to imported items on a populated drum track', () => {
+    const existing = { t: 0.25, p: 36 };
+    const imported = [{ t: 1.0, p: 38 }, { t: 1.5, p: 42 }];
+    const drumTab = seedDrums({ hits: [existing, ...imported] });
+    const cmd = new PlaceRegionCmd({
+        kind: 'drums', trackId: 'transcription:drums', startBeat: 4, items: imported,
+    });
+    cmd.exec();
+    assert.strictEqual(existing.t, 0.25, 'pre-existing hit stays put');
+    assert.deepStrictEqual(imported.map(hit => hit.t), [2.0, 2.5], 'only imported hits move');
+    assert.deepStrictEqual(S.trackSession.tracks[0].regions,
+        [{ id: 'region:2', startBeat: 4, lenBeat: 1.0001 }], 'bounds cover only imported hits');
+    cmd.rollback();
+    assert.deepStrictEqual(drumTab.hits.map(hit => hit.t), [0.25, 1.0, 1.5], 'rollback is exact');
+});
+
+t('place is atomic for a missing track and avoids an explicit id collision', () => {
+    const arr = seedNotation({
+        notes: [note(0.5)],
+        regions: [{ id: 'taken', startBeat: 0, lenBeat: 1 }],
+    });
+    const before = clone(arr.notes);
+    S.selectedTrackId = 'before';
+    S.selectedRegionId = 'before-region';
+    new PlaceRegionCmd({
+        kind: 'notation', arrIdx: 0, trackId: 'missing', startBeat: 4, regionId: 'new',
+    }).exec();
+    assert.deepStrictEqual(arr.notes, before, 'missing track leaves content untouched');
+    assert.strictEqual(S.selectedRegionId, 'before-region', 'missing track leaves selection untouched');
+
+    new PlaceRegionCmd({
+        kind: 'notation', arrIdx: 0, trackId: 'transcription:Lead', startBeat: 4, regionId: 'taken',
+    }).exec();
+    const ids = S.trackSession.tracks[0].regions.map(region => region.id);
+    assert.deepStrictEqual(ids.sort(), ['region:2', 'taken'], 'collision falls back to a free generated id');
+    assert.strictEqual(S.selectedRegionId, 'region:2', 'selection names the inserted region');
+});
+
 
 // ── DeleteRegionCmd: notation ─────────────────────────────────────────
 t('delete: removes only the block’s notes + its entry; leaves neighbours; round-trips', () => {
@@ -193,6 +231,21 @@ t('delete: removes only the block’s notes + its entry; leaves neighbours; roun
     cmd.exec();
     assert.deepStrictEqual(arr.notes.map(n => n.time), [0.5], 'redo re-deletes');
 });
+t('delete with a malformed region or missing track is a true no-op', () => {
+    const regions = [{ id: 'A', startBeat: 0, lenBeat: 4 }];
+    const arr = seedNotation({ notes: [note(0.5)], regions });
+    const before = clone(arr.notes);
+    const trackBefore = clone(S.trackSession.tracks[0]);
+    new DeleteRegionCmd({
+        kind: 'notation', arrIdx: 0, trackId: 'transcription:Lead', region: { startBeat: 0, lenBeat: 4 },
+    }).exec();
+    new DeleteRegionCmd({
+        kind: 'notation', arrIdx: 0, trackId: 'missing', region: regions[0],
+    }).exec();
+    assert.deepStrictEqual(arr.notes, before, 'content stays untouched');
+    assert.deepStrictEqual(S.trackSession.tracks[0], trackBefore, 'region state stays untouched');
+});
+
 
 t('delete respects the end-exclusive window (a note ON the boundary is a neighbour’s)', () => {
     // Region [0,4): owns beats 0..3; the note at beat 4 belongs to the next block.

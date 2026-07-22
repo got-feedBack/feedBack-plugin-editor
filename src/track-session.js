@@ -784,7 +784,7 @@ export function refreshTrackSessionSelection() {
 // full-span region is already selectable + draggable, so selection is all it
 // needs. Reached through host.placeImportedPartAsRegion (arrangement.js sits
 // below this module in the import graph — the usual host-table seam).
-export function placeImportedPartAsRegion({ kind, arrIdx, placeAt = 'keep' } = {}) {
+export function placeImportedPartAsRegion({ kind, arrIdx, placeAt = 'keep', items } = {}) {
     if (!Number.isInteger(arrIdx) || arrIdx < 0) return false;
     // The fresh part's row must exist before a region/selection can land on it.
     S.trackSession = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
@@ -794,7 +794,7 @@ export function placeImportedPartAsRegion({ kind, arrIdx, placeAt = 'keep' } = {
     const trackId = transcriptionTrackId(target.id);
     const startBeat = _placeAtStartBeatPure(placeAt, S.beats, S.cursorTime || 0, beatOf);
     if (startBeat != null && S.history) {
-        S.history.exec(new PlaceRegionCmd({ kind, arrIdx, trackId, startBeat }));
+        S.history.exec(new PlaceRegionCmd({ kind, arrIdx, trackId, startBeat, items }));
     } else {
         S.selectedTrackId = trackId;
         S.selectedRegionId = DEFAULT_REGION_ID;
