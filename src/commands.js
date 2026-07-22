@@ -35,6 +35,7 @@ import { _clearSuggested, _isSuggested, _markSuggested, notes, rescaleBendCurveT
 import {
     _absolutePitch, _cyclePositionCandidatesPure, _cycleStepPure, _suggestPositionPure,
 } from './position.js';
+import { cloneRhythm } from './rhythm-value.js';
 import { SNAP_VALUES, _editorEffectiveSnapValuePure, _editorSnapSubdivisionsPure } from './snap.js';
 import { S } from './state.js';
 import { setStatus } from './ui.js';
@@ -431,6 +432,47 @@ export class SetTechScalarCmd {
             if (!n.techniques) n.techniques = {};
             n.techniques[this.key] = this.old[k].v;
             if (this.key === 'bend') n.techniques.bend_values = this.old[k].bnv;
+        });
+    }
+}
+
+// Set (or clear, with value=null) the notated rhythm VALUE on a selection as one
+// undoable edit — the foundation command of the note-value model
+// (NOTE-VALUE-MODEL-DESIGN §12 slice 1). `rhythm` is a TOP-LEVEL runtime field,
+// NOT a technique (the `_NOTE_TECH_*` machinery is scalar/bool and drives the
+// content signature; value must stay off it, §5). Snapshots the prior per-note
+// rhythm, preserving the ABSENT-vs-present distinction with a sentinel, so undo
+// restores it exactly — including "there was no value here." The value is cloned
+// per note so two notes never share one mutable rhythm object (the bend_values
+// aliasing trap).
+const _RHYTHM_ABSENT = Symbol('rhythm-absent');
+export class SetRhythmValueCmd {
+    constructor(indices, value) {
+        this.indices = indices.slice();
+        this.value = cloneRhythm(value);   // canonical clone (or null to clear)
+        const nn = notes();
+        this.old = this.indices.map(i => {
+            const n = nn[i];
+            return (n && 'rhythm' in n) ? n.rhythm : _RHYTHM_ABSENT;
+        });
+    }
+    exec() {
+        const nn = notes();
+        for (const i of this.indices) {
+            const n = nn[i];
+            if (!n) continue;
+            if (this.value == null) delete n.rhythm;
+            else n.rhythm = cloneRhythm(this.value);   // fresh per note — no aliasing
+        }
+    }
+    rollback() {
+        const nn = notes();
+        this.indices.forEach((i, k) => {
+            const n = nn[i];
+            if (!n) return;
+            const prev = this.old[k];
+            if (prev === _RHYTHM_ABSENT || prev == null) delete n.rhythm;
+            else n.rhythm = prev;
         });
     }
 }
