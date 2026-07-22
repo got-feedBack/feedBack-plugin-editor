@@ -428,7 +428,7 @@ function _wire(panel) {
                 : 'Track unmuted')
             : (now.solo
                 ? (isAudio
-                    ? 'Track soloed — the other audio tracks (master mix included) and unsoloed guide voices are silent'
+                    ? 'Track soloed — unsoloed audio tracks and unsoloed guide voices are silent'
                     : 'Track soloed — other tracks’ guide voices are silent; the recording stays audible')
                 : 'Solo off'));
     });
