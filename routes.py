@@ -2746,34 +2746,121 @@ def _valid_handshape_dicts(seq):
     return out
 
 
-def _compute_anchors(notes, chords):
-    """Auto-generate anchors from note fret positions."""
-    all_fretted = []
-    for n in notes:
-        if n["fret"] > 0:
-            all_fretted.append((n["time"], n["fret"]))
-    for ch in chords:
-        for cn in ch.get("notes", []):
-            if cn["fret"] > 0:
-                all_fretted.append((cn["time"], cn["fret"]))
+# Fret-hand anchor generation ------------------------------------------------
+#
+# An anchor {time, fret, width} places the fret hand's index at `fret`,
+# reaching notes across the INCLUSIVE span [fret, fret + width]. `width` is
+# the playable span (max fret minus min fret the hand covers) — the same
+# width semantics the stretch lint (`span > width`) and the highway read,
+# NOT a half-open count.
+_ANCHOR_WIDTH = 4
 
-    all_fretted.sort(key=lambda x: x[0])
 
-    if not all_fretted:
-        return [{"time": 0.0, "fret": 1, "width": 4}]
+def _fretted_groups(notes, chords):
+    """Simultaneous fretted-note groups as (time, lo, hi) tuples, time-sorted.
 
-    anchors = [{
-        "time": 0.0,
-        "fret": max(1, all_fretted[0][1] - 1),
-        "width": 4,
-    }]
+    Open strings (fret <= 0) need no hand position and are skipped. Notes and
+    chord-notes that sound at one time collapse into ONE group: the hand has
+    to span them together, so the anchor window must contain the whole
+    [lo, hi] at once — unlike the old flat pass, which walked chord notes
+    individually and could "relocate" the hand in the middle of a chord.
+    Coincident single notes merge the same way.
+    """
+    groups = {}  # rounded time -> [lo, hi]
 
-    for t, fret in all_fretted:
-        a = anchors[-1]
-        if fret < a["fret"] or fret > a["fret"] + a["width"]:
-            new_fret = max(1, fret - 1)
-            if new_fret != a["fret"]:
-                anchors.append({"time": t, "fret": new_fret, "width": 4})
+    def _add(t, raw_fret):
+        fret = _safe_int(raw_fret, 0)
+        if fret <= 0:
+            return
+        key = round(_safe_float(t, 0.0), 6)
+        g = groups.get(key)
+        if g is None:
+            groups[key] = [fret, fret]
+        else:
+            g[0] = min(g[0], fret)
+            g[1] = max(g[1], fret)
+
+    for n in notes or []:
+        _add(n.get("time"), n.get("fret"))
+    for ch in chords or []:
+        ct = ch.get("time")
+        for cn in ch.get("notes", []) or []:
+            _add(cn.get("time", ct), cn.get("fret"))
+
+    return [(t, lo, hi) for t, (lo, hi) in sorted(groups.items())]
+
+
+def _compute_anchors(notes, chords, width=_ANCHOR_WIDTH):
+    """Auto-generate fret-hand anchors from note positions.
+
+    Picks a MINIMAL sequence of hand positions (each shift is one anchor)
+    covering the fretted notes. Two properties the old single forward-greedy
+    pass lacked:
+
+      * Look-ahead placement — each run is grown to the longest span of
+        consecutive note-groups that still fits ONE width-`width` window
+        *before* its fret is chosen, so e.g. frets 3, 1, 5 resolve to a
+        single anchor at fret 1 instead of relocating on the way down.
+      * Outlier tolerance (anti-thrash) — a lone note-group that jumps
+        outside the current window but is immediately followed by a return
+        to it is charted as a *reach*, not a position change, so a single
+        high grace note no longer forces two spurious shifts (up, then back).
+        A sustained excursion (>= 2 groups) is still a real move.
+
+    Pure and deterministic — unit-tested directly. `width` is a parameter for
+    tests only; both callers use the default.
+    """
+    groups = _fretted_groups(notes, chords)
+    if not groups:
+        return [{"time": 0.0, "fret": 1, "width": width}]
+
+    def _place(lo, hi):
+        # Keep one comfort fret below the run's lowest note when the run does
+        # not already fill the full width, but never let the window slip below
+        # the top note (fret >= hi - width) or below fret 1.
+        return max(1, max(hi - width, lo - 1))
+
+    anchors = []
+    i, ng = 0, len(groups)
+    while i < ng:
+        start_time, win_lo, win_hi = groups[i]
+        j = i + 1
+        while j < ng:
+            _, glo, ghi = groups[j]
+            new_lo, new_hi = min(win_lo, glo), max(win_hi, ghi)
+            if new_hi - new_lo <= width:
+                win_lo, win_hi = new_lo, new_hi
+                j += 1
+                continue
+            # groups[j] breaks the window. Absorb it as a single-group reach
+            # iff its own notes fit a hand-span (not a wide chord no position
+            # could hold) AND there is positive evidence of a return: the very
+            # next group is back inside the current window. A breaking group
+            # with nothing (or another out-of-window group) after it is a
+            # genuine position change, not a lone reach, so it starts a new
+            # run — that lone forward move is not thrash.
+            reachable = (ghi - glo) <= width
+            nxt = groups[j + 1] if j + 1 < ng else None
+            # Compare the return against the effective placed window, which
+            # includes the comfort margin around the raw run bounds.
+            tentative_fret = _place(win_lo, win_hi)
+            returns = (nxt is not None
+                       and tentative_fret <= nxt[1]
+                       and nxt[2] <= tentative_fret + width)
+            if reachable and returns:
+                j += 1
+                continue
+            break
+
+        fret = _place(win_lo, win_hi)
+        # The first anchor always covers t=0 so the hand has a position from
+        # the start; a shift landing on the previous anchor's fret is not a
+        # real move (both runs fit that one window) and is dropped.
+        if not anchors:
+            anchors.append({"time": 0.0, "fret": fret, "width": width})
+        elif anchors[-1]["fret"] != fret:
+            anchors.append({"time": start_time, "fret": fret, "width": width})
+        i = j
 
     return anchors
 

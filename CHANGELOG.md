@@ -50,6 +50,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing behavior, so a bare scroll can never edit. Every other profile is untouched.
 ### Changed
 
+- **The auto fret-hand anchor engine now looks ahead and stops thrashing on lone
+  notes.** `_compute_anchors` was a single forward-greedy pass — fixed width 4,
+  no look-ahead, relocating one fret below any note that fell outside the current
+  window — so it split positions it didn't need to (frets 3, 1, 5 became two
+  anchors instead of one at fret 1) and *thrashed* on a single high grace note,
+  emitting an up-then-back pair of shifts for one reached note. It now grows each
+  run to the longest span of consecutive note-groups that still fits one window
+  before choosing the fret (so 3, 1, 5 is one anchor at fret 1), and tolerates a
+  lone out-of-window group whose next note returns to the window as a *reach*
+  rather than a position change (a real ≥2-note excursion still moves). Chord
+  notes and coincident notes are now grouped by time so the hand can no longer
+  "relocate" in the middle of a chord. Auto anchors feed position-suggest,
+  chord-grip, fingering and the stretch/legato lints, so all of them get steadier
+  positions; the `{time, fret, width}` shape and inclusive-`width` semantics are
+  unchanged. Pure and covered by `tests/test_anchor_compute.py`.
+
 - **Redesigned the Tracks-view region blocks as glass banners.** A region now
   reads as a proper titled object: a translucent kind-colour title band across the
   top (blue master / teal stem / green guitar / orange bass / purple drums / ice
