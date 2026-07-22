@@ -24,9 +24,10 @@ import {
     _updateTonesButtonVisibility,
 } from './annotation-lanes.js';
 import { _handshapesAreDirty, flattenChords, reconstructChords } from './chords.js';
-import { adoptDrumParts, isDrumArrangement, pitchedArrangementCount, syncDrumArrangement } from './drum-arrangement.js';
+import { isDrumArrangement, pitchedArrangementCount, syncDrumArrangement } from './drum-arrangement.js';
 import { importMidiDrumTracksIntoSession } from './arrangement.js';
 import { EditHistory } from './history.js';
+import { adoptDrumParts } from './drum-arrangement.js';
 import { host } from './host.js';
 import { isKeysMode, updatePianoRange } from './keys.js';
 import { arrKind } from './instrument.js';
