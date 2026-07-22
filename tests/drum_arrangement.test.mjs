@@ -28,6 +28,7 @@ import {
     activeDrumArrangementIndex, addDrumArrangement, adoptDrumParts, drumArrangements,
 } from '../src/drum-arrangement.js';
 import { _trackSessionTargetsPure } from '../src/track-session.js';
+import { _drumImportTargetTabPure } from '../src/import.js';
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -271,6 +272,19 @@ t('adoptDrumParts: load-time extras keep their persisted ids and sort their hits
     assert.strictEqual(parts[2].id, 'drums-2', 'colliding id re-assigned, never a duplicate');
     assert.strictEqual(activeDrumArrangementIndex(S.arrangements, S.drumTab), 1,
         'the primary stays the active grid target');
+});
+
+t('unmapped GP percussion resolves to the drum part that owned it', () => {
+    const S = { arrangements: [gtr('Lead')], drumTab: tab() };
+    syncDrumArrangement(S);
+    adoptDrumParts(S, [
+        { id: 'aux', name: 'Aux', drum_tab: tab({ name: 'Aux', hits: [] }) },
+    ]);
+    const parts = drumArrangements(S.arrangements);
+    assert.strictEqual(_drumImportTargetTabPure(S, 0), parts[0].drumTab);
+    assert.strictEqual(_drumImportTargetTabPure(S, 1), parts[1].drumTab);
+    assert.strictEqual(_drumImportTargetTabPure(S, 99), S.drumTab,
+        'malformed/legacy part metadata safely falls back to the primary');
 });
 
 t('syncDrumArrangement with SEVERAL parts: a null active tab never mass-deletes', () => {

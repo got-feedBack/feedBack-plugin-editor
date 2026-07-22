@@ -27,6 +27,7 @@ import { _handshapesAreDirty, flattenChords, reconstructChords } from './chords.
 import { isDrumArrangement, pitchedArrangementCount, syncDrumArrangement } from './drum-arrangement.js';
 import { importMidiDrumTracksIntoSession } from './arrangement.js';
 import { EditHistory } from './history.js';
+import { adoptDrumParts } from './drum-arrangement.js';
 import { host } from './host.js';
 import { isKeysMode, updatePianoRange } from './keys.js';
 import { arrKind } from './instrument.js';
@@ -2470,7 +2471,17 @@ export async function editorApplyCreateResult(data) {
     // sessions as well — but ONLY beside a pitched part: a drums-only import
     // must not put a drums arrangement at index 0, where the default
     // currentArr would land on it (it stays a legacy off-array tab instead).
-    if (pitchedArrangementCount(S.arrangements) > 0) syncDrumArrangement(S);
+    if (pitchedArrangementCount(S.arrangements) > 0) {
+        syncDrumArrangement(S);
+        // A GP file with SEVERAL drum tracks (a second drummer, an aux-perc
+        // layer) returns the extras as `drum_parts` — adopt each as its own
+        // type:"drums" part beside the primary instead of folding them into
+        // one. The backend only emits drum_parts when a melodic part exists,
+        // so the primary is always materialized here first.
+        if (Array.isArray(data.drum_parts) && data.drum_parts.length) {
+            adoptDrumParts(S, data.drum_parts);
+        }
+    }
     // The DAW track-session feature is stacked independently. Its host hook is
     // inert on this branch, but when present it receives every create-time
     // source immediately so stems do not appear only after a save/reopen.

@@ -14,6 +14,7 @@ import { DRUM_PIECE_META, DRUM_PIECE_ORDER, _drumImportHitPure } from './drum.js
 import { _uniqueKeysName, updatePianoRange } from './keys.js';
 import { arrKind, _isBassArr } from './instrument.js';
 import { flattenChords } from './chords.js';
+import { drumArrangements } from './drum-arrangement.js';
 import { host } from './host.js';
 
 // ════════════════════════════════════════════════════════════════════
@@ -1100,6 +1101,17 @@ export function _maybeOfferMidiTempoMap(tempoMap, onDone) {
     document.body.appendChild(modal);
 }
 
+export function _drumImportTargetTabPure(state, rawPartIndex) {
+    const index = Number(rawPartIndex);
+    if (Number.isInteger(index) && index >= 0) {
+        const holder = drumArrangements(state && state.arrangements)[index];
+        if (holder && holder.drumTab && Array.isArray(holder.drumTab.hits)) {
+            return holder.drumTab;
+        }
+    }
+    return state && state.drumTab;
+}
+
 export function _showDrumImportUnmappedModal(unmapped) {
     document.getElementById('editor-drum-unmapped-modal')?.remove();
 
@@ -1147,6 +1159,7 @@ export function _showDrumImportUnmappedModal(unmapped) {
         tr.className = 'border-t border-gray-800';
         tr.dataset.midi = String(u.midi);
         rowTimes.set(tr, {
+            targetTab: _drumImportTargetTabPure(S, u.drum_part_index),
             times: Array.isArray(u.times) ? u.times : [],
             // Optional, index-aligned with times when the server captured
             // them — the source notes' REAL velocities.
@@ -1205,18 +1218,22 @@ export function _showDrumImportUnmappedModal(unmapped) {
             modal.remove();
             return;
         }
-        // Build a key-set of existing hits so we don't duplicate against
-        // the imported drum_tab if two unmapped notes resolve to the
-        // same (rounded-time, piece) — keeps the editor's in-memory
-        // hits consistent with what the server would dedupe on save.
-        const seen = new Set(S.drumTab.hits.map(
-            h => `${Math.round((h.t || 0) * 1000)}|${h.p}`));
+        const seenByTab = new Map();
+        const touchedTabs = new Set();
         let added = 0, skipped = 0;
         for (const tr of tbody.querySelectorAll('tr')) {
             const sel = tr.querySelector('select');
             if (!sel || !sel.value) continue;
             const pid = sel.value;
-            const row = rowTimes.get(tr) || { times: [], vels: null };
+            const row = rowTimes.get(tr) || { targetTab: S.drumTab, times: [], vels: null };
+            const targetTab = row.targetTab || S.drumTab;
+            if (!targetTab || !Array.isArray(targetTab.hits)) continue;
+            let seen = seenByTab.get(targetTab);
+            if (!seen) {
+                seen = new Set(targetTab.hits.map(
+                    h => `${Math.round((h.t || 0) * 1000)}|${h.p}`));
+                seenByTab.set(targetTab, seen);
+            }
             for (let ti = 0; ti < row.times.length; ti++) {
                 const t = row.times[ti];
                 // Guard against malformed payload: skip NaN / Infinity /
@@ -1236,12 +1253,13 @@ export function _showDrumImportUnmappedModal(unmapped) {
                 // and round-trips as a ghost identically to the same note
                 // imported through the normal path.
                 const rawV = row.vels ? row.vels[ti] : undefined;
-                S.drumTab.hits.push(_drumImportHitPure(tRounded, pid, rawV));
+                targetTab.hits.push(_drumImportHitPure(tRounded, pid, rawV));
+                touchedTabs.add(targetTab);
                 added++;
             }
         }
         if (added > 0) {
-            S.drumTab.hits.sort((a, b) => (a.t || 0) - (b.t || 0));
+            for (const tab of touchedTabs) tab.hits.sort((a, b) => (a.t || 0) - (b.t || 0));
             S.drumTabDirty = true;
             host.updateArrangementSelector();
             host.draw();

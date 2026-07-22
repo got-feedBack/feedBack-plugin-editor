@@ -94,6 +94,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accepts the create-flow upload path too, and the drum-tab stash step is
   shared with the Add-Drums modal (`_stashImportedDrumTab`). Covered by
   `tests/midi_drum_autosplit.test.mjs` and runtime-verified end-to-end.
+- **Importing a Guitar Pro song with several drum tracks no longer squashes
+  them into one part.** The Create-New GP import folded *every* drum track into
+  a single `drum_tab`, so a second drummer or an aux-percussion layer lost its
+  separation. It now keeps each drum track as its own `type:"drums"` part — the
+  first as the primary and the rest as `drum_parts` (the same shape a reload
+  adopts and `/build` persists), with each GP track's name preserved. A song
+  with a single drum track, or a drums-only import (which can't hold plural
+  parts — a drums arrangement never sits at index 0), still folds into one, so
+  those imports are byte-identical. The split lives in a new module-level
+  `_gp_drum_arrs_to_parts` (covered by `tests/test_gp_multidrum_split.py`); the
+  frontend adopts the extras via the existing `adoptDrumParts` load path. This
+  brings the GP create-import to parity with the MIDI drum auto-split.
 
 - **A drum edit no longer strips another tool's authored keys from drum-part
   manifest entries.** Saving with drum changes rebuilds the `type: drums`
