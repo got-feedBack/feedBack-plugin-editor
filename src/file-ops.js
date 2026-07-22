@@ -41,12 +41,22 @@ import { host } from './host.js';
 // would otherwise clear a flag the second still needs held.
 export let _editorLoadsInFlight = 0;
 let externalSaveHandle = null;
+let externalSaveSessionId = null;
 let packLoadController = null;
 let packLoadGeneration = 0;
 
-async function _exportBlob() {
+export function _externalSaveHandleIsCurrentPure(handleSessionId, sessionId) {
+    return !!handleSessionId && handleSessionId === sessionId;
+}
+
+function _currentExternalSaveHandle() {
+    return _externalSaveHandleIsCurrentPure(externalSaveSessionId, S.sessionId)
+        ? externalSaveHandle : null;
+}
+
+async function _exportBlob(sessionId = S.sessionId) {
     const resp = await fetch('/api/plugins/editor/session/export?session_id='
-        + encodeURIComponent(S.sessionId || ''));
+        + encodeURIComponent(sessionId || ''));
     if (!resp.ok) {
         let detail = '';
         try { detail = (await resp.json()).error || ''; } catch (_) {}
@@ -55,8 +65,8 @@ async function _exportBlob() {
     return resp.blob();
 }
 
-async function _writeExternalCopy(handle) {
-    const blob = await _exportBlob();
+async function _writeExternalCopy(handle, sessionId = S.sessionId) {
+    const blob = await _exportBlob(sessionId);
     if (handle) {
         const writable = await handle.createWritable();
         try {
@@ -77,9 +87,12 @@ async function _writeExternalCopy(handle) {
 }
 
 async function _mirrorExternalCopy() {
-    if (!externalSaveHandle) return true;
+    const sessionId = S.sessionId;
+    const handle = _currentExternalSaveHandle();
+    if (!handle) return true;
     try {
-        await _writeExternalCopy(externalSaveHandle);
+        await _writeExternalCopy(handle, sessionId);
+        if (S.sessionId !== sessionId) return false;
         return true;
     } catch (e) {
         markSessionDirty();
@@ -154,6 +167,7 @@ export async function loadCDLC(filename, options = {}) {
             await disposeBackendSession(oldSessionId);
         }
         externalSaveHandle = null;
+        externalSaveSessionId = null;
         // The outgoing decoded buffer is not part of the new job. In
         // particular, an audio-less feedpak must not inherit AUDIO mode or
         // accidentally make the old recording playable again.
@@ -772,19 +786,19 @@ export function _buildSaveBody(forceFullSnapshot) {
 
 export async function saveCDLC(options = {}) {
     if (!S.sessionId) return false;
-    // A create-mode session has no library file to save over — /save rejects
-    // it outright. Persisting one IS building: route every save (Ctrl+S, the
-    // close-guard's "Save", the host saveSession hook) through editorBuild,
-    // which writes "<Title>_<Artist>.feedpak" into the library — the same
-    // deterministic filename every time, so repeat saves overwrite in place.
-    // Without this leg an hour of create-mode charting dead-ends in
-    // "Save error: Only sloppak-format sessions can be saved" (or its
-    // drum_tab variant) with no way to persist. editorBuild owns
-    // markSessionSaved() and the status line; the external mirror rides
-    // after it exactly as it does after a library save.
+    // A new document has no library file to overwrite. Package it inside the
+    // backend session, then write it only to the location selected by Save.
     if (S.createMode) {
-        if (!(await editorBuild())) return false;
-        if (!options.skipExternal && !(await _mirrorExternalCopy())) return false;
+        if (!(await editorBuild({ destination: 'session' }))) return false;
+        // Save As writes its newly-picked handle after this preparation step.
+        if (options.skipExternal) return true;
+        if (!_currentExternalSaveHandle()) {
+            setStatus('Choose a location with Save or Save As first');
+            return false;
+        }
+        if (!(await _mirrorExternalCopy())) return false;
+        markSessionSaved();
+        setStatus('Saved successfully');
         return true;
     }
     // archive can't carry >6-string guitar / >4-string bass. If the user
@@ -897,6 +911,7 @@ export const editorSaveAsSloppakConfirm = async () => {
 
 export async function editorSaveAs() {
     if (!S.sessionId) return false;
+    const sessionId = S.sessionId;
     let handle = null;
     if (typeof window.showSaveFilePicker === 'function') {
         try {
@@ -913,21 +928,37 @@ export async function editorSaveAs() {
             return false;
         }
     }
+    if (S.sessionId !== sessionId) {
+        await _removeEmptyPickedFile(handle);
+        return false;
+    }
 
-    // A create-mode session rides the saveCDLC leg: its create-mode branch
-    // builds the pack into the library (and /build records the filename on
-    // the backend session, which is what lets /session/export serve the
-    // external copy below).
-    const saved = S.format === 'archive'
-        ? await editorSaveAsSloppakConfirm()
-        : await saveCDLC({ skipExternal: true });
+    // Create mode prepares a session-scoped package without publishing it.
+    const saved = S.createMode
+        ? await saveCDLC({ skipExternal: true })
+        : (S.format === 'archive'
+            ? await editorSaveAsSloppakConfirm()
+            : await saveCDLC({ skipExternal: true }));
     if (!saved) {
         await _removeEmptyPickedFile(handle);   // don't strand a 0-byte husk
         return false;
     }
+    if (S.sessionId !== sessionId) {
+        await _removeEmptyPickedFile(handle);
+        return false;
+    }
     try {
-        await _writeExternalCopy(handle);
+        await _writeExternalCopy(handle, sessionId);
+        if (S.sessionId !== sessionId) {
+            await _removeEmptyPickedFile(handle);
+            return false;
+        }
+        if (!handle) {
+            setStatus('Downloaded a copy — this browser cannot confirm a durable project location');
+            return false;
+        }
         externalSaveHandle = handle;
+        externalSaveSessionId = sessionId;
         markSessionSaved();
         setStatus(handle ? 'Saved to the selected file' : 'Saved — download started');
         return true;
@@ -939,31 +970,14 @@ export async function editorSaveAs() {
     }
 }
 
-// The Save command (Ctrl+S / the toolbar Save button / File ▸ Save). The FIRST
-// save of a session pulls up the file explorer — same picker as Save As — so the
-// user chooses where the .feedpak lands; once a location is chosen this session,
-// later saves write straight to it (and mirror to that file). The "chosen this
-// session" signal is externalSaveHandle: it's null on load / a new session and
-// set by editorSaveAs after a picked file. Guard on the picker API so that
-// where it's unavailable (no showSaveFilePicker) we fall back to the plain
-// library save rather than re-triggering a download on every Ctrl+S. Programmatic
-// saves (highway handoff, host saveSession hook, build) keep calling saveCDLC()
-// directly and are unaffected — only the user's Save routes through here.
-// Route the Save command to the picker only when no location has been chosen
-// this session (hasHandle=false) AND the picker API exists (without it,
-// editorSaveAs can only trigger a download, so fall back to the library save)
-// AND the session can actually complete the Save As flow (sessionCanExport).
-// The last gate matters: a directory-form sloppak library-saves fine but
-// /session/export can't serve a packed file for it — routing it through the
-// picker would pop the explorer, have the user pick a destination, then fail
-// (and re-prompt on every subsequent Ctrl+S, with the session falsely
-// re-marked dirty after a library save that succeeded). A create-mode
-// session is also kept off the first-save picker, for a different reason:
-// its Save is a Build whose pack lands in the library under a
-// title/artist-derived name — there is no location to choose. An explicit
-// Save As still works there (build + export a copy to the picked file).
-export function _saveShouldPickPure(hasHandle, hasPickerApi, sessionCanExport) {
-    return !hasHandle && !!hasPickerApi && !!sessionCanExport;
+// Save is document persistence, never a library export. An untitled create
+// session must choose its first destination (native picker where available,
+// download fallback elsewhere); later saves reuse that handle. Loaded projects
+// already have a source path and save in place. Bind the handle to sessionId so
+// starting another project can never overwrite the previous project's file.
+export function _saveShouldPickPure(hasHandle, _hasPickerApi, sessionNeedsLocation) {
+    // Without the native API, editorSaveAs falls back to a browser download.
+    return !hasHandle && !!sessionNeedsLocation;
 }
 export async function editorSave() {
     if (!S.sessionId) return false;
@@ -974,7 +988,11 @@ export async function editorSave() {
     // CONVERT it to a new .sloppak (editorSaveAsSloppakConfirm), and a plain
     // Save must never perform a format conversion the user didn't ask for —
     // that stays behind the explicit Save As command.
-    const canExport = !S.createMode && S.format === 'sloppak' && S.sloppakForm !== 'dir';
-    if (_saveShouldPickPure(!!externalSaveHandle, hasPicker, canExport)) return editorSaveAs();
+    // Loaded documents already have an in-place destination; only an untitled
+    // create session needs the first-save picker.
+    const needsLocation = S.createMode;
+    if (_saveShouldPickPure(!!_currentExternalSaveHandle(), hasPicker, needsLocation)) {
+        return editorSaveAs();
+    }
     return saveCDLC();
 }

@@ -517,7 +517,7 @@ setHostHooks({
     startPlayback,
     stopPlayback,
     cancelAudioLoad,
-    saveSession: () => saveCDLC(),
+    saveSession: () => editorSave(),
     finalizeRecording: () => {
         if (_recState === 'recording') editorStopRecordMidi();
     },
@@ -820,6 +820,16 @@ window.editorShowNewFormatPicker = async () => {
 };
 window.editorStagedRemove = editorStagedRemove;
 window.editorYtUrlInput = editorYtUrlInput;
+
+// The editor-owned Back button is a destructive document transition, just
+// like New/Open. Keep the screen mounted when the user cancels or when Save
+// (including a cancelled first-save picker) does not complete durably.
+async function _editorLeaveToHome() {
+    if (!(await guardSessionTransition('returning to the library'))) return false;
+    if (typeof window.showScreen === 'function') window.showScreen('home');
+    return true;
+}
+window.editorLeaveToHome = _editorLeaveToHome;
 
 
 // The window.* surface the modules can't own: a top-level `window.x =` throws

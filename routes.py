@@ -4086,6 +4086,17 @@ def setup(app, context):
         session = sessions.get(session_id)
         if not session:
             return JSONResponse({"error": "No active session"}, 404)
+        saved_path = session.get("export_path")
+        if saved_path:
+            candidate = Path(saved_path).resolve()
+            if not candidate.is_file():
+                return JSONResponse(
+                    {"error": "Saved feedpak is not a packed file"}, 409)
+            return FileResponse(
+                candidate,
+                media_type="application/zip",
+                filename=str(session.get("export_filename") or candidate.name),
+            )
         filename = str(session.get("filename") or "")
         dlc_dir = get_dlc_dir()
         if not filename or not dlc_dir:
@@ -8652,16 +8663,20 @@ def setup(app, context):
     async def build_song_endpoint(data: dict):
         """Build a song from the current create-mode session.
 
-        Always writes a native `.sloppak`. (the native `.archive`/custom-song export
-        has been removed — the sloppak container carries every arrangement,
-        including extended-range 7/8-string guitar and 5/6-string bass that
-        the old note-chart binary format couldn't.)
+        ``destination: "session"`` writes a temporary `.feedpak` for Save or
+        Save As. Omitting it (or sending ``"library"``) preserves the
+        historical Export-to-Library behavior for older clients.
         """
         session_id = data.get("session_id", "")
         session = sessions.get(session_id)
         if not session or not session.get("create_mode"):
             return JSONResponse({"error": "No active create session"}, 400)
         session["last_touched"] = time.time()
+
+        destination = data.get("destination", "library")
+        if destination not in ("library", "session"):
+            return JSONResponse(
+                {"error": "destination must be 'library' or 'session'"}, 400)
 
         arrangements_data = data.get("arrangements", [])
         beats = data.get("beats", [])
@@ -8753,15 +8768,25 @@ def setup(app, context):
                     raise RuntimeError(f"Audio track '{track['name']}' is unavailable")
                 extra_audio_tracks.append({**track, "path": str(track_path)})
 
-            dlc_dir = get_dlc_dir()
-            if not dlc_dir:
-                raise RuntimeError("DLC folder not configured")
-
             title = meta.get("title", "Untitled")
             artist = meta.get("artistName") or meta.get("artist", "Unknown")
             safe_t = re.sub(r'[<>:"/\\|?*]', '_', title)
             safe_a = re.sub(r'[<>:"/\\|?*]', '_', artist)
-            output = dlc_dir / f"{safe_t}_{safe_a}.feedpak"
+            suggested_name = (
+                f"{safe_t}_{safe_a}.feedpak" if safe_a
+                else f"{safe_t}.feedpak"
+            )
+            if destination == "session":
+                # One immutable package per save generation: /session/export
+                # may still be streaming the previous generation while a fast
+                # second Ctrl+S is assembled.
+                output = (Path(session["dir"])
+                          / f"project-save-{time.time_ns()}.feedpak")
+            else:
+                dlc_dir = get_dlc_dir()
+                if not dlc_dir:
+                    raise RuntimeError("DLC folder not configured")
+                output = dlc_dir / suggested_name
             return _write_sloppak_pak(
                 audio_file=audio_file,
                 art_path=_safe_storage_asset(art_path),
@@ -8793,24 +8818,45 @@ def setup(app, context):
             traceback.print_exc()
             return JSONResponse({"error": str(e)}, 500)
 
-        # Record the built pack on the session so /session/export (the Save As
-        # external-copy source) can serve it. Builds land at the DLC root, so
-        # the bare name is the library-relative filename export resolves.
-        # Nothing else keys off `filename` for a create-mode session: /save is
-        # gated off above it, and save_as_sloppak only accepts archive
-        # sessions.
-        session["filename"] = Path(output_path).name
+        title = meta.get("title", "Untitled")
+        artist = meta.get("artistName") or meta.get("artist", "Unknown")
+        safe_t = re.sub(r'[<>:"/\\|?*]', '_', title)
+        safe_a = re.sub(r'[<>:"/\\|?*]', '_', artist)
+        suggested_name = (
+            f"{safe_t}_{safe_a}.feedpak" if safe_a
+            else f"{safe_t}.feedpak"
+        )
+        previous_export = session.get("export_path")
+        if destination == "session":
+            session["export_path"] = str(output_path)
+            session["export_filename"] = suggested_name
+        else:
+            session.pop("export_path", None)
+            session.pop("export_filename", None)
+        if previous_export:
+            previous = Path(previous_export)
+            if previous != Path(output_path):
+                try:
+                    previous.unlink(missing_ok=True)
+                except OSError:
+                    # A response may still hold the old file open (Windows).
+                    # Session teardown removes the containing temp directory.
+                    pass
+        if destination == "library":
+            session["filename"] = Path(output_path).name
 
-        return {
+        response = {
             "success": True,
-            "path": output_path,
             "format": "sloppak",
-            # Library-relative filename (built paks land at the DLC root),
-            # mirroring create_sloppak's response: the frontend keys per-song
-            # editor prefs (e.g. C1 surface memory) by the same filename a
-            # later load/loadCDLC will use.
-            "filename": Path(output_path).name,
+            "destination": destination,
+            "filename": (Path(output_path).name
+                         if destination == "library" else suggested_name),
         }
+        # Preserve the legacy library-build response without leaking the
+        # private session temp path used by Save.
+        if destination == "library":
+            response["path"] = output_path
+        return response
 
     # ── Helpers ──────────────────────────────────────────────────────────
 

@@ -15,7 +15,8 @@ globalThis.localStorage = globalThis.localStorage || {
     getItem: () => null, setItem: () => {}, removeItem: () => {},
 };
 
-const { _saveShouldPickPure } = await import('../src/file-ops.js');
+const { _externalSaveHandleIsCurrentPure, _saveShouldPickPure } =
+    await import('../src/file-ops.js');
 
 let pass = 0, fail = 0;
 function t(name, fn) {
@@ -23,28 +24,32 @@ function t(name, fn) {
     catch (e) { fail++; console.error('  FAIL ' + name + ': ' + e.message); }
 }
 
-t('picks the file explorer only on the first save, and only when the API exists', () => {
-    // hasHandle=false ⇒ nothing chosen yet this session (a new song, or one just
-    // opened from the library — externalSaveHandle resets to null on load).
-    assert.strictEqual(_saveShouldPickPure(false, true, true), true, 'first save + API → picker');
-    assert.strictEqual(_saveShouldPickPure(true, true, true), false, 'location chosen → save straight to it');
-    assert.strictEqual(_saveShouldPickPure(false, false, true), false, 'no picker API → library save, never a re-download');
+t('picks the file explorer for an untitled project, and only when the API exists', () => {
+    // hasHandle=false ⇒ this untitled project has no destination yet.
+    assert.strictEqual(_saveShouldPickPure(false, true, true), true, 'untitled project + API → picker');
+    assert.strictEqual(_saveShouldPickPure(true, true, true), false, 'chosen project path → save straight to it');
+    assert.strictEqual(_saveShouldPickPure(false, false, true), true,
+        'no picker API → Save As download fallback, never a library build');
     assert.strictEqual(_saveShouldPickPure(true, false, true), false);
 });
 
-t('never routes a session that cannot complete Save As through the picker', () => {
-    // sessionCanExport=false covers: create-mode sessions (/save rejects them
-    // outright — the picker would pop, the user would pick a destination, then
-    // nothing would be written to it) and directory-form sloppaks
-    // (/session/export 409s — the library save succeeds but the external write
-    // fails, falsely re-marking the session dirty and re-prompting forever).
+t('a chosen file handle belongs only to the session that picked it', () => {
+    assert.strictEqual(_externalSaveHandleIsCurrentPure('session-a', 'session-a'), true);
+    assert.strictEqual(_externalSaveHandleIsCurrentPure('session-a', 'session-b'), false,
+        'a new project cannot inherit and overwrite the previous project file');
+    assert.strictEqual(_externalSaveHandleIsCurrentPure(null, 'session-b'), false);
+});
+
+t('only an untitled project is routed through first-save destination selection', () => {
     assert.strictEqual(_saveShouldPickPure(false, true, false), false, 'non-exportable session → plain library save');
+    assert.strictEqual(_saveShouldPickPure(false, true, true), true,
+        'a create session with temporary export support gets a first-save picker');
     assert.strictEqual(_saveShouldPickPure(true, true, false), false);
 });
 
 t('coerces truthiness (defensive against non-boolean inputs)', () => {
     assert.strictEqual(_saveShouldPickPure(null, {}, 1), true);    // no handle, api present, exportable
-    assert.strictEqual(_saveShouldPickPure(undefined, undefined, true), false);
+    assert.strictEqual(_saveShouldPickPure(undefined, undefined, true), true);
     assert.strictEqual(_saveShouldPickPure('handle', 'fn', true), false); // truthy handle
     assert.strictEqual(_saveShouldPickPure(false, true, undefined), false, 'unknown exportability → no picker');
 });

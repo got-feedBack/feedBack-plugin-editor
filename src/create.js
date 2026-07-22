@@ -30,7 +30,7 @@ import { host } from './host.js';
 import { isKeysMode, updatePianoRange } from './keys.js';
 import { arrKind } from './instrument.js';
 import { _seedExtendedStringsFromTuning } from './lanes.js';
-import { S, markSessionDirty, markSessionSaved } from './state.js';
+import { S, markSessionDirty } from './state.js';
 import { _marksSanitizePure } from './tempo-marks.js';
 import { disposeBackendSession, stopSessionProcesses } from './session-lifecycle.js';
 import { _ensureOnsetsShifted, _guideAnalysisReset, resetStemAudioCache, syncStemAudio } from './audio.js';
@@ -2472,7 +2472,7 @@ export async function editorApplyCreateResult(data) {
 
     document.getElementById('editor-song-title').textContent =
         `${S.artist} — ${S.title} (new)`;
-    document.getElementById('editor-save-btn').classList.add('hidden');
+    document.getElementById('editor-save-btn').classList.remove('hidden');
     document.getElementById('editor-build-btn').classList.remove('hidden');
     document.getElementById('editor-play-btn').disabled = !data.audio_url;
     document.getElementById('editor-sync-btn').classList.toggle('hidden', !data.audio_url);
@@ -2502,14 +2502,14 @@ export async function editorApplyCreateResult(data) {
         (s, u) => s + Math.max(0, Number(u.count) || 0), 0);
     if (_droppedCount > 0 && S.drumTab) {
         setStatus(`Imported (${_droppedCount} unmapped percussion — see dialog) `
-            + '— edit notes then click Build feedpak');
+            + '— edit notes, Save your project, then Export to Library when ready');
         _showDrumImportUnmappedModal(_drumUnmapped);
     } else if (_droppedCount > 0) {
         setStatus(`Imported — ${_droppedCount} percussion note`
             + `${_droppedCount === 1 ? '' : 's'} outside the drum vocabulary were `
             + 'dropped (the import response did not include a writable drum track)');
     } else {
-        setStatus('Imported — edit notes then click Build feedpak');
+        setStatus('Imported — edit notes, Save your project, then Export to Library when ready');
     }
 }
 
@@ -2575,20 +2575,21 @@ async function _editorDoEofCreate() {
     }
 }
 
-// Resolves true only after the pack was durably written to the library —
-// saveCDLC's create-mode leg (Save/Ctrl+S, the close-guard's "Save", the
-// host saveSession hook) relies on this to report save success honestly.
-export async function editorBuild() {
+// Packages the current create session. The default is an explicit library export;
+// Save passes destination:"session" so the backend prepares a temporary package
+// for the user-selected file without publishing it.
+export async function editorBuild(options = {}) {
     if (!S.sessionId || !S.createMode) return false;
+    const destination = options.destination === 'session' ? 'session' : 'library';
     // PR3c: warn before building when authored tone slots have no
     // matching gear definition — DLC Builder defaults them to stock
     // clean in the output archive. Confirm prompt lets the user
     // continue or bail back to the modal to pull definitions in.
-    if (!_editorConfirmToneDefinitions()) {
-        setStatus('Build cancelled');
+    if (destination === 'library' && !_editorConfirmToneDefinitions()) {
+        setStatus('Export cancelled');
         return false;
     }
-    setStatus('Building custom song...');
+    setStatus(destination === 'library' ? 'Exporting to library...' : 'Preparing feedpak...');
 
     // Reconstruct chords for ALL arrangements before sending. Each
     // arrangement must be flattened first: reconstructChords() rebuilds
@@ -2688,6 +2689,7 @@ export async function editorBuild() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 session_id: S.sessionId,
+                destination,
                 arrangements: allArrangements,
                 beats: S.beats,
                 sections: S.sections,
@@ -2726,19 +2728,20 @@ export async function editorBuild() {
             }),
         });
         const data = await resp.json();
-        if (data.error) { setStatus('Build error: ' + data.error); return false; }
-        host.kickLibraryRescan();   // refresh the library grid in the background
+        if (data.error) {
+            setStatus((destination === 'library' ? 'Export' : 'Save') + ' error: ' + data.error);
+            return false;
+        }
+        if (destination === 'library') host.kickLibraryRescan();
         // C1: the surface shaped while arranging becomes the built file's
         // memory, so re-opening it from the library lands on the same tools.
         // (The create session itself has no filename — this is the handoff.)
-        if (data.filename) surfacePersistFor(data.filename);
-        // A build IS this session's durable save — clear the dirty flag so
-        // the unsaved-changes guard doesn't re-prompt over persisted work.
-        markSessionSaved();
-        setStatus('Built - added to library!');
+        if (destination === 'library' && data.filename) surfacePersistFor(data.filename);
+        // Export never clears project dirty state; only Save's file write does.
+        setStatus(destination === 'library' ? 'Exported to library' : 'Feedpak ready to save');
         return true;
     } catch (e) {
-        setStatus('Build failed: ' + e.message);
+        setStatus((destination === 'library' ? 'Export' : 'Save') + ' failed: ' + e.message);
         return false;
     } finally {
         // Re-flatten current arrangement for continued editing

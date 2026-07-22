@@ -6,7 +6,8 @@
  * saved", or the drum_tab variant when the session carries a drum chart),
  * which used to dead-end an hour of from-scratch charting with no persist
  * path from Save at all. saveCDLC now routes create-mode sessions through
- * editorBuild (POST /build), which IS their durable save.
+ * editorBuild (POST /build) with a session-only destination, then writes the
+ * resulting package to the user-selected file.
  *
  * Also covers the Save As husk cleanup (_removeEmptyPickedFile — the picker
  * creates the file before the save runs, so a failed save used to strand a
@@ -22,11 +23,12 @@ import assert from 'node:assert';
 globalThis.localStorage = globalThis.localStorage || {
     getItem: () => null, setItem: () => {}, removeItem: () => {},
 };
+globalThis.window = globalThis.window || globalThis;
 globalThis.document = globalThis.document || { getElementById: () => null };
 
-const { saveCDLC, _removeEmptyPickedFile, _suggestedSaveNamePure } =
+const { editorSave, editorSaveAs, saveCDLC, _removeEmptyPickedFile, _suggestedSaveNamePure } =
     await import('../src/file-ops.js');
-const { _drumBuildPayloadPure } = await import('../src/create.js');
+const { _drumBuildPayloadPure, editorBuild } = await import('../src/create.js');
 const { S } = await import('../src/state.js');
 
 let pass = 0, fail = 0;
@@ -55,21 +57,102 @@ function seedCreateSession() {
     });
 }
 
-await t('create-mode saveCDLC routes to /build (never /save) and reports durable success', async () => {
+await t('create-mode save prepares a session package without publishing or clearing dirty state', async () => {
     seedCreateSession();
     const calls = [];
     globalThis.fetch = async (url, opts) => {
         calls.push({ url, body: JSON.parse(opts.body) });
         return { json: async () => ({ success: true, filename: 'White Wedding (Pt. 1)_Billy Idol.feedpak' }) };
     };
-    const ok = await saveCDLC();
+    const ok = await saveCDLC({ skipExternal: true });
     assert.strictEqual(ok, true, 'a successful build resolves the save true');
     assert.strictEqual(calls.length, 1);
     assert.match(calls[0].url, /\/api\/plugins\/editor\/build$/,
         'the create leg must hit /build — /save rejects create sessions');
     assert.strictEqual(calls[0].body.session_id, 'sess-create-1');
-    assert.strictEqual(S.sessionDirty, false,
-        'a build IS the durable save — the dirty flag clears so the close guard stays quiet');
+    assert.strictEqual(calls[0].body.destination, 'session',
+        'Save prepares a session package instead of publishing to the library');
+    assert.strictEqual(S.sessionDirty, true,
+        'the temporary package is not durable until the picked file is written');
+});
+
+await t('explicit Export to Library stays separate from Save', async () => {
+    seedCreateSession();
+    let body = null;
+    globalThis.fetch = async (url, opts) => {
+        body = JSON.parse(opts.body);
+        return { json: async () => ({ success: true, filename: 'export.feedpak' }) };
+    };
+    assert.strictEqual(await editorBuild(), true);
+    assert.strictEqual(body.destination, 'library');
+    assert.strictEqual(S.sessionDirty, true,
+        'exporting does not claim unsaved project edits were saved');
+});
+
+await t('first Save picks a durable project file; later Save reuses it', async () => {
+    seedCreateSession();
+    let pickerCalls = 0;
+    const writes = [];
+    const handle = {
+        createWritable: async () => ({
+            write: async (blob) => { writes.push(blob); },
+            close: async () => {},
+            abort: async () => {},
+        }),
+    };
+    window.showSaveFilePicker = async () => { pickerCalls++; return handle; };
+    const buildBodies = [];
+    globalThis.fetch = async (url, opts) => {
+        if (String(url).includes('/session/export')) {
+            return { ok: true, blob: async () => ({ package: buildBodies.length }) };
+        }
+        buildBodies.push(JSON.parse(opts.body));
+        return { json: async () => ({ success: true, filename: 'project.feedpak' }) };
+    };
+
+    assert.strictEqual(await editorSave(), true);
+    assert.strictEqual(pickerCalls, 1);
+    assert.strictEqual(buildBodies[0].destination, 'session');
+    assert.strictEqual(writes.length, 1);
+    assert.strictEqual(S.sessionDirty, false, 'dirty clears only after the picked file closes');
+
+    S.sessionDirty = true;
+    assert.strictEqual(await editorSave(), true);
+    assert.strictEqual(pickerCalls, 1, 'the second Save reuses the chosen handle');
+    assert.strictEqual(writes.length, 2);
+    assert.strictEqual(S.sessionDirty, false);
+    delete window.showSaveFilePicker;
+});
+
+await t('archive-format create Save As stays session-only instead of publishing', async () => {
+    seedCreateSession();
+    S.format = 'archive';
+    const writes = [];
+    const handle = {
+        createWritable: async () => ({
+            write: async blob => { writes.push(blob); },
+            close: async () => {},
+            abort: async () => {},
+        }),
+    };
+    window.showSaveFilePicker = async () => handle;
+    const calls = [];
+    globalThis.fetch = async (url, opts) => {
+        calls.push({ url: String(url), body: opts?.body ? JSON.parse(opts.body) : null });
+        if (String(url).includes('/session/export')) {
+            return { ok: true, blob: async () => ({ package: 'session' }) };
+        }
+        return { json: async () => ({ success: true, filename: 'project.feedpak' }) };
+    };
+
+    assert.strictEqual(await editorSaveAs(), true);
+    const build = calls.find(call => call.url.endsWith('/api/plugins/editor/build'));
+    assert.ok(build, 'create-mode Save As prepares through /build');
+    assert.strictEqual(build.body.destination, 'session');
+    assert.strictEqual(calls.some(call => call.url.includes('/save_as_sloppak')), false,
+        'archive-format create mode must not publish through the legacy conversion route');
+    assert.strictEqual(writes.length, 1, 'the private package reaches only the picked file');
+    delete window.showSaveFilePicker;
 });
 
 await t('create-mode build ships an authored arr.type (a re-typed track is not re-inferred from its name)', async () => {
@@ -84,7 +167,7 @@ await t('create-mode build ships an authored arr.type (a re-typed track is not r
         body = JSON.parse(opts.body);
         return { json: async () => ({ success: true, filename: 'x.feedpak' }) };
     };
-    await saveCDLC();
+    await saveCDLC({ skipExternal: true });
     assert.ok(Array.isArray(body.arrangements), 'build ships the arrangement snapshot');
     assert.strictEqual(body.arrangements[0].type, 'guitar',
         'the authored type rides the build payload (else /build re-infers keys from the name)');
@@ -93,7 +176,7 @@ await t('create-mode build ships an authored arr.type (a re-typed track is not r
 await t('a failed build reports save failure and keeps the session dirty', async () => {
     seedCreateSession();
     globalThis.fetch = async () => ({ json: async () => ({ error: 'DLC folder not configured' }) });
-    const ok = await saveCDLC();
+    const ok = await saveCDLC({ skipExternal: true });
     assert.strictEqual(ok, false, 'build error must not read as a successful save');
     assert.strictEqual(S.sessionDirty, true, 'unsaved work stays flagged');
 });
@@ -101,7 +184,7 @@ await t('a failed build reports save failure and keeps the session dirty', async
 await t('a network-dead build reports save failure too', async () => {
     seedCreateSession();
     globalThis.fetch = async () => { throw new Error('ECONNREFUSED'); };
-    const ok = await saveCDLC();
+    const ok = await saveCDLC({ skipExternal: true });
     assert.strictEqual(ok, false);
     assert.strictEqual(S.sessionDirty, true);
 });
@@ -224,7 +307,7 @@ await t('create-mode build ships the drum parts on the /build wire (real editorB
         body = JSON.parse(opts.body);
         return { json: async () => ({ success: true, filename: 'x.feedpak' }) };
     };
-    const ok = await saveCDLC();
+    const ok = await saveCDLC({ skipExternal: true });
     assert.strictEqual(ok, true);
     assert.deepStrictEqual(body.drum_tab, kit, 'the PRIMARY tab ships as drum_tab, not the active secondary');
     assert.strictEqual(body.drum_tab_id, 'drums', 'the /build wire carries the primary id for round-trip');
