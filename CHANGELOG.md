@@ -38,6 +38,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grid keep their own wheel grammars, Shift/Alt keep pan and the roll's
   lane-stretch, and with nothing selected the wheel falls through to its
   existing behavior, so a bare scroll can never edit. Every other profile is untouched.
+### Changed
+
+- **Redesigned the Tracks-view region blocks as glass banners.** A region now
+  reads as a proper titled object: a translucent kind-colour title band across the
+  top (blue master / teal stem / green guitar / orange bass / purple drums / ice
+  keys) sits over a top-lit "glass" fill that fades to almost nothing, with a
+  rounded border that accents and glows when the region is selected. The note
+  silhouette (and audio waveform) is now inset **below** the title band, so notes
+  no longer run up under the header line, and the region name is vertically centred
+  in the band so descenders (p, y, g) stay inside it. On a lane too short to host a
+  banner (< ~23px) the block degrades to a bare colour spine — the band never
+  crushes the content. Geometry, hit-testing, bar-snap drag and the drop ghost are
+  unchanged; this is a render-only change to `src/parts-view.js` (the new banner-
+  height pure `_regionBannerH` lives in `src/region.js`).
 
 ### Fixed
 

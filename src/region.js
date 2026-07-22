@@ -179,6 +179,18 @@ export function _regionHitPure(rect, x) {
     return Number.isFinite(n) && n >= rect.x && n <= rect.x + rect.w;
 }
 
+// The glass title-banner height for a region block at a given lane height. The
+// banner is ~14px, but it shrinks on a short lane and collapses to 0 below ~23px
+// so a squeezed lane falls back to a bare colour spine (no banner, no inset)
+// instead of a crushed title strip. The Parts-view renderer insets the note
+// silhouette below this height so the notes never cross the title line, and
+// because the banner is always strictly less than the lane height the inset
+// content band can never invert.
+export function _regionBannerH(laneH) {
+    const h = Math.min(14, (Number(laneH) || 0) - 3 - 12);
+    return h >= 8 ? h : 0;
+}
+
 // ── Move (reposition) ─────────────────────────────────────────────────
 
 // The exact seconds shift for a beat offset `dBeat` when the tempo is globally
