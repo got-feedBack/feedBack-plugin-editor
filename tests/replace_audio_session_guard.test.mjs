@@ -122,5 +122,43 @@ await t('closing the dialog invalidates its in-flight upload', async () => {
     assert.strictEqual(calls.length, 1, 'closing prevented the follow-up replace request');
 });
 
+await t('closing during decode cancels the stale audio before it can commit', async () => {
+    seedSession('session-a');
+    const decode = deferred();
+    const originalBuffer = S.audioBuffer;
+    S.audioCtx = { decodeAudioData: () => decode.promise };
+    const calls = [];
+    globalThis.fetch = async (url, options) => {
+        calls.push({ url, options });
+        if (String(url).includes('youtube-audio')) {
+            return { json: async () => ({ audio_url: '/cache/session-a.mp3' }) };
+        }
+        if (String(url).includes('replace-audio')) {
+            return { json: async () => ({ persisted: false, next_step: 'save' }) };
+        }
+        if (String(url).includes('/cache/session-a.mp3')) {
+            return { arrayBuffer: async () => new ArrayBuffer(8) };
+        }
+        throw new Error('unexpected request: ' + url);
+    };
+
+    const applying = editorApplyReplaceAudio();
+    for (let i = 0; i < 4 && calls.length < 3; i++) {
+        await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.strictEqual(calls.length, 3, 'upload, backend update, and decode fetch started');
+
+    editorHideReplaceAudioModal();
+    decode.resolve({
+        duration: 20,
+        sampleRate: 48000,
+        getChannelData: () => new Float32Array(1),
+    });
+    await applying;
+
+    assert.strictEqual(S.audioBuffer, originalBuffer,
+        'the invalidated decode never replaced the current buffer');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

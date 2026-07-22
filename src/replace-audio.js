@@ -3,7 +3,7 @@
 // are re-attached by main.js; display refreshers (draw, updateTimeDisplay) are
 // reached through host.
 
-import { loadAudio, stopPlayback } from './audio.js';
+import { cancelAudioLoad, loadAudio, stopPlayback } from './audio.js';
 import { _uploadAudioForMode, createState } from './create.js';
 import { _editorApplyScrollBounds } from './loop.js';
 import { S, markSessionDirty } from './state.js';
@@ -12,14 +12,24 @@ import { host } from './host.js';
 
 let replaceAudioState = { audioMode: 'file' };
 let replaceAudioRequest = 0;
+let replaceAudioLoadRequest = 0;
 
 function _replaceAudioRequestIsCurrent(request, sessionId) {
     return request === replaceAudioRequest && S.sessionId === sessionId;
 }
 
+function _invalidateReplaceAudioRequest() {
+    const request = ++replaceAudioRequest;
+    if (replaceAudioLoadRequest) {
+        cancelAudioLoad();
+        replaceAudioLoadRequest = 0;
+    }
+    return request;
+}
+
 export function editorShowReplaceAudioModal() {
     if (!S.sessionId) return;
-    replaceAudioRequest++;
+    _invalidateReplaceAudioRequest();
     replaceAudioState = { audioMode: 'file' };
     document.getElementById('editor-replace-audio').value = '';
     document.getElementById('editor-replace-yt-url').value = '';
@@ -30,7 +40,7 @@ export function editorShowReplaceAudioModal() {
 }
 
 export function editorHideReplaceAudioModal() {
-    replaceAudioRequest++;
+    _invalidateReplaceAudioRequest();
     document.getElementById('editor-replace-audio-modal').classList.add('hidden');
 }
 
@@ -67,7 +77,7 @@ async function _uploadReplaceAudio() {
 export async function editorApplyReplaceAudio() {
     if (!S.sessionId) return;
     const sessionId = S.sessionId;
-    const request = ++replaceAudioRequest;
+    const request = _invalidateReplaceAudioRequest();
     const status = document.getElementById('editor-replace-audio-status');
     const apply = document.getElementById('editor-replace-audio-apply');
     apply.disabled = true;
@@ -101,7 +111,12 @@ export async function editorApplyReplaceAudio() {
         // changed. Without this we would close the modal and announce
         // "Audio replaced" even on an unsupported / corrupt upload.
         const prevBuffer = S.audioBuffer;
-        await loadAudio(audioUrl);
+        replaceAudioLoadRequest = request;
+        try {
+            await loadAudio(audioUrl);
+        } finally {
+            if (replaceAudioLoadRequest === request) replaceAudioLoadRequest = 0;
+        }
         if (!_replaceAudioRequestIsCurrent(request, sessionId)) return;
         if (!S.audioBuffer || S.audioBuffer === prevBuffer) {
             status.textContent = 'Failed to decode audio (unsupported format?)';
