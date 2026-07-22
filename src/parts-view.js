@@ -10,7 +10,7 @@ import { hideContextMenu } from './context-menu.js';
 import { DRUM_PIECE_META, _refreshDrumEditButton } from './drum.js';
 import { beatOf, timeOf } from './beats.js';
 import { LABEL_W, TIMELINE_TOP, timeToX, xToTime } from './geometry.js';
-import { _regionBlockRectPure, _regionHitPure, _regionSnapStartPure, _regionTimeSpanPure, _trackRegionsResolvePure } from './region.js';
+import { _regionBannerH, _regionBlockRectPure, _regionHitPure, _regionSnapStartPure, _regionTimeSpanPure, _trackRegionsResolvePure } from './region.js';
 import { DeleteRegionCmd, MoveRegionCmd } from './region-commands.js';
 import { isDrumArrangement } from './drum-arrangement.js';
 import { arrKind } from './instrument.js';
@@ -236,12 +236,29 @@ function _laneContentTimeExtent(row, arrIdx) {
     return hi >= lo ? [lo, hi] : null;
 }
 
-// Draw each of a lane's regions as a block: a kind-colour spine, a hairline
-// border (accent when selected), and the name when the lane is tall enough.
-// Drawn OVER the content silhouette so the border reads. Today every track has
-// one full-span region wrapping its whole content; bounded blocks arrive with
-// the move/trim PRs and need no change here (the span pure resolves them).
-function _drawRegionBlocks(row, y0, laneH, w, extent) {
+// #rrggbb + alpha → an rgba() string. The region palette is all 6-digit hex.
+function _hexA(hex, a) {
+    const n = parseInt(String(hex).slice(1), 16);
+    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+// A rounded-rect path on the shared ctx (no primitive we rely on across targets).
+function _roundRectPath(x, y, w, h, r) {
+    const q = Math.max(0, Math.min(r, w / 2, h / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + q, y);
+    ctx.arcTo(x + w, y, x + w, y + h, q);
+    ctx.arcTo(x + w, y + h, x, y + h, q);
+    ctx.arcTo(x, y + h, x, y, q);
+    ctx.arcTo(x, y, x + w, y, q);
+    ctx.closePath();
+}
+
+// The glass FILL for each region block — a top-lit kind-colour gradient that
+// fades to almost nothing, drawn UNDER the content so the silhouette stays the
+// dominant read. The banner + border + name are painted over the content by
+// _drawRegionBlocks. Selection lifts the fill slightly.
+function _drawRegionFills(row, y0, laneH, w, extent) {
     if (!extent) return;
     const spine = _regionSpineColor(row);
     const selectedRow = row.id === S.selectedTrackId;
@@ -253,20 +270,75 @@ function _drawRegionBlocks(row, y0, laneH, w, extent) {
         const isSel = selectedRow && region.id === S.selectedRegionId;
         const top = y0 + 1.5;
         const boxH = Math.max(2, laneH - 3);
-        ctx.strokeStyle = isSel ? 'rgba(120,180,255,.95)' : 'rgba(148,163,184,.32)';
-        ctx.lineWidth = isSel ? 1.5 : 1;
-        ctx.strokeRect(rect.x + 0.5, top + 0.5, Math.max(1, rect.w - 1), boxH - 1);
-        ctx.fillStyle = spine;
-        ctx.fillRect(rect.x, top, 3, boxH);
-        if (laneH >= 30 && rect.w > 44) {
+        const grad = ctx.createLinearGradient(0, top, 0, top + boxH);
+        grad.addColorStop(0, _hexA(spine, isSel ? 0.22 : 0.15));
+        grad.addColorStop(1, _hexA(spine, 0.03));
+        _roundRectPath(rect.x, top, rect.w, boxH, 4);
+        ctx.fillStyle = grad;
+        ctx.fill();
+    }
+}
+
+// Draw each region as a "glass banner" block: a translucent kind-colour title
+// strip carrying the name, over the top-lit glass fill (_drawRegionFills), with
+// a rounded border that accents + glows when selected. The content silhouette is
+// inset below the banner by _regionBannerH, so notes never cross the title line;
+// the name is vertically centred in the band so descenders stay inside it. On a
+// lane too short for a banner the block degrades to a bare colour spine. Today
+// every track has one full-span region; bounded blocks (move/trim) resolve
+// through the same span pure and need no change here.
+function _drawRegionBlocks(row, y0, laneH, w, extent) {
+    if (!extent) return;
+    const spine = _regionSpineColor(row);
+    const selectedRow = row.id === S.selectedTrackId;
+    const beatToTime = (beat) => timeOf(S.beats, beat);
+    const bannerH = _regionBannerH(laneH);
+    for (const region of _trackRegionsResolvePure(row.regions)) {
+        const span = _regionTimeSpanPure(region, extent[0], extent[1], beatToTime);
+        const rect = _regionBlockRectPure(timeToX(span.t0), timeToX(span.t1), PARTS_GUTTER, w);
+        if (!rect.visible) continue;
+        const isSel = selectedRow && region.id === S.selectedRegionId;
+        const top = y0 + 1.5;
+        const boxH = Math.max(2, laneH - 3);
+        if (bannerH > 0) {
+            // Translucent glass title band. Notes are inset below it, so it sits
+            // on the fill, not on the silhouette; a hairline marks the split.
             ctx.save();
-            ctx.beginPath();
-            ctx.rect(rect.x, top, rect.w, boxH);
+            _roundRectPath(rect.x, top, rect.w, boxH, 4);
             ctx.clip();
-            ctx.font = '10px system-ui, sans-serif';
-            ctx.textBaseline = 'top';
-            ctx.fillStyle = isSel ? 'rgba(210,230,255,.95)' : 'rgba(200,210,230,.7)';
-            ctx.fillText(String(region.name || row.name || 'Region'), rect.x + 7, top + 3);
+            const band = ctx.createLinearGradient(0, top, 0, top + bannerH);
+            band.addColorStop(0, _hexA(spine, isSel ? 0.62 : 0.5));
+            band.addColorStop(1, _hexA(spine, isSel ? 0.2 : 0.13));
+            ctx.fillStyle = band;
+            ctx.fillRect(rect.x, top, rect.w, bannerH);
+            ctx.fillStyle = _hexA(spine, 0.7);
+            ctx.fillRect(rect.x, top + bannerH - 1, rect.w, 1);
+            ctx.restore();
+        } else {
+            // Lane too short for a banner — keep a colour spine for identity.
+            ctx.fillStyle = spine;
+            ctx.fillRect(rect.x, top, 3, boxH);
+        }
+        // Rounded border; accent + soft glow when selected.
+        ctx.save();
+        if (isSel) { ctx.shadowColor = _hexA(spine, 0.55); ctx.shadowBlur = 9; }
+        _roundRectPath(rect.x + 0.5, top + 0.5, Math.max(1, rect.w - 1), boxH - 1, 4);
+        ctx.strokeStyle = isSel ? _hexA(spine, 0.95) : 'rgba(148,163,184,.34)';
+        ctx.lineWidth = isSel ? 1.5 : 1;
+        ctx.stroke();
+        ctx.restore();
+        // Region name, centred vertically in the banner (clipped, soft shadow).
+        if (bannerH >= 11 && rect.w > 40) {
+            ctx.save();
+            _roundRectPath(rect.x, top, rect.w, bannerH, 4);
+            ctx.clip();
+            ctx.font = '600 9.5px system-ui, sans-serif';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor = 'rgba(0,0,0,.5)';
+            ctx.shadowBlur = 2;
+            ctx.shadowOffsetY = 0.5;
+            ctx.fillStyle = '#eef4ff';
+            ctx.fillText(String(region.name || row.name || 'Region'), rect.x + 7, top + bannerH / 2 + 0.5);
             ctx.restore();
         }
     }
@@ -301,20 +373,28 @@ export function _partsViewDraw(w, h) {
             ctx.lineTo(x, y0 + laneH);
             ctx.stroke();
         }
-        if (row.type === 'audio') _drawTrackAudioWaveform(row, y0, laneH, w);
+        // Region layering: the glass fill goes UNDER the content, the content
+        // silhouette is inset below the title banner, and the banner + border +
+        // name go OVER it — so notes never cross the header line.
+        const extent = row.type !== 'folder' ? _laneContentTimeExtent(row, arrIdx) : null;
+        const bannerH = row.type !== 'folder' ? _regionBannerH(laneH) : 0;
+        const cY0 = y0 + bannerH;
+        const cLaneH = laneH - bannerH;
+        if (extent) _drawRegionFills(row, y0, laneH, w, extent);
+        if (row.type === 'audio') _drawTrackAudioWaveform(row, cY0, cLaneH, w);
         else if (row.type === 'transcription' && arrIdx >= 0 && isDrumArrangement(S.arrangements[arrIdx])) {
             // A drum part's lane paints its OWN tab (any of several parts).
-            _partsDrawSilhouette({ kind: 'drums', idx: arrIdx }, y0, laneH, w);
+            _partsDrawSilhouette({ kind: 'drums', idx: arrIdx }, cY0, cLaneH, w);
         } else if (row.type === 'transcription' && row.targetId === 'drums') {
             // Legacy unmaterialized tab (create-mode compose).
-            if (S.drumTab && Array.isArray(S.drumTab.hits)) _partsDrawSilhouette({ kind: 'drums', idx: -1 }, y0, laneH, w);
+            if (S.drumTab && Array.isArray(S.drumTab.hits)) _partsDrawSilhouette({ kind: 'drums', idx: -1 }, cY0, cLaneH, w);
         } else if (row.type === 'transcription' && arrIdx >= 0) {
-            _partsDrawSilhouette({ kind: 'arr', idx: arrIdx }, y0, laneH, w);
+            _partsDrawSilhouette({ kind: 'arr', idx: arrIdx }, cY0, cLaneH, w);
         } else if (row.type === 'folder') {
             ctx.fillStyle = 'rgba(251,191,36,.16)';
             ctx.fillRect(PARTS_GUTTER, y0 + laneH - 2, w - PARTS_GUTTER, 2);
         }
-        if (row.type !== 'folder') _drawRegionBlocks(row, y0, laneH, w, _laneContentTimeExtent(row, arrIdx));
+        if (extent) _drawRegionBlocks(row, y0, laneH, w, extent);
         // Drag ghost: a dashed preview of where the block will land, on its own
         // row, at the bar-snapped start (see _partsViewRegionDrag).
         if (S.drag && S.drag.type === 'region-move' && S.drag.moved && row.id === S.drag.trackId) {
