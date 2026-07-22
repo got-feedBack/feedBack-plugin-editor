@@ -103,7 +103,7 @@ t('exposes ready and planned shortcut command rows', () => {
     assert.strictEqual(rows.find(r => r.id === 'slideEditor').key, 'S');
     assert.strictEqual(rows.find(r => r.id === 'cyclePickDirection').key, 'K');
     // EOF's Shift+T is Midi Tones; time signature is Shift+I only there.
-    assert.strictEqual(rows.find(r => r.id === 'setTimeSignature').key, 'Shift+I');
+    assert.strictEqual(rows.find(r => r.id === 'setTimeSignature').key, 'Shift+T / Shift+I');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatCount').key, 'N (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatMinus').key, '[ (Tempo Map)');
     assert.strictEqual(rows.find(r => r.id === 'tempoBeatUnit').key, 'D (Tempo Map)');

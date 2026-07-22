@@ -155,7 +155,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'addToneChange', label: 'Add tone change at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+Shift+T', eof: 'Ctrl+Shift+T' } },
     { id: 'addHandshape', label: 'Add handshape from selection', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+H', eof: 'Ctrl+Shift+H' } },
     { id: 'toggleTempoMap', label: 'Enter/exit Tempo Map', group: 'Tempo map', status: 'ready', keys: { feedback: 'T,T', logical: 'G', eof: 'T (Tempo Map)' } },
-    { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+I' } },
+    { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+T / Shift+I' } },
     { id: 'tempoBeatCount', label: 'Set selected measure beat count', group: 'Tempo map', status: 'ready', keys: { feedback: 'N (Tempo Map)', eof: 'N (Tempo Map)' } },
     { id: 'tempoBeatMinus', label: 'Remove a beat from selected measure', group: 'Tempo map', status: 'ready', keys: { feedback: '[ (Tempo Map)', eof: '[ (Tempo Map)' } },
     { id: 'tempoBeatPlus', label: 'Add a beat to selected measure', group: 'Tempo map', status: 'ready', keys: { feedback: '] (Tempo Map)', eof: '] (Tempo Map)' } },
@@ -193,6 +193,7 @@ export const PROFILE_DIVERGENCES = Object.freeze({
         nudgeTimeLeft: { kind: 'adapted', of: 'Left = seek', why: 'Arrows nudge the selection here (seek when nothing is selected); the Page keys seek.' },
         nudgeTimeRight: { kind: 'adapted', of: 'Right = seek', why: 'Arrows nudge the selection here (seek when nothing is selected); the Page keys seek.' },
         selectLike: { kind: 'adapted', of: 'Shift+L = precise select-like', why: 'Both EOF select-like keys run the one select-matching command here.' },
+        setTimeSignature: { kind: 'adapted', of: 'Shift+I', why: 'Shift+I matches EOF; Tempo Map also keeps Shift+T as a contextual alias.' },
         toggleGuideClap: { kind: 'editorOnly', why: 'No EOF pro-guitar equivalent — guide claps ride this editor’s MIDI preview.' },
     }),
     logical: Object.freeze({
