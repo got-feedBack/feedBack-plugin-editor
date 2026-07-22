@@ -823,7 +823,10 @@ window.editorYtUrlInput = editorYtUrlInput;
 
 // The editor-owned Back button is a destructive document transition, just
 // like New/Open. Keep the screen mounted when the user cancels or when Save
-// (including a cancelled first-save picker) does not complete durably.
+/**
+ * Navigates from the editor to the home screen after confirming the session transition.
+ * @return {boolean} `true` if navigation is allowed, `false` if the transition is denied.
+ */
 async function _editorLeaveToHome() {
     if (!(await guardSessionTransition('returning to the library'))) return false;
     if (typeof window.showScreen === 'function') window.showScreen('home');

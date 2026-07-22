@@ -17,6 +17,15 @@ class _FakeApp:
         self.routes = {}
 
     def _register(self, path):
+        """
+        Create a decorator that registers a route handler for the specified path.
+        
+        Parameters:
+            path: The route path associated with the handler.
+        
+        Returns:
+            A decorator that stores a handler in the app's route registry and returns it unchanged.
+        """
         def decorator(fn):
             self.routes[path] = fn
             return fn
@@ -31,6 +40,15 @@ class _FakeApp:
 
 @pytest.fixture()
 def build_routes(tmp_path):
+    """
+    Create an isolated test environment with registered editor routes and a session workspace.
+    
+    Parameters:
+    	tmp_path (Path): Temporary directory used for test files and configuration.
+    
+    Yields:
+    	tuple: The imported routes module, fake application, DLC directory, and session directory.
+    """
     added = []
     if "lib" not in sys.modules:
         lib = types.ModuleType("lib")
@@ -81,6 +99,15 @@ def build_routes(tmp_path):
 
 
 def _payload(**extra):
+    """
+    Build the default JSON payload used by editor build route tests.
+    
+    Parameters:
+    	extra (dict): Additional fields that override or extend the default payload.
+    
+    Returns:
+    	dict: The resulting request payload.
+    """
     data = {
         "session_id": "create",
         "audio_url": "/api/plugins/editor/cache/source.ogg",

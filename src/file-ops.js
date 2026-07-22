@@ -45,15 +45,31 @@ let externalSaveSessionId = null;
 let packLoadController = null;
 let packLoadGeneration = 0;
 
+/**
+ * Determines whether an external save handle belongs to the specified session.
+ * @param {*} handleSessionId - The session identifier associated with the handle.
+ * @param {*} sessionId - The current session identifier.
+ * @return {boolean} `true` if the handle session identifier is present and matches the current session, `false` otherwise.
+ */
 export function _externalSaveHandleIsCurrentPure(handleSessionId, sessionId) {
     return !!handleSessionId && handleSessionId === sessionId;
 }
 
+/**
+ * Gets the external save handle associated with the active session.
+ * @return {FileSystemFileHandle|null} The current session's external save handle, or `null` when none is associated with the session.
+ */
 function _currentExternalSaveHandle() {
     return _externalSaveHandleIsCurrentPure(externalSaveSessionId, S.sessionId)
         ? externalSaveHandle : null;
 }
 
+/**
+ * Retrieves the exported feedpak for a session.
+ * @param {string} [sessionId=S.sessionId] - The session identifier to export.
+ * @returns {Promise<Blob>} The exported feedpak data.
+ * @throws {Error} If the export request fails.
+ */
 async function _exportBlob(sessionId = S.sessionId) {
     const resp = await fetch('/api/plugins/editor/session/export?session_id='
         + encodeURIComponent(sessionId || ''));
@@ -65,6 +81,11 @@ async function _exportBlob(sessionId = S.sessionId) {
     return resp.blob();
 }
 
+/**
+ * Writes the current session export to a selected file or starts a download.
+ * @param {FileSystemFileHandle|null} handle - Destination file handle, or `null` to download the export.
+ * @param {string} sessionId - Session identifier to export.
+ */
 async function _writeExternalCopy(handle, sessionId = S.sessionId) {
     const blob = await _exportBlob(sessionId);
     if (handle) {
@@ -86,6 +107,10 @@ async function _writeExternalCopy(handle, sessionId = S.sessionId) {
     setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+/**
+ * Mirrors the current session to its external save destination.
+ * @return {boolean} `true` if the copy succeeds or no destination is configured, `false` if the session changes or the copy fails.
+ */
 async function _mirrorExternalCopy() {
     const sessionId = S.sessionId;
     const handle = _currentExternalSaveHandle();
@@ -137,6 +162,13 @@ export function _suggestedSaveNamePure(filename, title, artist) {
     return `${t || 'Untitled'}_${a || 'Unknown'}.feedpak`;
 }
 
+/**
+ * Loads a feedpak into the editor and resets session-specific state.
+ * @param {string} filename - The feedpak filename to load.
+ * @param {Object} [options] - Load options.
+ * @param {boolean} [options.skipGuard=false] - Whether to skip the session-transition guard.
+ * @return {Promise<boolean>} `true` when the feedpak is loaded successfully, `false` if loading fails, is canceled, or is superseded.
+ */
 export async function loadCDLC(filename, options = {}) {
     if (!options.skipGuard && !(await guardSessionTransition('opening another feedpak'))) return false;
     const oldSessionId = S.sessionId;
@@ -784,6 +816,12 @@ export function _buildSaveBody(forceFullSnapshot) {
     return _stripBeatsFromSaveBody(body);
 }
 
+/**
+ * Saves the current editor session and optionally mirrors it to an external location.
+ * @param {Object} [options={}] - Save options.
+ * @param {boolean} [options.skipExternal=false] - Whether to skip writing an external copy.
+ * @return {boolean} `true` if the session is saved successfully, `false` otherwise.
+ */
 export async function saveCDLC(options = {}) {
     if (!S.sessionId) return false;
     // A new document has no library file to overwrite. Package it inside the
@@ -909,6 +947,11 @@ export const editorSaveAsSloppakConfirm = async () => {
     }
 };
 
+/**
+ * Saves the current session to a user-selected file or downloads a copy.
+ *
+ * @returns {boolean} `true` if the session is saved successfully to a selected file, `false` otherwise.
+ */
 export async function editorSaveAs() {
     if (!S.sessionId) return false;
     const sessionId = S.sessionId;
@@ -972,11 +1015,21 @@ export async function editorSaveAs() {
 // session must choose its first destination (native picker where available,
 // download fallback elsewhere); later saves reuse that handle. Loaded projects
 // already have a source path and save in place. Bind the handle to sessionId so
-// starting another project can never overwrite the previous project's file.
+/**
+ * Determines whether saving requires selecting an external destination.
+ * @param {boolean} hasHandle - Whether the current session has an external save handle.
+ * @param {boolean} _hasPickerApi - Whether the file picker API is available.
+ * @param {boolean} sessionNeedsLocation - Whether the session requires a save location.
+ * @returns {boolean} `true` if no external handle exists and the session requires a save location, `false` otherwise.
+ */
 export function _saveShouldPickPure(hasHandle, _hasPickerApi, sessionNeedsLocation) {
     // Without the native API, editorSaveAs falls back to a browser download.
     return !hasHandle && !!sessionNeedsLocation;
 }
+/**
+ * Saves the current editor session, prompting for an external destination when a new document requires one.
+ * @returns {boolean} `true` if the session is saved successfully, `false` otherwise.
+ */
 export async function editorSave() {
     if (!S.sessionId) return false;
     const hasPicker = typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function';

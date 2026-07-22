@@ -74,6 +74,10 @@ async function _uploadReplaceAudio() {
     });
 }
 
+/**
+ * Replaces the session audio with a user-selected file or YouTube URL.
+ * @returns {Promise<void>}
+ */
 export async function editorApplyReplaceAudio() {
     if (!S.sessionId) return;
     const sessionId = S.sessionId;

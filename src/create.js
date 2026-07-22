@@ -2368,7 +2368,10 @@ async function _editorDoBlankCreate() {
 
 // Apply a create-mode import result (from convert-gp OR import-xml-project) to
 // the editor and open it. The two import sources return the same shape
-// (_song_to_dict + session_id + create_mode), so this is shared.
+/**
+ * Applies an imported creation result to the editor as a new session.
+ * @param {Object} data - Backend result containing session metadata, arrangements, timing data, and optional audio, drum, and track-session data.
+ */
 export async function editorApplyCreateResult(data) {
     // Persist the audio URL the backend actually used (e.g. GP8-extracted or the
     // project's uploaded mix) so editorBuild() reuses it on later builds.
@@ -2538,7 +2541,9 @@ export function editorEofFilesSelected(input) {
 
 // EOF import path for editorDoCreate: upload the (optional) audio, POST the
 // arrangement XML(s) + audio URL + metadata, then open the result. Album art and
-// the preview clip are baked later at Build (editorBuild), from their own inputs.
+/**
+ * Imports EOF arrangement files into a new editor session, optionally including staged audio and metadata.
+ */
 async function _editorDoEofCreate() {
     const status = document.getElementById('editor-create-status');
     const btn = document.getElementById('editor-create-go');
@@ -2577,7 +2582,12 @@ async function _editorDoEofCreate() {
 
 // Packages the current create session. The default is an explicit library export;
 // Save passes destination:"session" so the backend prepares a temporary package
-// for the user-selected file without publishing it.
+/**
+ * Builds the current create-mode project for library export or session saving.
+ * @param {Object} [options={}] - Build options.
+ * @param {string} [options.destination] - Set to `session` to prepare a package for saving; other values export to the library.
+ * @return {boolean} `true` if the build succeeds, `false` otherwise.
+ */
 export async function editorBuild(options = {}) {
     if (!S.sessionId || !S.createMode) return false;
     const destination = options.destination === 'session' ? 'session' : 'library';

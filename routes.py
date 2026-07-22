@@ -3955,6 +3955,16 @@ def _arr_to_data(arr, name):
 
 
 def setup(app, context):
+    """Initialize the editor plugin, register its routes, and manage editing sessions.
+    
+    Parameters:
+    	app: FastAPI application to which the editor routes are registered.
+    	context (dict): Host-provided configuration and service callbacks, including the
+    	configuration directory and DLC directory resolver.
+    
+    Returns:
+    	None
+    """
     config_dir = context["config_dir"]
     get_dlc_dir = context["get_dlc_dir"]
     # Shared metadata cache (title/artist/…), populated by the core library
@@ -4083,6 +4093,16 @@ def setup(app, context):
 
     @app.get("/api/plugins/editor/session/export")
     async def export_editor_session(session_id: str):
+        """
+        Export the saved feedpak associated with an active editor session.
+        
+        Parameters:
+        	session_id (str): Identifier of the active editor session.
+        
+        Returns:
+        	FileResponse: The saved feedpak file.
+        	JSONResponse: An error response when the session or saved feedpak is unavailable or invalid.
+        """
         session = sessions.get(session_id)
         if not session:
             return JSONResponse({"error": "No active session"}, 404)
@@ -8752,10 +8772,19 @@ def setup(app, context):
                         {"error": f"invalid drum_parts[{_pi}].drum_tab: {_p_reason}"}, 400)
 
         def _build_sloppak():
-            """Build a `.sloppak` for the create-mode session.
-
-            Output filename is derived from title/artist for create-mode
-            sessions (no existing source filename to preserve).
+            """
+            Builds a Sloppak package for the create-mode session.
+            
+            The package is staged in the session directory when the destination is
+            ``"session"``; otherwise, it is written to the configured DLC directory
+            using a title- and artist-derived filename.
+            
+            Raises:
+                RuntimeError: If the master audio, an additional audio track, or the DLC
+                    directory required for a library build is unavailable.
+            
+            Returns:
+                Path: The path to the created package.
             """
             resolved = _resolve_storage_url(audio_url) if audio_url else None
             audio_file = str(resolved) if resolved else ""

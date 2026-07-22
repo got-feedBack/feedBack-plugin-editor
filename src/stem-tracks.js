@@ -211,6 +211,9 @@ function _onPairChange(e) {
     })();
 }
 
+/**
+ * Imports selected audio files as stem tracks and updates the session with the resulting stems and pairings.
+ */
 function _onImportPicked(e) {
     const input = e.target;
     if (!input || !input.files || !input.files.length || !S.sessionId) return;
