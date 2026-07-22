@@ -1,8 +1,8 @@
 # Song Editor — User Guide
 
 The **Song Editor** turns a recording into a playable feedBack chart. You line a
-grid up to the music, place the notes, mark the tempo and sections, and build a
-`.feedpak` the rest of the app can practice against.
+grid up to the music, place the notes, mark the tempo and sections, save the
+editable `.feedpak` project, and export it where the rest of the app can use it.
 
 This guide is the same content you get in-app from **Help ▸ User Guide**. It
 covers the FeedBack shortcut profile (the default). Three other profiles remap
@@ -23,7 +23,7 @@ six steps, and this guide follows them in order:
 3. **Chart the notes** (§4) — place, edit, and mark up every note and technique.
 4. **Build out the tracks** (§5, §7) — more parts, keys with hands, drums, studio stems.
 5. **Hear it** (§3) — guide claps, the metronome, loops, and the mixer console.
-6. **Save and build** (§9) — `Ctrl+S` while you work; **Build** writes the `.feedpak`.
+6. **Save and export** (§9) — `Ctrl+S` preserves the project; export publishes it.
 
 ---
 
@@ -81,8 +81,9 @@ A few sources arrive through their own doors, any time after creation:
 - A **GoPlayAlong** sidecar brings bar→time sync points only (no notes) —
   useful for lining a grid up fast.
 
-> **Autosave is not a thing.** Nothing touches your library until you **Build**
-> (§9). Save early with `Ctrl+S`.
+> **Autosave is not a thing.** Importing creates an unsaved project, not a
+> library item. Save early with `Ctrl+S`; nothing touches your library until
+> you choose **Export to Library** (§9).
 
 ---
 
@@ -409,16 +410,19 @@ These live in the **Add** menu (Markers) and show in the inspector when selected
 
 ---
 
-## 9. Save and build — the finish line
+## 9. Save and export — the finish line
 
-- **`Ctrl+S`** saves your working session. For an exportable packed song, the
-  first save can ask where to keep an external copy when your browser supports
-  a file picker; otherwise it saves straight to the library. Later saves reuse
-  the chosen location.
-- **Build feedpak** (the toolbar button, or File ▸ Build feedpak) assembles
-  the finished **`.feedpak`** through the host's core libraries and writes it
-  to your library — this is the only step that changes what the rest of the
-  app sees. The pack carries everything you authored: every arrangement,
+- **`Ctrl+S`** saves the editable `.feedpak` project. A new project asks for a
+  name and location through the native file picker; later saves reuse that
+  location. Opening an existing project and pressing Save updates it in place.
+  Saving never publishes a library copy and never asks you to review export
+  settings. In browsers without the native picker, Save downloads a copy but
+  keeps the project marked unsaved because download completion cannot be
+  verified; the desktop-native save contract is the durable path.
+- **Export to Library** (the toolbar button, or File ▸ Export to Library)
+  assembles the current project through the host's core libraries and publishes
+  a playable copy to your library. Exporting is separate from saving: it does
+  not clear unsaved project changes. The exported pack carries every arrangement,
   the tempo map, sections and phrases, techniques, keys notation with its
   hand split, stems, tones, and art.
 
@@ -429,8 +433,9 @@ These live in the **Add** menu (Markers) and show in the inspector when selected
 3. The lint flags you care about are addressed (they *advise*, never block).
 4. Song details are filled (title, artist, art) — they're the library card.
 
-Build again any time — rebuilding replaces the pack, and your working session
-stays editable.
+Export again any time to refresh the library copy. For quick edits that do not
+need a new export, Save and close—the project remains editable and the library
+copy simply stays at its previous version.
 
 **Undo/redo is the safety net.** Every edit — including tempo moves, offset, and
 imports — is undoable (`Ctrl+Z` / `Ctrl+Y`). If something looks wrong, undo it.

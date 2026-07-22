@@ -6,7 +6,7 @@
 
     <!-- Top bar: back + song info -->
     <div class="flex items-center gap-3 px-4 py-2 bg-dark-800 border-b border-gray-800 shrink-0">
-        <button onclick="showScreen('home')" class="text-gray-500 hover:text-white text-sm flex items-center gap-1">
+        <button onclick="editorLeaveToHome()" class="text-gray-500 hover:text-white text-sm flex items-center gap-1">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
             </svg> Back
@@ -64,7 +64,7 @@
         <button id="editor-save-btn" onclick="editorSave()" class="px-3 py-1 bg-accent hover:bg-accent-light rounded text-xs font-medium" disabled>Save</button>
         <button id="editor-replace-audio-btn" onclick="editorShowReplaceAudioModal()" class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden" title="Replace the audio track">Replace Audio</button>
         <button id="editor-shift-audio-btn" onclick="editorPromptAudioShift()" class="px-3 py-1 bg-dark-600 hover:bg-dark-500 rounded text-xs font-medium hidden" title="Slide the recording in time to line it up with the chart — the audio moves, the chart stays put (non-destructive, undoable)">Shift Audio…</button>
-        <button id="editor-build-btn" onclick="editorBuild()" class="px-3 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs font-medium hidden" title="Assemble the finished .feedpak package">Build feedpak</button>
+        <button id="editor-build-btn" onclick="editorBuild()" class="px-3 py-1 bg-purple-800 hover:bg-purple-700 rounded text-xs font-medium hidden" title="Export the current project to the feedBack library">Export to Library</button>
         </div>
         <!-- Parts -->
         <div class="editor-tb" data-tb="parts">
@@ -1087,7 +1087,7 @@
         </div>
         <div class="flex-1 overflow-y-auto px-5 py-4 text-sm text-gray-300 leading-relaxed editor-guide-body">
             <p class="text-gray-400">Turn a recording into a playable chart: line a grid up to the
-                music, place the notes, mark the tempo and sections, and build a <code>.feedpak</code>.
+                music, place the notes, mark the tempo and sections, save the editable <code>.feedpak</code>, and export it when ready.
                 Keys below are the default <strong>FeedBack</strong> profile — press
                 <kbd>?</kbd> for the full, profile-aware shortcut list.</p>
             <figure>
@@ -1104,7 +1104,7 @@
                 <img src="/api/plugins/editor/assets/guide/import.png" alt="The Create New Arrangement dialog: add files, review every imported track, and select the Guide audio source.">
                 <figcaption><strong>New…</strong> uses one track table for audio, Guitar Pro, MIDI, and XML. Pick one audio row as the Guide for tempo mapping.</figcaption>
             </figure>
-            <p class="tip">Nothing touches your library until you <strong>Build</strong> (§9). Save early with <kbd>Ctrl</kbd>+<kbd>S</kbd>.</p>
+            <p class="tip">Nothing touches your library until you <strong>Export to Library</strong> (§9). Save early with <kbd>Ctrl</kbd>+<kbd>S</kbd>.</p>
 
             <h3>2 · The workspace</h3>
             <ul>
@@ -1167,8 +1167,8 @@
                 <figcaption>Adding drums: import a Guitar Pro or MIDI drum track, then edit it on the piece-lane grid.</figcaption>
             </figure>
 
-            <h3>9 · Save &amp; build</h3>
-            <p><kbd>Ctrl</kbd>+<kbd>S</kbd> saves your session. <strong>Build</strong> assembles the finished <code>.feedpak</code> into your library — the only step that changes what the rest of the app sees. Build once the grid fits, the notes are placed, and guide-claps-against-the-recording sounds right.</p>
+            <h3>9 · Save &amp; export</h3>
+            <p><kbd>Ctrl</kbd>+<kbd>S</kbd> saves the editable <code>.feedpak</code> project at the location you choose. <strong>Export to Library</strong> publishes the current project to the library without replacing Save. Export once the grid fits, the notes are placed, and guide-claps-against-the-recording sounds right.</p>
             <p class="tip"><strong>Undo/redo is the safety net</strong> — every edit, including tempo moves, offset, and imports, is undoable (<kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd>). If something looks wrong, undo it.</p>
 
             <p class="text-gray-500 text-[12px] mt-4 pt-3 border-t border-gray-700/60">More help: <kbd>?</kbd> shortcut panel · <kbd>Ctrl</kbd>+<kbd>K</kbd> command palette. Full written copy: <code>docs/USER-GUIDE.md</code> in the plugin repo.</p>

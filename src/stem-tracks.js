@@ -233,7 +233,7 @@ function _onImportPicked(e) {
             setStatus(`Imported ${n} track${n === 1 ? '' : 's'}`
                 + (skipped ? ` (${skipped} skipped — not audio)` : '')
                 + (data.next_step === 'save' ? ' — Save writes them into the pack.'
-                    : data.next_step === 'build' ? ' — Build Song packs them in.' : '.'));
+                    : data.next_step === 'build' ? ' — Save the project, then export again when ready.' : '.'));
         } catch (err) {
             setStatus('Import failed: ' + err.message);
         }

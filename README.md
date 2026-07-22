@@ -3,15 +3,15 @@
 The **Song Editor** plugin for [feedBack](https://github.com/got-feedback/feedback)
 (plugin id `editor`) — a DAW-style timeline editor that turns a recording into
 a playable feedBack chart: import a tab or start from audio, line the grid up
-to the take, author every note, and build a `.feedpak` the whole ecosystem
-plays.
+to the take, author every note, save the editable `.feedpak` project, and
+export it to the targets where it will be played.
 
 ![The Song Editor: the multitrack Tracks column at left, the waveform and beat grid up top, and a synced Guitar Pro chart laid out on the string lanes.](assets/guide/workspace.png)
 
 **New here?** The **[User Guide](docs/USER-GUIDE.md)** (also in-app under
 Help ▸ User Guide) walks the whole journey — create a project from a
 recording, a chart, or both; fit the tempo map; chart the notes; add tracks,
-stems, and drums; mix; and build the finished feedpak.
+stems, and drums; mix; save the project; and export it to the library.
 
 It is the largest plugin in the ecosystem. If you are here to work on it,
 read this top-to-bottom once — the architecture section saves real time.
@@ -56,8 +56,10 @@ read this top-to-bottom once — the architecture section saves real time.
   (candidate positions from the suggest-position resolver, click to assign),
   a drum kit / pad strip (GM-mapped, MIDI-monitor capable), and advisory
   playability/limb lints that name physical questions without ever blocking.
-- **Build** — assembles the finished `.feedpak` through the host's core
-  libraries, so output packages are compatible everywhere.
+- **Save and export are separate** — Save preserves the editable `.feedpak`
+  project at the location you choose. **Export to Library** assembles and
+  publishes a playable library copy through the host's core libraries. Export
+  never pretends that unsaved project edits were saved.
 
 ## Layout
 

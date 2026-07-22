@@ -134,7 +134,7 @@ export async function editorApplyReplaceAudio() {
         const HINTS = {
             none:    'Audio replaced',
             save:    'Audio replaced (Save to persist to .sloppak)',
-            build:   'Audio replaced (will persist on next Build feedpak)',
+            build:   'Audio replaced (Save the project; export again to update the library)',
             rebuild: "Audio replaced (playback only — archive won't be repacked)",
         };
         editorHideReplaceAudioModal();

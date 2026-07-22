@@ -75,7 +75,7 @@ export const EDITOR_MENUS = Object.freeze([
         { sep: true },
         { label: 'Replace audio…', fn: 'editorShowReplaceAudioModal' },
         { cmd: 'manageStemTracks' },
-        { label: 'Build feedpak', fn: 'editorBuild' },
+        { label: 'Export to Library', fn: 'editorBuild' },
     ] },
     { title: 'Edit', items: [
         { label: 'Undo', fn: 'editorUndo', key: 'Ctrl+Z' },
