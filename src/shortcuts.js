@@ -77,12 +77,12 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'showTabPreview', label: 'Preview track as tab (read-only, saved pack)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleTabView', label: 'Tab view (live engraving of the current track)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'toggleDrumDensity', label: 'Cycle drum row density (Full / Compact / GM roll)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
-    { id: 'toggleFollow', label: 'Toggle follow playhead', group: 'View', status: 'ready', keys: { feedback: 'Shift+L', cableton: 'Ctrl+Shift+F', eof: 'Shift+L' } },
+    { id: 'toggleFollow', label: 'Toggle follow playhead', group: 'View', status: 'ready', keys: { feedback: 'Shift+L', cableton: 'Ctrl+Shift+F', eof: '' } },
     { id: 'toggleScrollInPlay', label: 'Toggle scroll in play (continuous follow)', group: 'View', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'renamePart', label: 'Rename current track', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'movePartEarlier', label: 'Move current track earlier', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'movePartLater', label: 'Move current track later', group: 'Structure', status: 'ready', keys: { feedback: '', eof: '' } },
-    { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: '?' } },
+    { id: 'showShortcutHelp', label: 'Show shortcut help', group: 'View', status: 'ready', keys: { feedback: '?', eof: 'F1 / ?' } },
     { id: 'openCommandPalette', label: 'Open command palette', group: 'View', status: 'ready', keys: { feedback: 'Ctrl+K', eof: 'Ctrl+K' } },
     { id: 'importMidi', label: 'Import MIDI / keys', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F6' } },
     { id: 'importXml', label: 'Import XML source', group: 'File', status: 'ready', keys: { feedback: '', eof: 'F7' } },
@@ -98,20 +98,20 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'nextGrid', label: 'Jump to next grid line', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Page Down', eof: 'Ctrl+Shift+Page Down' } },
     { id: 'prevAnchor', label: 'Jump to previous anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Left', eof: 'Alt+Page Up' } },
     { id: 'nextAnchor', label: 'Jump to next anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Right', eof: 'Alt+Page Down' } },
-    { id: 'gotoBookmarkDigit', label: 'Jump to bookmark 1-9', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+1-9', eof: 'Alt+1-9' } },
-    { id: 'setBookmarkDigit', label: 'Set / clear bookmark 1-9 at cursor', group: 'Timeline', status: 'ready', keys: { feedback: 'Shift+Alt+1-9', eof: 'Shift+Alt+1-9' } },
+    { id: 'gotoBookmarkDigit', label: 'Jump to bookmark 1-9', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+1-9', eof: 'Numpad 1-9 / Alt+1-9' } },
+    { id: 'setBookmarkDigit', label: 'Set / clear bookmark 1-9 at cursor', group: 'Timeline', status: 'ready', keys: { feedback: 'Shift+Alt+1-9', eof: 'Ctrl+Numpad 1-9 / Shift+Alt+1-9' } },
     { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '[', eof: '[' } },
     { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: ']', eof: ']' } },
-    { id: 'toggleSnap', label: 'Toggle snap on/off', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'G', cableton: 'Ctrl+4', eof: '' } },
+    { id: 'toggleSnap', label: 'Toggle snap on/off', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'G', logical: 'Shift+G', cableton: 'Ctrl+4', eof: '' } },
     { id: 'snapDown', label: 'Decrease snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: ',', logical: 'Ctrl+,', cableton: 'Ctrl+2', eof: ',' } },
     { id: 'snapUp', label: 'Increase snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: '.', logical: 'Ctrl+.', cableton: 'Ctrl+1', eof: '.' } },
     { id: 'toggleSnapMode', label: 'Toggle snap target (grid / audio onset)', group: 'Grid and sustain', status: 'ready', keys: { feedback: '', eof: '' } },
     { id: 'editFret', label: 'Edit fret / fingering', group: 'Notes', status: 'ready', keys: { feedback: 'F', eof: 'F / Ctrl+F' } },
     { id: 'suggestFingers', label: 'Suggest fret-hand fingers', group: 'Notes', status: 'ready', keys: { feedback: '', eof: '' } },
-    { id: 'setFretDigit', label: 'Set selected fret 0-9', group: 'Notes', status: 'ready', keys: { feedback: '0-9', eof: '0-9' } },
-    { id: 'setFretTen', label: 'Set selected fret 10', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+0', eof: 'Shift+0' } },
+    { id: 'setFretDigit', label: 'Set selected fret 0-9', group: 'Notes', status: 'ready', keys: { feedback: '0-9', eof: '0-9 / Ctrl+1-9' } },
+    { id: 'setFretTen', label: 'Set selected fret 10', group: 'Notes', status: 'ready', keys: { feedback: 'Shift+0', eof: 'Shift+0 / Ctrl+0' } },
     { id: 'noteMenu', label: 'Open note edit menu', group: 'Notes', status: 'ready', keys: { feedback: '', eof: 'N' } },
-    { id: 'bend', label: 'Edit bend', group: 'Notes', status: 'ready', keys: { feedback: 'B', eof: 'Ctrl+B' } },
+    { id: 'bend', label: 'Edit bend', group: 'Notes', status: 'ready', keys: { feedback: 'B', cableton: 'Ctrl+B', eof: 'Ctrl+B' } },
     { id: 'slideEditor', label: 'Edit pitched slide', group: 'Notes', status: 'ready', keys: { feedback: 'S', eof: 'S' } },
     { id: 'unpitchedSlide', label: 'Edit unpitched slide', group: 'Notes', status: 'ready', keys: { feedback: 'U', eof: 'Ctrl+U' } },
     { id: 'moveStringUp', label: 'Move selection up one string', group: 'Notes', status: 'ready', keys: { feedback: 'Up', eof: 'Up' } },
@@ -122,7 +122,7 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'slideDown', label: 'Pitched slide down', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+Down', eof: 'Ctrl+Down' } },
     { id: 'toggleHammerOn', label: 'Toggle hammer-on', group: 'Techniques', status: 'ready', keys: { feedback: 'H', eof: 'H' } },
     { id: 'togglePullOff', label: 'Toggle pull-off', group: 'Techniques', status: 'ready', keys: { feedback: 'P', eof: 'P' } },
-    { id: 'toggleTap', label: 'Toggle tap', group: 'Techniques', status: 'ready', keys: { feedback: 'Y', eof: 'T / Ctrl+T' } },
+    { id: 'toggleTap', label: 'Toggle tap', group: 'Techniques', status: 'ready', keys: { feedback: 'Y', eof: 'Ctrl+T' } },
     { id: 'togglePinchHarmonic', label: 'Toggle pinch harmonic', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+N', eof: 'Shift+H' } },
     { id: 'toggleNaturalHarmonic', label: 'Toggle natural harmonic', group: 'Techniques', status: 'ready', keys: { feedback: 'N', eof: 'Ctrl+H' } },
     { id: 'togglePalmMute', label: 'Toggle palm mute', group: 'Techniques', status: 'ready', keys: { feedback: 'M', eof: 'Ctrl+M' } },
@@ -139,22 +139,22 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'fretUp', label: 'Increase selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl++', eof: 'Ctrl++' } },
     { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+-' } },
     { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
-    { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', cableton: 'Ctrl+Shift+L', eof: 'Ctrl+L' } },
+    { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', cableton: 'Ctrl+Shift+L', eof: 'Ctrl+L / Shift+L' } },
     { id: 'duplicateSelection', label: 'Duplicate selection to next position', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+D', eof: 'Ctrl+D' } },
     { id: 'copySelection', label: 'Copy selection', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+C', eof: 'Ctrl+C' } },
     { id: 'cutSelection', label: 'Cut selection', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+X', eof: 'Shift+Del' } },
     { id: 'pasteAtPlayhead', label: 'Paste at playhead', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+V', eof: 'Ctrl+V' } },
-    { id: 'splitAtPlayhead', label: 'Split notes at playhead', group: 'Selection', status: 'ready', keys: {} },
+    { id: 'splitAtPlayhead', label: 'Split notes at playhead', group: 'Selection', status: 'ready', keys: { feedback: '', cableton: 'Ctrl+E', eof: '' } },
     // The Logic-style left-click tool palette (CLICK-TOOLS-DESIGN.md). Plain T
     // opens it in every profile except Legacy (EOF), whose key map stays 1:1
     // EOF — there it lives in the View menu / this command palette.
-    { id: 'toolPalette', label: 'Tool palette (left-click tool)', group: 'View', status: 'ready', keys: { feedback: 'T', logical: 'T', cableton: 'T' } },
+    { id: 'toolPalette', label: 'Tool palette (left-click tool)', group: 'View', status: 'ready', keys: { feedback: 'T', logical: 'T', cableton: 'T', eof: '' } },
     { id: 'resnapSelection', label: 'Resnap selection to grid', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'Shift+R', logical: 'Q', cableton: 'Ctrl+U', eof: 'Shift+R' } },
     { id: 'addSection', label: 'Add section at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+M', logical: "Alt+'", eof: 'Shift+S' } },
     { id: 'addPhrase', label: 'Add phrase at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+P', eof: 'Shift+P' } },
     { id: 'addToneChange', label: 'Add tone change at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+Shift+T', eof: 'Ctrl+Shift+T' } },
     { id: 'addHandshape', label: 'Add handshape from selection', group: 'Structure', status: 'ready', keys: { feedback: 'Ctrl+H', eof: 'Ctrl+Shift+H' } },
-    { id: 'toggleTempoMap', label: 'Enter/exit Tempo Map', group: 'Tempo map', status: 'ready', keys: { feedback: 'T', eof: 'T (Tempo Map)' } },
+    { id: 'toggleTempoMap', label: 'Enter/exit Tempo Map', group: 'Tempo map', status: 'ready', keys: { feedback: 'T,T', logical: 'G', eof: 'T (Tempo Map)' } },
     { id: 'setTimeSignature', label: 'Set time signature', group: 'Tempo map', status: 'ready', keys: { feedback: 'Shift+T', eof: 'Shift+T / Shift+I' } },
     { id: 'tempoBeatCount', label: 'Set selected measure beat count', group: 'Tempo map', status: 'ready', keys: { feedback: 'N (Tempo Map)', eof: 'N (Tempo Map)' } },
     { id: 'tempoBeatMinus', label: 'Remove a beat from selected measure', group: 'Tempo map', status: 'ready', keys: { feedback: '[ (Tempo Map)', eof: '[ (Tempo Map)' } },
@@ -179,20 +179,62 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'placeMoverPhrase', label: 'Place mover phrase', group: 'Structure', status: 'planned', keys: { feedback: 'Ctrl+Shift+R', eof: 'Ctrl+Shift+R' } },
 ]);
 
+// Where a compat profile deliberately diverges from its reference app. This is
+// the ONLY curated fidelity data — everything else derives: a row absent from
+// this map displays silently as a match (or, when keyless, as editor-only).
+// `of` names the reference app's own key/meaning; `why` is the one-line reason
+// shown in the tooltip. Sourced from EOF_hotkeys.txt (pro-guitar set) and the
+// manual-verified Logic/Live audits — a factual claim about the reference app,
+// not UI copy; keep entries in sync with EOF-PROFILE-POLICY.md.
+export const PROFILE_DIVERGENCES = Object.freeze({
+    eof: Object.freeze({
+        setFretDigit: { kind: 'adapted', of: 'Ctrl+`-9', why: 'Plain digits type the fret here; EOF’s Ctrl+digit works too.' },
+        setFretTen: { kind: 'adapted', of: 'Ctrl+0', why: 'Shift+0 types fret 10 here; EOF’s Ctrl+0 works too.' },
+        nudgeTimeLeft: { kind: 'adapted', of: 'Left = seek', why: 'Arrows nudge the selection here (seek when nothing is selected); the Page keys seek.' },
+        nudgeTimeRight: { kind: 'adapted', of: 'Right = seek', why: 'Arrows nudge the selection here (seek when nothing is selected); the Page keys seek.' },
+        selectLike: { kind: 'adapted', of: 'Shift+L = precise select-like', why: 'Both EOF select-like keys run the one select-matching command here.' },
+        setTimeSignature: { kind: 'adapted', of: 'Shift+I', why: 'Shift+I matches EOF; Tempo Map also keeps Shift+T as a contextual alias.' },
+        toggleGuideClap: { kind: 'editorOnly', why: 'No EOF pro-guitar equivalent — guide claps ride this editor’s MIDI preview.' },
+    }),
+    logical: Object.freeze({
+        toggleSnap: { kind: 'adapted', of: '(no Logic key)', why: 'Plain G is Tempo Map here (Logic’s G opens the global tracks); Shift+G toggles snap.' },
+        snapDown: { kind: 'adapted', of: 'Logic: Rewind by Transient', why: 'Ctrl+, steps snap finer here; , rewinds as in Logic.' },
+        snapUp: { kind: 'adapted', of: 'Logic: Forward by Transient', why: 'Ctrl+. steps snap coarser here; . forwards as in Logic.' },
+        cyclePickDirection: { kind: 'adapted', of: 'Logic: Toggle Count-in', why: 'Relocated off K (Logic’s Click); no Logic analogue for pick direction.' },
+        toggleGuideClap: { kind: 'adapted', of: '(no Logic key)', why: 'Relocated off C (Logic’s Cycle Mode).' },
+    }),
+    cableton: Object.freeze({
+        bend: { kind: 'adapted', of: 'Live: B = Draw Mode', why: 'Plain B toggles the Pencil here, as in Live; bend moved to Ctrl+B.' },
+        selectLike: { kind: 'adapted', of: 'Live: Select Loop Contents', why: 'Relocated off Ctrl+L (Live’s Loop Brace toggle).' },
+        togglePop: { kind: 'adapted', of: '(no Live key)', why: 'Relocated off O (Live’s Metronome).' },
+    }),
+});
+
 export function _editorShortcutRowsPure(profile) {
     const p = EDITOR_SHORTCUT_PROFILES.has(profile) ? profile : 'feedback';
-    return EDITOR_SHORTCUT_COMMANDS.map(cmd => ({
-        id: cmd.id,
-        label: cmd.label,
-        group: cmd.group,
-        status: cmd.status,
+    return EDITOR_SHORTCUT_COMMANDS.map(cmd => {
         // A profile entry that is ABSENT inherits the FeedBack key (the delta
         // model: unoverridden keys keep their FeedBack meaning). An entry that
         // is EXPLICITLY '' means the profile reassigned that key away and the
         // command is keyless there — the two must not collapse, or a shadowed
         // command would display a key that no longer runs it.
-        key: (cmd.keys && (cmd.keys[p] ?? cmd.keys.feedback)) || '',
-    }));
+        const key = (cmd.keys && (cmd.keys[p] ?? cmd.keys.feedback)) || '';
+        // Fidelity vs the profile's reference app is DERIVED, never hand-tagged
+        // per command: divergence-map hit → its kind; keyless → editor-only;
+        // otherwise a silent match. The native profile has no reference.
+        const div = p === 'feedback' ? null : (PROFILE_DIVERGENCES[p] || {})[cmd.id] || null;
+        const row = {
+            id: cmd.id,
+            label: cmd.label,
+            group: cmd.group,
+            status: cmd.status,
+            key,
+            fidelity: p === 'feedback' ? 'native' : (div ? div.kind : (key === '' ? 'editorOnly' : 'match')),
+        };
+        if (div && div.of) row.fidelityOf = div.of;
+        if (div && div.why) row.fidelityWhy = div.why;
+        return row;
+    });
 }
 export function _editorEofCommandForKeyPure(e, mode) {
     const sig = _editorKeySigPure(e);
@@ -222,6 +264,7 @@ export function _editorEofCommandForKeyPure(e, mode) {
         if (plain && (e.key === 'Delete' || e.key === 'Backspace')) return 'tempoDeleteSync';
     }
 
+    if (sig === 'F1') return 'showShortcutHelp';                 // EOF: F1 = Help
     if (sig === 'F2') return 'save';
     if (sig === 'F5') return 'toggleWaveform';
     if (plain && key === 'c') return 'toggleGuideClap';
@@ -229,7 +272,10 @@ export function _editorEofCommandForKeyPure(e, mode) {
     if (alt && key === 'b') return 'toggleLoopAB';
     if (shift && key === 'w') return 'toggleOnsetStrip';
     if (shift && key === 'a') return 'togglePartsView';
-    if (shift && key === 'l') return 'toggleFollow';
+    // EOF: Shift+L = precise select-like; both select-like keys run our one
+    // select-matching command. Follow-playhead has no EOF key (EOF just
+    // auto-scrolls) — it stays on the transport-bar button / View menu here.
+    if (shift && key === 'l') return 'selectLike';
     if (shift && key === '?') return 'showShortcutHelp';
     if (ctrl && key === 'k') return 'openCommandPalette';
     if (sig === 'F6') return 'importMidi';
@@ -248,14 +294,28 @@ export function _editorEofCommandForKeyPure(e, mode) {
     if (plain && key === ',') return 'snapDown';
     if (plain && key === '.') return 'snapUp';
     if (plain && key === 'f') return 'editFret';
+    // Numpad bookmarks (EOF: Numpad = go to, Ctrl+Numpad = set) must be
+    // checked BEFORE the plain-digit fret entry — with NumLock on a numpad
+    // digit arrives as e.key '1'-'9' and would read as a fret otherwise.
+    {
+        const np = /^Numpad([1-9])$/.exec(e.code || '');
+        if (np && plain) return 'gotoBookmark:' + np[1];
+        if (np && ctrl) return 'setBookmark:' + np[1];
+    }
     if (plain && /^[0-9]$/.test(key)) return 'setFretDigit:' + key;
     if (shift && key === ')') return 'setFretTen';
+    // EOF's own fret entry (Ctrl+1-9 = fret 1-9, Ctrl+0 = 10, Ctrl+` = 0)
+    // kept as a faithful alias beside our plain-digit entry.
+    if (ctrl && /^[1-9]$/.test(key)) return 'setFretDigit:' + key;
+    if (ctrl && key === '0') return 'setFretTen';
+    if (ctrl && key === '`') return 'setFretDigit:0';
     if (plain && key === 'h') return 'toggleHammerOn';
     if (plain && key === 'k') return 'cyclePickDirection';
     if (plain && key === 'p') return 'togglePullOff';
     if (plain && key === 's') return 'slideEditor';
     if (plain && key === 'n') return 'noteMenu';
-    if (plain && key === 't') return 'toggleTap';
+    // No plain-T binding: EOF's T is "Crazy status", which this editor does
+    // not have — the key stays free rather than squatting Tap (Ctrl+T below).
     if (shift && key === 'f') return 'setAnchor';
     if (shift && key === 'g') return 'toggleGridDisplay';
     if (shift && key === 'h') return 'togglePinchHarmonic';
@@ -334,6 +394,7 @@ export const EDITOR_PROFILE_OVERRIDES = Object.freeze({
         'Ctrl+.': 'snapUp',              // relocated ('.' now forwards)
         'Shift+K': 'cyclePickDirection', // relocated ('K' now clicks)
         'Ctrl+Shift+C': 'toggleGuideClap', // relocated ('C' now cycles)
+        'Shift+G': 'toggleSnap',         // relocated (plain G is Tempo Map here — input.js)
         // NOT BOUND: Logic's Repeat is Cmd-R, but the Electron host registers a
         // {role:'reload'} menu item, whose CmdOrCtrl+R accelerator fires in the
         // main process BEFORE the renderer keydown — preventDefault() cannot
@@ -348,9 +409,15 @@ export const EDITOR_PROFILE_OVERRIDES = Object.freeze({
         'Ctrl+4': 'toggleSnap',          // authentic: Snap to Grid
         'O': 'toggleMetronome',          // authentic: Metronome (Live 12)
         'Ctrl+Shift+F': 'toggleFollow',  // authentic: Follow Playback
-        'Ctrl+L': 'toggleLoopRegion',    // authentic: Loop Selection
+        'Ctrl+L': 'toggleLoopRegion',    // authentic: Toggle Loop Brace
+        'Ctrl+E': 'splitAtPlayhead',     // authentic: Split Clip at Selection
         'Ctrl+Shift+P': 'togglePop',     // relocated ('O' now clicks)
         'Ctrl+Shift+L': 'selectLike',    // relocated ('Ctrl+L' now loops)
+        // Relocated (plain B is Draw Mode here — input.js). Ctrl+B, not
+        // Shift+B: the override sigs must stay disjoint from the tempo-map
+        // overlay, where Shift+B is tap tempo — and Ctrl+B is also the EOF
+        // profile's bend chord, so the relocation matches muscle memory.
+        'Ctrl+B': 'bend',
     }),
 });
 
@@ -621,6 +688,17 @@ export function _editorCommandById(id) {
     return EDITOR_SHORTCUT_COMMANDS.find(cmd => cmd.id === id) || null;
 }
 
+// The reference app each compat profile is measured against (fidelity pills,
+// the differences filter, and the legend all derive their wording from this).
+const PROFILE_REFERENCE_NAMES = Object.freeze({ logical: 'Logic', cableton: 'Live', eof: 'EOF' });
+
+// "Show differences" filter state for the shortcut panel — session-only chrome.
+let editorShortcutDiffOnly = false;
+export function editorSetShortcutDiffFilter(on) {
+    editorShortcutDiffOnly = !!on;
+    _editorRenderShortcutPanel();
+}
+
 export function _editorRenderShortcutPanel() {
     const panel = document.getElementById('editor-shortcut-panel');
     const list = document.getElementById('editor-shortcut-command-list');
@@ -629,15 +707,30 @@ export function _editorRenderShortcutPanel() {
     if (profileEl) profileEl.value = editorShortcutProfile;
     _editorSyncRightClickBehaviorControls();
     _editorSyncChordSelectControls();
+    const refName = PROFILE_REFERENCE_NAMES[editorShortcutProfile];
+    const allRows = _editorShortcutRowsPure(editorShortcutProfile);
+    const nAdapted = allRows.filter(r => r.fidelity === 'adapted').length;
+    const nEditorOnly = allRows.filter(r => r.fidelity === 'editorOnly').length;
     const subtitle = document.getElementById('editor-shortcut-panel-subtitle');
     if (subtitle) {
-        subtitle.textContent = editorShortcutProfile === 'eof'
-            ? 'EOF Legacy shows migration-friendly keys and clickable command controls.'
+        // Derived, zero-maintenance: compat profiles state the bucket counts so
+        // "unmarked = matches the reference" is an explicit, trustworthy claim.
+        subtitle.textContent = refName
+            ? `Unmarked keys match ${refName} — ${nAdapted} adapted, ${nEditorOnly} editor-only.`
             : 'FeedBack shows clickable command controls; the native key map will expand in a later pass.';
     }
+    // The differences filter only means something against a reference app.
+    const diffWrap = document.getElementById('editor-shortcut-diff-wrap');
+    if (diffWrap) diffWrap.classList.toggle('hidden', !refName);
+    const diffBox = document.getElementById('editor-shortcut-diff-only');
+    if (diffBox) diffBox.checked = editorShortcutDiffOnly;
+    const filtering = editorShortcutDiffOnly && !!refName;
     list.replaceChildren();
     const groups = new Map();
-    for (const row of _editorShortcutRowsPure(editorShortcutProfile)) {
+    for (const row of allRows) {
+        // Filtered rows are omitted on re-render (never `.hidden`) — the
+        // scoped-.hidden specificity trap makes display toggles unreliable here.
+        if (filtering && row.fidelity !== 'adapted' && row.fidelity !== 'editorOnly') continue;
         if (!groups.has(row.group)) groups.set(row.group, []);
         groups.get(row.group).push(row);
     }
@@ -664,12 +757,27 @@ export function _editorRenderShortcutPanel() {
             const key = document.createElement('span');
             key.className = 'shrink-0 rounded bg-dark-700 border border-gray-700 px-1.5 py-0.5 font-mono text-[11px] text-gray-300';
             key.textContent = row.key || 'Button';
+            // Mark only exceptions: faithful rows stay silent (the legend says
+            // unmarked = matches the reference), adapted rows get the house
+            // amber advisory pill, editor-only rows a muted one. The reference
+            // detail rides aria-label too — titles aren't reliably announced.
+            let pill = null;
+            if (row.fidelity === 'adapted' || row.fidelity === 'editorOnly') {
+                pill = document.createElement('span');
+                pill.className = row.fidelity === 'adapted'
+                    ? 'shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-amber-500/15 text-amber-300 border border-amber-400/30'
+                    : 'shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-dark-700 text-gray-500 border border-gray-700';
+                pill.textContent = row.fidelity === 'adapted' ? 'Adapted' : 'Editor-only';
+                const detail = [row.fidelityOf, row.fidelityWhy].filter(Boolean).join(' — ');
+                if (detail) { pill.title = detail; pill.setAttribute('aria-label', `${pill.textContent}: ${detail}`); }
+            }
             const badge = document.createElement('span');
             badge.className = row.status === 'ready'
                 ? 'shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-green-900/50 text-green-300 border border-green-800/60'
                 : 'shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-dark-700 text-gray-500 border border-gray-700';
             badge.textContent = row.status === 'ready' ? 'Ready' : 'Planned';
-            line.append(label, key, badge);
+            if (pill) line.append(label, key, pill, badge);
+            else line.append(label, key, badge);
             body.appendChild(line);
         }
         section.appendChild(body);

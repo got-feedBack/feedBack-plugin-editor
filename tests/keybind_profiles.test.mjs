@@ -66,7 +66,7 @@ t('Logical does NOT take Ctrl+R for Repeat — the host menu reloads on it', () 
     assert.strictEqual(lRows.duplicateSelection, 'Ctrl+D', 'displays the chord that actually works');
 });
 
-t('Cableton: the Live defaults land — Ctrl+U quantize, Ctrl+1/2 grid, Ctrl+4 snap, O click, Ctrl+L loop', () => {
+t('Cableton: the Live defaults land — Ctrl+U quantize, Ctrl+1/2 grid, Ctrl+4 snap, O click, Ctrl+L loop, Ctrl+E split', () => {
     assert.strictEqual(resolve(A, ev('u', { ctrl: true })), 'resnapSelection');
     assert.strictEqual(resolve(A, ev('1', { ctrl: true })), 'snapUp', 'Narrow Grid = finer');
     assert.strictEqual(resolve(A, ev('2', { ctrl: true })), 'snapDown', 'Widen Grid = coarser');
@@ -74,6 +74,42 @@ t('Cableton: the Live defaults land — Ctrl+U quantize, Ctrl+1/2 grid, Ctrl+4 s
     assert.strictEqual(resolve(A, ev('o')), 'toggleMetronome');
     assert.strictEqual(resolve(A, ev('f', { ctrl: true, shift: true })), 'toggleFollow');
     assert.strictEqual(resolve(A, ev('l', { ctrl: true })), 'toggleLoopRegion');
+    assert.strictEqual(resolve(A, ev('e', { ctrl: true })), 'splitAtPlayhead', "Live's Split");
+});
+
+t('the input.js plain-key interceptions are claimed keys — the panel never advertises them for another command', () => {
+    // input.js grabs three plain keys BEFORE the resolvers run: T → tool
+    // palette (every profile except EOF), G → Tempo Map (Logical), B → Pencil
+    // (Cableton). The registry can't dispatch those keys, so no row may
+    // DISPLAY one for a different command — that's the display-drift this
+    // test exists to catch (the panel said "Bend — B" while B drew notes).
+    const CLAIMED = [
+        { profile: 'feedback', key: 'T', owner: 'toolPalette' },
+        { profile: 'logical', key: 'T', owner: 'toolPalette' },
+        { profile: 'cableton', key: 'T', owner: 'toolPalette' },
+        { profile: 'logical', key: 'G', owner: 'toggleTempoMap' },
+        { profile: 'cableton', key: 'B', owner: null },   // pencil isn't a registry row
+    ];
+    for (const { profile, key, owner } of CLAIMED) {
+        const offenders = _editorShortcutRowsPure(profile)
+            .filter(r => r.key === key && r.id !== owner)
+            .map(r => r.id);
+        assert.deepStrictEqual(offenders, [], `${profile}: '${key}' advertised by ${offenders.join(', ')}`);
+    }
+    // …and the displaced commands got real keys instead of orphaning.
+    const lRows = Object.fromEntries(_editorShortcutRowsPure('logical').map(r => [r.id, r.key]));
+    const aRows = Object.fromEntries(_editorShortcutRowsPure('cableton').map(r => [r.id, r.key]));
+    assert.strictEqual(lRows.toggleSnap, 'Shift+G');
+    assert.strictEqual(resolve(L, ev('g', { shift: true })), 'toggleSnap');
+    // Ctrl+B, not Shift+B: override sigs stay disjoint from the tempo-map
+    // overlay (Shift+B taps tempo there) — and Ctrl+B is EOF's bend chord too.
+    assert.strictEqual(aRows.bend, 'Ctrl+B');
+    assert.strictEqual(resolve(A, ev('b', { ctrl: true })), 'bend');
+    assert.strictEqual(aRows.splitAtPlayhead, 'Ctrl+E');
+    // The FeedBack tempo-map entry shows the chord that actually works.
+    const fRows = Object.fromEntries(_editorShortcutRowsPure('feedback').map(r => [r.id, r.key]));
+    assert.strictEqual(fRows.toggleTempoMap, 'T,T');
+    assert.strictEqual(lRows.toggleTempoMap, 'G');
 });
 
 // ── inheritance + shadows ────────────────────────────────────────────

@@ -163,6 +163,7 @@ import {
     _editorLoadShortcutProfile,
     editorSetChordSelectBehavior,
     editorSetRightClickBehavior,
+    editorSetShortcutDiffFilter,
     editorSetShortcutProfile
     } from './shortcuts.js';
 import {
@@ -1573,6 +1574,7 @@ function _observeCanvasWrap() {
 window.editorSetShortcutProfile = editorSetShortcutProfile;
 window.editorSetRightClickBehavior = editorSetRightClickBehavior;
 window.editorSetChordSelectBehavior = editorSetChordSelectBehavior;
+window.editorSetShortcutDiffFilter = editorSetShortcutDiffFilter;
 window.editorShowLoadModal = showLoadModal;
 window.editorHideLoadModal = () => document.getElementById('editor-load-modal').classList.add('hidden');
 window.editorFilterSongs = filterSongs;

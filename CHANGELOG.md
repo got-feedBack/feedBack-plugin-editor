@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The Legacy (EOF) profile is now a faithful port of EOF's pro-guitar keyset,
+  pinned to the reference.** F1 opens help, Ctrl+1-9 / Ctrl+0 / Ctrl+` set frets
+  beside the plain digits, the numpad places and jumps bookmarks (Ctrl+Numpad
+  sets; the Alt+digit chords still work), Shift+L selects matching notes (EOF's
+  precise select-like — follow-playhead stays on its transport button there),
+  and plain T is freed: EOF's T is "Crazy status", a feature this editor doesn't
+  have, so Tap lives on its authentic Ctrl+T instead of squatting the key. The
+  whole keyset is now encoded line-by-line from the EOF reference into a pinned
+  test (`tests/eof_reference.test.mjs`), so a future binding that drifts from —
+  or silently squats — an EOF key fails CI instead of shipping.
+- **The shortcut panel now shows where a compat profile differs from its
+  reference app.** In the Logical / Cableton / Legacy-EOF profiles, rows that
+  deliberately diverge carry an amber "Adapted" pill (with the reference's own
+  key in the tooltip) and reference-less commands a muted "Editor-only" pill;
+  unmarked rows match the reference, and the subtitle counts the buckets. A
+  "Show differences" filter lists only the exceptions. Fidelity is derived from
+  one small divergence map — faithful bindings need no annotation.
+
 ### Fixed
 
 - **A drum edit no longer strips another tool's authored keys from drum-part
@@ -18,6 +38,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vanishing. Entries the editor owns (`id`/`name`/`type`/`drum_tab`) still take
   the rebuilt values, and single-drum packs stay byte-identical.
 
+- **The shortcut panel no longer advertises keys that run something else.**
+  Three plain-key grabs (T = tool palette, Logical's G = Tempo Map, Cableton's
+  B = Draw Mode) fire before the shortcut registry, but the panel and menus
+  still displayed them for their old commands — "Bend — B" while B drew notes.
+  Tempo Map now displays as T,T (G in Logical), Cableton's bend relocates to
+  Ctrl+B (also its EOF chord), and Logical's snap toggle to Shift+G — and the
+  keybind-profile suite now treats intercepted keys as claimed, so this class
+  of display drift fails tests instead of shipping. Also: Cableton gains Live's
+  Ctrl+E Split for the existing split-at-playhead command.
 - **Corrected inaccurate and inconsistent UI labels.** The canvas status footer
   said "Scroll: zoom" although the wheel pans (Ctrl+wheel zooms); it now reads
   "Wheel/middle-drag: pan | Ctrl+wheel: zoom". In the in-app User Guide, Tempo Map

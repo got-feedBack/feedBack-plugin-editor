@@ -402,6 +402,10 @@
                         <option value="chord">Whole chord</option>
                     </select>
                     <span id="editor-chord-select-hint" class="w-full text-[11px] text-gray-500"></span>
+                    <label id="editor-shortcut-diff-wrap" class="hidden flex items-center gap-1 text-[11px] text-gray-400 cursor-pointer" title="List only the keys that differ from this profile's reference app">
+                        <input type="checkbox" id="editor-shortcut-diff-only" onchange="editorSetShortcutDiffFilter(this.checked)" class="accent-amber-400">
+                        Show differences
+                    </label>
                     <span id="editor-right-click-hint" class="ml-auto text-[11px] text-gray-500">Disabled rows are planned commands.</span>
                 </div>
                 <div class="px-3 py-1.5 border-b border-gray-800 text-[11px] text-gray-500">Shortcut keys are handled only while the editor has focus; browser/system conflicts stay outside editor focus.</div>
