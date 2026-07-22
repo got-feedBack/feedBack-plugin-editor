@@ -176,6 +176,24 @@ t('normalize is idempotent over region data', () => {
     assert.deepStrictEqual(twice, once);
 });
 
+t('a TRIMMED AUDIO region survives the save→reload round-trip with no drift (PR4)', () => {
+    // TrimRegionCmd writes fractional srcIn/srcOut onto an audio track's region.
+    // Save (normalize) → JSON wire → reload (normalize) must yield an IDENTICAL
+    // window — the PR4 "no start/len drift" contract, for AUDIO trim specifically
+    // (the model round-trips above only cover a notation window).
+    const input = { ...empty, tracks: [
+        { id: 'audio:master', type: 'audio', sourceId: 'master',
+          regions: [{ id: 'r1', startBeat: 8, lenBeat: null, srcIn: 1.25, srcOut: 3.75, name: 'Solo' }] },
+    ] };
+    const saved = _trackSessionNormalizePure(input, sources, arrangements, drumTab);
+    const savedRegions = saved.tracks.find(tk => tk.id === 'audio:master').regions;
+    assert.deepStrictEqual(savedRegions,
+        [{ id: 'r1', startBeat: 8, lenBeat: null, srcIn: 1.25, srcOut: 3.75, name: 'Solo' }],
+        'the trimmed window is carried verbatim on save');
+    const reloaded = _trackSessionNormalizePure(JSON.parse(JSON.stringify(saved)), sources, arrangements, drumTab);
+    assert.deepStrictEqual(reloaded, saved, 'reload yields an identical session — no start/len/trim drift');
+});
+
 for (const [name, fn] of tests) {
     try { await fn(); pass++; console.log('  ok   ' + name); }
     catch (e) { fail++; console.error('  FAIL ' + name + ': ' + e.message); }
