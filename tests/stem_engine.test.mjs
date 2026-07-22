@@ -64,8 +64,31 @@ t('the whole-map solo rule spans stems AND synth parts', () => {
     assert.strictEqual(_mixerPartAudiblePure(mix, 'audio:Guitar_L'), true, 'the soloed stem sounds');
     assert.strictEqual(_mixerPartAudiblePure(mix, 'arr:0'), false, 'an unsoloed synth part is silenced by a stem solo');
     assert.strictEqual(_mixerPartAudiblePure(mix, 'audio:Bass_DI'), false, 'and so is an unsoloed stem');
+    assert.strictEqual(_mixerPartAudiblePure(mix, 'audio:master'), false,
+        'the master (full-mix recording) is a peer: a stem solo isolates against it too');
     // Mute always wins, even over its own solo.
     assert.strictEqual(_mixerPartAudiblePure({ 'audio:x': { solo: true, mute: true } }, 'audio:x'), false);
+});
+
+t('a stem solo gates the master through the LIVE strip hook the engine ramps from', () => {
+    // _mixerPartStripState is what main.js wires into host.partStripState —
+    // the exact value applyStemMix / _ensureStemGain seed and ramp the per-
+    // source gain nodes to. Drive it through the real S, both directions.
+    const savedMix = S.partMix;
+    try {
+        S.partMix = { 'audio:Guitar_L': { solo: true } };
+        assert.deepStrictEqual(_mixerPartStripState('audio:master'), { audible: false, vol: 1 },
+            'while a stem is soloed the master gain ramps to 0 (pre-fix: stayed at unity)');
+        assert.deepStrictEqual(_mixerPartStripState('audio:Guitar_L'), { audible: true, vol: 1 });
+        S.partMix = { 'arr:0': { solo: true } };
+        assert.deepStrictEqual(_mixerPartStripState('audio:master'), { audible: true, vol: 1 },
+            'a transcription-part solo leaves the master reference audible (D5)');
+        S.partMix = { 'audio:master': { solo: true }, 'audio:Guitar_L': {} };
+        assert.deepStrictEqual(_mixerPartStripState('audio:master'), { audible: true, vol: 1 },
+            'the master\'s own solo keeps it audible');
+        assert.deepStrictEqual(_mixerPartStripState('audio:Guitar_L'), { audible: false, vol: 1 },
+            'and isolates the recording against the stems');
+    } finally { S.partMix = savedMix; }
 });
 
 t('each stem places its buffer from its OWN shift+offset — the alignment contract', () => {

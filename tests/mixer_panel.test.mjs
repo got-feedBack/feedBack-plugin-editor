@@ -65,7 +65,8 @@ globalThis.localStorage = globalThis.localStorage || {
 globalThis.window = globalThis.window || globalThis;
 
 const {
-    _mixerPartsPure, _mixerPartStatePure, _mixerAnySoloPure, _mixerPartAudiblePure,
+    _mixerPartsPure, _mixerPartStatePure, _mixerAnySoloPure, _mixerAnyAudioSoloPure,
+    _mixerPartAudiblePure,
     _mixerClapStatePure, _mixerActivePartKeyPure, _mixerOpenFromStoredPure, _mixerClapState,
     _mixerGainForFaderPure, _mixerFaderLabelPure, _mixerOrderedPartsPure,
     _mixerPanelRefresh, editorToggleMixerPanel, initMixerPanel,
@@ -153,15 +154,35 @@ t('audibility: any solo isolates the soloed strips', () => {
     assert.strictEqual(_mixerPartAudiblePure(mix, 'drums'), false);
 });
 
-t('master is the OUTPUT bus: others solo/mute never silence it, its own mute does', () => {
-    // A stem soloed AND a different track muted — master must stay audible: it's
-    // the final destination downstream of the sum, not a peer channel.
-    const mix = { 'audio:gtr': { solo: true }, 'arr:0': { mute: true } };
-    assert.strictEqual(_mixerPartAudiblePure(mix, 'audio:master'), true);
-    // The non-soloed non-master track is still isolated out (rule unchanged).
-    assert.strictEqual(_mixerPartAudiblePure(mix, 'audio:bass'), false);
-    // Over-correction guard: master's OWN mute (the output fader) still mutes it.
+t('master honors D5 for part solos but joins the solo rule inside the audio band', () => {
+    // A transcription-part solo (plus an unrelated mute) — the master stays
+    // audible: it is the reference the parts are charted against (D5).
+    const partSolo = { 'arr:0': { solo: true }, 'arr:1': { mute: true } };
+    assert.strictEqual(_mixerAnyAudioSoloPure(partSolo), false, 'part solos are not audio-band solos');
+    assert.strictEqual(_mixerPartAudiblePure(partSolo, 'audio:master'), true);
+    // A soloed STEM must actually isolate: the master (the full-mix recording,
+    // a peer audio track) mutes with the rest — pre-fix it kept playing over
+    // every solo, so soloing an audio track never isolated it.
+    const stemSolo = { 'audio:gtr': { solo: true }, 'arr:0': { mute: true } };
+    assert.strictEqual(_mixerAnyAudioSoloPure(stemSolo), true);
+    assert.strictEqual(_mixerPartAudiblePure(stemSolo, 'audio:master'), false, 'a stem solo silences the master');
+    assert.strictEqual(_mixerPartAudiblePure(stemSolo, 'audio:gtr'), true, 'the soloed stem sounds');
+    assert.strictEqual(_mixerPartAudiblePure(stemSolo, 'audio:bass'), false, 'an unsoloed stem is still isolated out');
+    assert.strictEqual(_mixerPartAudiblePure(stemSolo, 'arr:1'), false, 'an audio solo still silences unsoloed parts');
+    // The master's OWN solo isolates the recording the same way.
+    const masterSolo = { 'audio:master': { solo: true } };
+    assert.strictEqual(_mixerPartAudiblePure(masterSolo, 'audio:master'), true);
+    assert.strictEqual(_mixerPartAudiblePure(masterSolo, 'audio:gtr'), false);
+    // Master + stem both soloed → both sound (peers in one band).
+    const both = { 'audio:master': { solo: true }, 'audio:gtr': { solo: true } };
+    assert.strictEqual(_mixerPartAudiblePure(both, 'audio:master'), true);
+    assert.strictEqual(_mixerPartAudiblePure(both, 'audio:gtr'), true);
+    // Mute always wins: a muted master stays silent even while soloed.
+    assert.strictEqual(_mixerPartAudiblePure({ 'audio:master': { mute: true, solo: true } }, 'audio:master'), false);
     assert.strictEqual(_mixerPartAudiblePure({ 'audio:master': { mute: true } }, 'audio:master'), false);
+    // Malformed maps never throw and never phantom-solo.
+    assert.strictEqual(_mixerAnyAudioSoloPure(null), false);
+    assert.strictEqual(_mixerAnyAudioSoloPure({ 'audio:gtr': null }), false);
 });
 
 // ── The clap state the guide scheduler consumes ──────────────────────

@@ -2329,8 +2329,9 @@ function _guideTick() {
     const from = Math.max(_guideScheduledUntil, nowChart - 0.005);
     if (to <= from) return;
     // Per-part mute/solo (mixer panel, B6): the active surface's part gates
-    // its own guide here (only the guide — the reference recording is a bus,
-    // not a part, and stays audible under any solo, D5). Gated at the
+    // its own guide here (only the guide — the reference audio rides its own
+    // per-source strips: part solos never gate it (D5), and audio-band solos
+    // reach it through applyStemMix, never this path). Gated at the
     // scheduler, not in _guideSourceTimes, so it never touches song duration.
     // The pitched GM voice IS this part's guide voice, so it sits inside the
     // same gate as the clap fallback.
