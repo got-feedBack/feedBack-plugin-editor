@@ -18,6 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Exporting no longer clears unsaved project changes. The editor's own Back
   button now uses the Save / Don't Save / Cancel guard; complete shell navigation
   and desktop app-exit guarding still require a cancellable host navigation/close contract.
+- **Keys parts now get a playability lint too.** Keys were the one instrument
+  with no advisory lint at all — the pass is fret/anchor-shaped, so
+  `_lintResults()` bailed to an empty result on any keys arrangement. A piano
+  lint now runs instead, over each simultaneity: a **hand stretch** (one hand,
+  by the per-note `lh`/`rh` assignment, reaching over an octave = a look, over a
+  10th = beyond most hands), **too many notes in a hand** (more than five at
+  once — a hand has five fingers), and a **muddy low voicing** (the two lowest
+  simultaneous pitches within a major 3rd, below ~E2, where close intervals turn
+  to mud). Span/count use the authored hand where present (assign hands to get
+  that feedback); muddy-low is pitch-only. Same advisory posture as the fretted
+  lint — a yellow underline + the count chip + the popover, never blocking. New
+  pures `_keysLintPure` / thresholds in `src/playability-lint.js`, covered by
+  `tests/keys_lint.test.mjs`.
 
 - **The Legacy (EOF) profile is now a faithful port of EOF's pro-guitar keyset,
   pinned to the reference.** F1 opens help, Ctrl+1-9 / Ctrl+0 / Ctrl+` set frets
