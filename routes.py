@@ -2260,6 +2260,34 @@ def _apply_chart_offset(song, delta: float) -> None:
     song.offset = 0.0
 
 
+def _apply_gp_import_offset(song, xml_paths, provided_offset: float) -> None:
+    """Apply a scalar GP-import audio offset to an ALREADY-PARSED ``song`` (and
+    its on-disk notation sidecars) in memory — never baked into the converted
+    XML.
+
+    ``convert_file`` adds ``audio_offset`` to every note time, so any lead-in
+    (a negative resolved offset) lands the front of the chart at a NEGATIVE XML
+    time. Core's ``parse_arrangement`` then slices each level at ``t >= 0`` and
+    silently drops those notes — the reported "auto-sync deleted the front 16
+    notes" data loss. Converting at ``audio_offset=0.0`` and shifting the parsed
+    Song here keeps the pre-roll: ``_apply_chart_offset`` rewrites absolute
+    times only and preserves negatives (the same in-memory retime the per-bar
+    warp path already relies on).
+
+    ``convert_file`` adds the offset, whereas ``_apply_chart_offset`` subtracts
+    its delta, so the delta is ``-provided_offset``. Zero offset is a no-op.
+    Module-level so pytest can reach it.
+    """
+    if not provided_offset:
+        return
+    _apply_chart_offset(song, -provided_offset)
+    # Sidecars were written by convert_file on the unshifted (0.0) timeline;
+    # move them by the same amount the notes moved so _attach_gp_notation reads
+    # times consistent with the shifted notes.
+    for _xp in xml_paths:
+        _warp_notation_sidecar(_xp, lambda t: round(t + provided_offset, 6))
+
+
 def _arrangement_xml_candidates(tmp_dir):
     """Return the source XMLs that represent playable arrangements.
 
@@ -7740,11 +7768,15 @@ def setup(app, context):
                         "offset-only sync"
                     )
 
-            # Convert GP to XMLs
+            # Convert GP to XMLs. Always at offset 0.0 — the per-bar warp and
+            # the scalar-offset fallback both retime the PARSED Song below
+            # instead of baking the shift into the XML, whose negative lead-in
+            # times core's parse_arrangement would slice off at t>=0 (dropping
+            # the front of the chart).
             xml_paths = convert_file(
                 gp_path, tmp,
                 track_indices=indices,
-                audio_offset=0.0 if _warp_anchors else _provided_offset,
+                audio_offset=0.0,
                 arrangement_names=names_map,
             )
 
@@ -7789,11 +7821,14 @@ def setup(app, context):
                             start_time=float(s.get("startTime", "0")),
                         ))
 
-            # Apply the per-bar warp: retime every note/beat/section from the
-            # tab's authored timeline onto the recording's (Songsterr-style
-            # piecewise mapping — the recording's tempo drift is followed
-            # instead of accumulating).
+            # Retime the parsed Song onto the recording's timeline. Both paths
+            # converted at offset 0.0 (above) and apply the shift here, in
+            # memory, so a lead-in's negative pre-roll survives parse.
             if _warp_anchors:
+                # Per-bar warp: retime every note/beat/section from the tab's
+                # authored timeline onto the recording's (Songsterr-style
+                # piecewise mapping — the recording's tempo drift is followed
+                # instead of accumulating).
                 from lib.gp_autosync import warp_song_times, warp_time
                 warp_song_times(song, lambda t: warp_time(t, _warp_anchors))
                 # The GP notation sidecars (keys tracks) were written by
@@ -7803,6 +7838,11 @@ def setup(app, context):
                 for _xp in xml_paths:
                     _warp_notation_sidecar(
                         _xp, lambda t: warp_time(t, _warp_anchors))
+            else:
+                # Scalar-offset fallback (per-bar warp unavailable: GP5 repeats,
+                # degenerate/absent sync points, or an older core). Applied to
+                # the parsed Song so the front of the chart is never dropped.
+                _apply_gp_import_offset(song, xml_paths, _provided_offset)
 
             # If we have a local audio file path, copy to static
             if audio_path and Path(audio_path).exists():

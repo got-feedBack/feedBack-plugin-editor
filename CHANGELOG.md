@@ -119,6 +119,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_gp_drum_arrs_to_parts` (covered by `tests/test_gp_multidrum_split.py`); the
   frontend adopts the extras via the existing `adoptDrumParts` load path. This
   brings the GP create-import to parity with the MIDI drum auto-split.
+- **An auto-sync import no longer deletes the front of the chart.** A Guitar
+  Pro import aligned to a recording with a lead-in (the audio starts before the
+  tab's bar 1) used to lose its opening notes: the scalar-offset path baked the
+  offset into the converted XML, pushing that pre-roll to a negative time that
+  core's `parse_arrangement` then sliced off at `t ≥ 0` — silently dropping, in
+  one report, the first 16 notes. Guitar Pro is now always converted at offset 0
+  and the shift is applied to the parsed arrangement **in memory** (the same
+  in-place retime the per-bar warp path already used), so a lead-in's notes,
+  beats, sections and keys notation all survive. The per-bar warp path was
+  already immune; this repairs the scalar-offset fallback it hands off to (GP5
+  with repeats, degenerate or absent sync points, or an older core). Tests:
+  `tests/test_gp_import_offset.py`.
 
 - **A drum edit no longer strips another tool's authored keys from drum-part
   manifest entries.** Saving with drum changes rebuilds the `type: drums`
