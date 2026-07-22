@@ -3737,7 +3737,13 @@ export function _reprojectAll(toBeats) {
 // goes out — the live objects keep their beats for continued editing.
 export function _stripBeat(o) {
     if (!o || typeof o !== 'object') return o;
-    const { beat, beatEnd, ...rest } = o;
+    // `rhythm` (notated value) is a runtime NOTE field, like beat/beatEnd: it
+    // never rides the seconds-only note wire (feedpak §6.2). Authored values
+    // persist via the separate §7.6 notation side-file, never the note dict, so
+    // the wire strip is permanent (NOTE-VALUE-MODEL-DESIGN §5). Non-note objects
+    // carry no `rhythm`, so pulling it here is a no-op for them. Stripped into the
+    // shallow clone; the live object keeps its rhythm for continued editing.
+    const { beat, beatEnd, rhythm, ...rest } = o;
     return rest;
 }
 export function _stripBeatsList(list) {

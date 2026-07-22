@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Notated rhythm values are now a first-class part of the note model (the
+  foundation slice).** A note can carry a symbolic `rhythm` — a base value
+  (whole…128th), dots, nested tuplets, and grace — as a third quantity alongside
+  its onset and its sounding `sustain`, so a staccato quarter and a legato quarter
+  are the *same value, different ring*. This first slice lands the pure engine
+  (`src/rhythm-value.js`: whole-note magnitude, the beat conversion, best-fit with
+  an honest `null` past tolerance, greedy tie-decomposition, and the GP/MIDI/
+  MusicXML tick projection) and the undoable `SetRhythmValueCmd`, with no UI yet.
+  Value is a runtime field like `note.beat`: it survives chord reconstruction but
+  never rides the seconds-only note wire (authored values will persist via the
+  notation side-file in a later slice), so a pack with no authored values stays
+  byte-identical. Tests: `tests/rhythm_value.test.mjs`, `tests/rhythm_value_cmd.test.mjs`.
 - **Save is now project persistence; Export to Library is publishing.** Importing
   files creates only an unsaved editing session. A new project's first Save
   chooses a `.feedpak` name and location through the native picker, later saves

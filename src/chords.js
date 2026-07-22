@@ -418,6 +418,14 @@ export function reconstructChords() {
                     fret: n.fret,
                     sustain: n.sustain || 0,
                     techniques: n.techniques || {},
+                    // Carry the notated rhythm VALUE onto the rebuilt chord member,
+                    // or it silently vanishes on chord notes (the exact field-mapper
+                    // hazard the suggested-mark WeakSet documents). Omit the key when
+                    // absent so "no authored value" stays distinct from a value —
+                    // reconstructChords runs at save time but mutates LIVE state, so a
+                    // dropped rhythm would lose the chord's authored value in-session.
+                    // It rides no further: `_stripBeat` peels it off the seconds-only wire.
+                    ...(n.rhythm != null ? { rhythm: n.rhythm } : {}),
                 })),
             });
         }
