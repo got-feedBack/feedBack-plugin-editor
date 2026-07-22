@@ -393,7 +393,7 @@ async function _maybeRemoveMidiSeed() {
 
 // Create-window MIDI path: the unified table already listed and selected the
 // file's tracks, so import those exact rows without reopening a second picker.
-export async function importMidiTracksIntoSession(midiPath, pickedList, statusEl = null) {
+export async function importMidiTracksIntoSession(midiPath, pickedList, statusEl = null, opts = {}) {
     if (!midiPath || !S.sessionId || !Array.isArray(pickedList) || !pickedList.length) return false;
     if (statusEl) statusEl.textContent = 'Importing selected MIDI tracks…';
     try {
@@ -403,6 +403,7 @@ export async function importMidiTracksIntoSession(midiPath, pickedList, statusEl
             body: JSON.stringify({
                 midi_path: midiPath,
                 audio_offset: host.effectiveAudioOffset(),
+                keep_upload: opts.keepUpload === true,
                 tracks: pickedList.map(track => ({
                     index: Number(track.index) || 0,
                     channel_filter: track.channel_filter == null ? null : Number(track.channel_filter),

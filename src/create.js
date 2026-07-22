@@ -25,6 +25,7 @@ import {
 } from './annotation-lanes.js';
 import { _handshapesAreDirty, flattenChords, reconstructChords } from './chords.js';
 import { isDrumArrangement, pitchedArrangementCount, syncDrumArrangement } from './drum-arrangement.js';
+import { importMidiDrumTracksIntoSession } from './arrangement.js';
 import { EditHistory } from './history.js';
 import { host } from './host.js';
 import { isKeysMode, updatePianoRange } from './keys.js';
@@ -149,7 +150,7 @@ export function editorShowCreateModal() {
         musicXmlFile: null, musicXmlData: null, musicXmlName: null,
         audioUrl: null, audioName: null, audioDuration: null, audioFile: null,
         audioTracks: [], guideTrackId: '', youtubeSelected: true,
-        midiInfo: null, midiFiles: null, midiPath: null, midiTracks: [],
+        midiInfo: null, midiFiles: null, midiPath: null, midiTracks: [], midiDrumTracks: [],
         artPath: null, previewPath: null,
         gp8AudioMode: 'none', autoSyncAudioUrl: null, lastSync: null, autoSyncCoupled: false,
         // GoPlayAlong sync sidecar (goplayalong.com): a <track> .xml that carries
@@ -1083,6 +1084,7 @@ async function _stageMidi(files) {
     createState.midiFiles = [file];
     createState.midiPath = null;
     createState.midiTracks = [];
+    createState.midiDrumTracks = [];
     try {
         const form = new FormData();
         form.append('file', file);
@@ -1091,6 +1093,13 @@ async function _stageMidi(files) {
         if (data.error) throw new Error(data.error);
         createState.midiPath = data.midi_path;
         createState.midiTracks = (data.tracks || []).map(track => ({
+            ...track,
+            selected: Number(track.notes) > 0,
+        }));
+        // Channel-9 drums arrive on a separate list — list_midi_tracks omits
+        // them (a keys-import of channel 9 is empty), so the backend lists them
+        // via list_drum_tracks; auto-imported as type:"drums" parts on Create.
+        createState.midiDrumTracks = (data.drum_tracks || []).map(track => ({
             ...track,
             selected: Number(track.notes) > 0,
         }));
@@ -1185,6 +1194,7 @@ export function editorStagedRemove(role) {
         createState.midiFiles = null;
         createState.midiPath = null;
         createState.midiTracks = [];
+        createState.midiDrumTracks = [];
     }
     const iStatus = document.getElementById('editor-create-import-status');
     if (iStatus) iStatus.textContent = '';
@@ -1997,9 +2007,21 @@ async function _editorDoMidiCreate() {
     // tag a later import on a DIFFERENT song would delete that song's arrangement 0.
     if (seeded) { S._midiSeedArrIdx = 0; S._midiSeedSession = S.sessionId; }
     const picked = (createState.midiTracks || []).filter(track => track.selected !== false && Number(track.notes) > 0);
-    if (createState.midiPath && picked.length) {
-        await importMidiTracksIntoSession(createState.midiPath, picked,
-            document.getElementById('editor-create-status'));
+    // Core's list_midi_tracks drops channel-9, so drums arrive on a separate
+    // list — import them alongside the pitched picks so a full-band MIDI keeps
+    // its drums instead of silently losing them.
+    const drumPicked = (createState.midiDrumTracks || []).filter(track => track.selected !== false && Number(track.notes) > 0);
+    const midiStatusEl = document.getElementById('editor-create-status');
+    if (createState.midiPath && (picked.length || drumPicked.length)) {
+        // Pitched first so each drum part has a pitched sibling to sit beside.
+        if (picked.length) {
+            await importMidiTracksIntoSession(createState.midiPath, picked, midiStatusEl, {
+                keepUpload: drumPicked.length > 0,
+            });
+        }
+        if (drumPicked.length) {
+            await importMidiDrumTracksIntoSession(createState.midiPath, drumPicked, midiStatusEl);
+        }
     } else if (typeof window.editorShowAddKeysModal === 'function'
             && typeof window._editorKeysHandleFile === 'function') {
         // Compatibility fallback for a core that could not list the MIDI at

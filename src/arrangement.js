@@ -456,6 +456,76 @@ export async function editorDrumsFileSelected(input) {
 // scaffolds might still wire it up. Forwards to the new dispatcher.
 export function editorDrumsGPSelected(input) { return editorDrumsFileSelected(input); }
 
+// Shared "stash a freshly-imported drum tab onto the session" step, used by
+// both the Add-Drums modal and the create-flow MIDI auto-split. Sorts hits,
+// adds a NEW type:"drums" arrangement when a drums part already exists (else
+// this tab becomes the primary), re-points S.drumTab at it, materializes it
+// beside a pitched part (drums never sit at index 0), and lands it as a
+// selected region at `placeAt` ('keep' = source timing). Returns whether it
+// was ADDED as an extra part (vs. becoming the first/primary tab).
+export function _stashImportedDrumTab(tab, placeAt = 'keep') {
+    if (tab && Array.isArray(tab.hits)) {
+        tab.hits.sort((a, b) => (a.t || 0) - (b.t || 0));
+    }
+    const added = _canAddAnotherDrums();
+    if (added) addDrumArrangement(S, tab);   // its own type:"drums" arrangement
+    S.drumTab = tab;                          // the imported part is now the grid target
+    S.drumTabDirty = true;                    // user-imported — persist on next save
+    S.drumSel = new Set();
+    // Reflect the imported tab in S.arrangements[] — beside a pitched part
+    // only (a drums-only session must not put drums at index 0).
+    if (pitchedArrangementCount(S.arrangements) > 0) syncDrumArrangement(S);
+    host.placeImportedPartAsRegion({
+        kind: 'drums',
+        arrIdx: activeDrumArrangementIndex(S.arrangements, tab),
+        placeAt,
+        items: Array.isArray(tab.hits) ? tab.hits.slice() : [],
+    });
+    return added;
+}
+
+// Create-window MIDI auto-split. Core's `list_midi_tracks` drops channel-9, so
+// the pitched picker never sees a MIDI's drums; /import-midi now also returns
+// the channel-9 `drum_tracks`, and this imports each as its own type:"drums"
+// part so a full-band MIDI keeps its drums instead of silently losing them
+// (mirrors the GP create-import auto-extract). Must run AFTER the pitched
+// import so each drum part has a pitched sibling to materialize beside. A bad
+// track is skipped, not fatal. Returns how many parts were imported.
+export async function importMidiDrumTracksIntoSession(midiPath, drumTracks, statusEl = null) {
+    if (!midiPath || !S.sessionId || !Array.isArray(drumTracks) || !drumTracks.length) return 0;
+    const picked = drumTracks.filter(t => t && Number(t.notes) > 0);
+    let imported = 0;
+    for (let i = 0; i < picked.length; i++) {
+        const t = picked[i];
+        try {
+            const resp = await fetch('/api/plugins/editor/import-drums-midi', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    midi_path: midiPath,
+                    track_index: Number(t.index) || 0,
+                    audio_offset: host.effectiveAudioOffset(),
+                    arrangement_name: t.name || 'Drums',
+                    keep_upload: i < picked.length - 1,
+                }),
+            });
+            const data = await resp.json();
+            if (data.error || !data.drum_tab) continue;
+            _stashImportedDrumTab(data.drum_tab, 'keep');
+            imported++;
+        } catch (_) { /* skip this track, keep importing the rest */ }
+    }
+    if (imported > 0) {
+        host.updateArrangementSelector();
+        host.draw();
+        if (statusEl) {
+            const base = statusEl.textContent ? statusEl.textContent.trim() + ' ' : '';
+            statusEl.textContent = `${base}+ ${imported} drum part${imported === 1 ? '' : 's'} imported.`;
+        }
+    }
+    return imported;
+}
+
 export async function editorDoAddDrums() {
     if (!_addDrumsFile || !S.sessionId) return;
 
@@ -495,32 +565,15 @@ export async function editorDoAddDrums() {
         // any stale selection so indices from the old tab don't point into
         // the new hits array. When drums already exist (saved sloppak), the
         // import ADDS another drum part; create mode still replaces.
+        // Stash the imported tab: sort hits, add it as an extra part (or make
+        // it the primary), materialize beside a pitched part, land as a region.
+        // The dialog's Place-at row picks where it lands; create mode forces
+        // 'keep' (its Place-at row is hidden — placement is deferred until the
+        // create build path proves it round-trips regions[]).
         const tab = data.drum_tab;
-        if (tab && Array.isArray(tab.hits)) {
-            tab.hits.sort((a, b) => (a.t || 0) - (b.t || 0));
-        }
-        const added = _canAddAnotherDrums();
-        if (added) addDrumArrangement(S, tab);   // its own type:"drums" arrangement
-        S.drumTab = tab;                          // the imported part is now the grid target
-        S.drumTabDirty = true;  // user-imported — persist on next save
-        S.drumSel = new Set();
-        // Reflect the imported tab in S.arrangements[] — beside a pitched
-        // part only (a drums-only session must not put drums at index 0).
-        if (pitchedArrangementCount(S.arrangements) > 0) syncDrumArrangement(S);
-
-        // Land the fresh part in the Tracks view as a selected region — placed
-        // at bar 1 / the playhead when the dialog said so, else left at the
-        // source file's own timing (R3b import-into-existing). Create mode
-        // forces 'keep' (its Place-at row is hidden — placement is deferred
-        // until the create build path proves it round-trips regions[]), so
-        // there the import lands selected at source timing.
         const placeSel = document.getElementById('editor-add-drums-place');
-        host.placeImportedPartAsRegion({
-            kind: 'drums',
-            arrIdx: activeDrumArrangementIndex(S.arrangements, tab),
-            placeAt: (placeSel && !S.createMode) ? placeSel.value : 'keep',
-            items: Array.isArray(tab.hits) ? tab.hits.slice() : [],
-        });
+        const added = _stashImportedDrumTab(
+            tab, (placeSel && !S.createMode) ? placeSel.value : 'keep');
 
         editorHideAddDrumsModal();
         const hitCount = Array.isArray(data.drum_tab.hits)
