@@ -87,8 +87,19 @@ def test_all_unmapped_keeps_one_empty_tab_for_recovery():
     a2 = arr("Perc", [note(TIMBALE, 1.0)])
     primary, extras, unmapped = _gp_drum_arrs_to_parts([a1, a2], has_pitched=True)
     assert primary is not None and primary["hits"] == []
-    assert extras == []
-    assert set(unmapped) == {CONGA_HI, TIMBALE}
+    assert len(extras) == 1 and extras[0]["drum_tab"]["hits"] == []
+    assert set(unmapped) == {(0, CONGA_HI), (1, TIMBALE)}
+
+
+def test_mixed_mapped_and_unmapped_tracks_keep_mapping_ownership():
+    a1 = arr("Drums", [note(KICK, 0.0), note(CONGA_HI, 0.5)])
+    a2 = arr("Aux", [note(TIMBALE, 1.0)])
+    primary, extras, unmapped = _gp_drum_arrs_to_parts([a1, a2], has_pitched=True)
+    assert pieces(primary) == ["kick"]
+    assert len(extras) == 1
+    assert extras[0]["name"] == "Aux"
+    assert extras[0]["drum_tab"]["hits"] == []
+    assert set(unmapped) == {(0, CONGA_HI), (1, TIMBALE)}
 
 
 def test_nothing_mappable_and_nothing_to_remap_returns_none():

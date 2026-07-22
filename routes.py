@@ -296,25 +296,30 @@ def _gp_drum_arrs_to_parts(drum_arrs, has_pitched):
     there is nothing to keep (no hits and nothing to remap). Module-level so
     pytest can reach it, mirroring `_drum_arrs_to_drum_tab`.
     """
-    unmapped: dict[int, dict] = {}
+    unmapped: dict[object, dict] = {}
     if len(drum_arrs) > 1 and has_pitched:
-        tabs = []
+        kept = []
         for darr in drum_arrs:
-            tab = _drum_arrs_to_drum_tab([darr], out_unmapped=unmapped)
+            part_unmapped: dict[int, dict] = {}
+            tab = _drum_arrs_to_drum_tab([darr], out_unmapped=part_unmapped)
             name = (darr.get("name") or "").strip()
             if name:
                 tab["name"] = name[:120]
-            tabs.append(tab)
-        with_hits = [t for t in tabs if t["hits"]]
-        if with_hits:
+            # An unmapped-only track still needs its own writable tab. The
+            # manual mapper uses this retained part index to restore notes to
+            # their source drummer instead of aggregating them on the primary.
+            if tab["hits"] or part_unmapped:
+                part_index = len(kept)
+                kept.append(tab)
+                for midi, rec in part_unmapped.items():
+                    unmapped[(part_index, midi)] = rec
+        if kept:
             extras = [
                 {"id": "", "name": t.get("name") or "Drums", "drum_tab": t}
-                for t in with_hits[1:]
+                for t in kept[1:]
             ]
-            return with_hits[0], extras, unmapped
-        # Every drum note needs manual mapping — keep one empty tab so the
-        # mapper (which mutates the tab object) can recover them.
-        return (tabs[0] if unmapped else None), [], unmapped
+            return kept[0], extras, unmapped
+        return None, [], unmapped
     tab = _drum_arrs_to_drum_tab(drum_arrs, out_unmapped=unmapped)
     if tab["hits"] or unmapped:
         return tab, [], unmapped
@@ -7896,9 +7901,18 @@ def setup(app, context):
             if _extras:
                 result["drum_parts"] = _extras
             if _unmapped:
-                result["drum_unmapped"] = [
-                    _safe_unmapped_entry(m, rec) for m, rec in sorted(_unmapped.items())
-                ]
+                _rows = []
+                for _key, _rec in sorted(_unmapped.items()):
+                    if isinstance(_key, tuple):
+                        _part_index, _midi = _key
+                    else:
+                        _part_index, _midi = 0, _key
+                    _row = _safe_unmapped_entry(_midi, _rec)
+                    # The create mapper uses this to restore each note to the
+                    # GP drum track that owned it. Legacy folded imports are 0.
+                    _row["drum_part_index"] = _part_index
+                    _rows.append(_row)
+                result["drum_unmapped"] = _rows
             result["arrangements"] = _pitched
             _xf = sessions[session_id]["xml_files"]
             sessions[session_id]["xml_files"] = [
