@@ -36,7 +36,7 @@
 import { S, editGen } from './state.js';
 import { host } from './host.js';
 import { notes } from './notes.js';
-import { isKeysArr } from './keys.js';
+import { isKeysArr, noteToMidi } from './keys.js';
 import { _activeAnchorAtPure } from './position.js';
 import { _editorEscHtml } from './ui.js';
 
@@ -49,6 +49,13 @@ export const LINT_STRETCH_TOLERANCE = 1;      // frets past the anchor window
 export const LINT_CLUSTER_EPSILON = 0.012;    // "simultaneous" (the drum-lint value)
 export const LINT_OVERLAP_EPSILON = 0.01;     // seconds of real overlap before flagging
 export const LINT_DEFAULT_WINDOW = 4;         // anchor width when none authored
+
+// Keys (piano) thresholds — the pedagogy seat's numbers. Semitone spans.
+export const KEYS_SPAN_WARN = 12;   // over an OCTAVE in one hand — a real stretch
+export const KEYS_SPAN_ERR = 16;    // over a 10th — beyond most hands (large-hand exception: TODO)
+export const KEYS_HAND_MAX = 5;     // five fingers; more than five in one hand at once is impossible
+export const KEYS_MUDDY_LOW_MIDI = 40;  // ~E2 — dense voicings below here turn to mud
+export const KEYS_MUDDY_INTERVAL = 4;   // two lowest within a major 3rd = a muddy close voicing
 
 // The fret-hand anchor list: authored anchors win, computed fall back —
 // the same dual-list precedence the tempo remap and the roll resolver use.
@@ -243,7 +250,7 @@ export function _lintFingerConflictPure(nn) {
     return issues;
 }
 
-// The full pass. Empty/keys-less input degrades to no issues.
+// The full FRETTED pass. Empty input degrades to no issues.
 export function _playabilityLintPure(nn, anchors) {
     return [
         ..._lintStretchPure(nn, anchors),
@@ -253,6 +260,70 @@ export function _playabilityLintPure(nn, anchors) {
         ..._lintFingerConflictPure(nn),
     ].sort((a, b) => a.time - b.time);
 }
+
+// midi pitch of a keys note — the piano-locked (string*24 + fret) packing.
+function _keysMidiPure(n) { return noteToMidi(n.string, n.fret); }
+
+// The KEYS pass. Keys parts have no frets/strings-as-strings and no anchors, so
+// the fretted rules don't apply — this lints the piano questions instead, per
+// hand where the note carries one:
+//   keys-span       one HAND spanning over an octave (>12) / over a 10th (>16);
+//   keys-hand       more than five notes in one hand at once (a hand has five
+//                   fingers);
+//   keys-muddy-low  a tight low voicing — the two lowest simultaneous pitches
+//                   within a major 3rd, below ~E2, where close intervals mud up.
+// The span/count rules need the per-note hand ('lh'/'rh'); unassigned notes are
+// skipped there (assign hands to get the feedback). muddy-low is pitch-only, so
+// it runs whether or not hands are assigned. Advisory, like the fretted lint.
+export function _keysLintPure(nn) {
+    const issues = [];
+    if (!Array.isArray(nn) || !nn.length) return issues;
+    const order = nn.map((n, i) => ({ n, i }))
+        .filter((e) => e.n && Number.isFinite(e.n.time)
+            && Number.isInteger(e.n.string) && Number.isInteger(e.n.fret))
+        .sort((a, b) => a.n.time - b.n.time);
+    let k = 0;
+    while (k < order.length) {
+        const t0 = order[k].n.time;
+        const cluster = [];
+        while (k < order.length && order[k].n.time <= t0 + LINT_CLUSTER_EPSILON) {
+            cluster.push(order[k]); k++;
+        }
+        if (cluster.length < 2) continue;
+        for (const hand of ['lh', 'rh']) {
+            const group = cluster.filter((e) => e.n.techniques && e.n.techniques.hand === hand);
+            if (group.length >= 2) {
+                const midis = group.map((e) => _keysMidiPure(e.n));
+                const span = Math.max(...midis) - Math.min(...midis);
+                if (span > KEYS_SPAN_WARN) {
+                    issues.push({
+                        rule: 'keys-span', time: t0, indices: group.map((e) => e.i),
+                        detail: span > KEYS_SPAN_ERR
+                            ? `${span}-semitone reach in one hand (beyond a 10th)`
+                            : `${span}-semitone reach in one hand (over an octave)`,
+                    });
+                }
+            }
+            if (group.length > KEYS_HAND_MAX) {
+                issues.push({
+                    rule: 'keys-hand', time: t0, indices: group.map((e) => e.i),
+                    detail: `${group.length} notes in one hand (a hand has five fingers)`,
+                });
+            }
+        }
+        // muddy low — the two LOWEST simultaneous pitches close together and low.
+        const byPitch = cluster.map((e) => ({ e, m: _keysMidiPure(e.n) })).sort((a, b) => a.m - b.m);
+        const gap = byPitch[1].m - byPitch[0].m;
+        if (byPitch[0].m < KEYS_MUDDY_LOW_MIDI && gap >= 1 && gap <= KEYS_MUDDY_INTERVAL) {
+            issues.push({
+                rule: 'keys-muddy-low', time: t0,
+                indices: [byPitch[0].e.i, byPitch[1].e.i],
+                detail: `close ${gap}-semitone voicing in the low register (below ~E2)`,
+            });
+        }
+    }
+    return issues.sort((a, b) => a.time - b.time);
+}
 /* @pure:playability-lint:end */
 
 // ── Memo (the draw-coalesce dirty path) ──────────────────────────────
@@ -261,13 +332,18 @@ let _memo = { gen: -1, arrIdx: -1, notesRef: null, issues: [], flagged: new Set(
 export function _lintResults() {
     const arr = S.arrangements && S.arrangements[S.currentArr];
     const nn = arr ? notes() : null;
-    if (!arr || !nn || isKeysArr() || S.drumEditMode) {
+    if (!arr || !nn || S.drumEditMode) {
         if (_memo.issues.length) _memo = { gen: -1, arrIdx: -1, notesRef: null, issues: [], flagged: new Set() };
         return _memo;
     }
     const gen = typeof editGen === 'number' ? editGen : 0;
     if (_memo.gen === gen && _memo.arrIdx === S.currentArr && _memo.notesRef === nn) return _memo;
-    const issues = _playabilityLintPure(nn, _lintAnchorsPure(arr));
+    // Keys parts get the piano lint (per-hand stretch / too-many-in-a-hand /
+    // muddy low); fretted parts get the anchor-window lint. Keys used to bail
+    // to no issues — the one instrument with no playability feedback at all.
+    const issues = isKeysArr()
+        ? _keysLintPure(nn)
+        : _playabilityLintPure(nn, _lintAnchorsPure(arr));
     const flagged = new Set();
     for (const iss of issues) for (const i of iss.indices) flagged.add(i);
     _memo = { gen, arrIdx: S.currentArr, notesRef: nn, issues, flagged };
@@ -284,6 +360,8 @@ const RULE_LABELS = {
     stretch: 'Stretch', overlap: 'String overlap', 'open-bend': 'Open-string bend',
     'bad-fret': 'Fret out of range', 'legato-jump': 'Legato jump',
     'finger-conflict': 'Finger conflict',
+    'keys-span': 'Hand stretch', 'keys-hand': 'Too many notes in a hand',
+    'keys-muddy-low': 'Muddy low voicing',
 };
 
 export function _lintChipRefresh() {
