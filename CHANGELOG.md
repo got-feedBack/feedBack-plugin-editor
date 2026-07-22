@@ -55,6 +55,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Creating a project from a multi-track MIDI no longer silently loses the
+  drums.** Core's `list_midi_tracks` excludes channel-9 (a keys-import of a
+  drum channel is empty), so a full-band MIDI's drum track never reached the
+  create picker and vanished. `/import-midi` now also returns the channel-9
+  `drum_tracks` (via `list_drum_tracks`), and the create flow auto-imports each
+  as its own `type:"drums"` arrangement — the same auto-split the Guitar Pro
+  create-import already does — so drums arrive alongside the pitched parts
+  instead of disappearing. The pitched picker and its import are unchanged
+  (drums ride a separate list, so no picker-row/selection collision); a
+  drums-only MIDI still imports as a drums session. `/import-drums-midi` now
+  accepts the create-flow upload path too, and the drum-tab stash step is
+  shared with the Add-Drums modal (`_stashImportedDrumTab`). Covered by
+  `tests/midi_drum_autosplit.test.mjs` and runtime-verified end-to-end.
+
 - **A drum edit no longer strips another tool's authored keys from drum-part
   manifest entries.** Saving with drum changes rebuilds the `type: drums`
   arrangement entries; that rebuild now merges onto the prior same-id entry —

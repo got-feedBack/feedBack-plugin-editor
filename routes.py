@@ -7169,7 +7169,7 @@ def setup(app, context):
     @app.post("/api/plugins/editor/import-midi")
     async def import_midi(file: UploadFile = File(...)):
         """Upload a MIDI file and return track listing."""
-        from lib.midi_import import list_midi_tracks
+        from lib.midi_import import list_midi_tracks, list_drum_tracks
 
         # Validate extension — the browser accept filter is advisory only.
         orig_suffix = Path(file.filename or "").suffix.lower()
@@ -7201,13 +7201,25 @@ def setup(app, context):
         def _list():
             return list_midi_tracks(midi_path)
 
+        # Core's `list_midi_tracks` EXCLUDES channel-9 (GM percussion) — a
+        # keys-import of a drum channel would yield an empty arrangement, so
+        # drums are dropped from the pitched listing. List them separately so
+        # the create picker can auto-split them into `type:"drums"` parts
+        # instead of silently losing a full-band MIDI's drums.
+        def _list_drums():
+            try:
+                return list_drum_tracks(midi_path)
+            except Exception:
+                return []
+
         try:
             tracks = await asyncio.get_event_loop().run_in_executor(None, _list)
+            drum_tracks = await asyncio.get_event_loop().run_in_executor(None, _list_drums)
         except Exception as e:
             shutil.rmtree(tmp, ignore_errors=True)
             return JSONResponse({"error": f"Failed to parse MIDI file: {e}"}, 500)
 
-        return {"midi_path": midi_path, "tracks": tracks}
+        return {"midi_path": midi_path, "tracks": tracks, "drum_tracks": drum_tracks}
 
     # ── MIDI import: convert a track to a Keys arrangement ────────────
 
@@ -8459,7 +8471,13 @@ def setup(app, context):
         except (TypeError, ValueError):
             return JSONResponse({"error": "audio_offset must be a number"}, 400)
 
-        validated = _validate_editor_upload_path(midi_path_raw, "slopsmith_drums_midi_")
+        # Accept both the Add-Drums list upload (slopsmith_drums_midi_) and the
+        # generic create-flow MIDI upload (slopsmith_midi_): the create picker's
+        # auto drum-split reuses the file it already staged via /import-midi.
+        validated = (
+            _validate_editor_upload_path(midi_path_raw, "slopsmith_drums_midi_")
+            or _validate_editor_upload_path(midi_path_raw, "slopsmith_midi_")
+        )
         if not validated:
             return JSONResponse({"error": "MIDI file not found"}, 400)
         midi_path = str(validated)
