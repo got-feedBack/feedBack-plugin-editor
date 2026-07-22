@@ -84,6 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against — charrette D5), and mute still always wins. "Solo my source track"
   now truly isolates the paired stem; solo the master strip alongside it to
   compare the two.
+- **Replace Audio no longer crosses song boundaries.** If an upload or download
+  finishes after you switch songs, close the dialog, or start another Replace
+  Audio request, the stale result is discarded instead of being applied to the
+  newly active session.
 
 - **Corrected inaccurate and inconsistent UI labels.** The canvas status footer
   said "Scroll: zoom" although the wheel pans (Ctrl+wheel zooms); it now reads
