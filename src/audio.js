@@ -20,6 +20,7 @@
 // Browser surface: WebAudio (AudioContext), `canvas` (for waveform width),
 // ════════════════════════════════════════════════════════════════════
 import { timeOf } from './beats.js';
+import { _trackRegionsResolvePure } from './region.js';
 import { DPR, canvas } from './canvas.js';
 import { LABEL_W, timeToX } from './geometry.js';
 import {
@@ -492,6 +493,86 @@ export function _audioBufferStartPure(cursorTime, audioShift, bufferDuration) {
     return { play: true, offset: bufOff, delay: 0 };
 }
 
+// Per-REGION generalization of _audioBufferStartPure (track-regions PR4). An
+// audio region plays media seconds [srcIn, srcOut) starting at chart-time
+// `startTime` (= the audio group's shift + timeOf(region.startBeat)); the media
+// buffer is never stretched, so trim is expressed purely as start()/duration
+// args. Returns { play, offset, delay, duration }:
+//   • offset   — buffer-time to begin at (BufferSource start()'s 2nd arg)
+//   • delay    — seconds to wait before the region begins (cursor is before it)
+//   • duration — seconds to play from `offset` (start()'s 3rd arg); null = to
+//                the natural buffer end (an untrimmed region whose out-point is
+//                the whole file — kept null so the scheduler omits the arg and
+//                behaves byte-identically to today's whole-stem path).
+// The whole-stem case IS a region: _regionStartPure(cursor, audioShift, 0, dur)
+// returns the same {play, offset, delay} as _audioBufferStartPure(cursor,
+// audioShift, dur) for every cursor — the pinned invariant PR4 rests on.
+export function _regionStartPure(cursorTime, startTime, srcIn, srcOut) {
+    const rel = (Number(cursorTime) || 0) - (Number(startTime) || 0);
+    const inSec = Math.max(0, Number(srcIn) || 0);
+    const outNum = Number(srcOut);
+    const out = Number.isFinite(outNum) && outNum > inSec ? outNum : null;
+    const contentLen = out != null ? out - inSec : null;   // null = to buffer end
+    // Past the region's trimmed tail → don't play (only the transport runs).
+    if (contentLen != null && rel >= contentLen) return { play: false, offset: 0, delay: 0, duration: 0 };
+    // Cursor is before the region begins → wait `-rel`, then play from the in-point.
+    if (rel < 0) return { play: true, offset: inSec, delay: -rel, duration: contentLen };
+    // Inside the region → play from in + elapsed, for the remaining trimmed length.
+    return { play: true, offset: inSec + rel, delay: 0, duration: contentLen != null ? contentLen - rel : null };
+}
+
+// Resolve a track's regions[] into concrete AUDIO placements for the scheduler:
+// each region's chart-time start-offset (timeOf(startBeat) — the caller adds the
+// audio group's shift) and its media window [srcIn, srcOut) in the buffer's own
+// seconds. The implicit default (absent regions) yields ONE full-span placement
+// [0, bufferDuration) at beat 0 — today's whole-stem path, so a project with no
+// authored regions schedules exactly as it does now. srcOut resolves to the
+// buffer end when absent/degenerate; startBeat maps through the injected
+// beatToTime so a moved region rides the tempo map. Pure (beatToTime injected).
+export function _audioRegionPlacementsPure(regions, bufferDuration, beatToTime) {
+    const dur = Math.max(0, Number(bufferDuration) || 0);
+    const b2t = typeof beatToTime === 'function' ? beatToTime : () => 0;
+    // Measure placement RELATIVE to beat 0 so the default region (startBeat 0)
+    // contributes zero offset whatever the grid origin — the whole-stem path
+    // stays at exactly `shift`, byte-identical to before regions.
+    const zero = Number(b2t(0)) || 0;
+    const out = [];
+    for (const r of _trackRegionsResolvePure(regions)) {
+        const startBeatTime = (Number(b2t(Number(r.startBeat) || 0)) || 0) - zero;
+        const srcIn = Math.max(0, Number(r.srcIn) || 0);
+        const so = Number(r.srcOut);
+        const srcOut = Number.isFinite(so) && so > srcIn ? (dur > 0 ? Math.min(so, dur) : so) : dur;
+        out.push({ id: r.id, startBeatTime, srcIn, srcOut, muted: r.muted === true });
+    }
+    return out;
+}
+
+// Fade length (seconds) for the per-region declick — long enough to kill an edge
+// pop, short enough to be inaudible as a fade (~5 ms; design: sound-design's call).
+const DECLICK_FADE = 0.005;
+
+// Declick envelope for a TRIMMED region's edges: a per-region gain fades from
+// silence over `fadeSec` at the region's first sample and back to silence over
+// `fadeSec` at its last, so a cut that doesn't land on a zero crossing doesn't
+// pop. Returns [{t, gain}] ramp points in ctx time — setValueAtTime the first,
+// linearRampToValueAtTime the rest. A region with no known end (open window) gets
+// only the fade-in; fades shrink to duration/2 so they never overlap on a short
+// region. A FULL-SPAN region never reaches here (its edges are the buffer's own
+// silent boundaries), so the untrimmed path stays gain-node-free and unchanged.
+export function _declickEnvelopePure(startTime, duration, fadeSec) {
+    const start = Number(startTime) || 0;
+    const fade = Math.max(0, Number(fadeSec) || 0);
+    const dur = (duration != null && Number.isFinite(Number(duration))) ? Math.max(0, Number(duration)) : null;
+    const inFade = dur != null ? Math.min(fade, dur / 2) : fade;
+    const env = [{ t: start, gain: 0 }, { t: start + inFade, gain: 1 }];
+    if (dur != null) {
+        const outFade = Math.min(fade, dur / 2);
+        env.push({ t: start + dur - outFade, gain: 1 });
+        env.push({ t: start + dur, gain: 0 });
+    }
+    return env;
+}
+
 // Effective timeline length for shifted audio. A positive shift delays the
 // recording, so its tail ends after the raw buffer duration; negative shifts
 // crop the front but do not shrink the chart the user already has.
@@ -653,16 +734,63 @@ function _auditionRefreshUi() {
     if (host && typeof host.updateTimeDisplay === 'function') host.updateTimeDisplay();
 }
 
+// Preserve the historical S.audioSource surface (stop + assignable onended)
+// while the active reference is represented by one BufferSource per region.
+// MIDI recording and teardown deliberately treat this as a single source.
+function _audioSourceGroup(nodes) {
+    if (!nodes.length) return null;
+    let onended = null;
+    let remaining = nodes.length;
+    const group = {
+        stop() {
+            for (const node of nodes) {
+                try { node.stop(); } catch (_) { /* already stopped */ }
+            }
+        },
+        get onended() { return onended; },
+        set onended(fn) { onended = typeof fn === 'function' ? fn : null; },
+    };
+    for (const node of nodes) {
+        const cleanup = node.onended;
+        node.onended = (event) => {
+            if (typeof cleanup === 'function') cleanup.call(node, event);
+            remaining--;
+            if (remaining === 0 && onended) onended.call(group, event);
+        };
+    }
+    return group;
+}
+
 export function _startAudioSourceAtCursor(preRoll = 0) {
     // Slide the recording by S.audioShift (the chart clock, anchored below, is
     // untouched — only the buffer read position moves). A positive shift can
     // push the audio start into the future (delay) or, near the end, past the
     // buffer entirely (no source; the transport still runs so the cursor and
     // guide advance over the trailing silence).
-    const st = _audioBufferStartPure(S.cursorTime,
-        (Number(S.audioShift) || 0) + (Number(S.activeAudioSourceOffset) || 0),
-        S.audioBuffer && S.audioBuffer.duration);
+    const duration = S.audioBuffer && S.audioBuffer.duration;
+    const activeShift = (Number(S.audioShift) || 0) + (Number(S.activeAudioSourceOffset) || 0);
+    const placements = _audioRegionPlacementsPure(
+        _trackRegionsForSourceId(S.activeAudioSourceId), duration,
+        (b) => timeOf(S.beats, b));
+    const starts = placements
+        .filter(region => !region.muted)
+        .map(region => ({ region, start: _regionStartPure(
+            S.cursorTime, activeShift + region.startBeatTime, region.srcIn, region.srcOut) }))
+        .filter(item => item.start.play);
+    // The pitch-preserving MediaElement can represent only one continuous,
+    // full-file placement. Authored region windows therefore use the
+    // sample-accurate 100% path (the same limitation as multi-stem audition).
+    const wholeFile = placements.length === 1 && !placements[0].muted
+        && placements[0].startBeatTime === 0 && placements[0].srcIn === 0
+        && placements[0].srcOut >= duration;
+    const st = starts[0] ? starts[0].start : { play: false, offset: 0, delay: 0 };
     let slow = _auditionActive();
+    if (slow && !wholeFile) {
+        slow = false;
+        S.auditionRate = 1;
+        _auditionRefreshUi();
+        setStatus('Audition speed is unavailable for edited audio regions — playing at 100%.');
+    }
     if (slow && st.play) {
         // Pitch-preserving slow path: the reference rides the MediaElement, so
         // the sample-accurate BufferSource is silenced. Both feed the SAME
@@ -680,21 +808,45 @@ export function _startAudioSourceAtCursor(preRoll = 0) {
             setStatus('Audition speed is unavailable for this recording — playing at 100%.');
         }
     }
-    if (!slow && st.play) {
+    if (!slow && starts.length) {
         _stopRefMedia();   // rate 1 → the slow-path element must be silent
-        S.audioSource = S.audioCtx.createBufferSource();
-        S.audioSource.buffer = S.audioBuffer;
         // Reference recording stays on a transparent path to destination — its
         // mixer fader is a plain gain (unity by default): the guide-clap limiter
         // must never color the recording, even when claps are off. Only the
         // guide/click voices sum through the limiter (see _ensureMasterBus).
         const target = _activeRefTarget();
-        if (target) S.audioSource.connect(target);
-        else S.audioSource.connect(S.audioCtx.destination);
         _mixApplyFirstPlayFade();
-        const when = (preRoll > 0 || st.delay > 0) ? S.audioCtx.currentTime + preRoll + st.delay : 0;
-        S.audioSource.start(when, st.offset);
-    } else if (!st.play) {
+        const ctxNow = S.audioCtx.currentTime;
+        const nodes = [];
+        for (const { region, start: p } of starts) {
+            const node = S.audioCtx.createBufferSource();
+            node.buffer = S.audioBuffer;
+            const when = (preRoll > 0 || p.delay > 0) ? ctxNow + preRoll + p.delay : 0;
+            const trimmed = region.srcIn > 0 || region.srcOut < duration;
+            if (trimmed) {
+                const g = S.audioCtx.createGain();
+                const realStart = when > 0 ? when : ctxNow;
+                const env = _declickEnvelopePure(realStart, p.duration, DECLICK_FADE);
+                g.gain.setValueAtTime(env[0].gain, env[0].t);
+                for (let i = 1; i < env.length; i++) {
+                    g.gain.linearRampToValueAtTime(env[i].gain, env[i].t);
+                }
+                g.connect(target || S.audioCtx.destination);
+                node.connect(g);
+                node.onended = () => { try { g.disconnect(); } catch (_) { /* ctx gone */ } };
+            } else if (target) {
+                node.connect(target);
+            } else {
+                node.connect(S.audioCtx.destination);
+            }
+            // Keep the untouched one-region case byte-for-byte on the legacy
+            // two-argument start path. Trimmed windows need the duration cap.
+            if (trimmed && p.duration != null) node.start(when, p.offset, p.duration);
+            else node.start(when, p.offset);
+            nodes.push(node);
+        }
+        S.audioSource = _audioSourceGroup(nodes);
+    } else if (!starts.length) {
         _stopRefMedia();
         S.audioSource = null;
     }
@@ -1836,7 +1988,7 @@ function _partGainsReset() {
 // silenced — so stems do not sound while slowed (they resume at 100%).
 // ════════════════════════════════════════════════════════════════════
 const stemAudioCache = new Map();     // sourceId → { url, buffer, peaks }
-const playingStemSources = new Map(); // sourceId → live AudioBufferSourceNode
+const playingStemSources = new Map(); // sourceId → live AudioBufferSourceNode[] (one per region)
 const stemGainNodes = new Map();      // sourceId → GainNode
 let stemDecodeGeneration = 0;
 
@@ -1870,6 +2022,16 @@ function _liveAudioSources() {
         || (S.activeAudioSourceId === MASTER_SOURCE_ID ? S.audioUrl : '') || '';
     return _liveAudioSourcesPure(masterUrl, S.stems,
         S.trackSession && S.trackSession.removedSourceIds);
+}
+
+// The regions[] of the audio track that owns a source (matched by sourceId), or
+// null → the implicit default full-span region. Lets the scheduler place one
+// buffer source per region instead of one per stem.
+function _trackRegionsForSourceId(sourceId) {
+    const tracks = S.trackSession && Array.isArray(S.trackSession.tracks) ? S.trackSession.tracks : null;
+    if (!tracks) return null;
+    const track = tracks.find(t => t && t.type === 'audio' && t.sourceId === sourceId);
+    return track ? track.regions : null;
 }
 
 // The sources the multi-source scheduler plays: every live source EXCEPT the
@@ -1981,7 +2143,9 @@ export function _stemCatchupPure(playStartTime, playStartWall, currentTime, rate
 export function _pruneStaleStems(liveIds) {
     for (const id of [...playingStemSources.keys()]) {
         if (liveIds.has(id)) continue;
-        try { playingStemSources.get(id).stop(); } catch (_) { /* already stopped */ }
+        for (const node of playingStemSources.get(id)) {
+            try { node.stop(); } catch (_) { /* already stopped */ }
+        }
         playingStemSources.delete(id);
     }
     for (const id of [...stemGainNodes.keys()]) {
@@ -2125,36 +2289,70 @@ export function applyStemMix(immediate = false) {
 }
 
 // Schedule every live source EXCEPT the active one (which plays via the
-// S.audioSource reference path), sample-aligned: each computes its placement
-// from S.audioShift + its own offset and starts at the SAME preRoll-shifted
-// anchor. Called from the reference's rate-1 start path (never audition-slow).
+// S.audioSource reference path), sample-aligned. Each source's track is placed
+// as one buffer source PER REGION: a project with no authored regions has one
+// full-span region, so this is byte-identical to the old whole-stem path; a
+// moved/trimmed region plays its media window [srcIn,srcOut) starting at the
+// group shift + timeOf(startBeat). Called from the reference's rate-1 start path
+// (never audition-slow, which is single-stream — see the design's phase-1 note).
 function _startStemSources(preRoll = 0, cursorTime = S.cursorTime) {
     _stopStemSources();
     if (!S.audioCtx) return 0;
     let started = 0;
+    const baseShift = Number(S.audioShift) || 0;
+    const ctxNow = S.audioCtx.currentTime;
     for (const source of _liveAudioSources()) {
         if (source.id === S.activeAudioSourceId) continue;   // plays via S.audioSource
         const cached = stemAudioCache.get(source.id);
         if (!cached || !cached.buffer) continue;   // not decoded yet — syncStemAudio catches up
-        const placement = _audioBufferStartPure(
-            cursorTime, (Number(S.audioShift) || 0) + source.offset, cached.buffer.duration);
-        if (!placement.play) continue;
-        const node = S.audioCtx.createBufferSource();
-        node.buffer = cached.buffer;
-        node.connect(_ensureStemGain(source.id) || _ensureRefGain() || S.audioCtx.destination);
-        const when = (preRoll > 0 || placement.delay > 0)
-            ? S.audioCtx.currentTime + preRoll + placement.delay : 0;
-        node.start(when, placement.offset);
-        playingStemSources.set(source.id, node);
-        started++;
+        const dest = _ensureStemGain(source.id) || _ensureRefGain() || S.audioCtx.destination;
+        const nodes = [];
+        for (const region of _audioRegionPlacementsPure(
+                _trackRegionsForSourceId(source.id), cached.buffer.duration,
+                (b) => timeOf(S.beats, b))) {
+            if (region.muted) continue;
+            const startTime = baseShift + source.offset + region.startBeatTime;
+            const p = _regionStartPure(cursorTime, startTime, region.srcIn, region.srcOut);
+            if (!p.play) continue;
+            const node = S.audioCtx.createBufferSource();
+            node.buffer = cached.buffer;
+            const when = (preRoll > 0 || p.delay > 0) ? ctxNow + preRoll + p.delay : 0;
+            // Declick a TRIMMED region's edges via a per-region gain (fade in/out
+            // ~5 ms); a full-span region keeps the buffer's own silent boundaries,
+            // so it routes straight to the stem gain — byte-identical to today.
+            const trimmed = region.srcIn > 0 || region.srcOut < cached.buffer.duration;
+            if (trimmed) {
+                const g = S.audioCtx.createGain();
+                const realStart = when > 0 ? when : ctxNow;
+                const env = _declickEnvelopePure(realStart, p.duration, DECLICK_FADE);
+                g.gain.setValueAtTime(env[0].gain, env[0].t);
+                for (let i = 1; i < env.length; i++) g.gain.linearRampToValueAtTime(env[i].gain, env[i].t);
+                g.connect(dest);
+                node.connect(g);
+                // Release the transient gain when the source ends (natural or stop()).
+                node.onended = () => { try { g.disconnect(); } catch (_) { /* ctx gone */ } };
+            } else {
+                node.connect(dest);
+            }
+            // duration caps a trimmed region; for a full-span region it equals
+            // the remaining buffer, so start() plays to the end exactly as the
+            // single-source path did (null only for a degenerate open window).
+            if (p.duration != null) node.start(when, p.offset, p.duration);
+            else node.start(when, p.offset);
+            nodes.push(node);
+            started++;
+        }
+        if (nodes.length) playingStemSources.set(source.id, nodes);
     }
     applyStemMix(true);
     return started;
 }
 
 function _stopStemSources() {
-    for (const node of playingStemSources.values()) {
-        try { node.stop(); } catch (_) { /* already stopped */ }
+    for (const nodes of playingStemSources.values()) {
+        for (const node of nodes) {
+            try { node.stop(); } catch (_) { /* already stopped */ }
+        }
     }
     playingStemSources.clear();
 }

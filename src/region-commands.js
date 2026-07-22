@@ -374,3 +374,69 @@ export class DeleteRegionCmd {
         if (this._sel.taken) { S.selectedTrackId = this._sel.track; S.selectedRegionId = this._sel.region; }
     }
 }
+
+// ════════════════════════════════════════════════════════════════════
+// TrimRegionCmd — adjust a region's WINDOW only, never its content
+// (track-regions PR4). For an AUDIO region: srcIn/srcOut, the immutable media
+// in/out points in the file's OWN seconds (the buffer is never stretched — trim
+// is expressed to the scheduler purely as _regionStartPure start()/duration
+// args). For a NOTATION region: startBeat/lenBeat, the beat window; notes that
+// fall outside the trimmed window are HIDDEN (no longer owned by the region),
+// never deleted — a later widen brings them straight back. Container-only: it
+// touches nothing but track.regions[], so no editGen/content churn. Rollback
+// restores the raw regions[] verbatim (incl. deleting a key that was never
+// there). Node-runnable (no DOM). Test: tests/region_trim.test.mjs.
+// ════════════════════════════════════════════════════════════════════
+
+// Whitelist the window fields a trim may set, coercing each to a finite number
+// or an explicit null (which _trackRegionsNormalizePure reads as "clear this
+// bound"). Unknown / NaN / non-numeric fields are dropped so a trim can never
+// smuggle content or junk onto a region.
+const _TRIM_FIELDS = ['startBeat', 'lenBeat', 'srcIn', 'srcOut'];
+export function _trimPatchPure(patch) {
+    const out = {};
+    if (!patch || typeof patch !== 'object') return out;
+    for (const k of _TRIM_FIELDS) {
+        if (!(k in patch)) continue;
+        const v = patch[k];
+        if (v === null) out[k] = null;
+        else if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+    }
+    return out;
+}
+
+export class TrimRegionCmd {
+    // `patch` carries the new window fields (startBeat/lenBeat for notation,
+    // srcIn/srcOut for audio); only whitelisted, finite (or explicit-null)
+    // values survive, then _trackRegionsNormalizePure clamps/sorts the result.
+    constructor({ trackId, regionId, patch } = {}) {
+        this.trackId = trackId;
+        this.regionId = regionId;
+        this.patch = _trimPatchPure(patch);
+        // Window-only: changes WHAT/WHEN a region covers, never a note's pitch,
+        // so it passes the read-only-roll edit lock like the move/place verbs.
+        this.pitchPreserving = true;
+        // The window lives on the track container (song-level), not an arrangement.
+        this.songScope = true;
+        this._regionBefore = { taken: false, hadKey: false, value: undefined };
+    }
+
+    exec() {
+        const track = _findTrack(this.trackId);
+        if (!track) return;
+        if (!Object.keys(this.patch).length) return;   // no valid fields → true no-op
+        const resolved = _trackRegionsResolvePure(track.regions);
+        // Unknown region id → no-op; never materialize the implicit default just
+        // to write nothing (keeps untouched packs byte-identical).
+        if (!resolved.some(r => r.id === this.regionId)) return;
+        this._regionBefore = _snapRegions(track);
+        const trimmed = resolved.map(r => (
+            r.id === this.regionId ? { ...r, ...this.patch } : r
+        ));
+        track.regions = _trackRegionsNormalizePure(trimmed);
+    }
+
+    rollback() {
+        _restoreRegions(_findTrack(this.trackId), this._regionBefore);
+    }
+}

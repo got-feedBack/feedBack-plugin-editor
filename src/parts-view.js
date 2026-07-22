@@ -108,30 +108,54 @@ function _isDrumRow(arrIdx, targetId) {
     return (arrIdx >= 0 && isDrumArrangement(S.arrangements[arrIdx])) || targetId === 'drums';
 }
 
-// An audio lane's waveform, when the host has one cached for the source
-// (today: the master mix via S.waveformPeaks; stems light up with the
-// engine slice). host.trackWaveform's inert default returns null — the
-// lane then just shows its background and downbeats.
+// The chart-time span + media window a region's waveform slice occupies, for the
+// windowed thumbnail. startTime = the group shift + the region's beat placement
+// MEASURED FROM BEAT 0 (so the default region at beat 0 sits at exactly `shift`);
+// [srcIn, srcOut) is the media window in the buffer's own seconds (srcOut → the
+// buffer end when absent/degenerate). The default full-span region reproduces the
+// whole buffer at the shift, so the pre-region single pass is drawn identically.
+export function _regionWaveWindowPure(region, shift, duration, beatToTime) {
+    const dur = Math.max(0, Number(duration) || 0);
+    const b2t = typeof beatToTime === 'function' ? beatToTime : () => 0;
+    const srcIn = Math.max(0, Number(region && region.srcIn) || 0);
+    const so = Number(region && region.srcOut);
+    const srcOut = Number.isFinite(so) && so > srcIn ? (dur > 0 ? Math.min(so, dur) : so) : dur;
+    const place = (Number(b2t(Number(region && region.startBeat) || 0)) || 0) - (Number(b2t(0)) || 0);
+    const startTime = (Number(shift) || 0) + place;
+    return { startTime, endTime: startTime + (srcOut - srcIn), srcIn, srcOut };
+}
+
+// An audio lane's waveform, when the host has one cached for the source (today:
+// the master mix via S.waveformPeaks; stems light up with the engine slice).
+// host.trackWaveform's inert default returns null — the lane then just shows its
+// background and downbeats. Drawn as one WINDOWED pass PER REGION: the default is
+// a single full-span region → the whole buffer at `shift`, identical to before;
+// a trimmed/moved region shows only its [srcIn,srcOut) slice under its own block.
 function _drawTrackAudioWaveform(row, y0, laneH, w) {
     const data = host.trackWaveform(row.sourceId);
     if (!data || !data.peaks || !data.peaks.bins || !(data.duration > 0)) return;
     const pk = data.peaks;
     const shift = (Number(S.audioShift) || 0) + (Number(row.sourceOffset) || 0);
-    const xLo = Math.max(PARTS_GUTTER, Math.floor(timeToX(shift)));
-    const xHi = Math.min(w, Math.ceil(timeToX(data.duration + shift)));
     const mid = y0 + laneH / 2;
     const amp = Math.max(2, laneH / 2 - 5);
-    ctx.strokeStyle = 'rgba(120,150,210,.18)';
-    ctx.beginPath(); ctx.moveTo(xLo, mid + .5); ctx.lineTo(xHi, mid + .5); ctx.stroke();
-    ctx.fillStyle = row.sourceKind === 'master' ? 'rgba(95,165,245,.72)' : 'rgba(74,205,220,.72)';
-    for (let px = xLo; px < xHi; px++) {
-        let i0 = Math.floor((xToTime(px) - shift) / data.duration * pk.bins);
-        let i1 = Math.floor((xToTime(px + 1) - shift) / data.duration * pk.bins);
-        i0 = Math.max(0, Math.min(pk.bins - 1, i0));
-        i1 = Math.max(i0, Math.min(pk.bins - 1, i1));
-        let lo = pk.min[i0]; let hi = pk.max[i0];
-        for (let i = i0 + 1; i <= i1; i++) { if (pk.min[i] < lo) lo = pk.min[i]; if (pk.max[i] > hi) hi = pk.max[i]; }
-        ctx.fillRect(px, mid - hi * amp, 1, Math.max(1, (hi - lo) * amp));
+    const fill = row.sourceKind === 'master' ? 'rgba(95,165,245,.72)' : 'rgba(74,205,220,.72)';
+    for (const region of _trackRegionsResolvePure(row.regions)) {
+        const win = _regionWaveWindowPure(region, shift, data.duration, (b) => timeOf(S.beats, b));
+        const xLo = Math.max(PARTS_GUTTER, Math.floor(timeToX(win.startTime)));
+        const xHi = Math.min(w, Math.ceil(timeToX(win.endTime)));
+        if (xHi <= xLo) continue;
+        ctx.strokeStyle = 'rgba(120,150,210,.18)';
+        ctx.beginPath(); ctx.moveTo(xLo, mid + .5); ctx.lineTo(xHi, mid + .5); ctx.stroke();
+        ctx.fillStyle = fill;
+        for (let px = xLo; px < xHi; px++) {
+            let i0 = Math.floor((win.srcIn + xToTime(px) - win.startTime) / data.duration * pk.bins);
+            let i1 = Math.floor((win.srcIn + xToTime(px + 1) - win.startTime) / data.duration * pk.bins);
+            i0 = Math.max(0, Math.min(pk.bins - 1, i0));
+            i1 = Math.max(i0, Math.min(pk.bins - 1, i1));
+            let lo = pk.min[i0]; let hi = pk.max[i0];
+            for (let i = i0 + 1; i <= i1; i++) { if (pk.min[i] < lo) lo = pk.min[i]; if (pk.max[i] > hi) hi = pk.max[i]; }
+            ctx.fillRect(px, mid - hi * amp, 1, Math.max(1, (hi - lo) * amp));
+        }
     }
 }
 

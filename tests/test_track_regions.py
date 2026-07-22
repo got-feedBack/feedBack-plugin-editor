@@ -80,3 +80,19 @@ def test_authored_regions_round_trip_through_manifest_yaml():
     again = _coerce_track_session(loaded)
     assert again["tracks"][0]["regions"] == [
         {"id": "r1", "startBeat": 8.0, "lenBeat": 8.0, "name": "Chorus"}]
+
+
+def test_audio_trimmed_region_round_trips_through_manifest_yaml():
+    # The round-trip above covers a NOTATION window (startBeat/lenBeat); this pins
+    # the AUDIO trim pair (fractional srcIn/srcOut) through the same coerce ->
+    # YAML dump/load -> coerce path with no drift (PR4 "identical window").
+    session = _coerce_track_session({
+        "tracks": [{"id": "audio:master", "type": "audio", "sourceId": "master",
+                    "regions": [{"id": "r1", "startBeat": 8, "lenBeat": None,
+                                 "srcIn": 1.25, "srcOut": 3.75, "name": "Solo"}]}],
+    })
+    loaded = yaml.safe_load(yaml.safe_dump(session, sort_keys=False, allow_unicode=True))
+    again = _coerce_track_session(loaded)
+    assert again["tracks"][0]["regions"] == [
+        {"id": "r1", "startBeat": 8.0, "lenBeat": None,
+         "srcIn": 1.25, "srcOut": 3.75, "name": "Solo"}]

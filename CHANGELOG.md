@@ -31,6 +31,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lint — a yellow underline + the count chip + the popover, never blocking. New
   pures `_keysLintPure` / thresholds in `src/playability-lint.js`, covered by
   `tests/keys_lint.test.mjs`.
+- **Audio regions — a stem's audio can now be placed and trimmed as movable
+  blocks (Track Regions PR4).** Audio playback becomes one source *per region*
+  instead of one per stem: a region plays only its media window `[srcIn, srcOut)`
+  at its placed start (the group shift plus the region's beat-0-relative
+  position), so a moved or trimmed audio block rides the tempo map for placement
+  while its content plays at natural speed, never stretched. Trim edges are
+  declicked with a ~5 ms per-region fade, and each region's waveform thumbnail is
+  windowed to its own slice. `TrimRegionCmd` makes the trim an undoable,
+  window-only edit that survives save→reload with no drift. A project with **no
+  authored regions** has a single full-span region and is byte-identical to
+  before — playback, scheduling, and the waveform are unchanged. Phase-1 scope
+  (per `docs`/`TRACK-REGIONS-DESIGN.md`): the active/reference source and the
+  audition-slow single-stream path stay whole-track; audio-region delete and
+  split/join are later tiers. New pure cores: `_regionStartPure`,
+  `_audioRegionPlacementsPure`, `_declickEnvelopePure` (`src/audio.js`),
+  `TrimRegionCmd` (`src/region-commands.js`), `_regionWaveWindowPure`
+  (`src/parts-view.js`).
 
 - **The Legacy (EOF) profile is now a faithful port of EOF's pro-guitar keyset,
   pinned to the reference.** F1 opens help, Ctrl+1-9 / Ctrl+0 / Ctrl+` set frets

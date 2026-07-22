@@ -14,7 +14,7 @@
 import assert from 'node:assert';
 import { S } from '../src/state.js';
 import { EditHistory } from '../src/history.js';
-import { _audioBufferStartPure, _audioTimelineDurationPure, AudioShiftCmd, editorSetAudioShift } from '../src/audio.js';
+import { _audioBufferStartPure, _audioTimelineDurationPure, _regionStartPure, _audioRegionPlacementsPure, _declickEnvelopePure, AudioShiftCmd, editorSetAudioShift } from '../src/audio.js';
 import { seedState, trackHooks, lastStatus } from './_history_env.mjs';
 
 let pass = 0, fail = 0;
@@ -86,6 +86,102 @@ t('editorSetAudioShift is a no-op when the value is unchanged', () => {
     S.audioShift = 0.1;
     editorSetAudioShift('0.1');
     assert.strictEqual(S.history.undo.length, 0, 'no command pushed for a no-op');
+});
+
+// ── _regionStartPure — the per-region generalization (track-regions PR4) ──────
+// The whole-stem case is a region [srcIn=0, srcOut=duration] placed at the audio
+// shift. This MUST stay byte-identical to _audioBufferStartPure so PR4 doesn't
+// regress today's single-source scheduling — the pinned invariant.
+t('_regionStartPure(cursor, shift, 0, dur) === _audioBufferStartPure for every cursor', () => {
+    const dur = 30, shift = 4;   // +4s pre-roll
+    for (const cursor of [-2, 0, 3.9, 4, 4.0001, 10, 33.999, 34, 40]) {
+        const legacy = _audioBufferStartPure(cursor, shift, dur);
+        const region = _regionStartPure(cursor, shift, 0, dur);
+        assert.strictEqual(region.play, legacy.play, `play @${cursor}`);
+        assert.ok(near(region.offset, legacy.offset), `offset @${cursor}: ${region.offset} vs ${legacy.offset}`);
+        assert.ok(near(region.delay, legacy.delay), `delay @${cursor}: ${region.delay} vs ${legacy.delay}`);
+    }
+});
+t('_regionStartPure — a trimmed region plays only its [srcIn,srcOut) window', () => {
+    // Region: media 2s..6s (4s of content) placed at chart-time 10.
+    const at = (c) => _regionStartPure(c, 10, 2, 6);
+    // Before it begins: wait, then start at the in-point, for the full window.
+    assert.deepStrictEqual(at(8), { play: true, offset: 2, delay: 2, duration: 4 });
+    // At the start: offset = in-point, no delay.
+    assert.deepStrictEqual(at(10), { play: true, offset: 2, delay: 0, duration: 4 });
+    // 2s in: read 2s past the in-point, 2s of window left.
+    assert.deepStrictEqual(at(12), { play: true, offset: 4, delay: 0, duration: 2 });
+    // At the trimmed tail (10 + 4): past the region — no source.
+    assert.deepStrictEqual(at(14), { play: false, offset: 0, delay: 0, duration: 0 });
+    // Just inside the tail: a sliver still plays.
+    const sliver = at(13.99);
+    assert.ok(sliver.play && near(sliver.offset, 5.99) && near(sliver.duration, 0.01), 'sliver at the tail');
+});
+t('_regionStartPure — no/invalid srcOut means play to the buffer end (duration null)', () => {
+    // srcOut null or ≤ srcIn → untrimmed tail: duration null (scheduler omits the
+    // start() 3rd arg) and no past-end cutoff.
+    assert.deepStrictEqual(_regionStartPure(5, 0, 0, null), { play: true, offset: 5, delay: 0, duration: null });
+    assert.deepStrictEqual(_regionStartPure(5, 0, 3, 3), { play: true, offset: 8, delay: 0, duration: null });
+    // Negative srcIn is clamped to 0.
+    assert.strictEqual(_regionStartPure(5, 0, -1, 20).offset, 5);
+});
+
+// ── _audioRegionPlacementsPure — a track's regions → scheduler placements ──────
+// This feeds the per-region rewrite of _startStemSources (regions PR4, step 2);
+// the default (absent regions) MUST reduce to today's single whole-stem source.
+t('_audioRegionPlacementsPure: absent regions → one full-span placement at beat 0', () => {
+    const p = _audioRegionPlacementsPure(null, 30, (b) => b * 0.5);
+    assert.strictEqual(p.length, 1);
+    assert.deepStrictEqual(p[0], { id: 'region:1', startBeatTime: 0, srcIn: 0, srcOut: 30, muted: false });
+});
+t('_audioRegionPlacementsPure ∘ _regionStartPure (default) === _audioBufferStartPure', () => {
+    // The whole default chain reproduces the legacy scheduler for every cursor —
+    // the guarantee that a region-free project schedules exactly as it does now.
+    const dur = 30; const shift = 4;
+    const [pl] = _audioRegionPlacementsPure(null, dur, (b) => b * 0.5);   // startBeatTime 0
+    for (const cursor of [-2, 0, 4, 10, 34, 40]) {
+        const legacy = _audioBufferStartPure(cursor, shift, dur);
+        const region = _regionStartPure(cursor, shift + pl.startBeatTime, pl.srcIn, pl.srcOut);
+        assert.strictEqual(region.play, legacy.play, `play @${cursor}`);
+        assert.ok(near(region.offset, legacy.offset), `offset @${cursor}`);
+        assert.ok(near(region.delay, legacy.delay), `delay @${cursor}`);
+    }
+});
+t('_audioRegionPlacementsPure maps startBeat via beatToTime, resolves + clamps the window', () => {
+    const regions = [
+        { id: 'r2', startBeat: 8, srcIn: 2, srcOut: 6 },                 // trimmed, placed at beat 8
+        { id: 'r3', startBeat: 0, lenBeat: null },                       // full-span (no trim)
+        { id: 'r4', startBeat: 4, srcIn: 1, srcOut: 999, muted: true },  // srcOut past end + muted
+    ];
+    const p = _audioRegionPlacementsPure(regions, 30, (b) => b * 0.5);   // 0.5 s/beat
+    assert.deepStrictEqual(p.map(x => x.id), ['r3', 'r4', 'r2'], 'normalized + sorted by startBeat');
+    assert.deepStrictEqual(p.find(x => x.id === 'r2'),
+        { id: 'r2', startBeatTime: 4, srcIn: 2, srcOut: 6, muted: false }, 'beat 8 → 4s; window [2,6)');
+    assert.deepStrictEqual(p.find(x => x.id === 'r3'),
+        { id: 'r3', startBeatTime: 0, srcIn: 0, srcOut: 30, muted: false }, 'no trim → whole buffer [0,dur)');
+    const r4 = p.find(x => x.id === 'r4');
+    assert.strictEqual(r4.srcOut, 30, 'srcOut past the buffer clamps to its duration');
+    assert.strictEqual(r4.muted, true, 'muted flag carried for the scheduler to skip');
+});
+
+// ── _declickEnvelopePure — per-region edge fades (regions PR4, step 5) ─────────
+const envNear = (env, exp) => {
+    assert.strictEqual(env.length, exp.length, `env length ${env.length} vs ${exp.length}`);
+    env.forEach((pt, i) => {
+        assert.ok(near(pt.t, exp[i].t), `t[${i}] ${pt.t} vs ${exp[i].t}`);
+        assert.strictEqual(pt.gain, exp[i].gain, `gain[${i}]`);
+    });
+};
+t('_declickEnvelopePure: fade in at the first sample, out before the last', () => {
+    envNear(_declickEnvelopePure(10, 2, 0.005), [
+        { t: 10, gain: 0 }, { t: 10.005, gain: 1 }, { t: 11.995, gain: 1 }, { t: 12, gain: 0 }]);
+});
+t('_declickEnvelopePure: an open window (null duration) gets only the fade-in', () => {
+    envNear(_declickEnvelopePure(0, null, 0.005), [{ t: 0, gain: 0 }, { t: 0.005, gain: 1 }]);
+});
+t('_declickEnvelopePure: fades shrink to duration/2 so they never overlap', () => {
+    envNear(_declickEnvelopePure(0, 0.006, 0.005), [
+        { t: 0, gain: 0 }, { t: 0.003, gain: 1 }, { t: 0.003, gain: 1 }, { t: 0.006, gain: 0 }]);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);
