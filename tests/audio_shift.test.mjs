@@ -14,7 +14,7 @@
 import assert from 'node:assert';
 import { S } from '../src/state.js';
 import { EditHistory } from '../src/history.js';
-import { _audioBufferStartPure, _audioTimelineDurationPure, AudioShiftCmd, editorSetAudioShift } from '../src/audio.js';
+import { _audioBufferStartPure, _audioTimelineDurationPure, _regionStartPure, AudioShiftCmd, editorSetAudioShift } from '../src/audio.js';
 import { seedState, trackHooks, lastStatus } from './_history_env.mjs';
 
 let pass = 0, fail = 0;
@@ -86,6 +86,44 @@ t('editorSetAudioShift is a no-op when the value is unchanged', () => {
     S.audioShift = 0.1;
     editorSetAudioShift('0.1');
     assert.strictEqual(S.history.undo.length, 0, 'no command pushed for a no-op');
+});
+
+// ── _regionStartPure — the per-region generalization (track-regions PR4) ──────
+// The whole-stem case is a region [srcIn=0, srcOut=duration] placed at the audio
+// shift. This MUST stay byte-identical to _audioBufferStartPure so PR4 doesn't
+// regress today's single-source scheduling — the pinned invariant.
+t('_regionStartPure(cursor, shift, 0, dur) === _audioBufferStartPure for every cursor', () => {
+    const dur = 30, shift = 4;   // +4s pre-roll
+    for (const cursor of [-2, 0, 3.9, 4, 4.0001, 10, 33.999, 34, 40]) {
+        const legacy = _audioBufferStartPure(cursor, shift, dur);
+        const region = _regionStartPure(cursor, shift, 0, dur);
+        assert.strictEqual(region.play, legacy.play, `play @${cursor}`);
+        assert.ok(near(region.offset, legacy.offset), `offset @${cursor}: ${region.offset} vs ${legacy.offset}`);
+        assert.ok(near(region.delay, legacy.delay), `delay @${cursor}: ${region.delay} vs ${legacy.delay}`);
+    }
+});
+t('_regionStartPure — a trimmed region plays only its [srcIn,srcOut) window', () => {
+    // Region: media 2s..6s (4s of content) placed at chart-time 10.
+    const at = (c) => _regionStartPure(c, 10, 2, 6);
+    // Before it begins: wait, then start at the in-point, for the full window.
+    assert.deepStrictEqual(at(8), { play: true, offset: 2, delay: 2, duration: 4 });
+    // At the start: offset = in-point, no delay.
+    assert.deepStrictEqual(at(10), { play: true, offset: 2, delay: 0, duration: 4 });
+    // 2s in: read 2s past the in-point, 2s of window left.
+    assert.deepStrictEqual(at(12), { play: true, offset: 4, delay: 0, duration: 2 });
+    // At the trimmed tail (10 + 4): past the region — no source.
+    assert.deepStrictEqual(at(14), { play: false, offset: 0, delay: 0, duration: 0 });
+    // Just inside the tail: a sliver still plays.
+    const sliver = at(13.99);
+    assert.ok(sliver.play && near(sliver.offset, 5.99) && near(sliver.duration, 0.01), 'sliver at the tail');
+});
+t('_regionStartPure — no/invalid srcOut means play to the buffer end (duration null)', () => {
+    // srcOut null or ≤ srcIn → untrimmed tail: duration null (scheduler omits the
+    // start() 3rd arg) and no past-end cutoff.
+    assert.deepStrictEqual(_regionStartPure(5, 0, 0, null), { play: true, offset: 5, delay: 0, duration: null });
+    assert.deepStrictEqual(_regionStartPure(5, 0, 3, 3), { play: true, offset: 8, delay: 0, duration: null });
+    // Negative srcIn is clamped to 0.
+    assert.strictEqual(_regionStartPure(5, 0, -1, 20).offset, 5);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

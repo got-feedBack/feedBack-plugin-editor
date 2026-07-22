@@ -492,6 +492,34 @@ export function _audioBufferStartPure(cursorTime, audioShift, bufferDuration) {
     return { play: true, offset: bufOff, delay: 0 };
 }
 
+// Per-REGION generalization of _audioBufferStartPure (track-regions PR4). An
+// audio region plays media seconds [srcIn, srcOut) starting at chart-time
+// `startTime` (= the audio group's shift + timeOf(region.startBeat)); the media
+// buffer is never stretched, so trim is expressed purely as start()/duration
+// args. Returns { play, offset, delay, duration }:
+//   • offset   — buffer-time to begin at (BufferSource start()'s 2nd arg)
+//   • delay    — seconds to wait before the region begins (cursor is before it)
+//   • duration — seconds to play from `offset` (start()'s 3rd arg); null = to
+//                the natural buffer end (an untrimmed region whose out-point is
+//                the whole file — kept null so the scheduler omits the arg and
+//                behaves byte-identically to today's whole-stem path).
+// The whole-stem case IS a region: _regionStartPure(cursor, audioShift, 0, dur)
+// returns the same {play, offset, delay} as _audioBufferStartPure(cursor,
+// audioShift, dur) for every cursor — the pinned invariant PR4 rests on.
+export function _regionStartPure(cursorTime, startTime, srcIn, srcOut) {
+    const rel = (Number(cursorTime) || 0) - (Number(startTime) || 0);
+    const inSec = Math.max(0, Number(srcIn) || 0);
+    const outNum = Number(srcOut);
+    const out = Number.isFinite(outNum) && outNum > inSec ? outNum : null;
+    const contentLen = out != null ? out - inSec : null;   // null = to buffer end
+    // Past the region's trimmed tail → don't play (only the transport runs).
+    if (contentLen != null && rel >= contentLen) return { play: false, offset: 0, delay: 0, duration: 0 };
+    // Cursor is before the region begins → wait `-rel`, then play from the in-point.
+    if (rel < 0) return { play: true, offset: inSec, delay: -rel, duration: contentLen };
+    // Inside the region → play from in + elapsed, for the remaining trimmed length.
+    return { play: true, offset: inSec + rel, delay: 0, duration: contentLen != null ? contentLen - rel : null };
+}
+
 // Effective timeline length for shifted audio. A positive shift delays the
 // recording, so its tail ends after the raw buffer duration; negative shifts
 // crop the front but do not shrink the chart the user already has.
