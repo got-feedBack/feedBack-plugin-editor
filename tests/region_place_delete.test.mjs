@@ -373,6 +373,17 @@ function seedImportedDrumPart() {
     S.drumTabDirty = false;
     return { primaryTab, freshTab };
 }
+function seedLegacyImportedDrums() {
+    const drumTab = { version: 1, name: 'Drums', kit: [], hits: [{ t: 0.5, p: 36 }, { t: 1.0, p: 38 }] };
+    seedState({ arrangements: [], currentArr: 0, beats: constGrid(), drumTab,
+        audioUrl: '', stems: [], stemLinks: {}, cursorTime: 0,
+        trackSession: { version: 3, tracks: [], removedSourceIds: [], tempoGuideSourceId: '', tempoGuideLocked: false, tempoGuideMode: 'audio' },
+        selectedTrackId: '', selectedRegionId: '' });
+    S.history = new EditHistory();
+    trackHooks();
+    S.drumTabDirty = false;
+    return drumTab;
+}
 const _trackById = (id) => S.trackSession.tracks.find(t => t.id === id);
 
 t('orchestrator bar1: synthesizes the row, places the part, selects the region; undo restores', () => {
@@ -413,7 +424,25 @@ t('orchestrator playhead: places at the cursor’s bar', () => {
 
 t('orchestrator refuses a bad arrIdx gracefully', () => {
     seedImportedDrumPart();
-    assert.strictEqual(placeImportedPartAsRegion({ kind: 'drums', arrIdx: -1, placeAt: 'bar1' }), false);
+    assert.strictEqual(placeImportedPartAsRegion({ kind: 'drums', arrIdx: -2, placeAt: 'bar1' }), false);
+    assert.strictEqual(placeImportedPartAsRegion({ kind: 'notation', arrIdx: -1, placeAt: 'bar1' }), false);
+t('orchestrator places the legacy drums-only target (arrIdx -1)', () => {
+    const drumTab = seedLegacyImportedDrums();
+    const before = clone(drumTab.hits);
+    const ok = placeImportedPartAsRegion({
+        kind: 'drums', arrIdx: -1, placeAt: 'bar1', items: drumTab.hits.slice(),
+    });
+    assert.strictEqual(ok, true);
+    assert.deepStrictEqual(drumTab.hits.map(hit => hit.t), [0, 0.5], 'legacy hits land at bar 1');
+    const track = _trackById('transcription:drums');
+    assert.ok(track, 'the legacy drums row was synthesized');
+    assert.strictEqual(S.selectedTrackId, track.id);
+    assert.strictEqual(S.selectedRegionId, track.regions[0].id);
+    S.history.doUndo();
+    assert.deepStrictEqual(drumTab.hits, before, 'undo restores the legacy tab exactly');
+    assert.ok(!('regions' in track), 'undo removes the placed window');
+});
+
     assert.strictEqual(placeImportedPartAsRegion({ kind: 'drums', arrIdx: 99, placeAt: 'bar1' }), false);
 });
 

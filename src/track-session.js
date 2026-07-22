@@ -785,11 +785,13 @@ export function refreshTrackSessionSelection() {
 // needs. Reached through host.placeImportedPartAsRegion (arrangement.js sits
 // below this module in the import graph — the usual host-table seam).
 export function placeImportedPartAsRegion({ kind, arrIdx, placeAt = 'keep', items } = {}) {
-    if (!Number.isInteger(arrIdx) || arrIdx < 0) return false;
+    if (!Number.isInteger(arrIdx) || arrIdx < -1) return false;
+    if (arrIdx === -1 && kind !== 'drums') return false;
     // The fresh part's row must exist before a region/selection can land on it.
     S.trackSession = _trackSessionNormalizePure(S.trackSession, _liveSources(), S.arrangements, S.drumTab);
+    const targetMixKey = arrIdx === -1 ? 'drums' : 'arr:' + arrIdx;
     const target = _trackSessionTargetsPure(S.arrangements, S.drumTab)
-        .find(t => t.mixKey === 'arr:' + arrIdx);
+        .find(t => t.mixKey === targetMixKey);
     if (!target) return false;
     const trackId = transcriptionTrackId(target.id);
     const startBeat = _placeAtStartBeatPure(placeAt, S.beats, S.cursorTime || 0, beatOf);

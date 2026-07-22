@@ -104,6 +104,9 @@ function _arrIndexForTarget(targetId) {
         .find(item => item.id === targetId);
     return target && target.mixKey.startsWith('arr:') ? Number(target.mixKey.slice(4)) : -1;
 }
+function _isDrumRow(arrIdx, targetId) {
+    return (arrIdx >= 0 && isDrumArrangement(S.arrangements[arrIdx])) || targetId === 'drums';
+}
 
 // An audio lane's waveform, when the host has one cached for the source
 // (today: the master mix via S.waveformPeaks; stems light up with the
@@ -388,7 +391,7 @@ export function _partsViewOnMouseDown(e, x, y) {
         host.selectTrackSessionSource(row.sourceId);
     } else {
         const idx = _arrIndexForTarget(row.targetId);
-        if ((idx >= 0 && isDrumArrangement(S.arrangements[idx])) || row.targetId === 'drums') {
+        if (_isDrumRow(idx, row.targetId)) {
             // A drum part (any of them) — arming is a no-op (currentArr never
             // moves onto a drums arrangement); double-click opens its grid.
             setStatus('Drum transcription selected — double-click to open the drum editor');
@@ -419,8 +422,7 @@ export function _partsViewOnMouseDown(e, x, y) {
                 // unmaterialized 'drums' target) moves DRUM content — the
                 // command resolves the part's own tab from arrIdx, so dragging
                 // a non-active part never shifts the active grid's hits.
-                kind: (rArrIdx >= 0 && isDrumArrangement(S.arrangements[rArrIdx])) || row.targetId === 'drums'
-                    ? 'drums' : 'notation',
+                kind: _isDrumRow(rArrIdx, row.targetId) ? 'drums' : 'notation',
                 arrIdx: rArrIdx,
                 origStart: span.t0,
                 spanW: Math.max(0, span.t1 - span.t0),
@@ -477,8 +479,7 @@ export function _partsViewRegionDelete() {
     const region = _trackRegionsResolvePure(row.regions).find(r => r.id === S.selectedRegionId);
     if (!region) return false;
     const arrIdx = _arrIndexForTarget(row.targetId);
-    const kind = (arrIdx >= 0 && isDrumArrangement(S.arrangements[arrIdx])) || row.targetId === 'drums'
-        ? 'drums' : 'notation';
+    const kind = _isDrumRow(arrIdx, row.targetId) ? 'drums' : 'notation';
     S.history.exec(new DeleteRegionCmd({ kind, arrIdx, trackId: row.id, region }));
     host.draw();
     host.updateStatus();
