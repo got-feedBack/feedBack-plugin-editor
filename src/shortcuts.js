@@ -100,8 +100,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'nextAnchor', label: 'Jump to next anchor', group: 'Timeline', status: 'ready', keys: { feedback: 'Ctrl+Alt+Right', eof: 'Alt+Page Down' } },
     { id: 'gotoBookmarkDigit', label: 'Jump to bookmark 1-9', group: 'Timeline', status: 'ready', keys: { feedback: 'Alt+1-9', eof: 'Numpad 1-9 / Alt+1-9' } },
     { id: 'setBookmarkDigit', label: 'Set / clear bookmark 1-9 at cursor', group: 'Timeline', status: 'ready', keys: { feedback: 'Shift+Alt+1-9', eof: 'Ctrl+Numpad 1-9 / Shift+Alt+1-9' } },
-    { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '[', eof: '[' } },
-    { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: ']', eof: ']' } },
+    { id: 'shortenSustain', label: 'Shorten selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: '[', eof: '[ / Wheel down' } },
+    { id: 'lengthenSustain', label: 'Lengthen selected sustain', group: 'Grid and sustain', status: 'ready', keys: { feedback: ']', eof: '] / Wheel up' } },
     { id: 'toggleSnap', label: 'Toggle snap on/off', group: 'Grid and sustain', status: 'ready', keys: { feedback: 'G', logical: 'Shift+G', cableton: 'Ctrl+4', eof: '' } },
     { id: 'snapDown', label: 'Decrease snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: ',', logical: 'Ctrl+,', cableton: 'Ctrl+2', eof: ',' } },
     { id: 'snapUp', label: 'Increase snap resolution', group: 'Grid and sustain', status: 'ready', keys: { feedback: '.', logical: 'Ctrl+.', cableton: 'Ctrl+1', eof: '.' } },
@@ -136,8 +136,8 @@ const EDITOR_SHORTCUT_COMMANDS = Object.freeze([
     { id: 'togglePop', label: 'Toggle pop / pluck', group: 'Techniques', status: 'ready', keys: { feedback: 'O', cableton: 'Ctrl+Shift+P', eof: 'Ctrl+Shift+P' } },
     { id: 'toggleSlap', label: 'Toggle slap', group: 'Techniques', status: 'ready', keys: { feedback: 'Shift+O', eof: 'Shift+O' } },
     { id: 'cyclePickDirection', label: 'Cycle pick direction', group: 'Techniques', status: 'ready', keys: { feedback: 'K', logical: 'Shift+K', eof: 'K' } },
-    { id: 'fretUp', label: 'Increase selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl++', eof: 'Ctrl++' } },
-    { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+-' } },
+    { id: 'fretUp', label: 'Increase selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl++', eof: 'Ctrl++ / Ctrl+Wheel up' } },
+    { id: 'fretDown', label: 'Decrease selected fret', group: 'Notes', status: 'ready', keys: { feedback: 'Ctrl+-', eof: 'Ctrl+- / Ctrl+Wheel down' } },
     { id: 'setAnchor', label: 'Set anchor at cursor', group: 'Structure', status: 'ready', keys: { feedback: 'Shift+F', eof: 'Shift+F' } },
     { id: 'selectLike', label: 'Select matching string/fret', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+L', cableton: 'Ctrl+Shift+L', eof: 'Ctrl+L / Shift+L' } },
     { id: 'duplicateSelection', label: 'Duplicate selection to next position', group: 'Selection', status: 'ready', keys: { feedback: 'Ctrl+D', eof: 'Ctrl+D' } },
@@ -372,6 +372,32 @@ export function _editorEofCommandForKeyPure(e, mode) {
     return null;
 }
 
+// ── The EOF wheel grammar (the mouse half of the EOF port) ───────────────────
+// In EOF the wheel is a NOTE-ENTRY verb, not navigation: plain wheel adjusts
+// the selected notes' sustain, Ctrl+wheel their fret (EOF_hotkeys.txt lines 1
+// and 5; wheel-up = lengthen / fret-up). This decides whether a wheel event is
+// that verb; mouse.js dispatches the returned registry command id, so undo,
+// status, and clamping stay identical to the [ ] and Ctrl+± keys.
+//
+// Scoped hard, per EOF-PROFILE-POLICY.md:
+//  • Legacy (EOF) profile only — every other profile keeps pan/zoom untouched.
+//  • Note mode only: the tempo map, Tracks overview, and drum grid keep their
+//    own wheel grammars (no EOF analogue exists for any of them).
+//  • A live selection only. EOF itself treats a selection-less wheel as a
+//    no-op; falling through to pan instead keeps navigation alive without
+//    ever causing a silent wrong edit.
+//  • Never with Shift/Alt held (pan and the roll's lane-stretch keep their
+//    meanings), and only on a vertical-dominant gesture.
+export function _editorEofWheelActionPure(e, ctx) {
+    if ((ctx && ctx.profile) !== 'eof') return null;
+    if (ctx.tempoMapMode || ctx.partsViewMode || ctx.drumEditMode) return null;
+    if (!ctx.selCount) return null;
+    if (e.shiftKey || e.altKey) return null;
+    if (!e.deltaY || Math.abs(e.deltaY) < Math.abs(e.deltaX || 0)) return null;
+    const up = e.deltaY < 0;
+    if (e.ctrlKey || e.metaKey) return up ? 'fretUp' : 'fretDown';
+    return up ? 'lengthenSustain' : 'shortenSustain';
+}
 
 // ── Logical / Cableton — delta tables over the FeedBack resolver ─────────────
 // Sig (from _editorKeySigPure) → command id. A sig in the table WINS (which is

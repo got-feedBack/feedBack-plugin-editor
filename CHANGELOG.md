@@ -26,6 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unmarked rows match the reference, and the subtitle counts the buckets. A
   "Show differences" filter lists only the exceptions. Fidelity is derived from
   one small divergence map — faithful bindings need no annotation.
+- **The Legacy (EOF) profile's wheel is now a note-entry verb, as in EOF
+  itself.** With notes selected in note mode, the plain wheel lengthens or
+  shortens their sustain (wheel-up = lengthen) and **Ctrl/Cmd+wheel** raises or
+  lowers their fret — the mouse half of the EOF port, beside the existing
+  right-click add/remove and whole-strum click. The gesture dispatches the
+  same registry commands as the `[` `]` and `Ctrl+±` keys, so undo, status,
+  and clamping are identical, and the shortcut panel now lists the wheel
+  beside those keys in the EOF profile. Scoped hard: EOF profile only, live
+  selection only, note mode only — the tempo map, Tracks overview, and drum
+  grid keep their own wheel grammars, Shift/Alt keep pan and the roll's
+  lane-stretch, and with nothing selected the wheel falls through to its
+  existing behavior, so a bare scroll can never edit. Every other profile is untouched.
 
 ### Fixed
 

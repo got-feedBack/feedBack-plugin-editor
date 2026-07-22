@@ -503,6 +503,7 @@ setHostHooks({
     updateStatus,
     updateArrangementSelector,
     hideContextMenu,
+    runShortcutCommand: editorRunShortcutCommand,
     snapTime,
     ensureArr: _historyEnsureArr,
     editBlipAt: _editBlipAt,
