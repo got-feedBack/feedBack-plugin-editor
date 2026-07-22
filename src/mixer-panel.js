@@ -14,9 +14,11 @@
 // per-part instrument voices (GM slice) read the SAME state when they arrive —
 // this panel is the source of truth, not a mirror.
 //
-// The solo rule is the DAW one: any solo anywhere → only soloed parts sound;
-// mute always wins. The recording / guide / click BUSES are not parts and are
-// never gated by part solo — solo keeps the reference audible (charrette D5).
+// The solo rule is the DAW one: any solo anywhere → only soloed strips sound;
+// mute always wins. It spans BOTH bands — the master-mix strip is a peer audio
+// track, so a transcription-part solo silences it like anything else (solo the
+// master too to hear both). Only the recording / guide / click BUSES sit
+// outside the rule: buses are not parts and are never gated by solo.
 // Audio consumes the state through `host.partClapState` (inert default:
 // audible at unity), so src/audio.js never imports this module.
 //
@@ -122,27 +124,17 @@ export function _mixerAnySoloPure(partMix) {
     if (!partMix || typeof partMix !== 'object') return false;
     return Object.keys(partMix).some(k => partMix[k] && partMix[k].solo);
 }
-// Any solo within the AUDIO band ('audio:<id>' strips, the master included)?
-// The master's solo immunity is scoped to this: it ignores transcription-part
-// solos (D5 — the reference stays audible while charting) but joins the rule
-// when the solo lives in its own band, so soloing a stem actually isolates it.
-export function _mixerAnyAudioSoloPure(partMix) {
-    if (!partMix || typeof partMix !== 'object') return false;
-    return Object.keys(partMix).some(k => k.startsWith('audio:') && partMix[k] && partMix[k].solo);
-}
 // The DAW audibility rule over PART keys only: mute always wins; any solo
-// anywhere means only soloed parts sound. Buses (recording/guide/click) are
-// not parts and never pass through here — solo keeps the reference audible.
+// anywhere means only soloed strips sound. One rule for BOTH bands — the
+// master mix strip is a peer AUDIO TRACK (the full-mix recording; the actual
+// output fader is the mixer's master BUS, not this strip), so a transcription-
+// part solo silences it exactly like a stem solo does. Soloing a track means
+// "isolate this" — hear the reference alongside a soloed part by soloing the
+// master too. Buses (recording/guide/click) are not parts and never pass
+// through here.
 export function _mixerPartAudiblePure(partMix, key) {
     const st = _mixerPartStatePure(partMix, key);
     if (st.mute) return false;
-    // The master mix strip is a peer AUDIO TRACK (the full-mix recording) —
-    // the actual output fader is the mixer's master BUS, not this strip. But
-    // it is also the default reference every part is charted against, so a
-    // TRANSCRIPTION part's solo never silences it (D5); only a solo within
-    // the audio band does — soloing a stem mutes the full mix like any DAW
-    // console, and the master's own solo isolates the recording.
-    if (key === 'audio:master') return _mixerAnyAudioSoloPure(partMix) ? st.solo : true;
     return _mixerAnySoloPure(partMix) ? st.solo : true;
 }
 // The mix key of the ACTIVE editing surface: the drums arrangement's channel

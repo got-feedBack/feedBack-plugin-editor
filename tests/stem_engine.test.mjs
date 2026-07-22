@@ -81,8 +81,8 @@ t('a stem solo gates the master through the LIVE strip hook the engine ramps fro
             'while a stem is soloed the master gain ramps to 0 (pre-fix: stayed at unity)');
         assert.deepStrictEqual(_mixerPartStripState('audio:Guitar_L'), { audible: true, vol: 1 });
         S.partMix = { 'arr:0': { solo: true } };
-        assert.deepStrictEqual(_mixerPartStripState('audio:master'), { audible: true, vol: 1 },
-            'a transcription-part solo leaves the master reference audible (D5)');
+        assert.deepStrictEqual(_mixerPartStripState('audio:master'), { audible: false, vol: 1 },
+            'a transcription-part solo gates the master too — one solo rule across bands');
         S.partMix = { 'audio:master': { solo: true }, 'audio:Guitar_L': {} };
         assert.deepStrictEqual(_mixerPartStripState('audio:master'), { audible: true, vol: 1 },
             'the master\'s own solo keeps it audible');

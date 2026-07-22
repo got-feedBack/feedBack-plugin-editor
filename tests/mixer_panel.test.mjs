@@ -4,9 +4,10 @@
  * canonical per-part mix state `S.partMix`.
  *
  * Pinned here: the pure strip-state model (defaults, clamps, the DAW
- * mute-wins/solo-isolates audibility rule), the clap-state the guide
- * scheduler consumes (drums vs current-arrangement key, volume scaling,
- * and — D5 — that it is a PART gate: the host-hook default leaves audio
+ * mute-wins/solo-isolates audibility rule — ONE rule across both bands,
+ * the master strip included), the clap-state the guide scheduler consumes
+ * (drums vs current-arrangement key, volume scaling, and that it is a
+ * PART gate: the host-hook default leaves audio
  * untouched and no bus is ever a part), the panel open-state pref
  * round-trip, the memoized render, and that a double init can never stack
  * delegated listeners (re-inject safety).
@@ -65,7 +66,7 @@ globalThis.localStorage = globalThis.localStorage || {
 globalThis.window = globalThis.window || globalThis;
 
 const {
-    _mixerPartsPure, _mixerPartStatePure, _mixerAnySoloPure, _mixerAnyAudioSoloPure,
+    _mixerPartsPure, _mixerPartStatePure, _mixerAnySoloPure,
     _mixerPartAudiblePure,
     _mixerClapStatePure, _mixerActivePartKeyPure, _mixerOpenFromStoredPure, _mixerClapState,
     _mixerGainForFaderPure, _mixerFaderLabelPure, _mixerOrderedPartsPure,
@@ -154,17 +155,23 @@ t('audibility: any solo isolates the soloed strips', () => {
     assert.strictEqual(_mixerPartAudiblePure(mix, 'drums'), false);
 });
 
-t('master honors D5 for part solos but joins the solo rule inside the audio band', () => {
-    // A transcription-part solo (plus an unrelated mute) — the master stays
-    // audible: it is the reference the parts are charted against (D5).
+t('one solo rule spans both bands: the master is a peer strip, never immune', () => {
+    // A TRANSCRIPTION-part solo silences the master like anything else —
+    // pre-fix the 'audio:master' carve-out kept the full mix playing over a
+    // soloed part, so soloing a transcription track never isolated it.
     const partSolo = { 'arr:0': { solo: true }, 'arr:1': { mute: true } };
-    assert.strictEqual(_mixerAnyAudioSoloPure(partSolo), false, 'part solos are not audio-band solos');
-    assert.strictEqual(_mixerPartAudiblePure(partSolo, 'audio:master'), true);
-    // A soloed STEM must actually isolate: the master (the full-mix recording,
-    // a peer audio track) mutes with the rest — pre-fix it kept playing over
-    // every solo, so soloing an audio track never isolated it.
+    assert.strictEqual(_mixerPartAudiblePure(partSolo, 'audio:master'), false,
+        'a transcription-part solo silences the master');
+    assert.strictEqual(_mixerPartAudiblePure(partSolo, 'audio:gtr'), false,
+        'and the stems');
+    assert.strictEqual(_mixerPartAudiblePure(partSolo, 'arr:0'), true, 'the soloed part sounds');
+    // Hear the reference alongside a soloed part: solo the master too.
+    const partPlusMaster = { 'arr:0': { solo: true }, 'audio:master': { solo: true } };
+    assert.strictEqual(_mixerPartAudiblePure(partPlusMaster, 'audio:master'), true);
+    assert.strictEqual(_mixerPartAudiblePure(partPlusMaster, 'arr:0'), true);
+    assert.strictEqual(_mixerPartAudiblePure(partPlusMaster, 'arr:1'), false);
+    // A soloed STEM isolates the same way (the #348 behavior, kept).
     const stemSolo = { 'audio:gtr': { solo: true }, 'arr:0': { mute: true } };
-    assert.strictEqual(_mixerAnyAudioSoloPure(stemSolo), true);
     assert.strictEqual(_mixerPartAudiblePure(stemSolo, 'audio:master'), false, 'a stem solo silences the master');
     assert.strictEqual(_mixerPartAudiblePure(stemSolo, 'audio:gtr'), true, 'the soloed stem sounds');
     assert.strictEqual(_mixerPartAudiblePure(stemSolo, 'audio:bass'), false, 'an unsoloed stem is still isolated out');
@@ -173,7 +180,9 @@ t('master honors D5 for part solos but joins the solo rule inside the audio band
     const masterSolo = { 'audio:master': { solo: true } };
     assert.strictEqual(_mixerPartAudiblePure(masterSolo, 'audio:master'), true);
     assert.strictEqual(_mixerPartAudiblePure(masterSolo, 'audio:gtr'), false);
-    // Master + stem both soloed → both sound (peers in one band).
+    assert.strictEqual(_mixerPartAudiblePure(masterSolo, 'arr:0'), false,
+        'the master\'s solo silences unsoloed parts too — one rule, both directions');
+    // Master + stem both soloed → both sound.
     const both = { 'audio:master': { solo: true }, 'audio:gtr': { solo: true } };
     assert.strictEqual(_mixerPartAudiblePure(both, 'audio:master'), true);
     assert.strictEqual(_mixerPartAudiblePure(both, 'audio:gtr'), true);
@@ -181,8 +190,8 @@ t('master honors D5 for part solos but joins the solo rule inside the audio band
     assert.strictEqual(_mixerPartAudiblePure({ 'audio:master': { mute: true, solo: true } }, 'audio:master'), false);
     assert.strictEqual(_mixerPartAudiblePure({ 'audio:master': { mute: true } }, 'audio:master'), false);
     // Malformed maps never throw and never phantom-solo.
-    assert.strictEqual(_mixerAnyAudioSoloPure(null), false);
-    assert.strictEqual(_mixerAnyAudioSoloPure({ 'audio:gtr': null }), false);
+    assert.strictEqual(_mixerAnySoloPure(null), false);
+    assert.strictEqual(_mixerPartAudiblePure({ 'audio:gtr': null }, 'audio:master'), true);
 });
 
 // ── The clap state the guide scheduler consumes ──────────────────────
@@ -202,14 +211,14 @@ t('clap state follows the active surface: the drums arrangement in drum mode, el
         'drum mode with no drums arrangement → currentArr');
 });
 
-t('solo keeps the reference audible (D5): the gate is per-PART, and the host default leaves audio untouched', () => {
+t('the clap gate is per-PART, and the host default leaves audio untouched', () => {
     // Soloing a part silences other PARTS' claps…
     const mix = { 'arr:0': { solo: true } };
     assert.strictEqual(_mixerClapStatePure(mix, false, 1).audible, false);
     // …but the hook audio.js consults defaults to audible-at-unity, so with
     // no panel wired (or nothing muted/soloed) nothing is gated — and the
-    // reference bus never passes through this gate at all: buses are not
-    // part keys, and audio.js only consults the hook on the CLAP path.
+    // recording/guide/click BUSES never pass through this gate at all: buses
+    // are not part keys, and audio.js only consults the hook on the CLAP path.
     assert.deepStrictEqual(host.partClapState(), { audible: true, vol: 1 });
     assert.strictEqual(_mixerClapStatePure(mix, false, 0).audible, true);
 });
