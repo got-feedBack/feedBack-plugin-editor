@@ -14,7 +14,7 @@
 import assert from 'node:assert';
 import { S } from '../src/state.js';
 import { EditHistory } from '../src/history.js';
-import { _audioBufferStartPure, _audioTimelineDurationPure, _regionStartPure, _audioRegionPlacementsPure, AudioShiftCmd, editorSetAudioShift } from '../src/audio.js';
+import { _audioBufferStartPure, _audioTimelineDurationPure, _regionStartPure, _audioRegionPlacementsPure, _declickEnvelopePure, AudioShiftCmd, editorSetAudioShift } from '../src/audio.js';
 import { seedState, trackHooks, lastStatus } from './_history_env.mjs';
 
 let pass = 0, fail = 0;
@@ -162,6 +162,26 @@ t('_audioRegionPlacementsPure maps startBeat via beatToTime, resolves + clamps t
     const r4 = p.find(x => x.id === 'r4');
     assert.strictEqual(r4.srcOut, 30, 'srcOut past the buffer clamps to its duration');
     assert.strictEqual(r4.muted, true, 'muted flag carried for the scheduler to skip');
+});
+
+// ── _declickEnvelopePure — per-region edge fades (regions PR4, step 5) ─────────
+const envNear = (env, exp) => {
+    assert.strictEqual(env.length, exp.length, `env length ${env.length} vs ${exp.length}`);
+    env.forEach((pt, i) => {
+        assert.ok(near(pt.t, exp[i].t), `t[${i}] ${pt.t} vs ${exp[i].t}`);
+        assert.strictEqual(pt.gain, exp[i].gain, `gain[${i}]`);
+    });
+};
+t('_declickEnvelopePure: fade in at the first sample, out before the last', () => {
+    envNear(_declickEnvelopePure(10, 2, 0.005), [
+        { t: 10, gain: 0 }, { t: 10.005, gain: 1 }, { t: 11.995, gain: 1 }, { t: 12, gain: 0 }]);
+});
+t('_declickEnvelopePure: an open window (null duration) gets only the fade-in', () => {
+    envNear(_declickEnvelopePure(0, null, 0.005), [{ t: 0, gain: 0 }, { t: 0.005, gain: 1 }]);
+});
+t('_declickEnvelopePure: fades shrink to duration/2 so they never overlap', () => {
+    envNear(_declickEnvelopePure(0, 0.006, 0.005), [
+        { t: 0, gain: 0 }, { t: 0.003, gain: 1 }, { t: 0.003, gain: 1 }, { t: 0.006, gain: 0 }]);
 });
 
 console.log(`\n${pass} passed, ${fail} failed`);

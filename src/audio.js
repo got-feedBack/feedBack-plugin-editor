@@ -532,15 +532,45 @@ export function _regionStartPure(cursorTime, startTime, srcIn, srcOut) {
 export function _audioRegionPlacementsPure(regions, bufferDuration, beatToTime) {
     const dur = Math.max(0, Number(bufferDuration) || 0);
     const b2t = typeof beatToTime === 'function' ? beatToTime : () => 0;
+    // Measure placement RELATIVE to beat 0 so the default region (startBeat 0)
+    // contributes zero offset whatever the grid origin — the whole-stem path
+    // stays at exactly `shift`, byte-identical to before regions.
+    const zero = Number(b2t(0)) || 0;
     const out = [];
     for (const r of _trackRegionsResolvePure(regions)) {
-        const startBeatTime = Number(b2t(Number(r.startBeat) || 0)) || 0;
+        const startBeatTime = (Number(b2t(Number(r.startBeat) || 0)) || 0) - zero;
         const srcIn = Math.max(0, Number(r.srcIn) || 0);
         const so = Number(r.srcOut);
         const srcOut = Number.isFinite(so) && so > srcIn ? (dur > 0 ? Math.min(so, dur) : so) : dur;
         out.push({ id: r.id, startBeatTime, srcIn, srcOut, muted: r.muted === true });
     }
     return out;
+}
+
+// Fade length (seconds) for the per-region declick — long enough to kill an edge
+// pop, short enough to be inaudible as a fade (~5 ms; design: sound-design's call).
+const DECLICK_FADE = 0.005;
+
+// Declick envelope for a TRIMMED region's edges: a per-region gain fades from
+// silence over `fadeSec` at the region's first sample and back to silence over
+// `fadeSec` at its last, so a cut that doesn't land on a zero crossing doesn't
+// pop. Returns [{t, gain}] ramp points in ctx time — setValueAtTime the first,
+// linearRampToValueAtTime the rest. A region with no known end (open window) gets
+// only the fade-in; fades shrink to duration/2 so they never overlap on a short
+// region. A FULL-SPAN region never reaches here (its edges are the buffer's own
+// silent boundaries), so the untrimmed path stays gain-node-free and unchanged.
+export function _declickEnvelopePure(startTime, duration, fadeSec) {
+    const start = Number(startTime) || 0;
+    const fade = Math.max(0, Number(fadeSec) || 0);
+    const dur = (duration != null && Number.isFinite(Number(duration))) ? Math.max(0, Number(duration)) : null;
+    const inFade = dur != null ? Math.min(fade, dur / 2) : fade;
+    const env = [{ t: start, gain: 0 }, { t: start + inFade, gain: 1 }];
+    if (dur != null) {
+        const outFade = Math.min(fade, dur / 2);
+        env.push({ t: start + dur - outFade, gain: 1 });
+        env.push({ t: start + dur, gain: 0 });
+    }
+    return env;
 }
 
 // Effective timeline length for shifted audio. A positive shift delays the
@@ -2215,8 +2245,24 @@ function _startStemSources(preRoll = 0, cursorTime = S.cursorTime) {
             if (!p.play) continue;
             const node = S.audioCtx.createBufferSource();
             node.buffer = cached.buffer;
-            node.connect(dest);
             const when = (preRoll > 0 || p.delay > 0) ? ctxNow + preRoll + p.delay : 0;
+            // Declick a TRIMMED region's edges via a per-region gain (fade in/out
+            // ~5 ms); a full-span region keeps the buffer's own silent boundaries,
+            // so it routes straight to the stem gain — byte-identical to today.
+            const trimmed = region.srcIn > 0 || region.srcOut < cached.buffer.duration;
+            if (trimmed) {
+                const g = S.audioCtx.createGain();
+                const realStart = when > 0 ? when : ctxNow;
+                const env = _declickEnvelopePure(realStart, p.duration, DECLICK_FADE);
+                g.gain.setValueAtTime(env[0].gain, env[0].t);
+                for (let i = 1; i < env.length; i++) g.gain.linearRampToValueAtTime(env[i].gain, env[i].t);
+                g.connect(dest);
+                node.connect(g);
+                // Release the transient gain when the source ends (natural or stop()).
+                node.onended = () => { try { g.disconnect(); } catch (_) { /* ctx gone */ } };
+            } else {
+                node.connect(dest);
+            }
             // duration caps a trimmed region; for a full-span region it equals
             // the remaining buffer, so start() plays to the end exactly as the
             // single-source path did (null only for a degenerate open window).
