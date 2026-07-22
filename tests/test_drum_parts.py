@@ -18,12 +18,17 @@ Pinned here:
   - `_create_build_drum_entries` — the CREATE-MODE /build write: the
     `type: drums` manifest entries + the extra side files, mirroring the
     /save_song drum-parts wire.
+  - `_drum_pointer_entry` — the /save_song drum block's entry rebuild
+    merges ONTO the prior same-id entry, so additive spec keys the editor
+    doesn't author (the feedpak-spec 1.18.0 entry-level `tones` sound
+    binding, extension keys) survive a drum-dirty save.
 """
 
 import json
 
 from routes import (
     _create_build_drum_entries,
+    _drum_pointer_entry,
     _is_drum_pointer_entry,
     _primary_drum_alias_id,
     _sanitize_extra_drum_tab,
@@ -104,6 +109,50 @@ def test_sanitize_drops_malformed_and_duplicate_hits_and_sorts():
 def test_sanitize_tolerates_a_missing_or_bogus_hits_field():
     assert _sanitize_extra_drum_tab({"version": 1})["hits"] == []
     assert _sanitize_extra_drum_tab({"version": 1, "hits": "junk"})["hits"] == []
+
+
+# ── /save_song entry rebuild preserves authored keys (_drum_pointer_entry) ───
+
+def test_drum_entry_rebuild_preserves_tones_and_extension_keys():
+    # A pack authored elsewhere binds a drum part's sound via the 1.18.0
+    # entry-level `tones` (and may carry extension keys). A drum-dirty
+    # editor save rebuilds the pointer entries — the rebuild must merge
+    # onto the prior same-id entry so those keys survive, exactly like the
+    # pitched pipeline's _merge_manifest_entry rule.
+    old = {
+        "id": "drums-2", "name": "Old Name", "type": "drums",
+        "drum_tab": "drum_tab_old.json",
+        "tones": {"rig": "kit-rock", "gm": {"program": 0, "bank": 128}},
+        "x_vendor_key": {"anything": True},
+    }
+    out = _drum_pointer_entry(old, "drums-2", "New Name", "drum_tab_drums-2.json")
+    # Authored/additive keys survive verbatim.
+    assert out["tones"] == {"rig": "kit-rock", "gm": {"program": 0, "bank": 128}}
+    assert out["x_vendor_key"] == {"anything": True}
+    # Editor-owned keys always take the rebuilt value.
+    assert out["id"] == "drums-2"
+    assert out["name"] == "New Name"
+    assert out["type"] == "drums"
+    assert out["drum_tab"] == "drum_tab_drums-2.json"
+    # The prior entry object is never mutated (merge returns a fresh dict).
+    assert old["name"] == "Old Name" and old["drum_tab"] == "drum_tab_old.json"
+
+
+def test_drum_entry_rebuild_without_a_predecessor_is_exactly_the_clean_entry():
+    # A genuinely new part (or an id that changed) has nothing to inherit:
+    # the rebuilt entry is the four editor-owned keys and nothing else —
+    # so single-drum packs stay byte-identical with pre-1.18.0 saves.
+    out = _drum_pointer_entry(None, "drums", "Drums", "drum_tab.json")
+    assert out == {"id": "drums", "name": "Drums", "type": "drums",
+                   "drum_tab": "drum_tab.json"}
+
+
+def test_drum_entry_rebuild_tolerates_a_malformed_predecessor():
+    # Defensive: a non-dict predecessor contributes nothing rather than
+    # crashing the save.
+    out = _drum_pointer_entry("junk", "drums", "Drums", "drum_tab.json")
+    assert out == {"id": "drums", "name": "Drums", "type": "drums",
+                   "drum_tab": "drum_tab.json"}
 
 
 # ── create-mode /build write (_create_build_drum_entries) ────────────────────
